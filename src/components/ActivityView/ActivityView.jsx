@@ -12,9 +12,11 @@ import {
   importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
 } from '../../utils/granolaCalls';
 import {
-  granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, groupMeetingsByDay,
-  undatedGranolaRecords, describeGranolaMeetings,
+  granolaMeetingsFromRecords, mergeMeetings, meetingsInRange, rangeForDays, rangeForUpcoming,
+  groupMeetingsByDay, undatedGranolaRecords, describeGranolaMeetings,
 } from '../../utils/granolaMeetings';
+import { outlookMeetingsFromEvents, describeOutlookCalendar } from '../../utils/outlookCalendar';
+import { secureGet, secureSet, secureClear } from '../../utils/secureStorage';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
@@ -34,16 +36,32 @@ const OUTREACH_INDEX_KEY = 'hubspot-outreach-index';
 const GRANOLA_IMPORTED_AT_KEY = 'granola-meetings-imported-at';
 const GRANOLA_STALE_MS = 15 * 60 * 1000;
 
-// How far back the meetings panel can look. Capped at the Granola import
-// window: offering more would show whatever the Call Recordings back-fill
-// happened to leave behind, which looks like a gappy calendar rather than
-// a longer one.
+// What the meetings panel covers. The look-back is capped at the Granola
+// import window: offering more would show whatever the Call Recordings
+// back-fill happened to leave behind, which looks like a gappy calendar
+// rather than a longer one.
+//
+// "Upcoming" is the only forward window, and it only has anything in it
+// once Outlook is connected — a notetaker can't know about a meeting
+// that hasn't happened, so every other source is a look-back by nature.
 const MEETING_RANGE_KEY = 'activity-meeting-range-days';
+const UPCOMING_DAYS = 7;
 const MEETING_RANGES = [
-  { days: 1, label: 'Today' },
-  { days: 7, label: '7 days' },
-  { days: 30, label: '30 days' },
+  { key: 'today', days: 1, forward: false, label: 'Today', title: 'Everything on today’s calendar' },
+  { key: 'upcoming', days: UPCOMING_DAYS, forward: true, label: 'Upcoming', title: `Today and the next ${UPCOMING_DAYS} days` },
+  { key: 'last7', days: 7, forward: false, label: 'Last 7', title: 'Meetings from the last 7 days' },
+  { key: 'last30', days: 30, forward: false, label: 'Last 30', title: 'Meetings from the last 30 days' },
 ];
+
+// The window fetched from Outlook, once, wide enough for every button
+// above — so changing range re-filters what is already here instead of
+// going back to Graph.
+const GRAPH_START_DAYS = -30;
+const GRAPH_END_DAYS = UPCOMING_DAYS;
+
+// Graph access tokens last about an hour. Re-read a little early so a
+// fetch doesn't go out with a token that expires mid-flight.
+const GRAPH_EXPIRY_SKEW_MS = 60 * 1000;
 
 function normalizeOutreachPhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
@@ -659,17 +677,30 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // the wider windows are for. The choice is kept per browser rather
   // than in synced settings: it is how you're reading the page right
   // now, not a preference worth pushing to your other devices.
-  const [meetingRangeDays, setMeetingRangeDays] = useState(() => {
-    const saved = Number(userLsGet(MEETING_RANGE_KEY));
-    return MEETING_RANGES.some(r => r.days === saved) ? saved : 1;
+  const [meetingRangeKey, setMeetingRangeKey] = useState(() => {
+    const saved = String(userLsGet(MEETING_RANGE_KEY) || '');
+    if (MEETING_RANGES.some(r => r.key === saved)) return saved;
+    // Before there was a forward window this was stored as a bare number
+    // of days. Read those rather than resetting a returning user to Today.
+    const legacy = { 1: 'today', 7: 'last7', 30: 'last30' }[Number(saved)];
+    return legacy || 'today';
   });
 
-  function chooseMeetingRange(days) {
-    setMeetingRangeDays(days);
-    try { userLsSet(MEETING_RANGE_KEY, String(days)); } catch { /* quota */ }
+  const meetingRange = useMemo(
+    () => MEETING_RANGES.find(r => r.key === meetingRangeKey) || MEETING_RANGES[0],
+    [meetingRangeKey],
+  );
+  const meetingRangeDays = meetingRange.days;
+
+  function chooseMeetingRange(key) {
+    setMeetingRangeKey(key);
+    try { userLsSet(MEETING_RANGE_KEY, key); } catch { /* quota */ }
   }
 
-  const meetingWindow = useMemo(() => rangeForDays(meetingRangeDays), [meetingRangeDays]);
+  const meetingWindow = useMemo(
+    () => (meetingRange.forward ? rangeForUpcoming(meetingRange.days) : rangeForDays(meetingRange.days)),
+    [meetingRange],
+  );
 
   const hubspotRangeMeetings = useMemo(() => (
     meetingsInRange(allActivities.filter(a => a._type === 'meeting' && a._source === 'hubspot'), meetingWindow)
@@ -678,6 +709,140 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const granolaRangeMeetings = useMemo(() => (
     meetingsInRange(granolaMeetings, meetingWindow)
   ), [granolaMeetings, meetingWindow]);
+
+  // ── Outlook Calendar over Microsoft Graph ──
+  // The calendar itself, read through the Outlook sign-in the Draft
+  // Emails page and the opportunity meeting picker already use — its
+  // scope has included Calendars.Read all along. This is what puts a
+  // meeting on the page BEFORE it happens: Granola only knows the ones
+  // it has already sat in and written up.
+  const [graphEvents, setGraphEvents] = useState([]);
+  const [graphLoaded, setGraphLoaded] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState('');
+  const [graphTruncated, setGraphTruncated] = useState(false);
+  const [graphFetchedAt, setGraphFetchedAt] = useState('');
+  // 'unknown' until the stored token has been read: the panel must not
+  // say "not connected" on first paint to somebody who is.
+  const [outlookAuth, setOutlookAuth] = useState('unknown'); // unknown | none | expired | live
+  const graphLoadingRef = useRef(false);
+
+  /** The stored Graph token, or '' when there isn't a usable one. */
+  const readOutlookToken = useCallback(async () => {
+    try {
+      const token = await secureGet('outlook-access-token');
+      if (!token) { setOutlookAuth('none'); return ''; }
+      const expiry = Number(await secureGet('outlook-token-expiry'));
+      if (Number.isFinite(expiry) && expiry > 0 && Date.now() > expiry - GRAPH_EXPIRY_SKEW_MS) {
+        setOutlookAuth('expired');
+        return '';
+      }
+      setOutlookAuth('live');
+      return token;
+    } catch {
+      setOutlookAuth('none');
+      return '';
+    }
+  }, []);
+
+  /**
+   * Pull the calendar window every range button can draw from. One fetch
+   * covers all of them, so switching range re-filters rather than
+   * re-fetches.
+   */
+  const loadOutlookCalendar = useCallback(async (tokenOverride = '') => {
+    if (graphLoadingRef.current) return;
+    const token = tokenOverride || await readOutlookToken();
+    if (!token) return;
+
+    graphLoadingRef.current = true;
+    setGraphLoading(true);
+    setGraphError('');
+    try {
+      const r = await apiFetch(
+        `/api/outlook-calendar?startDays=${GRAPH_START_DAYS}&endDays=${GRAPH_END_DAYS}`,
+        { headers: { 'X-MS-Token': token } },
+      );
+      if (r.status === 401) {
+        // The token outlived its expiry stamp, or was revoked. Not an
+        // error worth a red banner — signing in again is the whole fix.
+        setOutlookAuth('expired');
+        return;
+      }
+      if (!r.ok) {
+        let detail = '';
+        try { detail = (await r.json())?.error || ''; } catch { detail = await r.text().catch(() => ''); }
+        setGraphError(detail || `Outlook calendar fetch failed (HTTP ${r.status})`);
+        return;
+      }
+      const body = await r.json();
+      setGraphEvents(outlookMeetingsFromEvents(body.events || []));
+      setGraphTruncated(!!body.truncated);
+      setGraphLoaded(true);
+      setGraphFetchedAt(new Date().toISOString());
+      setOutlookAuth('live');
+    } catch (err) {
+      setGraphError(err?.message || String(err));
+    } finally {
+      graphLoadingRef.current = false;
+      setGraphLoading(false);
+    }
+  }, [readOutlookToken]);
+
+  // Read the calendar on arrival when the sign-in is still good. Nothing
+  // pops up and nothing is asked of the user: either the token is live
+  // and their day is on the page, or the panel says how to connect.
+  useEffect(() => { loadOutlookCalendar(); }, [loadOutlookCalendar]);
+
+  // The sign-in popup reports back the same way it does on the Draft
+  // Emails page and in the opportunity meeting picker, so one Outlook
+  // connection serves all three.
+  useEffect(() => {
+    function onMessage(e) {
+      if (e.data?.type === 'outlook-auth-success') {
+        (async () => {
+          try {
+            await secureSet('outlook-access-token', e.data.accessToken);
+            if (e.data.refreshToken) await secureSet('outlook-refresh-token', e.data.refreshToken);
+            await secureSet('outlook-token-expiry', String(Date.now() + (e.data.expiresIn || 3600) * 1000));
+          } catch { /* storage refused: the fetch below still works this session */ }
+          setOutlookAuth('live');
+          loadOutlookCalendar(e.data.accessToken);
+        })();
+      } else if (e.data?.type === 'outlook-auth-error') {
+        setGraphError(e.data.error || 'Outlook sign-in failed');
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [loadOutlookCalendar]);
+
+  function connectOutlook() {
+    setGraphError('');
+    window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700,left=200,top=100');
+  }
+
+  function disconnectOutlook() {
+    if (!window.confirm('Disconnect Outlook? Your calendar will stop showing here, and the Draft Emails page will ask you to sign in again.')) return;
+    try {
+      secureClear('outlook-access-token');
+      secureClear('outlook-refresh-token');
+      secureClear('outlook-token-expiry');
+    } catch { /* nothing stored */ }
+    setGraphEvents([]);
+    setGraphLoaded(false);
+    setGraphFetchedAt('');
+    setOutlookAuth('none');
+  }
+
+  // Company names, from the same domain → company index the Granola rows
+  // go through, so a calendar meeting shows who it's with rather than
+  // just who's on it.
+  const outlookMeetings = useMemo(() => (
+    graphEvents.map(m => (
+      m._company ? m : { ...m, _company: guessCompanyFromEmails(...(m._externalEmails || [])) }
+    ))
+  ), [graphEvents, hubspotContacts, domainToCompany]);
 
   // ── Outlook Calendar via Power Automate webhook ──
   // Power Automate pushes meetings to /api/calendar-webhook?token=xxx,
@@ -753,6 +918,14 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return unsub;
   }, [webhookToken]);
 
+  // The calendar, from whichever Outlook path is live. Both describe the
+  // same events, and mergeMeetings only ever collapses copies from
+  // DIFFERENT sources — so feeding it both would double every meeting of
+  // anyone who has the direct sign-in and an old Power Automate flow.
+  // The direct connection wins: it is fetched on this page, for this
+  // window, rather than being whatever the flow last pushed.
+  const calendarMeetings = outlookMeetings.length > 0 ? outlookMeetings : outlookEvents;
+
   // HubSpot + Outlook + Granola over the chosen window. The same meeting
   // reaches this page from more than one of them — the calendar invite
   // from Outlook, Granola's note on the meeting it sat in — so the copies
@@ -760,15 +933,24 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const rangeMeetings = useMemo(() => (
     mergeMeetings([
       ...hubspotRangeMeetings,
-      ...meetingsInRange(outlookEvents, meetingWindow),
+      ...meetingsInRange(calendarMeetings, meetingWindow),
       ...granolaRangeMeetings,
     ])
-  ), [hubspotRangeMeetings, outlookEvents, granolaRangeMeetings, meetingWindow]);
+  ), [hubspotRangeMeetings, calendarMeetings, granolaRangeMeetings, meetingWindow]);
 
-  // Broken into days for rendering: newest day first, each day read
-  // forwards. A today-only window is one group, which is the panel
-  // exactly as it was.
-  const meetingDayGroups = useMemo(() => groupMeetingsByDay(rangeMeetings), [rangeMeetings]);
+  // Broken into days for rendering, each day read forwards. A look-back
+  // opens on the most recent day; a look-ahead opens on today and runs
+  // into next week.
+  const meetingDayGroups = useMemo(
+    () => groupMeetingsByDay(rangeMeetings, { order: meetingRange.forward ? 'asc' : 'desc' }),
+    [rangeMeetings, meetingRange],
+  );
+
+  // The window this panel is showing, named so a sentence can end with
+  // it: "none today", "none in the next 7 days".
+  const rangeName = meetingRange.forward
+    ? `in the next ${meetingRange.days} days`
+    : (meetingRangeDays === 1 ? 'today' : `in the last ${meetingRangeDays} days`);
 
   // Why the Granola count is what it is. Suppressed when the panel is
   // already showing an error or the setup notice — those say more.
@@ -781,15 +963,34 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       rangeDays: meetingRangeDays,
       windowDays: DEFAULT_MEETING_WINDOW_DAYS,
       syncedAt: granolaSyncedAt,
+      rangeName,
     })
   ), [
     granolaMeetings, granolaRangeMeetings, granolaUndated, granolaImportResult,
-    meetingRangeDays, granolaSyncedAt, granolaUnconfigured, granolaError,
+    meetingRangeDays, granolaSyncedAt, granolaUnconfigured, granolaError, rangeName,
   ]);
 
-  // The heading over a day's meetings. Recent days are named rather than
-  // dated — "Yesterday" is what you actually call it when scanning back
-  // through the week.
+  // Why the calendar is showing what it is: not connected, signed out,
+  // or connected with nothing in this window. All three render as an
+  // empty list, and only the first two are something the user can act on.
+  const outlookNote = useMemo(() => (
+    // Nothing to say while the stored token is still being read, and
+    // nothing to say to somebody whose Power Automate flow is already
+    // filling the panel — "Outlook isn't connected" would be answering a
+    // question they haven't asked.
+    (graphError || outlookAuth === 'unknown' || outlookEvents.length > 0) ? '' : describeOutlookCalendar({
+      connected: outlookAuth === 'live' || outlookAuth === 'expired',
+      expired: outlookAuth === 'expired',
+      loaded: graphLoaded,
+      events: graphEvents.length,
+      inRange: meetingsInRange(calendarMeetings, meetingWindow).length,
+      rangeLabel: rangeName,
+    })
+  ), [graphError, outlookAuth, graphLoaded, graphEvents, outlookEvents, calendarMeetings, meetingWindow, rangeName]);
+
+  // The heading over a day's meetings. The days either side of today are
+  // named rather than dated — "Yesterday" and "Tomorrow" are what you
+  // actually call them when scanning a week.
   function fmtDayHeading(dayStart) {
     const day = new Date(dayStart);
     const today = new Date();
@@ -798,10 +999,12 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     const dated = day.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     if (daysBack === 0) return `Today · ${dated}`;
     if (daysBack === 1) return `Yesterday · ${dated}`;
+    if (daysBack === -1) return `Tomorrow · ${dated}`;
     return dated;
   }
 
-  function fmtMeetingTime(startStr, endStr) {
+  function fmtMeetingTime(startStr, endStr, allDay = false) {
+    if (allDay) return 'All day';
     if (!startStr) return '-';
     const start = new Date(startStr);
     if (isNaN(start)) return '-';
@@ -1179,37 +1382,41 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
       {error && <div className={styles.error}>{error}</div>}
 
-      {/* Today's calendar. Rendered as soon as EITHER source has
-          something to say — the Granola meetings stand on their own,
-          so the panel no longer waits on the HubSpot fetch. */}
-      {(data || granolaLoaded) && (
+      {/* Today's calendar. Rendered as soon as ANY source has something
+          to say — the Outlook calendar and the Granola meetings each
+          stand on their own, so the panel never waits on the HubSpot
+          fetch, and somebody with only Outlook connected still gets a
+          panel. */}
+      {(data || granolaLoaded || graphLoaded || outlookAuth !== 'unknown') && (
         <div style={{ marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
           <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
               <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
-                {meetingRangeDays === 1 ? "Today's Meetings" : 'Meetings'}
+                {meetingRange.key === 'today' ? "Today's Meetings" : (meetingRange.forward ? 'Coming Up' : 'Meetings')}
                 <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  {meetingRangeDays === 1
+                  {meetingRange.key === 'today'
                     ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
-                    : `${new Date(meetingWindow.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – today`}
+                    : (meetingRange.forward
+                      ? `today – ${new Date(meetingWindow.end - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                      : `${new Date(meetingWindow.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – today`)}
                 </span>
               </div>
               {/* How far back to look. Segmented rather than a dropdown:
                   three options, and the current one is worth seeing
                   without opening anything. */}
               <div style={{ display: 'inline-flex', border: '1px solid var(--color-border)', borderRadius: 4, overflow: 'hidden' }}>
-                {MEETING_RANGES.map((range) => {
-                  const isActive = meetingRangeDays === range.days;
+                {MEETING_RANGES.map((range, rangeIdx) => {
+                  const isActive = meetingRange.key === range.key;
                   return (
                     <button
-                      key={range.days}
+                      key={range.key}
                       type="button"
-                      onClick={() => chooseMeetingRange(range.days)}
-                      title={range.days === 1 ? 'Meetings today' : `Meetings from the last ${range.days} days`}
+                      onClick={() => chooseMeetingRange(range.key)}
+                      title={range.title}
                       style={{
                         padding: '0.2rem 0.5rem',
                         border: 'none',
-                        borderLeft: range.days === MEETING_RANGES[0].days ? 'none' : '1px solid var(--color-border)',
+                        borderLeft: rangeIdx === 0 ? 'none' : '1px solid var(--color-border)',
                         background: isActive ? 'var(--color-accent)' : '#fff',
                         color: isActive ? '#fff' : 'var(--color-text-secondary)',
                         fontSize: '0.66rem',
@@ -1232,26 +1439,59 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                   : `Import the last ${DEFAULT_MEETING_WINDOW_DAYS} days of meetings from Granola`}
                 style={{ padding: '0.25rem 0.6rem', border: '1px solid #7C3AED', borderRadius: 4, background: '#fff', color: '#7C3AED', fontSize: '0.68rem', fontWeight: 600, cursor: granolaImporting ? 'default' : 'pointer', fontFamily: 'inherit', opacity: granolaImporting ? 0.6 : 1 }}
               >{granolaImporting ? 'Importing…' : '↻ Granola'}</button>
-              {!hasWebhookToken ? (
-                <button
-                  onClick={setupWebhook}
-                  style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                >+ Outlook Calendar</button>
-              ) : (
+              {/* The calendar itself. One sign-in, shared with Draft
+                  Emails and the opportunity meeting picker — so for most
+                  visits this is already connected and there is nothing
+                  here but a refresh. */}
+              {outlookAuth === 'live' ? (
                 <>
                   <button
-                    onClick={setupWebhook}
-                    title="View Power Automate setup instructions"
-                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
-                  >⚙ Outlook Setup</button>
+                    onClick={() => loadOutlookCalendar()}
+                    disabled={graphLoading}
+                    title={graphFetchedAt
+                      ? `Re-read your Outlook calendar. Last read ${fmtDateTime(graphFetchedAt)}.`
+                      : 'Re-read your Outlook calendar'}
+                    style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: graphLoading ? 'default' : 'pointer', fontFamily: 'inherit', opacity: graphLoading ? 0.6 : 1 }}
+                  >{graphLoading ? 'Reading…' : '↻ Outlook'}</button>
                   <button
-                    onClick={removeWebhook}
-                    title="Disconnect Outlook calendar"
+                    onClick={disconnectOutlook}
+                    title="Disconnect Outlook"
                     style={{ padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
                     onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
                     onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
                   >×</button>
                 </>
+              ) : outlookAuth !== 'unknown' && (
+                <button
+                  onClick={connectOutlook}
+                  title="Sign in to Outlook to show your calendar — including meetings that haven't happened yet"
+                  style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >{outlookAuth === 'expired' ? '↻ Reconnect Outlook' : '+ Connect Outlook'}</button>
+              )}
+              {/* The Power Automate route the panel used to depend on.
+                  Kept for anyone already running that flow, but folded
+                  away — the sign-in above needs no flow at all. */}
+              {hasWebhookToken ? (
+                <>
+                  <button
+                    onClick={setupWebhook}
+                    title="View Power Automate setup instructions"
+                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >⚙ Power Automate</button>
+                  <button
+                    onClick={removeWebhook}
+                    title="Disconnect the Power Automate calendar feed"
+                    style={{ padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                    onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                  >×</button>
+                </>
+              ) : outlookAuth === 'none' && (
+                <button
+                  onClick={setupWebhook}
+                  title="The older route: a Power Automate flow that POSTs your calendar here. Connecting Outlook above does the same thing with no flow to build."
+                  style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.66rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Power Automate…</button>
               )}
             </div>
           </div>
@@ -1308,6 +1548,21 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               {outlookError}
             </div>
           )}
+          {graphError && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', borderBottom: '1px solid #FCA5A5' }}>
+              Outlook calendar: {graphError}
+            </div>
+          )}
+          {graphTruncated && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#FFFBEB', color: '#92400E', fontSize: '0.72rem', borderBottom: '1px solid #FDE68A' }}>
+              Your calendar has more events in this window than one read can return, so the far end of it is missing here.
+            </div>
+          )}
+          {outlookNote && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#F0F9FF', color: '#075985', fontSize: '0.72rem', borderBottom: '1px solid #E0F2FE' }}>
+              {outlookNote}
+            </div>
+          )}
           {granolaUnconfigured && (
             <div style={{ padding: '0.4rem 0.9rem', background: '#F5F3FF', color: '#5B21B6', fontSize: '0.75rem', borderBottom: '1px solid #DDD6FE' }}>
               Granola isn't connected in this deployment, so no meetings can be imported from it. The Call Recordings page explains how to set it up.
@@ -1328,9 +1583,9 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           )}
           {rangeMeetings.length === 0 ? (
             <div style={{ padding: '0.8rem 0.9rem', fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>
-              {meetingRangeDays === 1
+              {meetingRange.key === 'today'
                 ? 'No meetings scheduled for today.'
-                : `No meetings in the last ${meetingRangeDays} days.`}
+                : `No meetings ${rangeName}.`}
             </div>
           ) : (
             <div>
@@ -1338,7 +1593,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
               <div key={group.dayStart}>
               {/* A day heading only earns its row once the panel covers
                   more than one day. */}
-              {meetingRangeDays > 1 && (
+              {meetingRange.key !== 'today' && (
                 <div style={{ padding: '0.35rem 0.9rem', background: '#F8FAFC', borderTop: '1px solid #E2E8F0', borderBottom: '1px solid #F1F5F9', fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
                   <span>{fmtDayHeading(group.dayStart)}</span>
                   <span style={{ fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: '#94A3B8' }}>
@@ -1350,7 +1605,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
                 <div key={m.id || `${group.dayStart}-${i}`} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 260px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < group.meetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'start' }}>
                   <div>
                     <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
-                      {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
+                      {fmtMeetingTime(m._meetingStart, m._meetingEnd, m._allDay)}
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
                       {(m._sources?.length ? m._sources : [m._source]).map((src) => {

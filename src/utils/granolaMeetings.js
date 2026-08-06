@@ -236,6 +236,30 @@ export function rangeForDays(days, now = new Date()) {
   return { start: start.getTime(), end: end.getTime() };
 }
 
+/**
+ * The window covering today and the `days` days after it — today through
+ * the end of next week for `days: 7`.
+ *
+ * The mirror of rangeForDays, and it exists because a calendar is read in
+ * both directions. Every source the panel had until Outlook was connected
+ * could only describe meetings that had already happened, so a forward
+ * window would have been an empty one; the calendar itself knows what is
+ * coming, and that is most of what a calendar is for.
+ *
+ * It starts at the top of TODAY rather than at `now` — a meeting you are
+ * sitting in has already started, and dropping it off the list the minute
+ * it begins is the one moment it matters most.
+ *
+ * Walks the date like rangeForDays does, so a window spanning a
+ * daylight-saving change still ends at midnight.
+ */
+export function rangeForUpcoming(days, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(today);
+  end.setDate(end.getDate() + Math.max(0, Number(days) || 0) + 1);
+  return { start: today.getTime(), end: end.getTime() };
+}
+
 /** The rows that start inside `{ start, end }`. */
 export function meetingsInRange(rows, { start, end } = {}) {
   return (rows || []).filter((r) => {
@@ -263,15 +287,20 @@ export function meetingsInRange(rows, { start, end } = {}) {
  * point of this function.
  *
  * `imported` is { seen } from an import that ran this session, or null.
+ *
+ * `rangeName` names the window the panel is showing, carrying its own
+ * preposition ("today", "in the last 7 days", "in the next 7 days"). The
+ * default describes a look-back, which is all this could describe before
+ * the panel could look forward.
  */
 export function describeGranolaMeetings({
   total = 0, inRange = 0, undated = 0, imported = null,
-  rangeDays = 1, windowDays = 30, syncedAt = '',
+  rangeDays = 1, windowDays = 30, syncedAt = '', rangeName = '',
 } = {}) {
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   // Carries its own preposition: "none today" but "none IN the last 7
   // days", and the two read as one phrase at the call site.
-  const rangeName = rangeDays === 1 ? 'today' : `in the last ${rangeDays} days`;
+  const windowName = rangeName || (rangeDays === 1 ? 'today' : `in the last ${rangeDays} days`);
 
   // Nothing stored and nothing undated. Either no import has ever run,
   // or every one of them came back empty — and the user can only act on
@@ -294,7 +323,7 @@ export function describeGranolaMeetings({
   if (total > 0 && inRange === 0) {
     // The commonest benign cause of an empty panel once the import
     // works, and the one the range buttons fix in a click.
-    parts.push(`Granola has ${plural(total, 'meeting')} in the last ${windowDays} days, none ${rangeName}`);
+    parts.push(`Granola has ${plural(total, 'meeting')} in the last ${windowDays} days, none ${windowName}`);
   }
   if (undated > 0) {
     parts.push(`${plural(undated, 'note')} had no readable date and could not be placed`);
@@ -314,8 +343,13 @@ export function meetingsOnDay(rows, now = new Date()) {
  * That order is deliberate: the day is read forwards, the way a calendar
  * shows it, but the list of days is read backwards, because a look back
  * starts from what just happened.
+ *
+ * `order: 'asc'` flips the days, which is what a forward window wants:
+ * looking ahead starts from today and runs into next week, and a
+ * "coming up" list that opened on the furthest day would be read bottom
+ * to top.
  */
-export function groupMeetingsByDay(rows) {
+export function groupMeetingsByDay(rows, { order = 'desc' } = {}) {
   const buckets = new Map();
   for (const row of (rows || [])) {
     const t = msOf(row?._meetingStart);
@@ -325,8 +359,11 @@ export function groupMeetingsByDay(rows) {
     if (!buckets.has(dayStart)) buckets.set(dayStart, { dayStart, meetings: [] });
     buckets.get(dayStart).meetings.push(row);
   }
+  const byDay = order === 'asc'
+    ? (a, b) => a.dayStart - b.dayStart
+    : (a, b) => b.dayStart - a.dayStart;
   return [...buckets.values()]
-    .sort((a, b) => b.dayStart - a.dayStart)
+    .sort(byDay)
     .map(group => ({
       ...group,
       meetings: group.meetings.sort((a, b) => (msOf(a._meetingStart) ?? 0) - (msOf(b._meetingStart) ?? 0)),
