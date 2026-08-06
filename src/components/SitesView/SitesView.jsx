@@ -9481,6 +9481,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
       { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
+      // Owned vs Leased. Sits with the other building attributes rather
+      // than with the energy columns: it describes the site, and it is
+      // what decides whether a building-performance mandate binds this
+      // company or its landlord — the same question the compliance
+      // subtabs' Owned / All-sites toggle asks.
+      { label: 'Ownership', get: (s) => s.ownership, width: 13 },
       { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
@@ -9626,6 +9632,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // the upload's raw value wasn't recognized, surface it as-is
           // (the Flags column already calls out the unrecognized case).
           propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+          // Canonical Owned / Leased where the upload's value could be
+          // placed. Where it couldn't, the raw string travels as-is
+          // rather than the cell going blank: "Owned/Leased" or "TBD" is
+          // a real answer about that site, and dropping it would read as
+          // "not provided" when it was.
+          ownership: r.__ownership__ || r.__ownershipRaw__ || '',
           // Mapped property size (sq ft) when the user provided one.
           sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? Math.round(r.__propertySizeFt2__) : null,
           electricUtility,
