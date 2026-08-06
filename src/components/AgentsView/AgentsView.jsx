@@ -9,8 +9,8 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
-import { lookupCloseNotSold } from '../../data/closeNotSoldRules';
 import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
+import { computeCloseNotSoldOpps, detectBfoUrl } from '../../utils/closeNotSoldOpps';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
@@ -742,20 +742,8 @@ function readActivityCache() {
   }
 }
 
-// The Opps sheet keeps the Salesforce / Lightning URL in the
-// "BFO Address" column. Fall back to scanning every field if that one
-// happens to be empty so older rows still surface a link when possible.
-function detectBfoUrl(rawOpp) {
-  if (!rawOpp) return '';
-  const direct = String(rawOpp['BFO Address'] || '').trim();
-  if (/^https?:\/\//i.test(direct)) return direct;
-  for (const v of Object.values(rawOpp)) {
-    if (typeof v !== 'string' || !v) continue;
-    const m = v.match(/https?:\/\/\S+/i);
-    if (m) return m[0];
-  }
-  return '';
-}
+// detectBfoUrl (the Opps "BFO Address" → Salesforce link resolver) lives
+// in utils/closeNotSoldOpps.js, shared with the Issues-tab detector.
 
 // A BFO field counts as "missing" when it's blank, "-", or an "#N/A"
 // variant — the same placeholders Opps 2 uses for "no value yet".
@@ -2541,67 +2529,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // opp out. Rows whose combination isn't in the rules table fall
   // through so the user can see them and either update the row or
   // extend the table.
-  const closeNotSoldOpps = useMemo(() => {
-    const records = oppsCache?.records || [];
-    if (!records.length) return [];
-    // Index BFO Activity by opportunity name so we can quickly check
-    // whether an Opps 2 row has a corresponding open BFO opp. Collapse
-    // runs of whitespace and lower-case so a stray double-space in
-    // either the BFO Link or the Opportunity Name doesn't drop the
-    // match.
-    const normalizeName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    const bfoByName = new Map();
-    const headers = bfoActivity?.headers || [];
-    const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
-    if (oppCol) {
-      for (const r of (bfoActivity?.rows || [])) {
-        const k = normalizeName(r[oppCol]);
-        if (k && !bfoByName.has(k)) bfoByName.set(k, r);
-      }
-    }
-    const rows = [];
-    const seen = new Set();
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim().toLowerCase();
-      if (stage !== 'not sold') continue;
-      const bfoOpp = String(r['BFO Link'] || '').trim();
-      if (!bfoOpp || bfoOpp === '-' || bfoOpp === '#N/A') continue;
-      const key = normalizeName(bfoOpp);
-      if (seen.has(key)) continue;
-      // Only surface opps that still exist on the BFO Activity tab —
-      // the prompt is about closing them out in BFO, so a BFO row is
-      // required.
-      if (bfoByName.size > 0 && !bfoByName.has(key)) continue;
-      // URL is nice-to-have, not a gate: a Not-Sold opp with a
-      // matching BFO Activity row but a missing BFO Address still
-      // surfaces here (with the URL cell flagged red) so the user can
-      // patch the Opps 2 row.
-      const bfoUrl = detectBfoUrl(r);
-      const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
-      // Competition (set via the Sold / Not Sold close-out popups or
-      // inline on Opps 2) is half of the mapping key AND feeds the
-      // Competitor Name the AI enters on Lost opps. A blank /
-      // placeholder Competition can't map, so the row surfaces as
-      // unmapped until the user fills it in.
-      const competitionRaw = String(r['Competition'] || '').trim();
-      const competition = (competitionRaw === '-' || competitionRaw === '#N/A') ? '' : competitionRaw;
-      const map = lookupCloseNotSold(competition, reasonNotSold);
-      seen.add(key);
-      rows.push({
-        id: `${key}|${bfoUrl || bfoOpp}`,
-        name: bfoOpp,
-        account: String(r.Account || '').trim(),
-        reasonNotSold,
-        status: map?.status || '',
-        reason: map?.reason || '',
-        competition,
-        unmapped: !map,
-        bfoUrl,
-      });
-    }
-    rows.sort((a, b) => a.account.localeCompare(b.account));
-    return rows;
-  }, [oppsCache, bfoActivity]);
+  // Shared with the Issues tab's "Close Not Sold missing data" detector,
+  // so both pages agree on the row set and on what counts as missing.
+  const closeNotSoldOpps = useMemo(
+    () => computeCloseNotSoldOpps({ oppsCache, bfoActivity }),
+    [oppsCache, bfoActivity],
+  );
 
   // AI BFO Prep — live Opps 2 opps (Stage not Sold / Not Sold) that have
   // a non-blank Call In, carry a BFO Opportunity Name (BFO Link), but
