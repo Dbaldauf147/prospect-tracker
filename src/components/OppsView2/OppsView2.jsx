@@ -63,6 +63,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import { LinkedCalls } from './LinkedCalls';
+import { UntaggedCalls } from './UntaggedCalls';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -10406,6 +10407,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {activeTab === 'opps' && (
         <>
           <TodoBox />
+
+          {/* Calls nobody has decided about yet, on the page where the
+              opportunity they belong to actually is. Renders nothing when
+              the queue is empty. */}
+          <UntaggedCalls opps={data?.records || []} />
 
           {massEditOn && selectedIds.size > 0 && (
             <MassEditBar
