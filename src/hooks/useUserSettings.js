@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey } from '../utils/settingsMerge';
+import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
 // plain nested object, creating intermediate objects as needed.
@@ -14,6 +15,19 @@ function setDottedPath(obj, path, value) {
   }
   const last = parts[parts.length - 1];
   if (value == null) delete cur[last]; else cur[last] = value;
+}
+
+// Firestore's 1 MiB document cap, checked before the write rather than
+// after. Its own error names a byte count and nothing else, which leaves
+// no way to tell which of a hundred settings keys filled the document —
+// this refuses the save and names the biggest ones. Returns true when the
+// caller should stop.
+function refuseIfOverBudget(next) {
+  const report = settingsDocReport(next);
+  if (report.bytes <= SETTINGS_SIZE_BUDGET) return false;
+  console.error('userSettings would exceed the document size limit', report);
+  alert(overBudgetMessage(report));
+  return true;
 }
 
 export function useUserSettings(user) {
@@ -33,6 +47,16 @@ export function useUserSettings(user) {
   // device's change (e.g. a dropdown option added on another laptop).
   // The save that caused the skip folds it back in when it settles.
   const pendingRemoteRef = useRef(null);
+
+  // So window.__settingsSize() can be called with no arguments from the
+  // console when someone needs to know what is filling the document.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    Object.defineProperty(window, '__lastSettings', {
+      configurable: true,
+      get: () => settingsRef.current,
+    });
+  }, []);
 
   useEffect(() => {
     if (!user) { setSettings({}); setLoaded(false); return; }
@@ -67,6 +91,9 @@ export function useUserSettings(user) {
     const prev = settingsRef.current || {};
     const expectedAt = prev._lastWriteAt || null;
     const optimistic = { ...prev, ...updates };
+    // Refuse before touching local state, so a save that can't be stored
+    // doesn't leave this device showing data the server never took.
+    if (refuseIfOverBudget(optimistic)) return;
     settingsRef.current = optimistic;
     setSettings(optimistic);
     writingRef.current += 1;
@@ -148,6 +175,7 @@ export function useUserSettings(user) {
     for (const [path, value] of Object.entries(pathUpdates)) {
       setDottedPath(optimistic, path, value);
     }
+    if (refuseIfOverBudget(optimistic)) return;
     settingsRef.current = optimistic;
     setSettings(optimistic);
     writingRef.current += 1;

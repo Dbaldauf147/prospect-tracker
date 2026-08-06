@@ -66,6 +66,20 @@ export async function collectUserBackup(db, uid, email) {
     } catch (e) { summary.errors.push(`${col}: ${msg(e)}`); }
   }
 
+  // Company site lists moved out of the userSettings document into
+  // `userSettings/{uid}/companySiteLists/{slug}` — a whole uploaded
+  // spreadsheet per company, and the settings blob above no longer
+  // carries them. Restored to the same slug → entry map the settings key
+  // used to hold.
+  try {
+    const snap = await db.collection('userSettings').doc(uid).collection('companySiteLists').get();
+    const lists = {};
+    snap.forEach(d => { lists[d.id] = d.data(); });
+    backup.collections.companySiteLists = lists;
+    summary.counts.companySiteLists = snap.size;
+    if (snap.size) summary.captured.push('companySiteLists');
+  } catch (e) { summary.errors.push(`companySiteLists: ${msg(e)}`); }
+
   // Prospects
   try {
     const useShared = !!email && email.toLowerCase() === SHARED_PROSPECTS_EMAIL;

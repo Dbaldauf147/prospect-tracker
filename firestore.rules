@@ -111,6 +111,14 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Per-company site lists. One document per company rather than a
+    // `companySiteLists` map on the settings document: each list is a
+    // whole spreadsheet, and together they filled the 1 MB cap, at which
+    // point every settings write started failing.
+    match /userSettings/{userId}/companySiteLists/{companySlug} {
+      allow read, write: if owns(userId);
+    }
+
     // Target accounts: users can only read/write their own data
     match /targetAccounts/{userId} {
       allow read, write: if owns(userId);
