@@ -3835,8 +3835,8 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
   );
 }
 
-// Prompt shown when an opp moves from "Lead" to "Qualifying". Qualifying
-// is the first stage the "Missing USD value" 🚩 applies to (see
+// Prompt shown when an opp moves into "Qualifying", from any stage.
+// Qualifying is the first stage the "Missing USD value" 🚩 applies to (see
 // needsUsdFlag), so this asks for the figure at the moment the gap would
 // otherwise open rather than leaving it to be chased off the Flags column
 // later. Pre-populated, so an opp that already carries a USD? value shows
@@ -3909,7 +3909,7 @@ function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose })
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}just moved from <strong>Lead</strong> to <strong>Qualifying</strong>.
+            {' '}just moved to <strong>Qualifying</strong>.
             {' '}Add the <strong>USD?</strong> value below.
           </div>
         </div>
@@ -7040,9 +7040,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Amount so a newly-activated opp carries a dollar figure. Cleared on
   // Save or Skip.
   const [leadQuotedPromptId, setLeadQuotedPromptId] = useState(null);
-  // _id of the opp that just moved from "Lead" to "Qualifying". Qualifying
-  // is the first stage the "Missing USD value" flag covers, so the
-  // QualifyingUsdModal asks for USD? right at that boundary instead of
+  // _id of the opp that just moved into "Qualifying" from any stage.
+  // Qualifying is the first stage the "Missing USD value" flag covers, so
+  // the QualifyingUsdModal asks for USD? right at that boundary instead of
   // leaving the gap to be found later. Cleared on Save or Skip.
   const [qualifyingUsdPromptId, setQualifyingUsdPromptId] = useState(null);
   // { id, next } for an opp that just left the "Not Started" stage. An opp
@@ -8178,12 +8178,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }),
       };
     });
-    // Which stage-specific popup this transition warrants, if any. Each is
-    // the same prompt as before — close-out details on "Not Sold" / "Sold",
-    // quote tracking on "Quoted", the approval set on "Agreement Sent", and
-    // the Deal Size when an opp first becomes a Lead. Skipped on bulk
-    // mass-edits — those run through the bulk path below and we don't want to
-    // multi-modal across selections.
+    // Which stage-specific popup this transition warrants, if any:
+    // close-out details on "Not Sold" / "Sold", quote tracking on "Quoted",
+    // the approval set on "Agreement Sent", the Deal Size when an opp first
+    // becomes a Lead, and the USD? value on the way into "Qualifying".
+    // Skipped on bulk mass-edits — those run through the bulk path below and
+    // we don't want to multi-modal across selections.
     const prevStage = String(row['Stage'] ?? '').trim().toLowerCase();
     const nextStage = String(value ?? '').trim().toLowerCase();
     let stagePrompt = null;
@@ -8194,8 +8194,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       else if (nextStage === 'sold') stagePrompt = 'sold';
       else if (nextStage === 'lead' && prevStage === 'not started') stagePrompt = 'leadQuoted';
       // Qualifying is where the "Missing USD value" flag starts applying,
-      // so ask for the figure on the way in rather than flagging it after.
-      else if (nextStage === 'qualifying' && prevStage === 'lead') stagePrompt = 'qualifyingUsd';
+      // so ask for the figure on the way in rather than flagging it after —
+      // from whichever stage the opp arrives, including back down from a
+      // later one, since the gap is the same either way.
+      else if (nextStage === 'qualifying') stagePrompt = 'qualifyingUsd';
     }
     // An opp leaving "Not Started" is the point its service is decided, so ask
     // for Scope on that transition whichever stage it moved to. The stage's
