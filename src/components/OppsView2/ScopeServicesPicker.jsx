@@ -21,6 +21,7 @@ import { SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { parseMulti } from '../common/columnLinks';
+import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 
 // Same palette the company card's services board uses, so a service reads
 // the same colour in both places.
@@ -52,20 +53,9 @@ const STAGE_PRIORITY = {
 
 const UNGROUPED = 'Other services';
 
-// Split a Scope cell into its service tokens. Same separators the company
-// card splits on, so a scope written "GHG; Budgets" matches either way.
-function scopeTokens(scope) {
-  return String(scope || '').split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
-}
-
-// Service ← scope-token match. Deliberately loose (either side may contain
-// the other) because Scope is typed shorthand — "GHG" should find "Comp GHG"
-// — and it mirrors the company card's matching so the two boards agree.
-function tokenMatchesItem(token, item) {
-  const t = token.toLowerCase();
-  const i = item.toLowerCase();
-  return i === t || i.includes(t) || t.includes(i);
-}
+// Scope → service matching lives in src/utils/scopeMatch.js, shared with
+// the company card and the Pipeline coverage table so all three boards
+// agree on which services a Scope names.
 
 // The automatic status per service: the best stage among the account's opps
 // that name it. This is the fallback the company card shows when no manual
@@ -85,7 +75,7 @@ function buildAutoStatuses({ account, oppRows, items, currentOppId }) {
     if (!stage) continue;
     for (const token of scopeTokens(row?.Scope)) {
       for (const item of items) {
-        if (!tokenMatchesItem(token, item)) continue;
+        if (!scopeTokenMatchesService(token, item)) continue;
         const existing = out.get(item);
         const pri = STAGE_PRIORITY[stage] ?? 1;
         const existingPri = existing ? (STAGE_PRIORITY[existing] ?? 1) : -1;

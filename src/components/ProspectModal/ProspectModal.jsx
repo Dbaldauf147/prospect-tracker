@@ -15,6 +15,7 @@ import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadP
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
+import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
@@ -3863,12 +3864,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const stagePriority = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
     const matched = new Map(); // item -> stage
     for (const { scope, stage } of oppsRecords) {
-      const parts = scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
-      for (const part of parts) {
-        const lower = part.toLowerCase();
+      for (const part of scopeTokens(scope)) {
         for (const cat of SERVICE_CATEGORIES) {
           for (const item of cat.items) {
-            if (item.toLowerCase() === lower || item.toLowerCase().includes(lower) || lower.includes(item.toLowerCase())) {
+            // Whole-word matching, shared with the Scope picker and the
+            // Pipeline coverage table (src/utils/scopeMatch.js), so the
+            // three boards can't disagree about what a Scope names.
+            if (scopeTokenMatchesService(part, item)) {
               const existing = matched.get(item);
               const existingPri = existing ? (stagePriority[existing] ?? 1) : -1;
               const newPri = stagePriority[stage] ?? 1;

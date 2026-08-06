@@ -6,6 +6,7 @@
 // Issues row can never disagree with the row it's warning about.
 import { SERVICE_CATEGORIES } from '../data/enums';
 import { matchesCdm } from './cdmMatch';
+import { scopeTokens, scopeTokenMatchesService } from './scopeMatch.js';
 
 // Loose company-name match for joining opp Account values to a prospect's
 // company. This is a verbatim copy of ProspectModal's companiesMatch so the
@@ -72,13 +73,10 @@ export function buildOppStagesByClient(clients, oppsRecords) {
     const matched = new Map();
     for (const o of opps) {
       if (!coverageCompaniesMatch(o.account, p.company)) continue;
-      const parts = o.scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
-      for (const part of parts) {
-        const lower = part.toLowerCase();
+      for (const part of scopeTokens(o.scope)) {
         for (const cat of SERVICE_CATEGORIES) {
           for (const item of cat.items) {
-            const il = item.toLowerCase();
-            if (il === lower || il.includes(lower) || lower.includes(il)) {
+            if (scopeTokenMatchesService(part, item)) {
               const existing = matched.get(item);
               const existingPri = existing ? (OPP_STAGE_PRIORITY[existing] ?? 1) : -1;
               const newPri = OPP_STAGE_PRIORITY[o.stage] ?? 1;
