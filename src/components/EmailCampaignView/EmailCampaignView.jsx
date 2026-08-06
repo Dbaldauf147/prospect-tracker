@@ -191,22 +191,29 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     };
   }
 
-  // Re-pull activity for every saved campaign at once. Campaigns that fail to
-  // refresh keep their last saved numbers; everything is persisted in a single
-  // write, and the open campaign (if any) is updated to match.
+  // Re-pull activity for every saved campaign. Campaigns that fail to refresh
+  // keep their last saved numbers; everything is persisted in a single write,
+  // and the open campaign (if any) is updated to match.
+  //
+  // One campaign at a time, deliberately: HubSpot's per-second cap is
+  // portal-wide, and firing every campaign at once (each of which pages the
+  // search API) walks straight into it — the sweep would come back with half
+  // the campaigns rate-limited. Sequential takes longer but actually returns
+  // fresh numbers for all of them.
   async function refreshAllCampaigns() {
     if (refreshingAll || savedCampaigns.length === 0) return;
     setRefreshingAll(true);
     setError('');
     const current = savedCampaigns;
-    const outcomes = await Promise.all(current.map(async (c) => {
-      if (!c.subject) return { campaign: c, ok: true };
+    const outcomes = [];
+    for (const c of current) {
+      if (!c.subject) { outcomes.push({ campaign: c, ok: true }); continue; }
       try {
-        return { campaign: mergeActivity(c, await fetchCampaignActivity(c.subject)), ok: true };
+        outcomes.push({ campaign: mergeActivity(c, await fetchCampaignActivity(c.subject)), ok: true });
       } catch {
-        return { campaign: c, ok: false };
+        outcomes.push({ campaign: c, ok: false });
       }
-    }));
+    }
     const updated = outcomes.map(o => o.campaign);
     await saveCampaigns(updated);
     // Keep the open campaign's view in sync with its refreshed numbers.
@@ -492,7 +499,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     } catch (err) {
       // Keep the saved snapshot on screen; just note the refresh didn't land.
       if (viewTokenRef.current === token) {
-        setError('Couldn’t refresh the latest activity (' + (err.message || 'unknown error') + '): showing the last saved numbers.');
+        // The reason leads: a rate limit reads as "try again in a moment",
+        // which is very different from a broken campaign, and burying it in
+        // parentheses mid-sentence hides that.
+        const reason = (err.message || 'Unknown error').replace(/\.$/, '');
+        setError(`${reason}. Showing the last saved numbers.`);
       }
     } finally {
       if (viewTokenRef.current === token) setRefreshing(false);

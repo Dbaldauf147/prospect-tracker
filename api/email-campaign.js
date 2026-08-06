@@ -16,6 +16,54 @@ const EMAIL_PROPERTIES = 'hs_email_subject,hs_email_status,hs_email_direction,hs
 // Safety cap shared by both fetch paths — mirrors the previous behavior.
 const MAX_EMAILS = 10000;
 
+// HubSpot caps requests per second per portal (the SECONDLY policy; the
+// search API is the tightest of them). Paging a campaign fires those
+// requests back to back, and a portal that's also being used elsewhere —
+// another refresh, a sync, the Activity views — pushes it over. The limit
+// clears in under a second, so a 429 is a "wait a moment", not a failure:
+// pace the pages, and retry the ones that come back rate-limited instead
+// of abandoning the refresh mid-page.
+const RETRYABLE = new Set([429, 502, 503, 504]);
+const MAX_ATTEMPTS = 5;
+const PAGE_PACING_MS = 250;   // ~4 req/s, HubSpot's search allowance
+const MAX_BACKOFF_MS = 8000;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// What the user should be told when HubSpot refuses. Raw HubSpot JSON in a
+// UI banner reads as a crash; a rate limit is worth naming as the transient
+// thing it is.
+function describeFailure(status, body) {
+  if (status === 429) {
+    return 'HubSpot is rate-limiting this portal right now. Wait a few seconds and refresh again.';
+  }
+  if (status === 401 || status === 403) {
+    return `HubSpot rejected the request (${status}): check the access token's scopes.`;
+  }
+  return `HubSpot ${status}: ${String(body || '').slice(0, 200)}`;
+}
+
+// One HubSpot call, retried through the transient statuses with exponential
+// backoff. Honours Retry-After when HubSpot sends one (it's in seconds).
+async function hubspotFetch(url, init) {
+  let backoff = 500;
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url, init);
+    if (response.ok) return response;
+
+    const body = await response.text().catch(() => '');
+    if (!RETRYABLE.has(response.status) || attempt >= MAX_ATTEMPTS) {
+      throw new Error(describeFailure(response.status, body));
+    }
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const wait = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, MAX_BACKOFF_MS)
+      : backoff;
+    await sleep(wait);
+    backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+  }
+}
+
 // The single most distinctive word in the subject, used to pre-filter emails
 // server-side with the CRM search API instead of listing the whole mailbox.
 // The longest alphanumeric token (>= 3 chars) is the most selective, and any
@@ -43,16 +91,12 @@ async function searchEmailsBySubjectToken(token, searchToken) {
       sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
       limit: 100,
     };
-    if (after) body.after = after;
-    const response = await fetch(`${BASE}/crm/v3/objects/emails/search`, {
+    if (after) { body.after = after; await sleep(PAGE_PACING_MS); }
+    const response = await hubspotFetch(`${BASE}/crm/v3/objects/emails/search`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HubSpot search ${response.status}: ${text.slice(0, 200)}`);
-    }
     const data = await response.json();
     collected.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
     if (data.paging?.next?.after && collected.length < MAX_EMAILS) { after = data.paging.next.after; } else break;
@@ -67,14 +111,10 @@ async function listAllEmails(token) {
   let after;
   while (true) {
     const params = new URLSearchParams({ limit: '100', properties: EMAIL_PROPERTIES, sort: '-hs_timestamp' });
-    if (after) params.set('after', after);
-    const response = await fetch(`${BASE}/crm/v3/objects/emails?${params}`, {
+    if (after) { params.set('after', after); await sleep(PAGE_PACING_MS); }
+    const response = await hubspotFetch(`${BASE}/crm/v3/objects/emails?${params}`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HubSpot API ${response.status}: ${text.slice(0, 200)}`);
-    }
     const data = await response.json();
     collected.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
     if (data.paging?.next?.after && collected.length < MAX_EMAILS) { after = data.paging.next.after; } else break;
