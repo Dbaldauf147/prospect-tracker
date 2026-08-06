@@ -513,6 +513,22 @@ function KeyContactsViewInner({
   const [massCompanyOpen, setMassCompanyOpen] = useState(false);
   const [massCompanyHover, setMassCompanyHover] = useState(0);
   const massCompanyBoxRef = useRef(null);
+  // Bulk tag editing (massField === 'dans_tags'). Tags are a
+  // multi-value HubSpot property, so a single "new value" box doesn't
+  // fit: instead the user picks one or more tags and an operation —
+  // add them, remove them, or replace the whole list.
+  const [massTagMode, setMassTagMode] = useState('add'); // 'add' | 'remove' | 'replace'
+  const [massTags, setMassTags] = useState(() => new Set());
+  const [massTagOpen, setMassTagOpen] = useState(false);
+  const [massTagQuery, setMassTagQuery] = useState('');
+  const massTagBoxRef = useRef(null);
+  function toggleMassTag(tag) {
+    setMassTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+  }
   // Push the currently-selected contacts into the Custom Email Campaign
   // queue (Draft Emails page). Shared by the Mass Edit toolbar and the
   // normal-mode selection bar, so "Queue for Campaign" works whether or
@@ -541,6 +557,12 @@ function KeyContactsViewInner({
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [massCompanyOpen]);
+  useEffect(() => {
+    if (!massTagOpen) return;
+    const onDown = (e) => { if (!massTagBoxRef.current?.contains(e.target)) setMassTagOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [massTagOpen]);
   function toggleMassSelect(id) {
     setMassSelected(prev => {
       const next = new Set(prev);
@@ -743,6 +765,85 @@ function KeyContactsViewInner({
       } catch (err) { console.warn('Hide cache update failed', err); }
     }
     return { updated, errors, errorMessage: firstErrorMessage };
+  }
+
+  // Bulk tag editor. Applies one operation to the Dan's Tags property
+  // of every contact in `contactIds`:
+  //   add     — union of the contact's existing tags and `tags`
+  //   remove  — existing tags minus `tags`
+  //   replace — `tags` becomes the whole list (empty clears the field)
+  // Matching is case-insensitive but existing spellings are preserved,
+  // so an add of "hide" never rewrites a contact's "Hide" to lowercase.
+  // Contacts already in the requested state are reported as unchanged
+  // instead of being written, so a bulk add across a mixed selection
+  // only touches the rows that actually need it. Only writes HubSpot
+  // accepted are mirrored into the local cache.
+  async function applyTagEdit(contactIds, mode, tags) {
+    const ids = [...new Set((contactIds || []).map(String).filter(Boolean))];
+    const chosen = (tags || []).map(t => String(t).trim()).filter(Boolean);
+    if (ids.length === 0) return { updated: 0, unchanged: 0, errors: 0, errorMessage: '' };
+    if (mode !== 'replace' && chosen.length === 0) return { updated: 0, unchanged: 0, errors: 0, errorMessage: '' };
+    const chosenLower = new Set(chosen.map(t => t.toLowerCase()));
+    const cache = hubspotCache?.contacts || [];
+    const nextById = new Map();
+    let updated = 0;
+    let unchanged = 0;
+    let errors = 0;
+    let firstErrorMessage = '';
+    for (const id of ids) {
+      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
+      const existing = String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '')
+        .split(';').map(s => s.trim()).filter(Boolean);
+      let next;
+      if (mode === 'replace') {
+        next = [...chosen];
+      } else if (mode === 'remove') {
+        next = existing.filter(t => !chosenLower.has(t.toLowerCase()));
+      } else {
+        const have = new Set(existing.map(t => t.toLowerCase()));
+        next = [...existing, ...chosen.filter(t => !have.has(t.toLowerCase()))];
+      }
+      // Use ';' (no space) to match the separator HubSpotView's tag
+      // picker uses; some HubSpot enum properties reject leading
+      // whitespace on values.
+      const nextStr = next.join(';');
+      if (nextStr === existing.join(';')) { unchanged += 1; continue; }
+      try {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: id, properties: { dans_tags: nextStr } }),
+        });
+        const json = await res.json();
+        if (json.error || !res.ok) {
+          errors += 1;
+          if (!firstErrorMessage) firstErrorMessage = json.error || `HubSpot ${res.status}`;
+          continue;
+        }
+        updated += 1;
+        nextById.set(id, nextStr);
+      } catch (err) {
+        errors += 1;
+        if (!firstErrorMessage) firstErrorMessage = err?.message || 'Network error';
+      }
+    }
+    if (nextById.size > 0) {
+      try {
+        await updateHubspotCache(draft => {
+          for (const c of draft.contacts) {
+            const nextStr = nextById.get(String(c.id || c.vid));
+            if (nextStr === undefined) continue;
+            c.dans_tags = nextStr;
+            // Legacy field spellings shadow dans_tags when it's blank
+            // (readers do `dans_tags || dan_s_tags || dans_tag`), so a
+            // clear has to wipe them too or the old tags come back.
+            if (c.dan_s_tags !== undefined) c.dan_s_tags = nextStr;
+            if (c.dans_tag !== undefined) c.dans_tag = nextStr;
+          }
+        });
+      } catch (err) { console.warn('Tag cache update failed', err); }
+    }
+    return { updated, unchanged, errors, errorMessage: firstErrorMessage };
   }
 
   // Push a suggested-company value onto the contact in HubSpot and
@@ -1150,7 +1251,43 @@ function KeyContactsViewInner({
     URL.revokeObjectURL(url);
   }
 
+  // Bulk tag apply — the Tags field of the Mass Edit toolbar. Replace
+  // is destructive (it drops tags the user never picked, including
+  // Hide), so it asks first; add / remove are additive and don't.
+  async function handleMassTagApply() {
+    if (massSelected.size === 0) return;
+    const tags = [...massTags];
+    if (massTagMode !== 'replace' && tags.length === 0) return;
+    const n = massSelected.size;
+    const plural = n === 1 ? '' : 's';
+    if (massTagMode === 'replace') {
+      const message = tags.length === 0
+        ? `Clear every tag on ${n} selected contact${plural}?`
+        : `Replace the tags on ${n} selected contact${plural} with ${tags.join(', ')}? Any other tags they have today are removed.`;
+      if (!window.confirm(message)) return;
+    }
+    setMassProcessing(true);
+    setMassStatus(null);
+    const { updated, unchanged, errors, errorMessage } = await applyTagEdit([...massSelected], massTagMode, tags);
+    const hint = errors > 0 && /allowed options/i.test(errorMessage)
+      ? ': add the tag to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+      : '';
+    const verb = massTagMode === 'add' ? 'Tagged' : massTagMode === 'remove' ? 'Untagged' : 'Retagged';
+    setMassStatus({
+      type: errors === 0 ? 'success' : 'partial',
+      message: `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
+        + (unchanged > 0 ? ` · ${unchanged} already up to date` : '')
+        + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
+    });
+    setMassProcessing(false);
+    if (errors === 0) {
+      setMassTags(new Set());
+      setMassSelected(new Set());
+    }
+  }
+
   async function handleMassApply() {
+    if (massField === 'dans_tags') { await handleMassTagApply(); return; }
     if (massSelected.size === 0 || !massValue.trim()) return;
     setMassProcessing(true);
     setMassStatus(null);
@@ -1457,6 +1594,26 @@ function KeyContactsViewInner({
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Every distinct Dan's Tags value in the cache — the option list for
+  // the bulk tag editor. Derived the same way HubSpotView builds its
+  // tag picker options, so the two offer the same vocabulary. HubSpot
+  // rejects values outside the property's allowed options, so offering
+  // only tags already in use keeps bulk edits from bouncing.
+  const dansTagOptions = useMemo(() => {
+    const seen = new Map(); // lowercase → first-seen spelling
+    for (const c of (hubspotCache?.contacts || [])) {
+      const v = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+      if (!v) continue;
+      for (const part of String(v).split(';')) {
+        const t = part.trim();
+        if (!t) continue;
+        const k = t.toLowerCase();
+        if (!seen.has(k)) seen.set(k, t);
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [hubspotCache]);
 
   // Activity cache (emails / calls / meetings) populated by the
   // Activity tab — used to drive the "Last Outreach" column. Read on
@@ -2655,6 +2812,7 @@ function KeyContactsViewInner({
               <option value="country">Country</option>
               <option value="firstname">First Name</option>
               <option value="lastname">Last Name</option>
+              <option value="dans_tags">Tags</option>
             </select>
             {massField === 'company' ? (() => {
               const q = (massValue || '').trim().toLowerCase();
@@ -2729,6 +2887,94 @@ function KeyContactsViewInner({
                   )}
                 </div>
               );
+            })() : massField === 'dans_tags' ? (() => {
+              // Tags are multi-value, so instead of one text box the user
+              // picks tags from the vocabulary already in HubSpot and
+              // chooses whether to add, remove, or replace.
+              const q = massTagQuery.trim().toLowerCase();
+              const matches = q ? dansTagOptions.filter(t => t.toLowerCase().includes(q)) : dansTagOptions;
+              const exact = dansTagOptions.some(t => t.toLowerCase() === q);
+              const chosen = [...massTags];
+              return (
+                <div ref={massTagBoxRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 340px', minWidth: 280 }}>
+                  <select
+                    value={massTagMode}
+                    onChange={e => setMassTagMode(e.target.value)}
+                    title="Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list"
+                    style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
+                  >
+                    <option value="add">Add</option>
+                    <option value="remove">Remove</option>
+                    <option value="replace">Replace all</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setMassTagOpen(o => !o)}
+                    title={chosen.length > 0 ? chosen.join(', ') : 'Pick the tags to apply'}
+                    style={{
+                      flex: 1, minWidth: 140, textAlign: 'left',
+                      padding: '0.25rem 0.5rem', fontSize: '0.72rem',
+                      border: '1px solid #CBD5E1', borderRadius: 4,
+                      background: '#fff', color: chosen.length > 0 ? '#1E293B' : '#94A3B8',
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}
+                  >{chosen.length > 0 ? chosen.join(', ') : 'Choose tags…'} ▾</button>
+                  {chosen.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMassTags(new Set())}
+                      title="Clear the chosen tags"
+                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                    >Clear tags</button>
+                  )}
+                  {massTagOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%', left: 0, right: 0,
+                      marginTop: 2,
+                      zIndex: 30,
+                      maxHeight: 260,
+                      overflowY: 'auto',
+                      background: '#fff',
+                      border: '1px solid #CBD5E1',
+                      borderRadius: 6,
+                      boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+                    }}>
+                      <div style={{ padding: 6, borderBottom: '1px solid #F1F5F9', position: 'sticky', top: 0, background: '#fff' }}>
+                        <input
+                          type="text"
+                          value={massTagQuery}
+                          autoFocus
+                          onChange={e => setMassTagQuery(e.target.value)}
+                          placeholder="Search tags…"
+                          style={{ width: '100%', padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+                        />
+                      </div>
+                      {matches.map(t => (
+                        <label
+                          key={t}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.35rem 0.6rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}
+                        >
+                          <input type="checkbox" checked={massTags.has(t)} onChange={() => toggleMassTag(t)} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t}</span>
+                        </label>
+                      ))}
+                      {matches.length === 0 && !massTagQuery.trim() && (
+                        <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.72rem', color: '#94A3B8' }}>No tags in the HubSpot cache yet.</div>
+                      )}
+                      {massTagQuery.trim() && !exact && (
+                        <button
+                          type="button"
+                          onMouseDown={e => { e.preventDefault(); toggleMassTag(massTagQuery.trim()); setMassTagQuery(''); }}
+                          title="HubSpot only accepts tags in the Dan's Tags allowed values — a brand-new tag has to be added there first."
+                          style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.72rem', border: 'none', borderTop: '1px solid #F1F5F9', background: '#F8FAFC', color: '#1D4ED8', cursor: 'pointer', fontFamily: 'inherit' }}
+                        >Use "{massTagQuery.trim()}"</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
             })() : (
               <input
                 type="text"
@@ -2738,22 +2984,32 @@ function KeyContactsViewInner({
                 style={{ flex: '1 1 220px', minWidth: 160, padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
               />
             )}
-            <button
-              type="button"
-              onClick={handleMassApply}
-              disabled={massProcessing || massSelected.size === 0 || !massValue.trim()}
-              style={{
-                padding: '0.3rem 0.75rem',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                border: 'none',
-                borderRadius: 4,
-                background: (massProcessing || massSelected.size === 0 || !massValue.trim()) ? '#94A3B8' : '#1D4ED8',
-                color: '#fff',
-                cursor: (massProcessing || massSelected.size === 0 || !massValue.trim()) ? 'default' : 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >{massProcessing ? 'Updating…' : 'Apply to Selected'}</button>
+            {(() => {
+              // "Replace all" with nothing chosen is a legitimate action
+              // (clear every tag), so the Apply button only needs a
+              // chosen tag for add / remove.
+              const disabled = massProcessing || massSelected.size === 0 || (massField === 'dans_tags'
+                ? (massTagMode !== 'replace' && massTags.size === 0)
+                : !massValue.trim());
+              return (
+                <button
+                  type="button"
+                  onClick={handleMassApply}
+                  disabled={disabled}
+                  style={{
+                    padding: '0.3rem 0.75rem',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRadius: 4,
+                    background: disabled ? '#94A3B8' : '#1D4ED8',
+                    color: '#fff',
+                    cursor: disabled ? 'default' : 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >{massProcessing ? 'Updating…' : 'Apply to Selected'}</button>
+              );
+            })()}
             <button
               type="button"
               onClick={handleMassHide}
@@ -2818,6 +3074,22 @@ function KeyContactsViewInner({
                 fontFamily: 'inherit',
               }}
             >Queue for Campaign</button>
+            <button
+              type="button"
+              onClick={() => { setMassField('dans_tags'); setMassStatus(null); setMassMode(true); setMassTagOpen(true); }}
+              title="Add, remove, or replace Dan's Tags on the selected contacts"
+              style={{
+                padding: '0.3rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                border: '1px solid #7C3AED',
+                borderRadius: 4,
+                background: '#F5F3FF',
+                color: '#6D28D9',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Edit Tags</button>
             <button
               type="button"
               onClick={() => setMassSelected(new Set())}
