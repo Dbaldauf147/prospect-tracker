@@ -1439,22 +1439,10 @@ export function BuildingComplianceScreening({
         </div>
         <span className={styles.brandLogo} dangerouslySetInnerHTML={{ __html: schneiderLogoSvg({ onDark: true, width: 172 }) }} />
       </div>
+      {/* The strap explaining the lookup chain and its row counts used to sit
+          here. It said the same thing on every visit, so it is gone — the
+          three download buttons carry the same detail in their tooltips. */}
       <div className={styles.header}>
-        <div>
-          <div className={styles.subtitle}>
-            Screens each Utility Lookup site: <strong>city + state → Government ID</strong> (City Lookup),
-            then <strong>Government ID → BBS / Audits / BPS mandates</strong> (Master Ordinances).
-            {' '}· <strong>{CITY_ROWS.length.toLocaleString('en-US')}</strong> cities across <strong>{MASTER_ORDINANCES.length}</strong> jurisdictions on file.
-            {/* The mandates say what a site owes; this says whether the data to
-                report it can be had. Cited here so the third reference reads as
-                part of the same chain rather than an unexplained download. */}
-            <br />
-            Whole Building Data adds <strong>zip code → serving utility</strong>, and whether that utility
-            releases aggregated whole-building data to report with.
-            {' '}· <strong>{WHOLE_BUILDING_META.zips.toLocaleString('en-US')}</strong> zip codes
-            across <strong>{WHOLE_BUILDING_META.utilities.toLocaleString('en-US')}</strong> utilities on file.
-          </div>
-        </div>
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={downloadCityLookup} title={`Download the City Lookup table: ${CITY_ROWS.length.toLocaleString('en-US')} cities, each with the Government ID it screens against`}>City Lookup</button>
           <button type="button" className={styles.btn} onClick={downloadMasterOrdinances} title="Download the Master Ordinances Database (Government ID → BBS/Audits/BPS)">Master Ordinances</button>
