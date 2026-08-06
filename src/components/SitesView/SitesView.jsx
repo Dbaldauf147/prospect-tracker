@@ -48,6 +48,7 @@ import {
   ALWAYS_SHOW_REGULATIONS,
 } from '../../data/corporateComplianceScreening';
 import { classifyHqRegion, normalizeHqRegion } from '../../utils/hqRegion';
+import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
@@ -4843,6 +4844,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // parent (and its revenue) is part of showing the working — a verdict
     // reached against a parent's numbers reads as unsupported without it.
     const parentCompanies = settings?.corporateComplianceParent || {};
+    // Saved "Research with Claude" runs — the programme summary, published
+    // reports and researched targets the company page stores.
+    const companyResearch = settings?.companyResearch || {};
     const keyOf = (name) => {
       const norm = normalizeCompany(name);
       return norm ? norm.replace(/\s+/g, '-') : '';
@@ -5073,6 +5077,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // both or a reader can't check the working.
         revenueEntity,
         ownRevenueLabel,
+        // Targets / frameworks / programmes / reports, resolved exactly as
+        // the Corporate Compliance card resolves them: curated company-page
+        // fields where they exist, saved research where they don't.
+        sustainability: sustainabilityProfile({
+          company: name,
+          prospect,
+          companyResearch,
+        }),
         // Card-level screening state the jurisdiction rows are read against.
         doingBusinessInCA: doingBusinessInCA || '',
         caRuledOut,
@@ -9223,13 +9235,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           summarySheet.getRow(sumRow++).height = 6; // spacer
         }
 
+        // Merged cells don't auto-fit in Excel, so a wrapped value in a
+        // fixed-height row just gets clipped — which is what buried the
+        // regimes list. Estimate the wrapped line count from the merged
+        // width and size each row to fit. `chars` is the usable width in
+        // characters (column width units ≈ characters, less the indent).
+        // Shared by both company sections below, which both merge cells.
+        const wrapLines = (text, chars) => String(text == null ? '' : text)
+          .split('\n')
+          .reduce((total, line) => {
+            const words = line.split(/\s+/).filter(Boolean);
+            if (!words.length) return total + 1;
+            let lines = 1, len = 0;
+            for (const w of words) {
+              const next = len ? len + 1 + w.length : w.length;
+              if (next <= chars) { len = next; continue; }
+              lines++; len = w.length;
+            }
+            return total + lines;
+          }, 0);
+
+        // The company-level rollup, built once and read by the two sections
+        // below — the screening verdicts and the sustainability commitments
+        // are two views of the same companies, and rebuilding it per section
+        // is how they would drift apart.
+        const ccCompanies = corporateComplianceSummary();
+
         // Section 3: Corporate Compliance Screening — the company-level
         // disclosure view from the Corporate Compliance tab. Mirrors that
         // page's derivation: companies grouped by canonical key, the six
         // jurisdiction gating answers, and the regulations those answers
         // plus the researched revenue trigger.
         {
-          const ccCompanies = corporateComplianceSummary();
           if (ccCompanies.length) {
             const anyYes = ccCompanies.filter(c => c.yesJurisdictions.length).length;
             const regCount = new Set(
@@ -9295,24 +9332,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             });
             summarySheet.getRow(ccHdrRowNum).height = 20;
 
-            // Merged cells don't auto-fit in Excel, so a wrapped value in a
-            // fixed-height row just gets clipped — which is what buried the
-            // regimes list. Estimate the wrapped line count from the merged
-            // width and size each row to fit. `chars` is the usable width in
-            // characters (column width units ≈ characters, less the indent).
-            const wrapLines = (text, chars) => String(text == null ? '' : text)
-              .split('\n')
-              .reduce((total, line) => {
-                const words = line.split(/\s+/).filter(Boolean);
-                if (!words.length) return total + 1;
-                let lines = 1, len = 0;
-                for (const w of words) {
-                  const next = len ? len + 1 + w.length : w.length;
-                  if (next <= chars) { len = next; continue; }
-                  lines++; len = w.length;
-                }
-                return total + lines;
-              }, 0);
             // Columns 4-5 and 6-8 are width 15 each; the indent costs ~2.
             const JURIS_CHARS = 15 * 2 - 2;
             const REGIME_CHARS = 15 * 3 - 2;
@@ -9372,6 +9391,77 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             ccNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
             ccNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
             summarySheet.getRow(ccNoteRowNum).height = 30;
+            summarySheet.getRow(sumRow++).height = 6; // spacer
+          }
+        }
+
+        // Section 4: Sustainability Targets — the last thing on the sheet,
+        // and deliberately so. Everything above it is what the portfolio is
+        // obliged to do; this is what the company has said it will do. A
+        // reader who has just seen which regimes bite wants the commitments
+        // next, and the published reports those commitments live in are the
+        // documents any of it gets checked against.
+        //
+        // Companies with nothing recorded are skipped rather than listed
+        // empty: a page of "no targets" rows says nothing and buries the
+        // ones that do.
+        {
+          const withTargets = ccCompanies.filter(c => c.sustainability?.hasAny);
+          if (withTargets.length) {
+            sumSection(sumRow++, 'Sustainability Targets');
+
+            for (const c of withTargets) {
+              const prof = c.sustainability;
+
+              // Company banner, with the frameworks it reports under.
+              const bannerNum = sumRow++;
+              summarySheet.mergeCells(bannerNum, 1, bannerNum, SUM_NCOLS);
+              const banner = summarySheet.getCell(bannerNum, 1);
+              banner.value = prof.frameworks.length
+                ? `${c.name}    ${prof.frameworks.join(' · ')}`
+                : c.name;
+              banner.font = { name: 'Nunito Sans', bold: true, size: 10.5, color: { argb: SE_TEXT_DARK } };
+              banner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+              banner.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+              summarySheet.getRow(bannerNum).height = 18;
+
+              const detailRow = (label, text, opts = {}) => {
+                if (!text) return;
+                const rowNum = sumRow++;
+                summarySheet.mergeCells(rowNum, 1, rowNum, 2);
+                summarySheet.mergeCells(rowNum, 3, rowNum, SUM_NCOLS);
+                const lbl = summarySheet.getCell(rowNum, 1);
+                lbl.value = label;
+                lbl.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: SE_SLATE } };
+                lbl.alignment = { vertical: 'top', horizontal: 'left', indent: 1 };
+                const val = summarySheet.getCell(rowNum, 3);
+                val.value = text;
+                val.font = { name: 'Nunito Sans', size: 9.5, color: { argb: opts.muted ? SE_SLATE : SE_TEXT_DARK } };
+                val.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+                // Columns 3..N at width 15 each, less the indent.
+                const chars = (SUM_NCOLS - 2) * 15 - 2;
+                summarySheet.getRow(rowNum).height = Math.max(15, wrapLines(text, chars) * 12 + 3);
+              };
+
+              detailRow(
+                prof.targetsSource === 'research' ? 'Targets *' : 'Targets',
+                prof.targets.map(t => `• ${t}`).join('\n'),
+              );
+              detailRow('Programs', prof.programs.map(t => `• ${t}`).join('\n'));
+              detailRow('Summary', prof.summary, { muted: true });
+              detailRow(
+                'Reports',
+                prof.reports.map(r => `${r.title}${r.year ? ` (${r.year})` : ''} — ${r.url}`).join('\n'),
+              );
+            }
+
+            const stNoteNum = sumRow++;
+            summarySheet.mergeCells(stNoteNum, 1, stNoteNum, SUM_NCOLS);
+            const stNote = summarySheet.getCell(stNoteNum, 1);
+            stNote.value = 'Sustainability commitments and disclosures per company, from the company page\u2019s Sustainability Targets field and its saved Claude research. Targets marked * came from research and have not been confirmed on the company page.';
+            stNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+            stNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+            summarySheet.getRow(stNoteNum).height = 30;
             summarySheet.getRow(sumRow++).height = 6; // spacer
           }
         }
