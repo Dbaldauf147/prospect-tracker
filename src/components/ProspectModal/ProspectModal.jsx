@@ -13,6 +13,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
@@ -5901,6 +5902,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div className={styles.fieldFull}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                 <label className={styles.label}>Sustainability Targets</label>
+                {/* Whether the company actually discloses, read straight off
+                    the Frameworks selection above. A target means something
+                    different depending on whether there's an audited report
+                    behind it, so the two belong next to each other — and the
+                    Corporate Compliance screener shows the same pair. */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexWrap: 'wrap' }}>
+                  {reportingStatus(effectiveFrameworks).map(({ label, reported, name }) => {
+                    const c = reported ? REPORTED_COLORS : NOT_REPORTED_COLORS;
+                    return (
+                      <span
+                        key={label}
+                        title={`${name} — ${reported ? 'reported' : 'not reported'}. Set on the Frameworks field above.`}
+                        style={{
+                          fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem',
+                          borderRadius: 4, whiteSpace: 'nowrap',
+                          background: c.bg, color: c.text, border: `1px solid ${c.border}`,
+                        }}
+                      >{reported ? '\u2713' : '\u2013'} {label}</span>
+                    );
+                  })}
+                </div>
                 {fields.company && (
                   <button
                     type="button"

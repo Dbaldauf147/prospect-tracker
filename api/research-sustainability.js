@@ -31,7 +31,7 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
 - summary: string: 2-3 sentence executive overview of the company's sustainability stance. Note explicitly when public information is sparse.
 - programs: array of strings: bullet-style descriptions of major sustainability initiatives or programs (e.g. "renewable energy procurement via PPA", "Scope 3 supplier engagement", "operational efficiency program").
 - targets: array of strings: concrete quantified commitments where available, each as a single line (e.g. "Net zero across all scopes by 2050", "50% absolute Scope 1+2 reduction by 2030 vs 2019 baseline", "100% renewable electricity by 2025"). Use the company's own language where possible.
-- frameworks: array of strings: only labels they have publicly disclosed or committed to, drawn from: "RECA", "CSRD", "CDP", "GRESB", "SBT", "Ecovadis", "UN PRI", "CA SB", "NZAM". Use this exact spelling. Omit any framework you don't have direct evidence for.
+- frameworks: array of strings: only labels they have publicly disclosed or committed to, drawn from: "RECA", "CSRD", "IFRS", "TCFD", "CDP", "GRESB", "SBT", "Ecovadis", "UN PRI", "CA SB", "NZAM". Use this exact spelling. Omit any framework you don't have direct evidence for. Use "IFRS" for the IFRS Sustainability Disclosure Standards (ISSB S1 / S2) and "TCFD" for a TCFD-aligned disclosure — for these two, report them only when the company has actually published a report under them.
 - reports: array of { title: string, url: string, year: number? }: links to public ESG / sustainability reports or pages found via web search. Prefer the most recent. Up to 5 entries.
 - sources: array of { title: string, url: string }: citation list of pages you used to derive the above. Up to 8 entries.
 
@@ -75,7 +75,7 @@ If no public sustainability information surfaces, return the JSON object with su
       return res.status(502).json({ error: 'Claude returned malformed JSON', raw: text });
     }
 
-    const ALLOWED_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
+    const ALLOWED_FRAMEWORKS = new Set(['RECA', 'CSRD', 'IFRS', 'TCFD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
     const asStrArray = (v) => Array.isArray(v) ? v.map(x => String(x || '').trim()).filter(Boolean) : [];
     const asLinkArray = (v) => Array.isArray(v) ? v
       .filter(o => o && typeof o === 'object' && (o.url || o.href))
