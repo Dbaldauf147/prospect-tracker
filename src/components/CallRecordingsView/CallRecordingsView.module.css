@@ -1302,3 +1302,103 @@
     overflow: visible;
   }
 }
+
+/* ---- Auto-N/A rules --------------------------------------------------- */
+
+.naRuleBadge {
+  margin-left: 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.naRules {
+  margin: 0 1.25rem 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.naRulesHead {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.naRuleAdd {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.naRuleAdd .input {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* What the half-typed rule would catch. Shown before there is anything
+   to undo, because a too-broad rule is the expensive mistake here. */
+.naRulePreview {
+  font-size: var(--font-size-xs);
+  color: #075985;
+  background: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+}
+
+.naRuleList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.naRuleChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.3rem 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: var(--color-text);
+  max-width: 32ch;
+}
+
+.naRuleRemove {
+  border: none;
+  background: none;
+  color: #94a3b8;
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  cursor: pointer;
+}
+
+.naRuleRemove:hover {
+  color: #dc2626;
+}
+
+.naRuleFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.naRuleNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}

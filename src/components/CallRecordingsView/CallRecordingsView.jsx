@@ -64,8 +64,11 @@ import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAc
 import { setOppField } from '../../utils/opps2Store';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
-  filterByOppTag, oppTagCounts, OPP_TAG_FILTERS,
+  filterByOppTag, oppTagCounts, isAutoNa, autoNaPatch, OPP_TAG_FILTERS,
 } from '../../utils/callOppTag';
+import {
+  normalizeRules, normalizeRule, autoNaMatches, autoNaPatchFor, describeNaRules, MAX_NA_RULES,
+} from '../../utils/callNaRules';
 import styles from './CallRecordingsView.module.css';
 
 const TOKEN_KEY = 'onedrive-access-token';
@@ -410,6 +413,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // tagged / na. Not persisted — it is how you are working through the
   // list right now, not a setting.
   const [oppTagFilter, setOppTagFilter] = useState('all');
+  // The auto-N/A rules panel: open state, the text being typed, and
+  // whether a bulk apply is running.
+  const [showNaRules, setShowNaRules] = useState(false);
+  const [naRuleDraft, setNaRuleDraft] = useState('');
+  const [applyingNaRules, setApplyingNaRules] = useState(false);
   const [breakdownQuery, setBreakdownQuery] = useState('');
   // Which call the Breakdown subtab is showing. Empty means "the newest
   // one", resolved below against the filtered list rather than stored, so
@@ -489,6 +497,18 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // waiting for the "Push to opp" button. Off by default — AI text
   // editing pipeline data unreviewed should be a deliberate choice.
   const autoPush = settings.callRecordingsAutoPush === true;
+
+  // Meeting names that never belong to an opportunity. Stored in synced
+  // settings rather than per-browser: a recurring 1:1 is one on every
+  // machine, and re-typing the list is exactly the work this removes.
+  const naRules = useMemo(
+    () => normalizeRules(settings.callRecordingsNaRules || []),
+    [settings.callRecordingsNaRules],
+  );
+  // Kept in a ref for the sync path, which runs inside a callback that
+  // must not be rebuilt (and re-armed) every time the list is edited.
+  const naRulesRef = useRef(naRules);
+  useEffect(() => { naRulesRef.current = naRules; }, [naRules]);
 
   const uid = user?.uid || null;
 
@@ -1053,11 +1073,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       render: (r) => {
         if (r.oppTag === 'tagged') return <span title={r.oppLabel}>{r.oppLabel}</span>;
         if (r.oppTag === 'na') {
+          // The ⟳ says a rule did this rather than the user. Without it,
+          // a page that marked 200 calls N/A on its own would be
+          // indistinguishable from 200 the user had worked through.
           return (
             <span
               className={styles.historyNa}
-              title={r.oppNaAt ? `Marked N/A ${fmtWhen(r.oppNaAt)}` : 'Belongs to no opportunity'}
-            >N/A</span>
+              title={[
+                r.oppNaRule ? `Marked N/A automatically by the rule “${r.oppNaRule}”` : 'Belongs to no opportunity',
+                r.oppNaAt ? fmtWhen(r.oppNaAt) : '',
+              ].filter(Boolean).join(' · ')}
+            >N/A{r.oppNaRule ? ' ⟳' : ''}</span>
           );
         }
         // The queue. Both decisions are one click from here, so the
@@ -1258,6 +1284,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           const saved = await persist(call.id, {
             ...recordPatchFor(call),
             ...(autoLink(call, stored, idx) || {}),
+            // A recurring meeting the user has already ruled on is N/A
+            // by the time it first appears, rather than passing through
+            // the queue on its way there. Costs no extra write — the
+            // record is being stored anyway — and never touches a call
+            // that has been decided by hand.
+            ...(autoNaPatchFor(call, naRulesRef.current, stored) || {}),
           });
           // Throwing is what keeps the watermark honest. A call that
           // wasn't stored has to land in result.errors, because a sync
@@ -1414,9 +1446,70 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setOppPickerFor(null);
   }
 
-  // Undoes either decision — back into the queue.
+  // Undoes either decision — back into the queue. Also marks the call as
+  // the user's, so a rule that matches its name doesn't put it straight
+  // back on the next sync.
   function untagOpp(recordingId) {
     persist(recordingId, clearOppTagPatch());
+  }
+
+  // ---- auto-N/A rules --------------------------------------------------------
+
+  // Stored calls the current rules would newly mark N/A. Computed over
+  // every record, not just the visible source: the backlog a rule is
+  // written to clear is usually older than whatever is on screen.
+  const naRuleMatches = useMemo(
+    () => autoNaMatches(records, naRules),
+    [records, naRules],
+  );
+
+  function saveNaRules(next) {
+    updateSettings?.({ callRecordingsNaRules: normalizeRules(next).map(r => r.text) });
+  }
+
+  function addNaRule(text) {
+    const rule = normalizeRule(text);
+    if (!rule) return false;
+    if (naRules.length >= MAX_NA_RULES) return false;
+    // Already covered — by this exact rule or a broader one. Adding it
+    // would be a no-op the user couldn't see, so say nothing changed.
+    if (naRules.some(r => rule.key.includes(r.key))) return false;
+    saveNaRules([...naRules.map(r => r.text), rule.text]);
+    return true;
+  }
+
+  function removeNaRule(key) {
+    saveNaRules(naRules.filter(r => r.key !== key).map(r => r.text));
+  }
+
+  /**
+   * Apply the rules to everything already stored.
+   *
+   * A rule written today is usually about a meeting that has been
+   * recurring for months, so the backlog is the point. Deliberately a
+   * button rather than something that happens on its own: this writes
+   * one record per call, and the count it will write is on the button.
+   */
+  async function applyNaRules() {
+    const matches = naRuleMatches;
+    if (matches.length === 0) return;
+    const message = matches.length === 1
+      ? `Mark 1 call as N/A?\n\n${matches[0].name}`
+      : `Mark ${matches.length} calls as N/A?\n\n`
+        + matches.slice(0, 8).map(m => `• ${m.name}`).join('\n')
+        + (matches.length > 8 ? `\n…and ${matches.length - 8} more` : '');
+    if (!window.confirm(message)) return;
+    setApplyingNaRules(true);
+    try {
+      // Sequential, not in parallel: each write goes through the same
+      // optimistic-state merge, and firing hundreds at once is how a
+      // Firestore write queue starts refusing them.
+      for (const match of matches) {
+        await persist(match.id, autoNaPatch(match.rule));
+      }
+    } finally {
+      setApplyingNaRules(false);
+    }
   }
 
   // Refreshed every render so the History table's row buttons always
@@ -1808,6 +1901,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             />
             Auto-push summaries to opps
           </label>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => setShowNaRules(v => !v)}
+            title="Meeting names that never belong to an opportunity: calls matching one are marked N/A automatically"
+          >
+            {showNaRules ? '▾' : '▸'} Auto-N/A rules
+            {naRules.length > 0 && <span className={styles.naRuleBadge}>{naRules.length}</span>}
+          </button>
           <span className={styles.sourceToggle}>
             <button
               type="button"
@@ -1879,6 +1981,96 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           )}
         </div>
       </div>
+
+      {/* Auto-N/A rules. A calendar is mostly recurrences, and every one
+          of them asks the triage queue the same question it asked last
+          week — so answer it once, by name. */}
+      {showNaRules && (
+        <div className={styles.naRules}>
+          <div className={styles.naRulesHead}>
+            Mark calls N/A automatically by meeting name
+          </div>
+          <form
+            className={styles.naRuleAdd}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (addNaRule(naRuleDraft)) setNaRuleDraft('');
+            }}
+          >
+            <input
+              className={styles.input}
+              type="text"
+              value={naRuleDraft}
+              onChange={e => setNaRuleDraft(e.target.value)}
+              placeholder="e.g. Prospecting Time, Weekly 1:1, Office Hours"
+              maxLength={200}
+              aria-label="Meeting name to mark N/A"
+            />
+            <button
+              type="submit"
+              className={styles.btn}
+              disabled={!normalizeRule(naRuleDraft) || naRules.length >= MAX_NA_RULES}
+              title={naRules.length >= MAX_NA_RULES
+                ? `That's the limit of ${MAX_NA_RULES} rules`
+                : 'Add this name as a rule'}
+            >Add rule</button>
+          </form>
+
+          {/* What the draft would catch, before it is a rule. Matching on
+              a substring is easy to get wrong in the direction that
+              matters — a short word swallowing real client calls — so
+              the count is shown while there is still nothing to undo. */}
+          {normalizeRule(naRuleDraft) && (() => {
+            const preview = autoNaMatches(records, [naRuleDraft]);
+            return (
+              <div className={styles.naRulePreview}>
+                {preview.length === 0
+                  ? 'No untagged call matches that name yet. It still applies to calls that arrive later.'
+                  : `Matches ${preview.length} untagged call${preview.length === 1 ? '' : 's'}: ${preview.slice(0, 3).map(m => m.name).join(', ')}${preview.length > 3 ? `, +${preview.length - 3} more` : ''}`}
+              </div>
+            );
+          })()}
+
+          {naRules.length > 0 && (
+            <div className={styles.naRuleList}>
+              {naRules.map(rule => (
+                <span key={rule.key} className={styles.naRuleChip}>
+                  {rule.text}
+                  <button
+                    type="button"
+                    className={styles.naRuleRemove}
+                    onClick={() => removeNaRule(rule.key)}
+                    title={`Stop marking “${rule.text}” N/A. Calls it already marked keep their N/A.`}
+                    aria-label={`Remove rule ${rule.text}`}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.naRuleFoot}>
+            <span className={styles.naRuleNote}>
+              {describeNaRules({ rules: naRules, matches: naRuleMatches.length, total: Object.keys(records).length })}
+            </span>
+            {naRuleMatches.length > 0 && (
+              <button
+                type="button"
+                className={styles.btnPrimary}
+                onClick={applyNaRules}
+                disabled={applyingNaRules}
+              >
+                {applyingNaRules
+                  ? 'Marking…'
+                  : `Mark ${naRuleMatches.length} call${naRuleMatches.length === 1 ? '' : 's'} N/A`}
+              </button>
+            )}
+          </div>
+          <div className={styles.naRuleNote}>
+            Rules never touch a call you tagged or cleared yourself, and matching ignores case,
+            punctuation, and a “Canceled:” prefix.
+          </div>
+        </div>
+      )}
 
       <div className={styles.subtabs}>
         {[
@@ -2291,8 +2483,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   {oppTagStateOf(stored) === 'na' && (
                     <span
                       className={styles.oppChipNa}
-                      title="Marked as belonging to no opportunity — this call is done being triaged"
-                    >N/A</span>
+                      title={isAutoNa(stored)
+                        ? `Marked N/A automatically by the rule “${stored.oppNaRule}”`
+                        : 'Marked as belonging to no opportunity — this call is done being triaged'}
+                    >N/A{isAutoNa(stored) ? ' ⟳' : ''}</span>
                   )}
                   <span className={styles.cardActions}>
                     {/* A Granola call has no media behind it — the note is
