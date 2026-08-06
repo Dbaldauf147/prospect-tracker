@@ -186,6 +186,10 @@ function detectSitesMapping(headers) {
   return {
     siteName,
     companyName: detectColumn(headers, [/^company\s*name$/i, /^company$/i, /\bcompany\b/i, /\bportfolio\b/i, /parent\s*(co|company|org)/i, /\baccount\s*name\b/i, /\bcustomer\s*name\b/i, /\borganization\b/i, /\bclient\b/i]) || '',
+    // Sub-level of Company Name — the operating brand / subsidiary /
+    // business unit the site sits under. Patterns stay clear of the
+    // company ones above so a sheet carrying both maps each correctly.
+    division: detectColumn(headers, [/^division$/i, /^business\s*unit$/i, /^operating\s*(company|unit|brand)$/i, /^subsidiary$/i, /^banner$/i, /\bdivision\b/i, /business\s*unit/i, /\bsubsidiary\b/i]) || '',
     address: detectColumn(headers, [/^address$/i, /^street\s*address$/i, /street/i, /\baddress\b/i]) || '',
     city: detectColumn(headers, [/^city$/i, /^town$/i, /^municipality$/i, /\bcity\b/i]) || '',
     state: detectColumn(headers, [/^state$/i, /^province$/i, /^state\s*\/\s*province$/i, /\bstate\b/i, /\bregion\b/i]) || '',
@@ -1091,6 +1095,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Optional column carrying each building's Owned / Leased status.
   const [ownershipOverride, setOwnershipOverride] = useState(null);
   const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
+  // Optional column naming the division / business unit the site sits
+  // under — the level below Company Name. Passthrough, like the company.
+  const [divisionOverride, setDivisionOverride] = useState(null);
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
   const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
@@ -1199,6 +1206,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         setSegmentOverride(m.segment || null);
         setOwnershipOverride(m.ownership || null);
         setSiteDescriptionOverride(m.siteDescription || null);
+        setDivisionOverride(m.division || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
         setGasContractPriceOverride(m.gasContractPrice || null);
@@ -1361,6 +1369,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       segment:               safe(noneToEmpty(segmentOverride)),
       ownership:             safe(noneToEmpty(ownershipOverride)),
       siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
+      division:              safe(noneToEmpty(divisionOverride)),
       propertySize:          safe(noneToEmpty(propertySizeOverride)),
       electric:              safe(noneToEmpty(electricColOverride)),
       electricUom:           safe(noneToEmpty(electricUomOverride)),
@@ -1441,7 +1450,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // pass-through column ends up rendered on the Utility Lookup
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
-        'siteName', 'companyName', 'address', 'city', 'state', 'zip', 'country',
+        'siteName', 'companyName', 'division', 'address', 'city', 'state', 'zip', 'country',
         'propertyType', 'segment', 'ownership', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
@@ -1499,6 +1508,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setSegmentOverride(mapping.segment || null);
       setOwnershipOverride(mapping.ownership || null);
       setSiteDescriptionOverride(mapping.siteDescription || null);
+      setDivisionOverride(mapping.division || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
       setGasContractPriceOverride(mapping.gasContractPrice || null);
@@ -2066,6 +2076,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         : null;
       const inputCompanyName = companyNameOverride ? String(r[companyNameOverride] || '').trim() : '';
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
+      const inputDivision = divisionOverride ? String(r[divisionOverride] || '').trim() : '';
       const inputOwnership = ownershipOverride ? String(r[ownershipOverride] || '').trim() : '';
       const canonicalOwnership = normalizeOwnership(inputOwnership);
       // Loose numeric parse for the optional Size_ft2 column — strips
@@ -2279,6 +2290,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             : (stateColInput || countryLabel || '');
         })(),
         __companyName__: (inputCompanyName || portfolioCompanyName) || null,
+        __division__: inputDivision || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __excludedType__: excludedType,
         __propertyType__: canonicalPropertyType,
@@ -2321,7 +2333,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // The analysis set: every derived site except those whose property type was
   // mapped to N/A. Defining it here means the whole page — counts, spend, the
@@ -2572,6 +2584,27 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         );
       },
       exportValue: (row) => row.__companyName__ || '',
+    };
+    // Division — the operating brand / subsidiary / business unit the
+    // site belongs to, one level under Company Name. Passthrough from
+    // the optional mapped column: nothing derives from it, it is here so
+    // a portfolio spanning several divisions can be read and filtered
+    // apart on the page and carries that split into the exports.
+    const divisionCol = {
+      key: 'division',
+      label: 'Division',
+      defaultWidth: 170,
+      render: (row) => {
+        const v = row.__division__;
+        if (!v) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>-</span>;
+        return (
+          <span
+            title={v}
+            style={{ fontSize: '0.72rem', color: 'var(--color-text-primary)', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >{v}</span>
+        );
+      },
+      exportValue: (row) => row.__division__ || '',
     };
     // ISO / RTO — the site's wholesale electricity market, resolved from its
     // zip via EPA eGRID subregions (see utils/isoLookup). A small chip flags
@@ -3103,6 +3136,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return [
       ...base,
       companyNameCol,
+      divisionCol,
       makeStateCol(),
       isoCol,
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
@@ -3992,6 +4026,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab: the Gas tab pulls Site Name from there via formula.' },
       { label: 'Company Name', greenHeader: true, hint: 'Company / portfolio the site belongs to. Optional reference field: shown as a column on the Utility Lookup page and used to name the Indicative Savings export file. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
+      { label: 'Division', greenHeader: true, hint: 'Division / business unit / operating brand the site belongs to — one level under Company Name. Optional reference field: shown as its own column on the Utility Lookup page. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'City', greenHeader: true, hint: 'City / town of the site. Optional reference field. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'State / Province', greenHeader: true, hint: 'State or province. Optional reference field: auto-derived from Zip for US / Canada when blank. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
@@ -13194,6 +13229,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'companyName', label: 'Company Name', required: false, hint: 'Company / portfolio the site belongs to. Surfaced as a column on the Utility Lookup page and used to name the Indicative Savings export file (e.g. "Acme Corp_Indicative Savings Analysis.xlsx").' },
+            { key: 'division', label: 'Division', required: false, hint: 'Division / business unit / operating brand the site belongs to — one level under Company Name. Passthrough only; surfaced as its own column on the Utility Lookup page so a portfolio spanning several divisions can be read and filtered apart.' },
             { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field: surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
             { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
