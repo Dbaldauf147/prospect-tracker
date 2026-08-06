@@ -21,6 +21,7 @@ import { loadCallRecords, saveCallRecord } from '../../utils/callRecordingsStore
 import { oppLabel } from '../../utils/callRecordShape';
 import { oppTagStateOf, OPP_TAG_NONE, tagOppPatch, markOppNaPatch } from '../../utils/callOppTag';
 import { suggestOppsForCall } from '../../utils/callOppSuggest';
+import { isActiveOppStage } from '../../utils/oppStages';
 
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -40,21 +41,29 @@ const suggestBtn = {
 };
 
 /** One untagged call, its suggestions, and the two ways to settle it. */
-function CallRow({ call, opps, onTag, onNa, busy }) {
+function CallRow({ call, opps, closedOpps, onTag, onNa, busy }) {
   const [search, setSearch] = useState('');
   const [picking, setPicking] = useState(false);
 
   const suggestions = useMemo(() => suggestOppsForCall(call, opps), [call, opps]);
 
-  // The manual picker: every opp, filtered by what's typed. Capped —
+  // The manual picker: every live opp, filtered by what's typed. Capped —
   // the list is a shortcut to one row, not a second opps table.
+  const hits = (list, term) => (list || [])
+    .filter(o => `${o?.['Account'] || ''} ${o?.['Scope'] || ''} ${o?.['Stage'] || ''}`.toLowerCase().includes(term));
   const matches = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return [];
-    return (opps || [])
-      .filter(o => `${o?.['Account'] || ''} ${o?.['Scope'] || ''} ${o?.['Stage'] || ''}`.toLowerCase().includes(term))
-      .slice(0, 8);
+    return hits(opps, term).slice(0, 8);
   }, [opps, search]);
+  // Closed opps the same search would have found. Counted rather than
+  // listed: they aren't taggable here, but a silent no-results on a deal
+  // the user can see on the table reads as the search being broken.
+  const closedHidden = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return 0;
+    return hits(closedOpps, term).length;
+  }, [closedOpps, search]);
 
   const when = fmtWhen(call.recordedAt || call.createdAt);
 
@@ -86,7 +95,7 @@ function CallRow({ call, opps, onTag, onNa, busy }) {
         ))}
         {suggestions.length === 0 && !picking && (
           <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-            No likely opp from the title or who was on it
+            No likely live opp from the title or who was on it
           </span>
         )}
 
@@ -100,6 +109,16 @@ function CallRow({ call, opps, onTag, onNa, busy }) {
               placeholder="Search opps…"
               style={{ ...btn, cursor: 'text', width: 200 }}
             />
+            {matches.length === 0 && closedHidden > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: 2,
+                background: 'var(--color-surface)', border: '1px solid var(--color-border)',
+                borderRadius: 6, boxShadow: '0 6px 18px rgba(15,23,42,0.18)', width: 320,
+                padding: '0.35rem 0.5rem', fontSize: '0.72rem', color: 'var(--color-text-muted)',
+              }}>
+                {closedHidden} closed opp{closedHidden === 1 ? '' : 's'} match, but only live deals can be tagged here.
+              </div>
+            )}
             {matches.length > 0 && (
               <div style={{
                 position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: 2,
@@ -141,6 +160,13 @@ function CallRow({ call, opps, onTag, onNa, busy }) {
 
 export function UntaggedCalls({ opps = [] }) {
   const { user } = useAuth();
+  // Only live deals are offered. A call summary belongs on a deal somebody
+  // is still working; pushing one onto a Sold or Not Sold opp isn't a
+  // decision anyone is trying to make here, and on an established account
+  // the closed deals outnumber the open ones badly enough to bury them.
+  // The caller hands over every record, so the split happens here.
+  const activeOpps = useMemo(() => (opps || []).filter(o => isActiveOppStage(o?.['Stage'])), [opps]);
+  const closedOpps = useMemo(() => (opps || []).filter(o => !isActiveOppStage(o?.['Stage'])), [opps]);
   const uid = user?.uid;
   const [calls, setCalls] = useState([]);
   const [collapsed, setCollapsed] = useState(false);
@@ -210,7 +236,8 @@ export function UntaggedCalls({ opps = [] }) {
         <CallRow
           key={call.id}
           call={call}
-          opps={opps}
+          opps={activeOpps}
+          closedOpps={closedOpps}
           onTag={onTag}
           onNa={onNa}
           busy={busyId === call.id}
