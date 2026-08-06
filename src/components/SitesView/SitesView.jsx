@@ -111,6 +111,20 @@ import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
 
+// Sentinel for the Division scope's "sites with no division" choice. A
+// real division can't collide with it — a blank division is exactly the
+// case this stands for, and any other value is the division's own text.
+const NO_DIVISION = '__no-division__';
+
+// Does a derived row fall inside the active division scope? '' scopes to
+// everything. Shared by the analysis set and the excluded-site tally so
+// the count next to the site total can't disagree with the table.
+function rowInDivision(row, divisionFilter) {
+  if (!divisionFilter) return true;
+  const d = String(row?.__division__ || '').trim();
+  return divisionFilter === NO_DIVISION ? !d : d === divisionFilter;
+}
+
 // Ceiling on a Master Analysis saved against a company. The workbook is
 // chunked across Firestore docs (900 KB of base64 each) and the company popup
 // reads only the metadata doc, so the binding cost is the upload itself — this
@@ -1098,6 +1112,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Optional column naming the division / business unit the site sits
   // under — the level below Company Name. Passthrough, like the company.
   const [divisionOverride, setDivisionOverride] = useState(null);
+  // Page-level Division scope — which division the whole page is looking
+  // at. '' is every division. Distinct from divisionOverride above: that
+  // says which uploaded column carries the division, this says which one
+  // of its values the page is currently narrowed to. Deliberately not
+  // persisted, like the compliance ownership scope: it is a lens on the
+  // upload, not a property of it.
+  const [divisionFilter, setDivisionFilter] = useState('');
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
   const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
@@ -2339,13 +2360,59 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // mapped to N/A. Defining it here means the whole page — counts, spend, the
   // compliance screening, the indicative-savings maths and every export built
   // from `rows` — drops them without each consumer having to remember to.
-  const rows = useMemo(() => allRows.filter(r => !r.__excludedType__), [allRows]);
+  // The Division scope narrows the same set, so every consumer of `rows`
+  // — the table, the stats, all four other tabs and every export — sees
+  // one division without any of them having to know the filter exists.
+  const rows = useMemo(
+    () => allRows.filter(r => !r.__excludedType__ && rowInDivision(r, divisionFilter)),
+    [allRows, divisionFilter],
+  );
+
+  // Every division present in the upload, with its site count. Built from
+  // allRows rather than `rows` so choosing one doesn't collapse the list
+  // to the choice just made. N/A-excluded sites are left out so the counts
+  // here match what the page would actually show.
+  const divisionOptions = useMemo(() => {
+    const counts = new Map();
+    let blank = 0;
+    for (const r of allRows) {
+      if (r.__excludedType__) continue;
+      const d = String(r.__division__ || '').trim();
+      if (!d) { blank++; continue; }
+      counts.set(d, (counts.get(d) || 0) + 1);
+    }
+    const list = [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([value, count]) => ({ value, label: value, count }));
+    // Only worth offering once something is actually filed by division —
+    // otherwise "(no division)" would be the entire upload.
+    if (blank > 0 && list.length > 0) list.push({ value: NO_DIVISION, label: '(no division)', count: blank });
+    return list;
+  }, [allRows]);
+
+  // A replaced sites file can retire the division being viewed. Without
+  // this the page would show zero sites with the reason hidden in a picker
+  // that no longer lists the value.
+  useEffect(() => {
+    if (!divisionFilter) return;
+    if (!divisionOptions.some(o => o.value === divisionFilter)) setDivisionFilter('');
+  }, [divisionOptions, divisionFilter]);
+
+  // The active division as a label for export file names and the
+  // compliance report header. Empty when the page is showing everything.
+  function activeDivisionLabel() {
+    if (!divisionFilter) return '';
+    return divisionFilter === NO_DIVISION ? 'No Division' : divisionFilter;
+  }
 
   // What the N/A mapping took out, for the notice next to the site count.
+  // Scoped to the active division for the same reason the site count is:
+  // the two sit side by side and would otherwise describe different sets.
   const excludedSites = useMemo(() => {
     const byType = new Map();
     for (const r of allRows) {
       if (!r.__excludedType__) continue;
+      if (!rowInDivision(r, divisionFilter)) continue;
       const raw = String(r.__propertyTypeRaw__ || '').trim() || '(blank)';
       byType.set(raw, (byType.get(raw) || 0) + 1);
     }
@@ -2353,7 +2420,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       total: [...byType.values()].reduce((n, v) => n + v, 0),
       byType: [...byType.entries()].map(([raw, count]) => ({ raw, count })).sort((a, b) => b.count - a.count),
     };
-  }, [allRows]);
+  }, [allRows, divisionFilter]);
 
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
@@ -4495,6 +4562,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // and collapse the leftover whitespace.
   function sanitizeFileNamePart(s) {
     return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Tag an export's file name with the active division. The exports that
+  // lead with a company name join it there instead; this is for the ones
+  // that don't, so no scoped workbook leaves the page looking like the
+  // whole portfolio.
+  function divisionScopedName(stem) {
+    const d = sanitizeFileNamePart(activeDivisionLabel());
+    return d ? `${stem} - ${d}` : stem;
   }
 
   // Company-level Corporate Compliance rollup for the export's Summary tab.
@@ -11451,8 +11527,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
     // Name the file after the company when one is available — e.g.
     // "Acme Corp_Indicative Savings Analysis.xlsx". Falls back to a
-    // dated generic name when no company name is mapped.
-    const exportCompany = sanitizeFileNamePart(deriveExportCompanyName(companyName));
+    // dated generic name when no company name is mapped. A division
+    // scope joins the company part, so a one-division export can't be
+    // mistaken for the whole portfolio once it leaves the page.
+    const exportCompany = sanitizeFileNamePart(
+      [deriveExportCompanyName(companyName), activeDivisionLabel()].filter(Boolean).join(' - '),
+    );
     const fileName = exportCompany
       ? `${exportCompany}_Indicative Savings Analysis.xlsx`
       : `Indicative Savings Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -11762,7 +11842,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       buf = await injectLiveLineChart(buf, injection);
     }
 
-    const exportCompany = sanitizeFileNamePart(company);
+    const exportCompany = sanitizeFileNamePart(
+      [company, activeDivisionLabel()].filter(Boolean).join(' - '),
+    );
     const fileName = exportCompany
       ? `${exportCompany}_Master Analysis.xlsx`
       : `Master Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -12265,7 +12347,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
-    const fileName = `Utility Mapping Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const fileName = `${divisionScopedName('Utility Mapping Analysis')} - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -12568,7 +12650,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Indicative Site Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.download = `${divisionScopedName('Indicative Site Analysis')} - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -12603,6 +12685,57 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           className={mainTab === 'corporate' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('corporate')}
         >Corporate Compliance</button>
+        {/* Division scope. Lives in the tab bar rather than inside the
+            Site List page because it scopes every tab — the compliance
+            tabs render instead of the Site List, so a control down there
+            would be invisible exactly where the scope still applies.
+            Only appears once the upload actually carries divisions. */}
+        {divisionOptions.length > 0 && (
+          <div
+            style={{
+              marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem',
+              paddingRight: '0.25rem',
+            }}
+          >
+            <label
+              htmlFor="sites-division-scope"
+              style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)' }}
+            >Division</label>
+            <select
+              id="sites-division-scope"
+              value={divisionFilter}
+              onChange={(e) => setDivisionFilter(e.target.value)}
+              title={divisionFilter
+                ? `Every tab and every export on this page is scoped to ${activeDivisionLabel()}. Pick "All divisions" to widen it back out.`
+                : 'Narrow every tab on this page — the site table, the compliance screening, the roadmap and all exports — to a single division.'}
+              style={{
+                maxWidth: 240, padding: '0.22rem 0.4rem', fontFamily: 'inherit',
+                fontSize: '0.75rem', fontWeight: divisionFilter ? 700 : 500,
+                borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${divisionFilter ? '#7C3AED' : 'var(--color-border)'}`,
+                background: divisionFilter ? '#F3E8FF' : 'var(--color-surface)',
+                color: divisionFilter ? '#6B21A8' : 'var(--color-text)',
+              }}
+            >
+              <option value="">All divisions ({divisionOptions.reduce((n, o) => n + o.count, 0)} sites)</option>
+              {divisionOptions.map(o => (
+                <option key={o.value} value={o.value}>{o.label} ({o.count})</option>
+              ))}
+            </select>
+            {divisionFilter && (
+              <button
+                type="button"
+                onClick={() => setDivisionFilter('')}
+                title="Show every division again"
+                style={{
+                  border: '1px solid #E9D5FF', background: '#F3E8FF', color: '#6B21A8',
+                  borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: '0.7rem', fontWeight: 700, padding: '0.18rem 0.4rem', lineHeight: 1.3,
+                }}
+              >Clear</button>
+            )}
+          </div>
+        )}
       </div>
       {mainTab === 'corporate' ? (
         <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />
@@ -12613,6 +12746,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ownedOnly={complianceOwnedOnly}
           onOwnedOnlyChange={setComplianceOwnedOnly}
           settings={settings}
+          scopeLabel={activeDivisionLabel()}
         />
       ) : mainTab === 'compliance' ? (
         <BuildingComplianceScreening
@@ -12621,6 +12755,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ownedOnly={complianceOwnedOnly}
           onOwnedOnlyChange={setComplianceOwnedOnly}
           companyName={deriveExportCompanyName(null)}
+          scopeLabel={activeDivisionLabel()}
         />
       ) : mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
@@ -13215,7 +13350,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           rows={filtered}
           alwaysVisible={alwaysVisible}
           emptyMessage="No matching sites"
-          exportFileName="Indicative Site Analysis"
+          exportFileName={divisionScopedName('Indicative Site Analysis')}
           exportPrimarySheetName="Raw Data"
           exportExtraSheets={exportExtraSheets}
           onExport={handleExport}
