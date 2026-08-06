@@ -4329,32 +4329,102 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return btoa(binary);
   }
 
+  // What the analysis worked out about a site, as columns to hang off
+  // that site's row in the company's site list.
+  //
+  // The uploaded file says where a site is; the analysis is what the page
+  // adds to it — which utility serves it, which market it sits in, what it
+  // consumes and what that costs. Storing the upload alone left the
+  // company's site list saying no more after a Master Analysis than it did
+  // before one, so the answers had to be read back out of the workbook.
+  //
+  // Labels match the workbook's Site Detail sheet: the same figure should
+  // not have two names depending on where it is read.
+  //
+  // Figures are rounded to what the sheet displays. A cell here is read
+  // as-is — there is no number format behind it to round 8.293000000000001
+  // down to $8.29 the way the workbook does.
+  const round = (value, dp = 0) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    const f = 10 ** dp;
+    return Math.round(value * f) / f;
+  };
+  const ANALYSIS_SITE_COLUMNS = [
+    ['ST / Prov', r => r.__stateProvinceDisplay__ || r.__state__ || ''],
+    ['Country', r => r.__country__ || ''],
+    ['Zip', r => r.__zipNorm__ || ''],
+    ['Property Type', r => r.__propertyType__ || r.__propertyTypeRaw__ || ''],
+    ['Size (ft²)', r => round(r.__propertySizeFt2__)],
+    ['Electric Utility', r => r.__electric__ || ''],
+    ['ISO / RTO', r => r.__iso__?.iso || ''],
+    ['Electric Supplier', r => r.__electricSupplier__ || ''],
+    ['Electric Market', r => classifyMarket(r, 'electric') || ''],
+    ['Annual Electric (kWh)', r => round(r.__kwh__)],
+    ['Electric Rate ($/kWh)', r => round(r.__electricRate__, 4)],
+    ['Total Electric Cost', r => round(r.__electricCost__)],
+    ['Gas Utility', r => r.__gas__ || ''],
+    ['Gas Market', r => classifyMarket(r, 'gas') || ''],
+    // Dth, like the Site Detail sheet — __therms__ is therms and
+    // __gasRate__ is $/therm, so both are decimal-shifted to match.
+    ['Annual Gas (Dth)', r => round(typeof r.__therms__ === 'number' ? r.__therms__ / 10 : null)],
+    ['Gas Rate ($/Dth)', r => round(typeof r.__gasRate__ === 'number' ? r.__gasRate__ * 10 : null, 2)],
+    ['Total Natural Gas Cost', r => round(r.__gasCost__)],
+    ['Total Energy Cost', r => round(r.__totalCost__)],
+  ];
+
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
   // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
   // Up status and the Site List Overview both read it. Returns a short
   // note to append to the save status ('' when the list was written).
-  function saveSitesAsCompanySiteList(company) {
+  async function saveSitesAsCompanySiteList(company) {
     const slug = companySlug(company);
-    if (!slug || !updateSettingsPath) return '';
-    if (!sitesData.length || !siteHeaders.length) return '';
+    if (!slug || !updateSettingsPath) return ' Site list not updated: no company to file it under.';
+    if (!sitesData.length || !siteHeaders.length) return ' Site list not updated: no sites are loaded.';
     // Firestore rejects Dates / nested objects in these row maps, and the
     // popup's own upload path normalizes the same way.
     const safeCell = (v) => {
       if (v == null) return '';
       if (v instanceof Date) return v.toISOString();
       if (typeof v === 'object') return String(v);
+      if (typeof v === 'number') return Number.isFinite(v) ? v : '';
       return v;
     };
+
+    // An uploaded column already called "Country" wins its own name: the
+    // file's value is what the user put there, and overwriting it with a
+    // derived one would edit their data rather than add to it.
+    const used = new Set(siteHeaders);
+    const analysisCols = ANALYSIS_SITE_COLUMNS.map(([label, get]) => {
+      let name = label;
+      for (let n = 1; used.has(name); n += 1) {
+        name = n === 1 ? `${label} (analysis)` : `${label} (analysis ${n})`;
+      }
+      used.add(name);
+      return { name, get };
+    });
+
+    // allRows is built from cleanSitesData, which is sitesData filtered by
+    // site name — so it is indexed by position within THAT list, not this
+    // one. Pair them by the row object itself; every uploaded row is kept,
+    // whether or not the analysis had anything to say about it.
+    const derivedFor = new Map();
+    allRows.forEach((derived, i) => {
+      const source = cleanSitesData[i];
+      if (source) derivedFor.set(source, derived);
+    });
+
     const rows = sitesData.map((r) => {
       const o = {};
       for (const h of siteHeaders) o[h] = safeCell(r[h]);
+      const derived = derivedFor.get(r);
+      for (const col of analysisCols) o[col.name] = derived ? safeCell(col.get(derived)) : '';
       return o;
     });
     const entry = {
       company: company || '',
       fileName: 'Saved from Utility Look Up',
-      headers: siteHeaders,
+      headers: [...siteHeaders, ...analysisCols.map(c => c.name)],
       rows,
       uploadedAt: new Date().toISOString(),
     };
@@ -4362,14 +4432,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Firestore caps at ~1 MiB across every company's list. Skip rather
     // than fail the whole save when these rows alone would crowd it out.
     if (JSON.stringify(entry).length > 400_000) {
-      return ' Site list not mapped: too many sites for the settings document.';
+      return ' Site list not updated: too many sites for the settings document.';
     }
     try {
-      updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
-      return '';
+      // Awaited, so the save status can't call the site list done while
+      // the write is still in flight.
+      await updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
+      return ` Site list updated with ${rows.length.toLocaleString()} site${rows.length === 1 ? '' : 's'} and the analysis columns.`;
     } catch (e) {
       console.warn('Could not save company site list:', e);
-      return ' Site list could not be mapped.';
+      return ' Site list could not be updated.';
     }
   }
 
@@ -4438,7 +4510,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // "Site list mapped" status (and the Site List Overview) reflect the
       // save instead of staying empty until someone re-uploads the same
       // rows from the company popup.
-      const siteListNote = saveSitesAsCompanySiteList(prospect.company);
+      const siteListNote = await saveSitesAsCompanySiteList(prospect.company);
       const siteCountNote = siteCount > 0
         ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
         : '';
