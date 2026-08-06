@@ -93,6 +93,10 @@ export function computeCloseNotSoldOpps({ oppsCache, bfoActivity }) {
     seen.add(key);
     rows.push({
       id: `${key}|${bfoUrl || bfoOpp}`,
+      // The Opps record id, so a consumer can write Reason Not Sold /
+      // Competition straight back to the row (the Issues tab's inline
+      // editor does exactly that).
+      oppId: r._id,
       name: bfoOpp,
       account: String(r.Account || '').trim(),
       reasonNotSold,
@@ -113,7 +117,9 @@ export function computeCloseNotSoldOpps({ oppsCache, bfoActivity }) {
  * "BFO Link\tStatus\tReason\tCompetition" per row, so a row is incomplete
  * when any of those is blank (Status + Reason are blank exactly when the
  * Reason Not Sold + Competition pair isn't in the mapping table).
- * Returns one entry per affected row: { id, name, account, missing, unmapped }.
+ * Returns one entry per affected row, carrying the opp id + its current
+ * Reason Not Sold / Competition so a consumer can offer an inline fix:
+ * { id, oppId, name, account, reasonNotSold, competition, missing, unmapped }.
  */
 export function computeCloseNotSoldMissingData(closeNotSoldOpps) {
   const out = [];
@@ -126,7 +132,18 @@ export function computeCloseNotSoldMissingData(closeNotSoldOpps) {
     // actually wrong: no rule for this Reason Not Sold + Competition pair.
     if (o.unmapped) missing.push('Status + Reason (no mapping for this Reason Not Sold + Competition)');
     if (!o.bfoUrl) missing.push('BFO Address (link)');
-    if (missing.length) out.push({ id: o.id, name: o.name, account: o.account, missing, unmapped: !!o.unmapped });
+    if (missing.length) {
+      out.push({
+        id: o.id,
+        oppId: o.oppId,
+        name: o.name,
+        account: o.account,
+        reasonNotSold: o.reasonNotSold,
+        competition: o.competition,
+        missing,
+        unmapped: !!o.unmapped,
+      });
+    }
   }
   return out;
 }
