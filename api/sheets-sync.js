@@ -2,7 +2,7 @@ import { withAuth } from './_lib/http.js';
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
-const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
+const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'IFRS', 'TCFD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
 const COL_MAP = [
   { col: 0, key: 'company' },

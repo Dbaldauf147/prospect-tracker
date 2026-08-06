@@ -102,10 +102,18 @@ export const ASSET_TYPES = [
 // Frameworks the Frameworks dropdown in the prospect modal offers.
 // Kept in sync with LIST_FLAG_SOURCES so the modal and the My Accounts
 // Frameworks column read from the same vocabulary.
+// The Frameworks multi-select on the company card. A superset of
+// LIST_FLAG_SOURCES: every label there is backed by an uploaded Lists-page
+// file that can auto-flag a company, while IFRS and TCFD have no such list
+// and are recorded by hand or by the sustainability research. They live
+// here because "has this company reported under it" is the same question
+// for all of them — see REPORTING_FRAMEWORKS in utils/reportingFrameworks.
 export const FRAMEWORKS = [
   'Largest',
   'RECA',
   'CSRD',
+  'IFRS',
+  'TCFD',
   'CDP',
   'GRESB',
   'SBT',

@@ -3,6 +3,7 @@ import { loadList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { userLsGet } from '../../utils/userLs';
 import {
   parseEmployeesInput, parseTextInput, resolveCompanyFacts,
@@ -1364,6 +1365,59 @@ function RegulationReference() {
 // in a fixed-width left gutter (top-aligned) so every section — Sites,
 // Revenue, Jurisdiction, Lists, CA sites — lines up as table rows instead
 // of stacked blocks. A top border draws the row separators.
+// Sustainability targets + disclosure status for one company card, read
+// from the matched company record. Read-only: the company page owns both
+// fields, and duplicating an editor here would give the same value two
+// homes that could disagree.
+//
+// The three chips always render, even with no targets written down —
+// "reports under CSRD but has published no targets" is a finding in its
+// own right, and a row that vanished would hide it.
+function SustainabilityTargets({ prospect, listMatched, unnamed }) {
+  const muted = { fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' };
+  if (unnamed) {
+    return <div style={muted}>Add a company name to pull its targets across.</div>;
+  }
+  if (!prospect) {
+    return <div style={muted}>No matching company record. Add the company on the Table view to see its targets here.</div>;
+  }
+  const targets = String(prospect.sustainabilityTargets || '')
+    .split('\n')
+    .map(t => t.trim())
+    .filter(Boolean);
+  const statuses = reportingStatus(prospect.frameworks, listMatched);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexWrap: 'wrap' }}>
+        {statuses.map(({ label, reported, name }) => {
+          const c = reported ? REPORTED_COLORS : NOT_REPORTED_COLORS;
+          return (
+            <span
+              key={label}
+              title={`${name} — ${reported ? 'reported' : 'not reported'}. Set on the company page's Frameworks field.`}
+              style={{
+                fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                borderRadius: 4, whiteSpace: 'nowrap',
+                background: c.bg, color: c.text, border: `1px solid ${c.border}`,
+              }}
+            >{reported ? '\u2713' : '\u2013'} {label}</span>
+          );
+        })}
+      </div>
+      {targets.length === 0 ? (
+        <div style={muted}>No sustainability targets recorded on the company page.</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: '1.05rem', display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+          {targets.map((t, i) => (
+            <li key={`${i}-${t}`} style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text)' }}>{t}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CardRow({ label, children, first }) {
   return (
     <div style={{
@@ -2111,6 +2165,11 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
           <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: '1fr' }}>
             {companies.map((c) => {
               const matches = listMatches[c.name] || [];
+              // Labels a *confirmed* Lists-page mapping supplies for this
+              // company. Suggestions are excluded on purpose: the company
+              // card treats only confirmed mappings as "Auto", so counting
+              // fuzzy hits here would claim a disclosure the card doesn't.
+              const reportedLists = matches.filter(m => m.state === 'mapped').map(m => m.list);
               // True while either the revenue or the jurisdiction research
               // for this company is in flight — drives the combined button.
               const anyResearching = !!revState[c.name]?.loading || !!screenState[c.key]?.loading;
@@ -2282,6 +2341,22 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         loading={!!revState[c.name]?.loading}
                         disabled={c.name === UNNAMED}
                         onEdit={(value) => setFactEdit(c.name, 'employees', value)}
+                      />
+                    </CardRow>
+
+                    {/* Sustainability targets from the matched company card,
+                        with whether the company actually discloses under
+                        CSRD / IFRS / TCFD. Read-only here: the company page
+                        owns both, and this screener is where they get used.
+                        A target with no disclosure behind it is a different
+                        conversation from one filed in an audited report, and
+                        the screening questions below are the place that
+                        distinction matters. */}
+                    <CardRow label="Targets">
+                      <SustainabilityTargets
+                        prospect={prospectByKey.get(c.key) || null}
+                        listMatched={reportedLists}
+                        unnamed={c.name === UNNAMED}
                       />
                     </CardRow>
 
