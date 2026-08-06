@@ -3835,6 +3835,153 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
   );
 }
 
+// Prompt shown when an opp moves from "Lead" to "Qualifying". Qualifying
+// is the first stage the "Missing USD value" 🚩 applies to (see
+// needsUsdFlag), so this asks for the figure at the moment the gap would
+// otherwise open rather than leaving it to be chased off the Flags column
+// later. Pre-populated, so an opp that already carries a USD? value shows
+// it for review instead of a blank box.
+function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose }) {
+  // Same resolution the Quoted / Agreement Sent prompts use, so USD? shows
+  // the identical menu here that it does everywhere else — the user's
+  // column link first, then a same-named Dropdowns list.
+  const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const optionsFor = (field) => {
+    const link = columnLinks ? resolveColumnLink(field, columnLinks) : null;
+    if (link && listRegistry) return listRegistry.get(link.listKey)?.options || [];
+    if (listRegistry) {
+      const target = normName(field);
+      for (const list of listRegistry.values()) {
+        if (normName(list.label) === target && Array.isArray(list.options) && list.options.length) {
+          return list.options;
+        }
+      }
+    }
+    return null;
+  };
+
+  const curUsd = opp?.['USD?'] ?? '';
+  const [usd, setUsd] = useState(String(curUsd ?? ''));
+  const usdOptions = optionsFor('USD?');
+
+  function handleSave() {
+    onSave({ usd: usd.trim() });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  // Only dismiss when the press *started* on the backdrop. Drag-selecting text
+  // in a field and releasing the mouse over the dimmed backdrop otherwise fires
+  // a click on the overlay that would close the popup mid-selection.
+  const backdropMouseDown = useRef(false);
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 420, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Enter the USD value
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}just moved from <strong>Lead</strong> to <strong>Qualifying</strong>.
+            {' '}Add the <strong>USD?</strong> value below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem' }}>
+          <label style={labelStyle}>USD?</label>
+          {usdOptions ? (
+            <select
+              autoFocus
+              value={usd}
+              onChange={(e) => setUsd(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">(Select)</option>
+              {/* A stored value that isn't one of the configured options is
+                  kept selectable so legacy data doesn't drop off the menu. */}
+              {((!usd || usdOptions.includes(usd)) ? usdOptions : [usd, ...usdOptions]).map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              autoFocus
+              value={usd}
+              onChange={(e) => setUsd(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              placeholder="e.g. $25,000"
+              style={inputStyle}
+            />
+          )}
+          {String(curUsd ?? '').trim() ? (
+            <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 }}>
+              Currently: {String(curUsd).trim()}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Prompt shown whenever an opp moves into the "Quoted" stage so the user
 // can enter / review the quote-tracking data points (Quoted On, Chance?,
 // Margin Email Date - Sales Leader Review Date). Pre-populated with the
@@ -6893,6 +7040,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Amount so a newly-activated opp carries a dollar figure. Cleared on
   // Save or Skip.
   const [leadQuotedPromptId, setLeadQuotedPromptId] = useState(null);
+  // _id of the opp that just moved from "Lead" to "Qualifying". Qualifying
+  // is the first stage the "Missing USD value" flag covers, so the
+  // QualifyingUsdModal asks for USD? right at that boundary instead of
+  // leaving the gap to be found later. Cleared on Save or Skip.
+  const [qualifyingUsdPromptId, setQualifyingUsdPromptId] = useState(null);
   // { id, next } for an opp that just left the "Not Started" stage. An opp
   // becoming active is the moment its service is decided, so the Scope board
   // opens on that transition — whatever stage it moved to. `next` carries the
@@ -7815,6 +7967,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     else if (kind === 'agreementSent') setAgreementSentPromptId(id);
     else if (kind === 'sold') setSoldPromptId(id);
     else if (kind === 'leadQuoted') setLeadQuotedPromptId(id);
+    else if (kind === 'qualifyingUsd') setQualifyingUsdPromptId(id);
   }, []);
 
   const updateOppField = useCallback((id, field, rawValue) => {
@@ -8040,6 +8193,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       else if (nextStage === 'agreement sent') stagePrompt = 'agreementSent';
       else if (nextStage === 'sold') stagePrompt = 'sold';
       else if (nextStage === 'lead' && prevStage === 'not started') stagePrompt = 'leadQuoted';
+      // Qualifying is where the "Missing USD value" flag starts applying,
+      // so ask for the figure on the way in rather than flagging it after.
+      else if (nextStage === 'qualifying' && prevStage === 'lead') stagePrompt = 'qualifyingUsd';
     }
     // An opp leaving "Not Started" is the point its service is decided, so ask
     // for Scope on that transition whichever stage it moved to. The stage's
@@ -10011,6 +10167,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setLeadQuotedPromptId(null);
             }}
             onClose={() => setLeadQuotedPromptId(null)}
+          />
+        );
+      })()}
+
+      {qualifyingUsdPromptId != null && (() => {
+        const opp = records.find(r => r._id === qualifyingUsdPromptId);
+        if (!opp) return null;
+        return (
+          <QualifyingUsdModal
+            opp={opp}
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
+            onSave={({ usd }) => {
+              // Only push when the value actually changed so the undo
+              // stack stays uncluttered with no-op snapshots.
+              if (usd !== String(opp['USD?'] ?? '').trim()) {
+                updateOppField(opp._id, 'USD?', usd);
+              }
+              setQualifyingUsdPromptId(null);
+            }}
+            onClose={() => setQualifyingUsdPromptId(null)}
           />
         );
       })()}
