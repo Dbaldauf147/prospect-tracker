@@ -4,6 +4,9 @@ import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { userLsGet } from '../../utils/userLs';
+import {
+  parseEmployeesInput, parseTextInput, resolveCompanyFacts,
+} from '../../utils/companyFacts';
 import { apiFetch } from '../../utils/apiFetch';
 import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import {
@@ -147,7 +150,119 @@ function fmtStamp(ms) {
 // revenue" button asks Claude (with web search) for the company's most
 // recent annual revenue. `disabled` guards the unnamed-company card,
 // which has nothing to research.
-function RevenueSection({ data, loading, error, disabled, onResearch }) {
+// A researched figure that can be typed over.
+//
+// The three facts this card carries - revenue, headcount, HQ - are
+// research output, and research is sometimes wrong or blank. They also
+// feed the compliance verdicts below (CSRD's 1,000-employee test, the SB
+// 253 / SB 261 thresholds), so being stuck with a wrong one means being
+// stuck with a wrong answer.
+//
+// The value itself is the control: click it and it becomes an input.
+// There is no edit button competing with the research button already on
+// each row, and nothing moves when the mode changes.
+//
+// An edit never overwrites the research - it sits on top of it - so a
+// corrected figure carries a marker naming what was researched, and
+// clearing the box hands the row back. That is the only way to undo, so
+// an empty box has to be a save rather than a rejection.
+function EditableFact({
+  value, display, edited, researched, placeholder, parse, onSave, disabled, label, hint = '',
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+
+  function open() {
+    if (disabled) return;
+    setDraft(value == null ? '' : String(value));
+    setError('');
+    setEditing(true);
+  }
+
+  function commit() {
+    const result = parse(draft);
+    if (!result.ok) { setError(result.error); return; }
+    onSave(result.value);
+    setEditing(false);
+    setError('');
+  }
+
+  if (editing) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.35rem', flexWrap: 'wrap' }}>
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => { setDraft(e.target.value); setError(''); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            // Escape abandons the edit. Checked before blur can save it,
+            // which is why the input is torn down here rather than by
+            // letting the blur handler run.
+            if (e.key === 'Escape') { e.preventDefault(); setEditing(false); setError(''); }
+          }}
+          onBlur={commit}
+          aria-label={label}
+          placeholder={placeholder}
+          style={{
+            fontSize: 'var(--font-size-sm)', fontWeight: 700, fontFamily: 'inherit',
+            padding: '0.05rem 0.3rem', borderRadius: 4, minWidth: 0, width: '11ch',
+            border: `1px solid ${error ? '#B91C1C' : 'var(--color-accent)'}`,
+            background: 'var(--color-surface)', color: 'var(--color-text)',
+          }}
+        />
+        {error && <span style={{ color: '#B91C1C', fontSize: '0.62rem' }}>{error}</span>}
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.3rem' }}>
+      <span
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        onClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+        // The research detail this value used to carry on hover is kept,
+        // with the edit affordance appended rather than replacing it.
+        title={[hint, disabled ? '' : 'Click to edit'].filter(Boolean).join('\n\n') || undefined}
+        style={{
+          fontWeight: 700,
+          color: display ? 'var(--color-text)' : 'var(--color-text-muted)',
+          fontStyle: display ? 'normal' : 'italic',
+          fontSize: display ? 'var(--font-size-sm)' : 'var(--font-size-xs)',
+          cursor: disabled ? 'default' : 'text',
+          borderBottom: disabled ? 'none' : '1px dashed var(--color-border)',
+        }}
+      >{display || placeholder}</span>
+      {edited && (
+        // Says the figure was typed, not researched, and what it replaced.
+        // Without this a corrected card is indistinguishable from a
+        // correct one, and nobody can tell which numbers to trust.
+        <span
+          title={researched == null || researched === ''
+            ? 'Entered by hand. Nothing was researched for this field.'
+            : `Entered by hand, replacing the researched ${researched}.`}
+          style={{ fontSize: '0.58rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '0.05rem 0.3rem', whiteSpace: 'nowrap' }}
+        >edited</span>
+      )}
+      {edited && !disabled && (
+        <button
+          type="button"
+          onClick={() => onSave(null)}
+          title={researched == null || researched === ''
+            ? 'Clear this value'
+            : `Go back to the researched ${researched}`}
+          aria-label={`Revert ${label}`}
+          style={{ fontSize: '0.62rem', fontFamily: 'inherit', lineHeight: 1, padding: '0.05rem 0.2rem', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer' }}
+        >↺</button>
+      )}
+    </span>
+  );
+}
+
+function RevenueSection({ data, fact, loading, error, disabled, onResearch, onEdit }) {
   const btn = (label) => (
     <button
       type="button"
@@ -176,25 +291,26 @@ function RevenueSection({ data, loading, error, disabled, onResearch }) {
 
   return (
     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
-      {data && (data.revenue || data.summary) ? (
-        <>
-          <span
-            title={detail || undefined}
-            style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}
-          >
-            {data.revenue || '-'}
-          </span>
-          {data.fiscalYear && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
-          {btn(loading ? 'Researching…' : 'Re-run research')}
-        </>
+      {loading && !fact.value ? (
+        <span style={{ fontStyle: 'italic' }}>Researching revenue…</span>
       ) : (
-        <>
-          <span style={{ fontStyle: 'italic' }}>
-            {loading ? 'Researching revenue…' : 'Revenue: pending research'}
-          </span>
-          {btn(loading ? 'Researching…' : 'Research revenue')}
-        </>
+        <EditableFact
+          value={fact.value}
+          display={fact.value || ''}
+          edited={fact.edited}
+          researched={fact.researched}
+          placeholder={data ? 'Revenue: not reported' : 'Revenue: pending research'}
+          parse={parseTextInput}
+          onSave={onEdit}
+          disabled={disabled}
+          label="Revenue"
+          hint={detail}
+        />
       )}
+      {/* The fiscal year belongs to the researched figure, so it is not
+          shown against a hand-entered one it does not describe. */}
+      {data?.fiscalYear && !fact.edited && <span style={{ fontSize: '0.65rem' }}>{data.fiscalYear}</span>}
+      {btn(loading ? 'Researching…' : (data ? 'Re-run research' : 'Research revenue'))}
       {error && (
         <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{error}</span>
       )}
@@ -317,7 +433,7 @@ function ParentCompanySection({
 // lookup, the revenue-research run, or the HQ Location the My Accounts page
 // already stored. The region is whatever was researched, else derived from
 // the location, else whatever the company record already says.
-function HqSection({ location, region, source, loading, error, disabled, notFound, onLookup, onSetRegion, canApply, onApply }) {
+function HqSection({ location, fact, region, source, loading, error, disabled, notFound, onLookup, onSetRegion, onEditLocation, canApply, onApply }) {
   const btn = (label, onClick, disabledNow) => (
     <button
       type="button"
@@ -336,14 +452,21 @@ function HqSection({ location, region, source, loading, error, disabled, notFoun
 
   return (
     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-      {location ? (
-        <span title={source ? `from ${source}` : undefined} style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
-          {location}
-        </span>
+      {loading && !fact?.value ? (
+        <span style={{ fontStyle: 'italic' }}>Looking up HQ…</span>
       ) : (
-        <span style={{ fontStyle: 'italic' }}>
-          {loading ? 'Looking up HQ…' : notFound ? 'No HQ on file: try "Research everything"' : 'HQ: pending lookup'}
-        </span>
+        <EditableFact
+          value={fact?.value ?? location}
+          display={fact?.value || location || ''}
+          edited={!!fact?.edited}
+          researched={fact?.researched}
+          placeholder={notFound ? 'No HQ on file: try "Research everything"' : 'HQ: pending lookup'}
+          parse={parseTextInput}
+          onSave={onEditLocation}
+          disabled={disabled}
+          label="HQ location"
+          hint={source ? `from ${source}` : ''}
+        />
       )}
 
       {/* The two-value call the company popup stores. It's the same choice
@@ -384,23 +507,25 @@ function HqSection({ location, region, source, loading, error, disabled, notFoun
 // as its own row because headcount gates regimes independently of revenue
 // (CSRD's 1,000-employee test, for one). No button of its own — the figure
 // arrives with the revenue run, so "Re-run research" up there refreshes it.
-function EmployeesSection({ data, loading }) {
-  const count = Number(data?.employees);
+function EmployeesSection({ data, fact, loading, disabled, onEdit }) {
+  const count = Number(fact?.value);
   const has = Number.isFinite(count) && count > 0;
   return (
     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
-      {has ? (
-        <span style={{ fontWeight: 700, color: 'var(--color-text)', fontSize: 'var(--font-size-sm)' }}>
-          {count.toLocaleString()}
-        </span>
+      {loading && !has ? (
+        <span style={{ fontStyle: 'italic' }}>Researching employees…</span>
       ) : (
-        <span style={{ fontStyle: 'italic' }}>
-          {loading
-            ? 'Researching employees…'
-            : data
-              ? 'Not reported'
-              : 'Employees: pending research'}
-        </span>
+        <EditableFact
+          value={has ? count : null}
+          display={has ? count.toLocaleString() : ''}
+          edited={!!fact?.edited}
+          researched={fact?.researched == null ? null : Number(fact.researched).toLocaleString()}
+          placeholder={data ? 'Not reported' : 'Employees: pending research'}
+          parse={parseEmployeesInput}
+          onSave={onEdit}
+          disabled={disabled}
+          label="Employees"
+        />
       )}
     </div>
   );
@@ -1579,6 +1704,20 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
   // /api/hq-lookup can fill it without a research run — and because the HQ
   // Location the My Accounts page already stores lives outside that blob too.
   const hqResearch = useMemo(() => settings?.companyHqResearch || {}, [settings?.companyHqResearch]);
+
+  // Figures typed over the research, keyed by the same company slug
+  // (settings.companyFactEdits). Held apart from the research rather than
+  // written into it so "Re-run research" cannot silently discard a
+  // correction, and so the card can still say what it was corrected from.
+  const factEdits = useMemo(() => settings?.companyFactEdits || {}, [settings?.companyFactEdits]);
+
+  const setFactEdit = useCallback((name, field, value) => {
+    const slug = revenueSlug(name);
+    if (!slug || !updateSettingsPath) return;
+    // null clears the override and hands the row back to the research,
+    // which is how an edit is undone.
+    updateSettingsPath({ [`companyFactEdits.${slug}.${field}`]: value ?? null });
+  }, [updateSettingsPath]);
   // HQ Locations the My Accounts page auto-detected, keyed by prospect id.
   // Read as a fallback so a company already looked up over there doesn't have
   // to be looked up again here.
@@ -1597,10 +1736,19 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     const prospect = prospectByKey.get(companyKeyOf(name)) || null;
     const fromAccounts = prospect?.id ? String(hqRegionMap[prospect.id] || '').trim() : '';
 
-    const location = String(saved?.location || '').trim()
+    const researchedLocation = String(saved?.location || '').trim()
       || String(rev?.headquarters || '').trim()
       || fromAccounts;
-    const source = saved?.location ? 'HQ lookup'
+    // A typed HQ outranks all three research sources. The region is then
+    // derived from whatever the card actually shows, so correcting the
+    // location moves the North America call with it.
+    const { hqLocation } = resolveCompanyFacts({
+      edits: factEdits[slug] || null,
+      hqLocation: researchedLocation,
+    });
+    const location = hqLocation.value || '';
+    const source = hqLocation.edited ? 'entered by hand'
+      : saved?.location ? 'HQ lookup'
       : rev?.headquarters ? 'revenue research'
       : fromAccounts ? 'My Accounts HQ Location' : '';
 
@@ -1609,8 +1757,17 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
       || classifyHqRegion(location)
       || normalizeHqRegion(prospect?.hqRegion);
 
-    return { slug, location, source, region, prospect };
-  }, [hqResearch, revenueResearch, hqRegionMap, prospectByKey]);
+    return { slug, location, source, region, prospect, locationFact: hqLocation };
+  }, [hqResearch, revenueResearch, hqRegionMap, prospectByKey, factEdits]);
+
+  // Revenue and headcount as the card shows them: the research with any
+  // hand-entered correction on top. One resolution feeds the rows AND the
+  // screening below, so a corrected headcount changes the CSRD answer
+  // rather than only the figure above it.
+  const factsFor = useCallback((name) => resolveCompanyFacts({
+    edits: factEdits[revenueSlug(name)] || null,
+    revenueResearch: revenueResearch[revenueSlug(name)] || null,
+  }), [factEdits, revenueResearch]);
 
   // Push a known HQ onto the matching company record — the reason this row
   // exists. Only fills blanks: an HQ Region already chosen on the popup, or
@@ -1960,6 +2117,8 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
               // Resolved HQ for this company (location + North America call),
               // drawn from whichever source has it.
               const hq = hqInfoFor(c.name);
+              // Revenue and headcount, research with any correction on top.
+              const facts = factsFor(c.name);
               return (
                 <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
@@ -2060,6 +2219,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     <CardRow label="HQ">
                       <HqSection
                         location={hq.location}
+                        fact={hq.locationFact}
                         region={hq.region}
                         source={hq.source}
                         loading={!!hqState[c.name]?.loading}
@@ -2068,6 +2228,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         disabled={c.name === UNNAMED}
                         onLookup={() => lookupHq(c.name)}
                         onSetRegion={(value) => setHqRegion(c.name, value)}
+                        onEditLocation={(value) => setFactEdit(c.name, 'hqLocation', value)}
                         canApply={
                           !!hq.region && !!hq.prospect?.id
                           && !normalizeHqRegion(hq.prospect.hqRegion)
@@ -2079,10 +2240,12 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     <CardRow label="Revenue">
                       <RevenueSection
                         data={revenueResearch[revenueSlug(c.name)] || null}
+                        fact={facts.revenue}
                         loading={!!revState[c.name]?.loading}
                         error={revState[c.name]?.error || null}
                         disabled={c.name === UNNAMED}
                         onResearch={() => researchRevenue(c.name)}
+                        onEdit={(value) => setFactEdit(c.name, 'revenue', value)}
                       />
                     </CardRow>
 
@@ -2115,7 +2278,10 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     <CardRow label="Employees">
                       <EmployeesSection
                         data={revenueResearch[revenueSlug(c.name)] || null}
+                        fact={facts.employees}
                         loading={!!revState[c.name]?.loading}
+                        disabled={c.name === UNNAMED}
+                        onEdit={(value) => setFactEdit(c.name, 'employees', value)}
                       />
                     </CardRow>
 
@@ -2136,13 +2302,13 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         onSetSharedLink={setSharedLink}
                         caSiteCount={c.california}
                         // Prefills the CSRD Employee Count row.
-                        employees={revenueResearch[revenueSlug(c.name)]?.employees ?? null}
+                        employees={facts.employees.value}
                         // Feeds the derived SB 253 / SB 261 verdicts. Prefer
                         // the researched figure shown in the Revenue row,
                         // falling back to whatever the matched company
                         // record already carries.
                         revenue={
-                          revenueResearch[revenueSlug(c.name)]?.revenue
+                          facts.revenue.value
                           || prospectByKey.get(c.key)?.revenue
                           || ''
                         }
