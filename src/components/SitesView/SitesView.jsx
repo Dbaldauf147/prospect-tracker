@@ -4378,6 +4378,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ['Total Energy Cost', r => round(r.__totalCost__)],
   ];
 
+  // Which of those figures were MODELED rather than measured, for one
+  // row. A company's site list can hold real consumption — someone typed
+  // it off a bill, or an upload carried it — and an indicative number
+  // must never be written over that. Consumption is modeled when it came
+  // from the property-type estimate; cost when no actual spend was
+  // mapped; the rates always, since they are state / country averages and
+  // never a billed tariff.
+  const analysisEstimatedFields = (r, columnFor) => {
+    const out = [];
+    const mark = (label, isEstimate) => { if (isEstimate) out.push(columnFor(label)); };
+    mark('Annual Electric (kWh)', !!r.__kwhFromEstimate__ && typeof r.__kwh__ === 'number');
+    mark('Total Electric Cost', r.__electricCostActual__ == null && typeof r.__electricCost__ === 'number');
+    mark('Electric Rate ($/kWh)', typeof r.__electricRate__ === 'number');
+    mark('Annual Gas (Dth)', !!r.__thermsFromEstimate__ && typeof r.__therms__ === 'number');
+    mark('Total Natural Gas Cost', r.__gasCostActual__ == null && typeof r.__gasCost__ === 'number');
+    mark('Gas Rate ($/Dth)', typeof r.__gasRate__ === 'number');
+    // Total Energy Cost is the sum of two costs, so it is only measured
+    // when both sides of it were.
+    mark('Total Energy Cost', typeof r.__totalCost__ === 'number'
+      && (r.__electricCostActual__ == null || r.__gasCostActual__ == null));
+    return out.filter(Boolean);
+  };
+
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
   // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
@@ -4408,7 +4431,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         name = n === 1 ? `${label} (analysis)` : `${label} (analysis ${n})`;
       }
       used.add(name);
-      return { name, get };
+      return { label, name, get };
     });
 
     // allRows is built from cleanSitesData, which is sitesData filtered by
@@ -4421,11 +4444,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (source) derivedFor.set(source, derived);
     });
 
+    // An analysis column's label may have been renamed around a colliding
+    // uploaded one, and the estimate flags have to name the column as it
+    // was actually written.
+    const columnFor = (label) => analysisCols.find(c => c.label === label)?.name || '';
+    const loadedSoft = [];
     const loadedRows = sitesData.map((r) => {
       const o = {};
       for (const h of siteHeaders) o[h] = safeCell(r[h]);
       const derived = derivedFor.get(r);
       for (const col of analysisCols) o[col.name] = derived ? safeCell(col.get(derived)) : '';
+      loadedSoft.push(derived ? analysisEstimatedFields(derived, columnFor) : []);
       return o;
     });
     const loadedHeaders = [...siteHeaders, ...analysisCols.map(c => c.name)];
@@ -4443,6 +4472,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const merged = mergeIntoSiteList(
       { headers: existingHeaders, rows: existingRows },
       { headers: loadedHeaders, rows: loadedRows },
+      { soft: loadedSoft },
     );
 
     const entry = {
@@ -4474,8 +4504,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (merged.added) parts.push(`${merged.added.toLocaleString()} added`);
       if (merged.updated) parts.push(`${merged.updated.toLocaleString()} updated`);
       const detail = parts.length ? `${parts.join(', ')}, ` : '';
+      // Worth saying out loud: an indicative figure was NOT written over
+      // a real one. Silence there reads as the estimate having landed.
+      const kept = merged.protected
+        ? ` ${merged.protected.toLocaleString()} actual figure${merged.protected === 1 ? '' : 's'} already on the list were kept over the indicative ones.`
+        : '';
       return {
-        note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).`,
+        note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${kept}`,
         total: merged.rows.length,
       };
     } catch (e) {
