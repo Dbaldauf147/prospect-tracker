@@ -8,7 +8,7 @@ import { normClientName } from '../../utils/clientIssues';
 import { useIssues } from '../../hooks/useIssues';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { lookupCloseNotSold, reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
+import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
 import { setOppField } from '../../utils/opps2Store';
 
 // Issues tab — a running list of outstanding items that need to be
@@ -22,38 +22,51 @@ import { setOppField } from '../../utils/opps2Store';
 // sidebar badge.
 // Editor for a "Close Not Sold missing data" row: the Reason Not Sold +
 // Competition pair on the opp itself, which is what the Agents page maps
-// to the BFO Status / Reason used to close the opp out. Same two fields
-// (and the same dependent-option behaviour) as the Not Sold close-out
-// popup on Opps, so a fix applied here matches one applied there.
+// to the BFO Status / Reason used to close the opp out.
 //
-// The live preview shows the BFO Status / Reason the chosen pair maps to
-// — or says the pair is still unmapped — so the user can tell whether
-// their pick actually clears the issue before saving.
+// Reason Not Sold is strictly dependent on Competition — it only ever
+// lists reasons that have a close-out rule for the chosen Competition,
+// so every pair the user can assemble here is one that maps. That's the
+// whole point of the editor: the row is on the Issues list *because* its
+// current pair doesn't map, so an invalid current value is shown as a
+// note above the field rather than pre-selected in it (pre-selecting it
+// is what made the editor open on an unsaveable pair). Competitions with
+// no rules at all — blank, "N/A" — leave the field disabled and say so
+// instead of offering reasons that can't work under them.
 function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, saving, error, onSave, onClose }) {
   const fix = row.closeNotSold || {};
-  const [competition, setCompetition] = useState(String(fix.competition || ''));
-  const [reason, setReason] = useState(String(fix.reasonNotSold || ''));
+  const storedCompetition = String(fix.competition || '');
+  const storedReason = String(fix.reasonNotSold || '');
+  const [competition, setCompetition] = useState(storedCompetition);
+  // Seed the reason only when the stored pair actually maps; otherwise
+  // start empty so the field shows the valid choices, not the broken one.
+  const [reason, setReason] = useState(
+    () => (lookupCloseNotSold(storedCompetition, storedReason) ? storedReason : ''),
+  );
 
-  // Only the Reason Not Sold values that have a close-out rule for the
-  // chosen Competition. Competitions without rules (blank, N/A) keep the
-  // full list; the row's existing reason stays selectable so a prefilled
-  // value never silently disappears.
-  const filteredReasonOptions = useMemo(() => {
-    const opts = reasonOptionsForCompetition(competition, reasonOptions);
-    return (reason && !opts.includes(reason)) ? [reason, ...opts] : opts;
-  }, [competition, reasonOptions, reason]);
+  const competitionHasRules = hasCloseNotSoldRules(competition);
+  // Only the Reason Not Sold values with a close-out rule for the chosen
+  // Competition. reasonOptionsForCompetition falls back to the full list
+  // for a rule-less Competition (so the Opps popup never paints the user
+  // into a corner) — here that fallback would offer reasons that can't
+  // map, so a rule-less Competition yields no options at all.
+  const filteredReasonOptions = useMemo(
+    () => (competitionHasRules ? reasonOptionsForCompetition(competition, reasonOptions) : []),
+    [competitionHasRules, competition, reasonOptions],
+  );
 
   function handleCompetitionChange(next) {
     setCompetition(next);
     // Drop a reason that isn't valid under the newly-chosen Competition
     // so an unmapped combination can't be saved by accident.
-    if (reason && !reasonOptionsForCompetition(next, reasonOptions).includes(reason)) {
-      setReason('');
-    }
+    if (reason && !lookupCloseNotSold(next, reason)) setReason('');
   }
 
   const mapped = lookupCloseNotSold(competition, reason);
-  const unchanged = competition === String(fix.competition || '') && reason === String(fix.reasonNotSold || '');
+  // The stored reason the seeding above deliberately didn't pre-select.
+  const droppedReason = (storedReason && !lookupCloseNotSold(storedCompetition, storedReason)) ? storedReason : '';
+  const unchanged = competition === storedCompetition && reason === storedReason;
+  const canSave = !saving && !unchanged && !!competition && !!reason;
 
   const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: '#1E293B', display: 'block', marginBottom: 4 };
   const inputStyle = {
@@ -113,12 +126,23 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
           </div>
           <div>
             <label style={labelStyle}>Reason Not Sold</label>
+            {droppedReason && (
+              <div style={{ fontSize: '0.7rem', color: '#92400E', marginBottom: 4 }}>
+                Currently <strong>{droppedReason}</strong>, which has no close-out rule under
+                {' '}<strong>{storedCompetition || 'a blank Competition'}</strong> — pick a valid pair below.
+              </div>
+            )}
             <select
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              style={inputStyle}
+              disabled={!competitionHasRules}
+              style={{ ...inputStyle, background: competitionHasRules ? '#fff' : '#F1F5F9', color: competitionHasRules ? '#1E293B' : '#94A3B8' }}
             >
-              <option value="">(Select a reason)</option>
+              <option value="">
+                {competitionHasRules
+                  ? '(Select a reason)'
+                  : (competition ? `(No reason maps under "${competition}")` : '(Select a Competition first)')}
+              </option>
               {filteredReasonOptions.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
@@ -129,7 +153,9 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
           }}>
             {mapped
               ? <>Closes out in BFO as Status <strong>{mapped.status}</strong> &middot; Reason <strong>{mapped.reason}</strong>.</>
-              : <>This Reason Not Sold + Competition pair has no BFO mapping yet, so the opp stays on this list. Pick a mapped pair, or extend the mapping table.</>}
+              : competitionHasRules
+                ? <>Pick a Reason Not Sold — each one listed maps to a BFO Status / Reason and clears this issue.</>
+                : <>{competition ? <>No Reason Not Sold maps under <strong>{competition}</strong>, so the opp would stay on this list. Choose a different Competition, or extend the mapping table.</> : <>Choose the Competition first — it decides which Reason Not Sold values can close this opp out in BFO.</>}</>}
           </div>
           {error && (
             <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>
@@ -137,9 +163,18 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
         </div>
 
         <div style={{
-          display: 'flex', justifyContent: 'flex-end', gap: '0.5rem',
+          display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem',
           padding: '0.6rem 1rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC',
         }}>
+          {/* Say why Save is off — a greyed-out button with no reason
+              just reads as broken. */}
+          {!canSave && !saving && (
+            <span style={{ marginRight: 'auto', fontSize: '0.7rem', color: '#64748B' }}>
+              {!competition || !reason
+                ? 'Pick a Competition and a Reason Not Sold to enable Save.'
+                : 'Nothing changed yet — pick a different Competition or Reason.'}
+            </span>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -149,13 +184,18 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
           </button>
           <button
             type="button"
-            disabled={saving || unchanged}
+            disabled={!canSave}
+            title={canSave
+              ? 'Save these values to the opp on Opps'
+              : (!competition || !reason
+                ? 'Pick a Competition and a Reason Not Sold first'
+                : 'Nothing changed yet')}
             onClick={() => onSave({ competition: competition.trim(), reason })}
             style={{
               ...btnStyle, border: '1px solid #0A66C2',
-              background: (saving || unchanged) ? '#93C5FD' : '#0A66C2',
+              background: canSave ? '#0A66C2' : '#93C5FD',
               color: '#fff',
-              cursor: (saving || unchanged) ? 'default' : 'pointer',
+              cursor: canSave ? 'pointer' : 'default',
             }}
           >
             {saving ? 'Saving…' : 'Save to Opps'}
