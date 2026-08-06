@@ -4351,6 +4351,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return Math.round(value * f) / f;
   };
   const ANALYSIS_SITE_COLUMNS = [
+    // The division / business unit the site sits under, from the mapped
+    // Division column. It is what a portfolio this size is actually read
+    // by — "which of our operating companies is this site" — and the
+    // company popup had no way to answer it.
+    ['Division', r => r.__division__ || ''],
     ['ST / Prov', r => r.__stateProvinceDisplay__ || r.__state__ || ''],
     ['Country', r => r.__country__ || ''],
     ['Zip', r => r.__zipNorm__ || ''],

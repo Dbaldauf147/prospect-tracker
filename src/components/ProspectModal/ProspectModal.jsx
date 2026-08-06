@@ -21,6 +21,7 @@ import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSub
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
 import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
+import { siteListFacts as computeSiteListFacts, formatSqft } from '../../utils/siteListFacts';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 // Aliased: `setClientManager` is also the name of this modal's own state
 // setter for the resolved value.
@@ -3571,6 +3572,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // slugify in migrateCompanyData so renames carry the list along.
   const siteListSlug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
   const currentSiteList = (settings.companySiteLists || {})[siteListSlug] || null;
+  // Sq ft, divisions and property types across that list — the three
+  // things a portfolio is read by, summarised above the table so they
+  // don't have to be counted out of it by eye.
+  const siteListFacts = useMemo(() => computeSiteListFacts(currentSiteList), [currentSiteList]);
 
   // Parse an uploaded .xlsx/.xls/.csv into { headers, rows } and stash it
   // under settings.companySiteLists[slug]. Rows are plain header→cell
@@ -7000,6 +7005,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 {currentSiteList && (currentSiteList.rows || []).length > 0 && (
                   <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
                     {currentSiteList.rows.length} {currentSiteList.rows.length === 1 ? 'site' : 'sites'}
+                    {/* What the list adds up to, from the columns it
+                        actually carries. Each part appears only when the
+                        list has that data — a portfolio nobody has sized
+                        says nothing rather than "0 ft²". */}
+                    {siteListFacts.sqft != null && (
+                      <span
+                        title={siteListFacts.sqftSites === currentSiteList.rows.length
+                          ? `${siteListFacts.sqft.toLocaleString()} ft² across all ${siteListFacts.sqftSites} sites`
+                          : `${siteListFacts.sqft.toLocaleString()} ft² across the ${siteListFacts.sqftSites} of ${currentSiteList.rows.length} sites that carry a size`}
+                      >
+                        {' · '}{formatSqft(siteListFacts.sqft)}
+                        {siteListFacts.sqftSites < currentSiteList.rows.length && ' (partial)'}
+                      </span>
+                    )}
+                    {siteListFacts.divisions.length > 0 && (
+                      <span title={siteListFacts.divisions.join('\n')}>
+                        {' · '}{siteListFacts.divisions.length} {siteListFacts.divisions.length === 1 ? 'division' : 'divisions'}
+                      </span>
+                    )}
+                    {siteListFacts.propertyTypes.length > 0 && (
+                      <span title={siteListFacts.propertyTypes.join('\n')}>
+                        {' · '}{siteListFacts.propertyTypes.length} {siteListFacts.propertyTypes.length === 1 ? 'property type' : 'property types'}
+                      </span>
+                    )}
                   </span>
                 )}
               </div>
