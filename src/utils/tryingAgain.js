@@ -15,6 +15,8 @@
 // on when a service is being retried — hence one implementation rather than
 // a copy in each.
 
+import { isActiveOppStage } from './oppStages.js';
+
 export const TRYING_AGAIN = 'Trying again';
 
 // purple-100 / purple-800 — distinct from the green (won), amber (in-flight),
@@ -30,14 +32,24 @@ export function hasSavedStatus(manual) {
 }
 
 // manual: the status saved on the company card for this service.
-// auto:   the status derived from an opp whose Scope names this service.
-// Both present → the service is being tried again.
+// auto:   the STAGE of the opp whose Scope names this service — both boards
+//         put a stage here ('Quoted', 'Sold', …), not a free-text status.
+//
+// Both present AND that opp still live → the service is being tried again.
+//
+// The live check is the whole point of the pair. "Trying again" claims a
+// service is back IN PLAY, and a closed opp is the opposite of that: a deal
+// marked Sold or Not Sold years ago is exactly the history the saved status
+// already records. Without this, every service that had ever appeared on any
+// closed opp went purple the moment the company card carried a status for it
+// — which on an established account is most of the board, and reads as a
+// pipeline that isn't there.
 export function isTryingAgain(manual, auto) {
-  return hasSavedStatus(manual) && !!String(auto ?? '').trim();
+  return hasSavedStatus(manual) && isActiveOppStage(auto);
 }
 
 // Tooltip shared by both boards, so the purple chip explains itself the same
 // way wherever it turns up.
 export function tryingAgainTitle(manual, auto) {
-  return `Trying again: this service was already marked “${manual}”, and an opp now names it${auto ? ` (${auto})` : ''}. The saved status is unchanged.`;
+  return `Trying again: this service was already marked “${manual}”, and a live opp now names it${auto ? ` (${auto})` : ''}. The saved status is unchanged.`;
 }
