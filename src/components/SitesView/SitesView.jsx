@@ -280,6 +280,30 @@ function isUtilityLookupCountry(rawCountry) {
     || /^(mx|mex|m[eé]xico)$/i.test(c);
 }
 
+// Narrower still: which countries a US/Canadian state code may be
+// DERIVED for. Every source of that code — the utility file's zip match,
+// the zip-prefix table, and the state-column normalizer — speaks US
+// 2-letter codes, and postal codes collide across countries: a Spanish
+// 45600 reads as Ohio's 456xx, an Argentine 16291 as Pennsylvania's
+// 162xx. That produced a state (and an ISO, and a US state's indicative
+// rate, and a US state's compliance ordinances) for sites nowhere near
+// North America.
+//
+// Mexico is in scope for the utility lookup above but NOT here: its
+// 5-digit códigos postales collide with US zips just as freely, and it
+// has no US-style state code to resolve to. Its subdivision reaches the
+// Mexico flags as the raw uploaded string instead (__stateRaw__).
+//
+// An empty / unknown country stays in scope, like the lookup above:
+// uploads without a Country column are overwhelmingly US.
+function isStateCodeCountry(rawCountry) {
+  const c = String(rawCountry || '').trim();
+  if (!c) return true;
+  return /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(c)
+    || /^(pr|puerto\s*rico)$/i.test(c)
+    || /^(ca|can|canada)$/i.test(c);
+}
+
 // Inline autocomplete input used by supplier cells in the Utility
 // Lookup table. Filters the bundled ENERGY_SUPPLIERS list by the
 // typed substring; Enter commits the highlighted match (or the typed
@@ -1964,12 +1988,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const zip = uploadedZip || zipEstimate?.zip || '';
       const zipEstimated = !uploadedZip && !!zipEstimate;
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
+      const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      // Whether a US / Canadian state code may be derived for this site
+      // at all. Read from the uploaded Country alone — never from the zip
+      // match's country, which on a foreign site is the collision this
+      // gate exists to stop.
+      const stateInScope = isStateCodeCountry(inputCountry);
       // State resolution for indicative rates + the deregulation map.
       // Prefer the utility file's zip match, then the zip prefix, then
       // a mapped State column — but only when that column normalizes to
       // a real US state code, so international provinces ("Milan",
       // "SP") don't false-map and still fall through to country rates.
-      const state = match?.state || zipToState(zip) || normalizeState(stateColInput);
+      //
+      // Out of scope, nothing is derived: a site in Spain or Argentina has
+      // no state, and inventing one from a colliding postal code priced it
+      // at an Ohio rate and screened it against Ohio's ordinances.
+      const state = stateInScope
+        ? (match?.state || zipToState(zip) || normalizeState(stateColInput))
+        : null;
       // Property type + customer segment resolve first: the segment
       // (commercial vs industrial) picks which state-rate column
       // applies. An explicit Segment column wins; otherwise infer it
@@ -1997,7 +2033,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const gasUomRaw = gasUomOverride ? r[gasUomOverride] : '';
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
-      const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
       // Gate the utility-provider lookup to the four supported countries
       // (US / Puerto Rico / Canada / Mexico). Out-of-scope sites skip the
       // zip → utility match and the vendor-name → known-utility match so
@@ -2189,7 +2224,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ...r,
         id: i,
         __zipNorm__: zip,
-        __iso__: lookupIsoForZip(zip),
+        // ISO / RTO is a North-American market map keyed by US zip, so it
+        // is gated with the state code: a Spanish postal code that lands
+        // inside PJM's zip range is the same collision, and the Excel
+        // export already blanks the market for non-US/CA sites. Out of
+        // scope reads back as the same "nothing known" shape the lookup
+        // returns for a zip it has never seen.
+        __iso__: stateInScope ? lookupIsoForZip(zip) : lookupIsoForZip(null),
         __zipEstimated__: zipEstimated,
         __zipEstimateCount__: zipEstimate?.candidateCount || 0,
         __zipEstimateSource__: zipEstimate?.source || null,
@@ -2213,7 +2254,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // Canonical US code when resolved (drives rates + deregulation
         // lookups); else the raw mapped value so non-US provinces still
         // display.
-        __state__: state || stateColInput || null,
+        // Null outside the US / Canada, where the raw value is a foreign
+        // subdivision ("Toledo (Castilla-La Mancha)") that every consumer
+        // of this field reads as a state code. The uploaded string is
+        // still carried, on __stateRaw__.
+        __state__: stateInScope ? (state || stateColInput || null) : null,
+        // The State / Province column exactly as uploaded, whatever the
+        // country and never a derived code. The Mexico flags key off it —
+        // a Baja site has to stay recognisable as Baja even though a
+        // Mexican código postal resolves no state code.
+        __stateRaw__: stateColInput || null,
         // Display value for the export's State / Province columns. US and
         // Canadian sites keep the 2-letter code (TX, ON); every other
         // country shows the full subdivision name exactly as uploaded —
@@ -5018,7 +5068,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // dereg gate so a regulated CFE site still surfaces.
         if (commodity === 'electric'
           && isMexico(r.__country__)
-          && !isBajaState(r.__state__)
+          // The uploaded subdivision, not __state__: Mexico resolves no
+          // US state code, so "Baja California" only survives on the raw
+          // field.
+          && !isBajaState(r.__stateRaw__ || r.__state__)
           && isCFE(r.__electric__)) {
           const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
           if (kwh > MEXICO_CFE_KWH_THRESHOLD) g.hasMexicoSourcing = true;
@@ -9082,7 +9135,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // too-low-consumption flag (< 6 GWh/yr). Pass the raw state
         // string here (not the US/CA-only stateCode) so the Baja
         // exclusion still sees a "Baja California" tag on Mexican rows.
-        const mxFlag = mexicoSiteFlag(country, r.__state__ || '', electricUtility, kwh);
+        const mxFlag = mexicoSiteFlag(country, r.__stateRaw__ || r.__state__ || '', electricUtility, kwh);
         // Property-type mapping flag: when the upload carried a raw
         // property-type value but normalizePropertyType couldn't
         // resolve it to a canonical entry, the per-property-type
