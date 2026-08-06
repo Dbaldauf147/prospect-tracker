@@ -4895,7 +4895,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const revData = revenueResearch[revSlug(name)] || null;
       const prospect = (prospects || []).find(p => keyOf(p?.company) === e.key) || null;
       const fromProspect = prospect?.revenue;
-      const revenueLabel = String(revData?.revenue || fromProspect || '').trim();
+      const ownRevenueLabel = String(revData?.revenue || fromProspect || '').trim();
+
+      // The entity the thresholds are measured at, resolved exactly as the
+      // card's thresholdRevenueFor does. Every regime in this section tests
+      // the CONSOLIDATED group, so a recorded parent whose revenue has been
+      // researched IS the test subject; an unresearched parent falls back to
+      // the company's own figure rather than screening on nothing.
+      const parentName = String(parentCompanies[e.key] || '').trim();
+      const parentRev = parentName ? (revenueResearch[revSlug(parentName)] || null) : null;
+      const parentRevenueLabel = String(parentRev?.revenue || '').trim();
+      const useParentRevenue = !!(parentName && parentRevenueLabel);
+      const revenueLabel = useParentRevenue ? parentRevenueLabel : ownRevenueLabel;
+      const revenueEntity = useParentRevenue ? parentName : '';
       const revenueUsd = parseRevenueUsd(revenueLabel);
       const research = complianceResearch[e.key] || null;
       const employees = Number.isFinite(Number(revData?.employees)) && Number(revData.employees) > 0
@@ -4929,6 +4941,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const criterionContext = {
         revenueUsd,
         revenueLabel,
+        revenueEntity,
         caSiteCount: e.california,
         employees,
         csrd: research?.csrd || null,
@@ -5010,6 +5023,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             : deriveRegulationVerdict(reg, {
               revenueUsd,
               revenueLabel,
+              revenueEntity,
               jurisdictionAnswer: answer,
               jurisdictionLabel: q.jurisdiction,
               doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
@@ -5044,9 +5058,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         };
       });
 
-      const parentName = String(parentCompanies[e.key] || '').trim();
-      const parentRev = parentName ? (revenueResearch[revSlug(parentName)] || null) : null;
-
       out.push({
         name, california: e.california, total: e.total, caSites: e.caSites,
         yesJurisdictions, regulations, revenueLabel,
@@ -5055,8 +5066,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         employees,
         hq,
         parent: parentName,
-        parentRevenueLabel: String(parentRev?.revenue || '').trim(),
+        parentRevenueLabel,
         parentRevenueFiscalYear: parentRev?.fiscalYear || '',
+        // Which entity's revenue the verdicts below were derived from, and
+        // this company's own figure when they differ — the sheet has to show
+        // both or a reader can't check the working.
+        revenueEntity,
+        ownRevenueLabel,
         // Card-level screening state the jurisdiction rows are read against.
         doingBusinessInCA: doingBusinessInCA || '',
         caRuledOut,

@@ -1051,6 +1051,11 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
       // travels with it — a verdict reached on the parent's numbers reads
       // as unsupported when only the subsidiary's figure is on the page.
       if (co.parent) {
+        // Say outright whether the thresholds were tested at the parent, and
+        // carry the company's own figure alongside when they were. A reader
+        // checking a Yes against a subsidiary that turns over a fraction of
+        // the quoted revenue has to be able to see why that is not an error.
+        const screenedAtParent = !!co.revenueEntity;
         trailing.push({
           label: 'Parent',
           text: [
@@ -1058,6 +1063,9 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
             co.parentRevenueLabel
               ? `revenue ${co.parentRevenueLabel}${co.parentRevenueFiscalYear ? ` (${co.parentRevenueFiscalYear})` : ''}`
               : 'revenue not researched',
+            screenedAtParent
+              ? `thresholds below tested at the parent${co.ownRevenueLabel ? `; ${co.name}'s own revenue ${co.ownRevenueLabel}` : ''}`
+              : 'thresholds below tested at this company (no parent revenue researched)',
           ].filter(Boolean).join('  ·  '),
         });
       }
