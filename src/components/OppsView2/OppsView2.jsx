@@ -465,6 +465,55 @@ function needsBudgetTimelineFlag(row) {
   return timeline === '';
 }
 
+// "Move to Qualifying?" flag: the opp is still sitting at the Lead stage
+// but its Status column already says a meeting is scheduled — once a
+// meeting is booked the deal has moved on, so the Stage should follow it
+// to Qualifying. Red rather than yellow: this is a stage that's wrong
+// now, not a field waiting to be filled in. Snoozeable (see
+// `qualifyingFlagSnoozeDaysLeft`) for the times Lead really is still right.
+function needsQualifyingStageFlag(row) {
+  if (!row) return false;
+  if (normCell(rowValueByHeader(row, 'stage')) !== 'lead') return false;
+  return normCell(rowValueByHeader(row, 'status')) === 'meeting scheduled';
+}
+
+// How long the "Move to Qualifying?" snooze runs for.
+const QUALIFYING_FLAG_SNOOZE_DAYS = 7;
+
+// Days left on a snoozed "Move to Qualifying?" flag — `_snoozeQualifyingFlagUntil`
+// holds the ISO date it wakes back up. null once the snooze has lapsed (or was
+// never set), so the flag comes back on its own without any cleanup.
+function qualifyingFlagSnoozeDaysLeft(row) {
+  const days = daysUntilDateISO(row?._snoozeQualifyingFlagUntil);
+  return days != null && days >= 0 ? days : null;
+}
+
+// The flag as it should render right now: 'active' when it fires,
+// 'snoozed' when it fires but the user has parked it, null when the opp
+// doesn't match at all.
+function qualifyingStageFlagState(row) {
+  if (!needsQualifyingStageFlag(row)) return null;
+  return qualifyingFlagSnoozeDaysLeft(row) == null ? 'active' : 'snoozed';
+}
+
+// ISO yyyy-mm-dd `n` days out from today, used to stamp the snooze.
+function isoDaysFromToday(n) {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// "in 7 days" / "tomorrow" / "today" for a snooze countdown.
+function snoozeCountdownLabel(days) {
+  if (days == null) return '';
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days} days`;
+}
+
 // The timeline kinds offered in the "Timelines" dropdown inside the Notes and
 // Follow Up popups. Two presets ship by default; anything the user types is
 // remembered and joins the list (see utils/timelineTypeOptions). The user logs
@@ -4727,6 +4776,65 @@ export function OppInfoModal({
               </span>
             </div>
           )}
+          {qualifyingStageFlagState(opp) === 'active' && (
+            // Same rule as the Flags-column 🚩: the Stage is still Lead
+            // while Status says a meeting is booked. Shown here too so it's
+            // visible when the Flags column is hidden in the table, with the
+            // same snooze the column offers.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCA5A5', borderRadius: 6,
+              background: '#FEF2F2', fontSize: '0.8rem',
+              color: '#991B1B', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <strong>Move to Qualifying?</strong> This opp is still at the{' '}
+                <strong>Lead</strong> stage but its Status says{' '}
+                <strong>Meeting scheduled</strong> — consider moving it to{' '}
+                <strong>Qualifying</strong> with the meeting scheduled.
+              </span>
+              <button
+                type="button"
+                onClick={() => onFieldChange('_snoozeQualifyingFlagUntil', isoDaysFromToday(QUALIFYING_FLAG_SNOOZE_DAYS))}
+                title={`Snooze this flag for ${QUALIFYING_FLAG_SNOOZE_DAYS} days`}
+                style={{
+                  flexShrink: 0, padding: '0.25rem 0.6rem', background: '#fff',
+                  border: '1px solid #FCA5A5', borderRadius: 4,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#991B1B', cursor: 'pointer',
+                }}
+              >Snooze {QUALIFYING_FLAG_SNOOZE_DAYS}d</button>
+            </div>
+          )}
+          {qualifyingStageFlagState(opp) === 'snoozed' && (
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.5rem 0.8rem',
+              border: '1px solid #E2E8F0', borderRadius: 6,
+              background: '#F8FAFC', fontSize: '0.76rem',
+              color: '#64748B', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                “Move to Qualifying?” snoozed — back{' '}
+                {snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(opp))}.
+              </span>
+              <button
+                type="button"
+                onClick={() => onFieldChange('_snoozeQualifyingFlagUntil', '')}
+                title="Bring this flag back now"
+                style={{
+                  flexShrink: 0, padding: '0.25rem 0.6rem', background: '#fff',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-accent)', cursor: 'pointer',
+                }}
+              >Restore</button>
+            </div>
+          )}
           {opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
@@ -8785,6 +8893,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
+      if (qualifyingStageFlagState(row) === 'active') parts.push('Move to Qualifying');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
@@ -8805,6 +8914,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         let n = 0;
         if (needsUsdFlag(row)) n += 1;
         if (needsBudgetTimelineFlag(row)) n += 1;
+        if (qualifyingStageFlagState(row) === 'active') n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
@@ -8818,6 +8928,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         const missingUsd = needsUsdFlag(row);
         const missingBudgetTimeline = needsBudgetTimelineFlag(row);
+        const qualifyingFlag = qualifyingStageFlagState(row);
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
@@ -8825,7 +8936,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -8839,6 +8950,45 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 title="Budgets is in Scope but the Timeline? field is empty: set the budget delivery timeline."
                 style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
               >⚠ Budget delivery timeline?</span>
+            )}
+            {qualifyingFlag === 'active' && (
+              <>
+                <span
+                  title="Stage is still Lead but Status says a meeting is scheduled: consider moving this opp to Qualifying."
+                  style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+                >🚩 Move to Qualifying?</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateOppField(row._id, '_snoozeQualifyingFlagUntil', isoDaysFromToday(QUALIFYING_FLAG_SNOOZE_DAYS));
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  title={`Snooze this flag for ${QUALIFYING_FLAG_SNOOZE_DAYS} days`}
+                  style={{
+                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
+                    fontSize: '0.62rem', color: '#991B1B', fontFamily: 'inherit', textDecoration: 'underline',
+                  }}
+                >snooze</button>
+              </>
+            )}
+            {qualifyingFlag === 'snoozed' && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span
+                  title={`"Move to Qualifying?" snoozed — back ${snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(row))} (${row._snoozeQualifyingFlagUntil}).`}
+                  style={{ ...chipBase, fontWeight: 600, background: '#F1F5F9', color: '#94A3B8', border: '1px solid #E2E8F0' }}
+                >Qualifying flag snoozed</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); updateOppField(row._id, '_snoozeQualifyingFlagUntil', ''); }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  title="Bring this flag back now"
+                  style={{
+                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
+                    fontSize: '0.62rem', color: 'var(--color-accent)', fontFamily: 'inherit', textDecoration: 'underline',
+                  }}
+                >restore</button>
+              </span>
             )}
             {missingAddr && (
               <span
