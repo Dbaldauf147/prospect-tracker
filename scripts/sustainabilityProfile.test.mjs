@@ -9,6 +9,7 @@
 // reading as a person's decision is the one failure that matters here.
 import {
   sustainabilityProfile, describeSustainability, companyResearchSlug,
+  frameworksNamedInProse,
 } from '../src/utils/sustainabilityProfile.js';
 
 let passed = 0, failed = 0;
@@ -138,6 +139,75 @@ eq(
   describeSustainability(sustainabilityProfile({})),
   'Add a company name to pull its sustainability targets across.',
   'an unnamed company is asked for a name',
+);
+
+// ---- frameworks named in the narrative --------------------------------------
+//
+// The research is told to list a framework only with direct evidence of a
+// published report, while its prose repeats what a company says about
+// itself. The two halves disagree often, and the disagreement is the
+// finding — so it has to be detected without inventing new ones.
+
+eq(
+  frameworksNamedInProse('The company joined UN PRI in 2021 and reports using SASB and TCFD frameworks.'),
+  ['TCFD', 'UN PRI'],
+  'the narrative’s framework names are picked out',
+);
+eq(frameworksNamedInProse('CDP respondent, GRESB rated, SBTi validated'), ['CDP', 'GRESB', 'SBT'], 'acronyms and the SBTi spelling');
+eq(frameworksNamedInProse('Aligned to the ISSB standards'), ['IFRS'], 'ISSB is how IFRS S1/S2 usually gets written');
+eq(frameworksNamedInProse('Reporting under California SB 253'), ['CA SB'], 'the California bills map to their label');
+eq(frameworksNamedInProse(['', null]), [], 'nothing in the prose, nothing found');
+eq(frameworksNamedInProse(''), [], 'and an empty string is not a match for everything');
+
+// Whole words only — the same trap the scope matcher fell into.
+eq(frameworksNamedInProse('Our subtotal is rising'), [], '"sbt" inside a longer word is not SBTi');
+eq(frameworksNamedInProse('recap of the year'), [], 'and "reca" inside another word is not RECA');
+eq(frameworksNamedInProse('Principles guide our pricing'), [], 'a bare "pri" is deliberately not a UN PRI match');
+
+// ---- confirmed vs claimed ---------------------------------------------------
+//
+// MassMutual, verbatim: the structured list found UN PRI only, while the
+// summary asserts TCFD. Neither a tick nor a blank is the truth here.
+
+const massmutual = sustainabilityProfile({
+  company: 'MassMutual',
+  companyResearch: {
+    massmutual: {
+      summary: 'The company joined UN PRI in 2021, published its inaugural sustainability report in 2022, and reports using SASB and TCFD frameworks.',
+      programs: ['Impact Investment program'],
+      frameworks: ['UN PRI'],
+      reports: [],
+    },
+  },
+});
+eq(massmutual.frameworks, ['UN PRI'], 'the confirmed list is what the research actually evidenced');
+eq(massmutual.otherFrameworks, ['UN PRI'], 'UN PRI shows even though it is not one of the three chips');
+eq(massmutual.claimedFrameworks, ['TCFD'], 'TCFD is reported as claimed, because only the prose says it');
+
+// A framework the list DID confirm never doubles up as a claim.
+const both = sustainabilityProfile({
+  company: 'X',
+  companyResearch: { x: { summary: 'Reports under TCFD.', frameworks: ['TCFD'], reports: [] } },
+});
+eq(both.claimedFrameworks, [], 'a confirmed framework is not also listed as claimed');
+eq(both.otherFrameworks, [], 'and a chip framework is not repeated as an extra');
+
+// A curated framework list settles it too: somebody decided.
+const curatedWins = sustainabilityProfile({
+  company: 'X',
+  prospect: { frameworks: ['TCFD'] },
+  companyResearch: { x: { summary: 'Reports under TCFD.', frameworks: [], reports: [] } },
+});
+eq(curatedWins.claimedFrameworks, [], 'a framework the user ticked is confirmed, not claimed');
+
+// A claim on its own is enough to make the row worth rendering.
+eq(
+  sustainabilityProfile({
+    company: 'X',
+    companyResearch: { x: { summary: 'Said to follow TCFD.', frameworks: [], reports: [], targets: [], programs: [] } },
+  }).hasAny,
+  true,
+  'a claim with nothing else still has something to say',
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

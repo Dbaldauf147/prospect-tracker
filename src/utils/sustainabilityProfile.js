@@ -21,6 +21,61 @@
 // Import-free, so the rules can be pinned under plain Node
 // (scripts/sustainabilityProfile.test.mjs).
 
+// The framework labels this app knows, and the ways a research narrative
+// writes each of them. Used to spot a framework the SUMMARY claims while
+// the structured list does not confirm it — a real and common split,
+// because the research is told to list a framework only with direct
+// evidence of a published report, while its prose happily repeats what a
+// company says about itself.
+//
+// Aliases are matched as whole words, never as substrings. That lesson is
+// already written down elsewhere in this codebase: "SBT" inside some
+// longer word is not a framework, and a bare "PRI" is deliberately absent
+// because it collides with ordinary prose in a way "UNPRI" does not.
+const FRAMEWORK_ALIASES = {
+  CSRD: ['csrd', 'corporate sustainability reporting directive'],
+  IFRS: ['ifrs', 'issb'],
+  TCFD: ['tcfd', 'task force on climate related financial disclosures'],
+  CDP: ['cdp', 'carbon disclosure project'],
+  GRESB: ['gresb'],
+  SBT: ['sbt', 'sbti', 'science based targets'],
+  Ecovadis: ['ecovadis'],
+  'UN PRI': ['un pri', 'unpri', 'principles for responsible investment'],
+  'CA SB': ['ca sb', 'sb 253', 'sb 261'],
+  NZAM: ['nzam', 'net zero asset managers'],
+  RECA: ['reca'],
+};
+
+// The three regimes the chips answer for. Everything else the research
+// finds is real and worth showing, just not one of these — UN PRI is a
+// commitment, not a disclosure standard, and a card that only rendered
+// these three showed nothing at all for a company whose only framework
+// was that one.
+const CHIP_FRAMEWORKS = new Set(['CSRD', 'IFRS', 'TCFD']);
+
+// Prose reduced to space-separated words, so an alias can be matched as a
+// whole run rather than as any substring.
+function proseWords(text) {
+  return ` ${String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+}
+
+/**
+ * Framework labels the narrative names, whether or not the structured
+ * list confirmed them.
+ *
+ * `texts` is everything written in prose — the summary and the programme
+ * lines.
+ */
+export function frameworksNamedInProse(texts) {
+  const hay = proseWords((Array.isArray(texts) ? texts : [texts]).filter(Boolean).join(' '));
+  if (hay.trim() === '') return [];
+  const found = [];
+  for (const [label, aliases] of Object.entries(FRAMEWORK_ALIASES)) {
+    if (aliases.some(a => hay.includes(` ${a} `))) found.push(label);
+  }
+  return found;
+}
+
 /** The key settings.companyResearch files a research run under. */
 export function companyResearchSlug(name) {
   return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
@@ -84,6 +139,18 @@ export function sustainabilityProfile({ company = '', prospect = null, companyRe
   const reports = links(research?.reports);
   const summary = String(research?.summary || '').trim();
 
+  // Confirmed frameworks that aren't one of the three chips. These were
+  // invisible before: a company whose only framework is UN PRI showed
+  // three dashes and no sign that anything had been found at all.
+  const otherFrameworks = frameworks.filter(f => !CHIP_FRAMEWORKS.has(f));
+
+  // Named in the narrative, absent from the structured list. Not a tick
+  // and not a blank: the research is telling us two different things, and
+  // the honest rendering says so rather than picking one silently.
+  const confirmed = new Set(frameworks);
+  const claimedFrameworks = frameworksNamedInProse([summary, ...programs])
+    .filter(f => !confirmed.has(f));
+
   return {
     company: name,
     targets,
@@ -93,12 +160,14 @@ export function sustainabilityProfile({ company = '', prospect = null, companyRe
     targetsSource: curatedTargets.length ? 'curated' : (researchedTargets.length ? 'research' : ''),
     frameworks,
     frameworksSource: curatedFrameworks.length ? 'curated' : (researchedFrameworks.length ? 'research' : ''),
+    otherFrameworks,
+    claimedFrameworks,
     summary,
     programs,
     reports,
     researchedAt: research?.savedAt || null,
     hasAny: targets.length > 0 || frameworks.length > 0 || programs.length > 0
-      || reports.length > 0 || !!summary,
+      || reports.length > 0 || !!summary || claimedFrameworks.length > 0,
   };
 }
 
