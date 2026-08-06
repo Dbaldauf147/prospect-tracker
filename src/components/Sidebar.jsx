@@ -385,19 +385,14 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#128100;</span>
           Contacts
         </button>
+        {/* Draft Emails carries Email Campaigns and Email Tracking as
+            sub-tabs, so those don't get sidebar entries of their own. */}
         <button
-          className={view === 'drafts' ? styles.navItemActive : styles.navItem}
+          className={view === 'drafts' || view === 'campaigns' || view === 'tracking' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('drafts')}
         >
           <span className={styles.navIcon}>&#9999;</span>
           Draft Emails
-        </button>
-        <button
-          className={view === 'tracking' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('tracking')}
-        >
-          <span className={styles.navIcon}>&#128233;</span>
-          Email Tracking
         </button>
         <button
           className={view === 'recordings' ? styles.navItemActive : styles.navItem}

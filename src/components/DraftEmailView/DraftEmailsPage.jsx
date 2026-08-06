@@ -1,15 +1,31 @@
-// Wraps the Draft Emails composer and the Email Campaigns viewer
-// behind a single sidebar entry with two sub-tabs. Folds Email
-// Campaigns under Draft Emails so the sidebar isn't carrying two
-// adjacent buttons that conceptually belong to the same workflow.
+// Wraps the Draft Emails composer, the Email Campaigns viewer and the
+// Email Tracking dashboard behind a single sidebar entry with sub-tabs.
+// The three belong to one workflow — compose a batch, watch the campaign
+// it belongs to, read the opens and clicks it produced — so the sidebar
+// isn't carrying separate buttons for each step.
+//
+// Tracking and Campaigns are linked: clicking a campaign in the tracking
+// table hops to the Email Campaigns tab with that campaign open.
 
 import { useState } from 'react';
 import { DraftEmailView } from './DraftEmailView';
 import { EmailCampaignView } from '../EmailCampaignView/EmailCampaignView';
+import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
 import { SiteListOverview } from './SiteListOverview';
 
+const TABS = ['drafts', 'campaigns', 'tracking', 'sitelists'];
+
 export function DraftEmailsPage({ prospects, settings, updateSettings, initialTab = 'drafts' }) {
-  const [tab, setTab] = useState(initialTab === 'campaigns' ? 'campaigns' : 'drafts');
+  const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
+  // Subject of a campaign the tracking tab asked to open. Cleared as soon as
+  // the campaign view picks it up, so clicking the same campaign twice works.
+  const [openCampaignSubject, setOpenCampaignSubject] = useState(null);
+
+  const openCampaign = (campaign) => {
+    if (campaign?.subject) setOpenCampaignSubject(campaign.subject);
+    setTab('campaigns');
+  };
+
   const tabBtn = (key, label) => (
     <button
       key={key}
@@ -34,12 +50,19 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, initialTa
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', marginBottom: '0.75rem' }}>
         {tabBtn('drafts', 'Drafts')}
         {tabBtn('campaigns', 'Email Campaigns')}
+        {tabBtn('tracking', 'Email Tracking')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
         <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
       )}
-      {tab === 'campaigns' && <EmailCampaignView />}
+      {tab === 'campaigns' && (
+        <EmailCampaignView
+          openSubject={openCampaignSubject}
+          onOpened={() => setOpenCampaignSubject(null)}
+        />
+      )}
+      {tab === 'tracking' && <EmailTrackingView onOpenCampaign={openCampaign} />}
       {tab === 'sitelists' && (
         <SiteListOverview prospects={prospects} settings={settings} />
       )}

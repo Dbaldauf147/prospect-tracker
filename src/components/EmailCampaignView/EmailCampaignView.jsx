@@ -6,7 +6,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail } from '../../hooks/useEmailTracking';
 
-export function EmailCampaignView() {
+// `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
+// to be opened by its subject line; `onOpened` acknowledges the request so
+// the same campaign can be asked for again.
+export function EmailCampaignView({ openSubject, onOpened }) {
   const { user } = useAuth();
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
@@ -15,6 +18,7 @@ export function EmailCampaignView() {
   const [notice, setNotice] = useState('');
   const [results, setResults] = useState(null);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
+  const [campaignsLoaded, setCampaignsLoaded] = useState(false);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
   const [saving, setSaving] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being edited
@@ -51,8 +55,24 @@ export function EmailCampaignView() {
           console.log('No saved campaigns found in Firestore');
         }
       } catch (err) { console.error('Failed to load campaigns:', err); }
+      setCampaignsLoaded(true);
     })();
   }, [user]);
+
+  // Honour an "open this campaign" request from the Email Tracking tab. Waits
+  // for the saved list to land, matches on the exact subject line, and opens
+  // the campaign the same way clicking it in the saved list would. Requests
+  // for a subject with no saved campaign are acknowledged and dropped.
+  useEffect(() => {
+    if (!openSubject || !campaignsLoaded) return;
+    const want = String(openSubject).trim().toLowerCase();
+    const idx = savedCampaigns.findIndex(c => String(c?.subject || '').trim().toLowerCase() === want);
+    if (idx !== -1) viewCampaign(idx);
+    onOpened?.();
+    // viewCampaign/onOpened are stable enough for this one-shot handoff;
+    // re-running on their identity would re-open the campaign on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSubject, campaignsLoaded, savedCampaigns]);
 
   async function saveCampaigns(campaigns) {
     setSavedCampaigns(campaigns);
