@@ -13,7 +13,7 @@ import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
   totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
-  deadlinesWithRecurrence, utilityFeedEligibility, utilityFeedSites,
+  deadlinesWithRecurrence, sitesForDeadline, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
 import { exportComplianceReportXlsx } from '../../utils/complianceReportXlsx';
 import {
@@ -175,7 +175,7 @@ function TodayMark({ ax, todayTime, y1, y2, label = true, W = TL.W }) {
 // tier when it would collide with its neighbour rather than being drawn on top
 // of it, and slid sideways off its dot when even that isn't enough — the dots
 // stay exactly on their true dates either way.
-function DeadlineLanes({ lanes, ax, todayTime }) {
+function DeadlineLanes({ lanes, ax, todayTime, onPick = null }) {
   const padT = 26, padB = 6;
   // Half the width a two-line label needs. Now that the count is a bare number
   // — the legend carries the "sites" — the wider line is the M/D date under it,
@@ -385,8 +385,20 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
             ))}
             {placed[i].labels.map(({ cx, lx, dy, stacked, ...p }) => {
               const ly = dotY + dy;
+              // The dot and its label are one target: the question they raise
+              // ("which sites are those?") is the same for both, and hitting a
+              // 4px circle with a mouse is not a fair ask.
+              const pick = onPick ? () => onPick({ category: lane.key, date: p.date, projected: !!p.projected, count: p.count }) : null;
               return (
-                <g key={p.date}>
+                <g
+                  key={p.date}
+                  onClick={pick || undefined}
+                  onKeyDown={pick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } } : undefined}
+                  role={pick ? 'button' : undefined}
+                  tabIndex={pick ? 0 : undefined}
+                  style={pick ? { cursor: 'pointer' } : undefined}
+                  aria-label={pick ? `${lane.label} ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'} — open the list` : undefined}
+                >
                   {/* Only a stacked label below the first tier needs a leader,
                       and it is vertical by construction — the label shares its
                       dot's x. A label in a run is tied to its cluster by the
@@ -399,6 +411,10 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                       published, and the two shouldn't read alike. Kept small:
                       dots sit on their true dates, so deadlines a fortnight
                       apart land on top of each other unless they're tight. */}
+                  {/* A transparent disc over the dot: the dot itself is 4px
+                      in a canvas that scales down, which is not a target
+                      anybody can hit on purpose. */}
+                  {pick && <circle cx={cx} cy={dotY} r="9" fill="transparent" />}
                   <circle
                     cx={cx} cy={dotY} r={p.projected ? 4 : 4.5}
                     fill={p.projected ? '#fff' : lane.color}
@@ -407,11 +423,18 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                   >
                     <title>
                       {`${lane.label} · ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'}`
-                        + (p.projected ? ' (projected from the ordinance\u2019s compliance cycle)' : '')}
+                        + (p.projected ? ' (projected from the ordinance\u2019s compliance cycle)' : '')
+                        + (onPick ? ' · click for the list' : '')}
                     </title>
                   </circle>
                   {dy != null && (
                     <>
+                      {pick && (
+                        <rect
+                          x={lx - 15} y={ly - 10} width="30" height="21"
+                          fill="transparent"
+                        />
+                      )}
                       <text x={lx} y={ly} textAnchor="middle" fontSize="9.5" fontWeight={p.projected ? 700 : 800}
                         fill={p.projected ? '#64748B' : '#0F172A'} stroke="#fff" strokeWidth="3" paintOrder="stroke">
                         {p.count}
@@ -976,7 +999,7 @@ function SiteDetailModal({ site, onClose, ordinances = MASTER_ORDINANCES, overri
 // The sites behind a figure on a dashboard card: either one jurisdiction's bar
 // (`government` set) or the card's whole applicable-sites total (`government`
 // null), with the numbers that produced it. Exports the same rows to Excel.
-function JurisdictionSitesModal({ category, government, rows, onExport, onSiteClick, onClose }) {
+function JurisdictionSitesModal({ category, government, rows, onExport, onSiteClick, onClose, title = '', subtitle = '' }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -1001,11 +1024,15 @@ function JurisdictionSitesModal({ category, government, rows, onExport, onSiteCl
         <div className={styles.modalHead} style={{ background: CATEGORY_COLOR[category] }}>
           <div>
             <div className={styles.modalTitle}>
-              {allJurisdictions ? `${label}: all applicable sites` : `${government} · ${label}`}
+              {title || (allJurisdictions ? `${label}: all applicable sites` : `${government} · ${label}`)}
             </div>
             <div className={styles.modalSub}>
-              {rows.length.toLocaleString('en-US')} applicable site{rows.length === 1 ? '' : 's'}
-              {allJurisdictions ? ` across ${govCount} jurisdiction${govCount === 1 ? '' : 's'}` : ''}
+              {subtitle || (
+                <>
+                  {rows.length.toLocaleString('en-US')} applicable site{rows.length === 1 ? '' : 's'}
+                  {allJurisdictions ? ` across ${govCount} jurisdiction${govCount === 1 ? '' : 's'}` : ''}
+                </>
+              )}
               {' · '}{usd(totalPenalty)}/yr max penalty
               {unsized ? ` · ${unsized} site${unsized === 1 ? '' : 's'} unsized` : ''}
             </div>
@@ -1198,6 +1225,9 @@ export function BuildingComplianceScreening({
   // The dashboard bar drilled into, as { category, government }. Opens the
   // list of sites behind that jurisdiction's count / penalty figure.
   const [drill, setDrill] = useState(null);
+  // The deadline drilled into, as { category, date, projected, count } — the
+  // sites due on one date under one mandate.
+  const [deadlineDrill, setDeadlineDrill] = useState(null);
   // The utility-feed figure drilled into, as { commodity, state, utility }.
   // state/utility null means the card's whole eligible-sites total.
   const [feedDrill, setFeedDrill] = useState(null);
@@ -1579,6 +1609,27 @@ export function BuildingComplianceScreening({
     return out;
   }, [results, drill]);
 
+  // The sites behind one dot on the deadlines chart. Read through
+  // sitesForDeadline so the list can't disagree with the number that was
+  // clicked — same eligibility, same recurrence walk.
+  const deadlineDrillRows = useMemo(() => {
+    if (!deadlineDrill) return [];
+    return sitesForDeadline(results, deadlineDrill.category, deadlineDrill.date, {
+      todayISO: new Date(todayTime).toISOString().slice(0, 10),
+      horizonYears: PROJECT_YEARS,
+      ordinances,
+    });
+  }, [results, deadlineDrill, todayTime, ordinances]);
+
+  function exportDeadlineDrill() {
+    if (!deadlineDrillRows.length) return;
+    writeRawWorkbook(
+      deadlineDrillRows,
+      `${slug(CATEGORY_LABEL[deadlineDrill.category])}-${deadlineDrill.date}-Sites.xlsx`,
+      { category: deadlineDrill.category },
+    );
+  }
+
   function exportDrill() {
     if (!drillRows.length) return;
     writeRawWorkbook(
@@ -1848,12 +1899,12 @@ export function BuildingComplianceScreening({
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
                   Key compliance deadlines
-                  <span className={styles.tlHeadSub}>{': '}one lane per mandate</span>
+                  <span className={styles.tlHeadSub}>{': '}one lane per mandate · click a deadline for its sites</span>
                 </span>
               </div>
               <div className={styles.tlChart}>
                 {roadmap.length
-                  ? <DeadlineLanes lanes={roadmapCharts.lanes} ax={axis} todayTime={todayTime} />
+                  ? <DeadlineLanes lanes={roadmapCharts.lanes} ax={axis} todayTime={todayTime} onPick={setDeadlineDrill} />
                   : <div className={styles.miniEmpty}>No dated deadlines across the screened portfolio.</div>}
               </div>
             </div>
@@ -2127,6 +2178,18 @@ export function BuildingComplianceScreening({
                 onExport={exportDrill}
                 onSiteClick={(site) => { setDrill(null); setDetailSite(site); }}
                 onClose={() => setDrill(null)}
+              />
+            )}
+            {deadlineDrill && (
+              <JurisdictionSitesModal
+                category={deadlineDrill.category}
+                rows={deadlineDrillRows}
+                title={`${CATEGORY_LABEL[deadlineDrill.category]} due ${mdY(deadlineDrill.date)}`}
+                subtitle={`${deadlineDrillRows.length.toLocaleString('en-US')} site${deadlineDrillRows.length === 1 ? '' : 's'} filing on this date`
+                  + (deadlineDrill.projected ? ' · projected from the ordinance’s compliance cycle' : '')}
+                onExport={exportDeadlineDrill}
+                onSiteClick={(site) => { setDeadlineDrill(null); setDetailSite(site); }}
+                onClose={() => setDeadlineDrill(null)}
               />
             )}
             {feedDrill && (

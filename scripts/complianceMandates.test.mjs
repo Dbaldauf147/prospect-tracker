@@ -5,6 +5,7 @@ import {
   classifyPropertyType, eligibilityByOrdinance, totalEligible,
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
   buildComplianceRoadmap, auditRequirements, auditRequirementsLabel, categoryColumns,
+  deadlinesWithRecurrence, sitesForDeadline, CATEGORIES,
 } from '../src/utils/complianceMandates.js';
 import MASTER_ORDINANCES from '../src/data/masterOrdinances.js';
 
@@ -352,6 +353,48 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   ok(monotonic, 'roadmap: cumulative sites & fines are non-decreasing');
   // Earliest obligation is the 2025-10-01 Audits deadline → first period Q4 2025.
   ok(rm.periods[0].label === 'Q4 2025', `roadmap: first period Q4 2025 (got ${rm.periods[0].label})`);
+}
+
+// ---- the sites behind a dot on the deadlines chart ----------------------
+// The chart's number and the drill-down's list are two readings of the same
+// thing. If they can disagree, the one you clicked is wrong — so the rule is
+// that every point's count equals the length of its site list, for published
+// dates and modelled recurrences alike.
+{
+  const res = screenSites([
+    { id: 1, siteName: 'Seattle A', city: 'Seattle', state: 'WA', sqft: 90000, propertyType: 'Office' },
+    { id: 2, siteName: 'Seattle B', city: 'Seattle', state: 'WA', sqft: 90000, propertyType: 'Office' },
+    { id: 3, siteName: 'Denver A', city: 'Denver', state: 'CO', sqft: 120000, propertyType: 'Office' },
+    { id: 4, siteName: 'NYC A', city: 'New York', state: 'NY', sqft: 200000, propertyType: 'Office' },
+  ]);
+  const todayISO = '2026-08-06';
+  let checked = 0;
+  let projectedSeen = 0;
+  for (const c of CATEGORIES) {
+    const points = deadlinesWithRecurrence(res, c, { todayISO, horizonYears: 5 });
+    for (const p of points) {
+      const sites = sitesForDeadline(res, c, p.date, { todayISO, horizonYears: 5 });
+      ok(sites.length === p.count,
+        `${c} ${p.date}: ${p.count} on the chart, ${sites.length} in the list`);
+      checked += 1;
+      if (p.projected) {
+        projectedSeen += 1;
+        ok(sites.every(s => s.projected), `${c} ${p.date}: a projected date lists only projected filings`);
+      }
+    }
+  }
+  ok(checked > 5, `checked ${checked} deadline points`);
+  ok(projectedSeen > 0, `covered ${projectedSeen} projected dates, not just published ones`);
+
+  // Every listed site really is eligible for that mandate, and really does
+  // carry the date it was listed under.
+  const first = deadlinesWithRecurrence(res, 'bbs', { todayISO, horizonYears: 5 })[0];
+  const rows = sitesForDeadline(res, 'bbs', first.date, { todayISO, horizonYears: 5 });
+  ok(rows.every(r => r.bbs?.eligible === true), 'every drilled site is eligible for the mandate');
+  ok(rows.every(r => r.siteName), 'every drilled site carries its name for the list');
+  eq(sitesForDeadline(res, 'bbs', '', { todayISO }), [], 'no date, no sites');
+  eq(sitesForDeadline(res, 'bbs', '2099-01-01', { todayISO }), [], 'a date nothing falls on lists nothing');
+  eq(sitesForDeadline([], 'bbs', first.date, { todayISO }), [], 'no results, no sites');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
