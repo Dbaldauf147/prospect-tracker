@@ -17,6 +17,7 @@ import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -2331,9 +2332,14 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
     return map;
   }, [companies, portfolioByPe, oppsRecords]);
 
+  // Which of these companies already have a Master Analysis saved against
+  // them (the workbook the Utility Lookup page saves), and when.
+  const savedAnalyses = useSavedAnalyses(companies);
+
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
     const pcCounts = pcOppCountsByCompanyId.get(p.id);
+    const analysis = savedAnalyses.get(p.id) || null;
     // Bucket the explored services by outcome. "In Progress" is any
     // service that's been explored but isn't a terminal Sold / Not Sold
     // (or N/A / blank) — i.e. the in-flight statuses (Exploring, Quoting,
@@ -2382,8 +2388,12 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       servicesInProgress,
       peOwner: p.peOwner || '',
       notes: p.notes || '',
+      // Master Analysis saved against this company: the timestamp drives
+      // sorting (0 = none), the meta drives the cell's tooltip.
+      _analysis: analysis,
+      analysisSavedAt: analysis?.savedAt ? new Date(analysis.savedAt).getTime() || 0 : (analysis ? 1 : 0),
     };
-  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap, savedAnalyses]);
 
   // Same dropdown vocabularies as Table View's inline editors, built
   // from the full prospect list so the options match exactly.
@@ -2576,6 +2586,31 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           >⬇ {r._pcMappedCount}</span>
         ) : <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
       ) },
+      // Master Analysis: whether this company has one saved (from the
+      // Utility Lookup page's "Save to <company>") and when it was written.
+      // Sorts newest-saved first so "who's been analysed, and how recently"
+      // is one click; companies with nothing saved sort to the bottom.
+      {
+        key: 'masterAnalysis', label: 'Master Analysis', defaultWidth: 130,
+        getSortValue: (r) => r.analysisSavedAt,
+        getFilterValue: (r) => (r._analysis ? 'Saved master analysis' : 'No master analysis'),
+        exportValue: (r) => (r._analysis
+          ? (r._analysis.savedAt ? new Date(r._analysis.savedAt).toLocaleDateString() : 'Saved')
+          : ''),
+        render: (r) => (r._analysis ? (
+          <span
+            title={[
+              `${r.company} has a Master Analysis saved${r._analysis.savedAt ? ` on ${new Date(r._analysis.savedAt).toLocaleString()}` : ''}.`,
+              r._analysis.fileName || '',
+              r._analysis.sizeBytes ? `${(r._analysis.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
+              'Download it from this company\'s popup, or pull it back onto the Utility Lookup page with Import Analysis.',
+            ].filter(Boolean).join('\n')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#166534' }}
+          >✓ {formatAnalysisDate(r._analysis.savedAt)}</span>
+        ) : (
+          <span title="No Master Analysis saved against this company yet" style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
+        )),
+      },
       // Read-only companions to PC Opps: the portfolio companies that
       // carry those opps, and the contacts tied to them (both pulled from
       // the same Opps-tab scan).
