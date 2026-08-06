@@ -8,6 +8,7 @@
 import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
+import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import {
   buildOppStagesByClient,
@@ -467,6 +468,39 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
   }));
 }
 
+// ---- Close Not Solds prompt missing data ----
+// Mirrors the highlighted / red "Missing" cells in the Agents page's
+// "AI Prompt (Close Not Solds)" table: a Not-Sold opp that still has an
+// open BFO Activity row but is missing something the close-out prompt
+// needs — Reason Not Sold, Competition, the BFO Address link, or a
+// Reason Not Sold + Competition pair that isn't in the mapping table (so
+// no BFO Status / Reason can be derived and the row is dropped from the
+// prompt block). One issue row per opp so each can be snoozed / actioned
+// on its own. Suppressed until the Opps cache has loaded.
+function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, prospects = [] }) {
+  if (!oppsCache?.records?.length) return [];
+  const missingList = computeCloseNotSoldMissingData(computeCloseNotSoldOpps({ oppsCache, bfoActivity }));
+  if (missingList.length === 0) return [];
+  // Normalized company → Table View prospect id, so the Issues row can
+  // link through to the account. First match wins, matching the lookup
+  // the other BFO detectors use.
+  const prospectIdByNorm = new Map();
+  for (const p of prospects) {
+    const norm = normalizeBfoCompany(p.company);
+    if (norm && !prospectIdByNorm.has(norm)) prospectIdByNorm.set(norm, p.id);
+  }
+  return missingList.map((m) => ({
+    id: `close-not-sold-missing:${m.id}`,
+    source: 'Agents',
+    type: 'Close Not Sold missing data',
+    company: m.account || m.name || '-',
+    prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.account)) || null,
+    daysUntil: null,
+    expirationDate: null,
+    detail: `Close Not Solds prompt is missing ${m.missing.join(', ')} for "${m.name}": Reason Not Sold / Competition / BFO Address come from the opp's row on Opps${m.unmapped ? '; an unmapped pair either needs those fields corrected or the Reason Not Sold + Competition → BFO mapping extended' : ''}.`,
+  }));
+}
+
 // ---- Service Exploration Coverage below 100% ----
 // Mirrors the Pipeline page's "Service Exploration Coverage" table: each
 // tracked service is a row showing what share of your active clients have
@@ -605,6 +639,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
+  issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects }));
   issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
   return issues;
