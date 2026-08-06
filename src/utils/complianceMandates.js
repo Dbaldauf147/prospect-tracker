@@ -567,11 +567,54 @@ export function deadlinesWithRecurrence(results, category, {
   }
   const rows = [...published.entries()].map(([date, count]) => ({ date, count, projected: false }));
   for (const [date, count] of projected) {
-    // A projected filing that lands on a published deadline is already on the
-    // roadmap under that date.
-    if (!published.has(date)) rows.push({ date, count, projected: true });
+    // A projected filing that lands on a published deadline shares that
+    // date's dot rather than drawing a second one on top of it — but it is
+    // still a filing due that day, so it is counted there. Dropping it
+    // instead (which is what this did) undercounted every date where one
+    // jurisdiction's published deadline collides with another's recurrence,
+    // and the site list behind the dot then had more sites in it than the
+    // dot claimed.
+    const at = rows.find(r => r.date === date);
+    if (at) at.count += count;
+    else rows.push({ date, count, projected: true });
   }
   return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * The sites behind one dot on the deadlines chart.
+ *
+ * Counting and listing have to agree, so this walks the same path
+ * deadlinesWithRecurrence counts along: a site is behind a date when its
+ * published deadline IS that date, or when one of its recurrences lands on
+ * it. Anything else — recomputing the list a different way, or filtering
+ * the results by deadline alone — drifts from the number on the chart the
+ * first time a cycle is involved, and a drill-down that disagrees with the
+ * figure it opened from is worse than no drill-down.
+ *
+ * `projected` marks the sites whose appearance here is a modelled
+ * recurrence rather than a published date.
+ */
+export function sitesForDeadline(results, category, date, {
+  todayISO, horizonYears = 5, ordinances = MASTER_ORDINANCES,
+} = {}) {
+  const target = String(date || '');
+  if (!target) return [];
+  const horizon = todayISO ? isoPlusYears(todayISO, horizonYears) : null;
+  const out = [];
+  for (const r of (results || [])) {
+    if (!isEligible(r, category)) continue;
+    const deadline = r[category].deadline;
+    if (!deadline) continue;
+    if (deadline === target) { out.push({ ...r, projected: false }); continue; }
+    if (!todayISO) continue;
+    const cycle = parseCycle(getMandates(r.govId, ordinances)?.[category]?.complianceCycle, DEFAULT_CYCLE_YEARS[category]);
+    if (occurrencesAfter(deadline, cycle, horizon).includes(target)) {
+      out.push({ ...r, projected: true });
+    }
+  }
+  return out.sort((a, b) => String(a.government || '').localeCompare(String(b.government || ''))
+    || String(a.siteName || '').localeCompare(String(b.siteName || '')));
 }
 
 // Estimated max yearly penalty summed over eligible sites, grouped by
