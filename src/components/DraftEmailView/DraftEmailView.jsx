@@ -6,7 +6,6 @@ import { db } from '../../firebase';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
@@ -40,8 +39,8 @@ Quill.register(DividerBlot, true);
 // the draft AND in the sent message. Lists are kept as real lists (with their
 // stock Word margins zeroed) since they can't be expressed with <br>s.
 //
-// Shared by the Outlook draft (Graph API), the .eml export, and the
-// clipboard-paste paths so all three render identically.
+// Shared by the .eml export and the clipboard-paste paths so both
+// render identically.
 // Core of the body transform, shared by the sent-email builder and the
 // on-screen preview. Collapses Quill's <p> paragraphs into a single block
 // separated by <br>, keeps lists as lists, and strips the breaks Word would
@@ -937,7 +936,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   });
   const [contactSearch, setContactSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   // Opt-in open/click tracking for the drafts this batch produces.
   // Persisted so the choice sticks between sessions; defaults on.
@@ -949,7 +947,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   }
   const [draftQueue, setDraftQueue] = useState([]); // contacts waiting to be opened
   const [draftsSent, setDraftsSent] = useState(0);
-  const [outlookConnected, setOutlookConnected] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   // Claude email critique — null when no review has run, busy flag
   // while the request is in flight, otherwise the parsed { score,
@@ -1162,45 +1159,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   };
 
 
-  // Check if Outlook is connected (encrypted token storage)
-  useEffect(() => {
-    (async () => {
-      const token = await secureGet('outlook-access-token');
-      const expiry = await secureGet('outlook-token-expiry');
-      setOutlookConnected(!!token && (!expiry || Date.now() < Number(expiry)));
-    })();
-  }, []);
-
-  // Listen for OAuth callback
-  useEffect(() => {
-    function handleMessage(e) {
-      if (e.data?.type === 'outlook-auth-success') {
-        (async () => {
-          await secureSet('outlook-access-token', e.data.accessToken);
-          if (e.data.refreshToken) await secureSet('outlook-refresh-token', e.data.refreshToken);
-          await secureSet('outlook-token-expiry', String(Date.now() + (e.data.expiresIn || 3600) * 1000));
-          setOutlookConnected(true);
-          setResult({ type: 'success', message: 'Outlook connected!' });
-        })();
-      } else if (e.data?.type === 'outlook-auth-error') {
-        setResult({ type: 'error', message: 'Outlook connection failed: ' + e.data.error });
-      }
-    }
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  function connectOutlook() {
-    window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700,left=200,top=100');
-  }
-
-  function disconnectOutlook() {
-    secureClear('outlook-access-token');
-    secureClear('outlook-refresh-token');
-    secureClear('outlook-token-expiry');
-    setOutlookConnected(false);
-  }
-
   // Close search dropdown on outside click
   useEffect(() => {
     if (!showSearch) return;
@@ -1368,7 +1326,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   // `silent` archives the compose without touching the result banner —
   // used by the send paths, which have a more specific outcome to report
-  // ("N drafts created in Outlook") and would otherwise have it
+  // ("N .eml files downloading…") and would otherwise have it
   // immediately overwritten by "Draft saved".
   function saveDraft({ silent = false } = {}) {
     // Quill wraps empty content in <p><br></p> — check for actual content
@@ -1635,104 +1593,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     } finally {
       setSavingCampaign(false);
     }
-  }
-
-  async function createOutlookDrafts() {
-    if (selectedContacts.length === 0) {
-      setResult({ type: 'error', message: 'Add at least one contact' });
-      return;
-    }
-    if (!subject.trim()) {
-      setResult({ type: 'error', message: 'Add a subject line' });
-      return;
-    }
-
-    const accessToken = await secureGet('outlook-access-token');
-    if (!accessToken) {
-      setResult({ type: 'info', message: 'Connect your Outlook account first' });
-      setOutlookConnected(false);
-      return;
-    }
-
-    setSending(true);
-    setResult(null);
-
-    // Load CC and To Also mappings
-    const ccMap = settings?.ccMap || {};
-    const toAlsoMap = settings?.toAlsoMap || {};
-
-    // Build personalized drafts for each contact
-    const drafts = selectedContacts.map(c => {
-      const pBodyHtml = personalizeForContact(body, c);
-      const pSubject = personalizeForContact(subject, c);
-      const contactCc = ccMap[c.email] || [];
-      const allCc = [...new Set([...contactCc, ...draftCc])];
-      const toAlso = toAlsoMap[c.email] || [];
-      const allTo = [c.email, ...toAlso].join(';');
-      // Run the body through the same paragraph-spacing fix the .eml path uses
-      // (zeroed <p> margins + <p><br></p> → <br>). Without it Outlook's Word
-      // renderer adds a blank line between every paragraph on Send. No
-      // signature is appended here — Outlook adds the user's own signature when
-      // the draft is opened, so injecting one would duplicate it.
-      return { to: allTo, name: c.name, subject: pSubject, body: buildStyledBodyHtml(pBodyHtml), cc: allCc };
-    });
-
-    try {
-      // Bigger batches get bucketed into a dedicated subfolder under
-      // Outlook's Drafts so the user's main Drafts pane doesn't get
-      // flooded. Folder name embeds the date + a slug of the subject
-      // so each batch is distinguishable; the API endpoint creates
-      // the folder on first use and reuses it on later batches with
-      // the same name.
-      const useFolder = drafts.length > 3;
-      const folderName = useFolder
-        ? (() => {
-            const date = new Date();
-            const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-            const slug = (subject || 'untitled')
-              .replace(/<[^>]+>/g, '')
-              .replace(/[\\/:*?"<>|]/g, '')
-              .replace(/\s+/g, ' ')
-              .trim()
-              .slice(0, 60);
-            return `Prospect Tracker · ${stamp} · ${slug || 'untitled'}`;
-          })()
-        : null;
-      const res = await apiFetch('/api/outlook-draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // `track` mirrors the checkbox the .eml path reads: the server
-        // injects the open pixel and rewrites the links into each body
-        // before Graph creates the draft, so the tracking is already in
-        // place when you open the draft and hit Send.
-        body: JSON.stringify({ accessToken, drafts, folderName, track: trackEmails }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        const folderNote = data.folder
-          ? ` in folder "${data.folder}"`
-          : (data.folderError ? ` (couldn't create folder: landed in default Drafts: ${data.folderError})` : '');
-        // Tracking is best-effort per draft — injection or the Firestore
-        // write can fail without failing the draft — so report what
-        // actually carried a pixel instead of assuming the whole batch did.
-        const tracked = (data.results || []).filter(r => r.success && r.tracked).length;
-        const trackNote = !trackEmails
-          ? ''
-          : tracked === data.created
-            ? ' Opens & clicks are tracked.'
-            : ` ${tracked} of ${data.created} carry tracking.`;
-        setResult({ type: 'success', message: `${data.created} draft${data.created !== 1 ? 's' : ''} created in Outlook${folderNote}!${trackNote}` });
-        saveDraft({ silent: true });
-      } else if (data.needsAuth) {
-        setResult({ type: 'info', message: 'Connect your Outlook account first' });
-        setOutlookConnected(false);
-      } else {
-        setResult({ type: 'error', message: data.error || 'Failed to create drafts' });
-      }
-    } catch (err) {
-      setResult({ type: 'error', message: err.message });
-    }
-    setSending(false);
   }
 
   function htmlToPlainText(html) {
@@ -2030,7 +1890,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2 className={styles.title}>Draft Emails</h2>
-        <p className={styles.desc}>Compose an email, tag contacts, and create drafts in Outlook.</p>
+        <p className={styles.desc}>Compose an email, tag contacts, and download drafts for Outlook.</p>
       </div>
 
       <div className={styles.layout}>
@@ -2389,32 +2249,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 Download first only
               </button>
             )}
-            <button
-              className={styles.secondaryBtn}
-              onClick={createOutlookDrafts}
-              disabled={sending || selectedContacts.length === 0 || !subject.trim()}
-              title={outlookConnected
-                ? 'Create these drafts straight in your Outlook Drafts folder: no .eml files to open one by one'
-                : 'Connect Outlook below first, then the drafts are created straight in your Drafts folder'}
-            >
-              {sending ? 'Creating…' : 'Create in Outlook'}
-            </button>
             <button className={styles.secondaryBtn} onClick={() => saveDraft()} disabled={!subject.trim() && !body.trim()}>
               Save Draft
-            </button>
-          </div>
-
-          {/* The Graph path writes straight into Outlook's Drafts folder, so
-              it needs a connected account. The token is shared with the
-              meeting picker, so this often already reads as connected. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.55rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: outlookConnected ? '#16A34A' : '#CBD5E1', flexShrink: 0 }} />
-            <span>{outlookConnected ? 'Outlook connected' : 'Outlook not connected: “Create in Outlook” needs it'}</span>
-            <button
-              onClick={outlookConnected ? disconnectOutlook : connectOutlook}
-              style={{ padding: 0, border: 'none', background: 'none', color: '#0078D4', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}
-            >
-              {outlookConnected ? 'Disconnect' : 'Connect'}
             </button>
           </div>
 
