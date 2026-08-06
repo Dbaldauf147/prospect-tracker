@@ -4838,6 +4838,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // HQ sources, in the same priority order the card's HQ row uses.
     const hqResearch = settings?.companyHqResearch || {};
     const hqRegionMap = settings?.hqRegionMap || {};
+    // Each company's ultimate parent, as recorded on the card. Every regime
+    // in this section tests its thresholds at the consolidated group, so the
+    // parent (and its revenue) is part of showing the working — a verdict
+    // reached against a parent's numbers reads as unsupported without it.
+    const parentCompanies = settings?.corporateComplianceParent || {};
     const keyOf = (name) => {
       const norm = normalizeCompany(name);
       return norm ? norm.replace(/\s+/g, '-') : '';
@@ -5039,6 +5044,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         };
       });
 
+      const parentName = String(parentCompanies[e.key] || '').trim();
+      const parentRev = parentName ? (revenueResearch[revSlug(parentName)] || null) : null;
+
       out.push({
         name, california: e.california, total: e.total, caSites: e.caSites,
         yesJurisdictions, regulations, revenueLabel,
@@ -5046,6 +5054,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         revenueSummary: revData?.summary || '',
         employees,
         hq,
+        parent: parentName,
+        parentRevenueLabel: String(parentRev?.revenue || '').trim(),
+        parentRevenueFiscalYear: parentRev?.fiscalYear || '',
         // Card-level screening state the jurisdiction rows are read against.
         doingBusinessInCA: doingBusinessInCA || '',
         caRuledOut,
