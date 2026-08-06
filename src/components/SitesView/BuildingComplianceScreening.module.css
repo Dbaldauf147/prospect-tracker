@@ -1204,3 +1204,89 @@
   /* Hover-only affordances read as noise on paper. */
   .siteTable tbody tr:hover td { background: inherit; }
 }
+
+/* ---- editing the mandate reference from the detail popup --------------- */
+/* The affordance sits in the coloured category header, so it reads as
+   "edit THIS mandate" rather than as another page control. */
+.mdEditToggle {
+  float: right;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  cursor: pointer;
+}
+.mdEditToggle:hover { background: rgba(255, 255, 255, 0.32); }
+
+.mdEdit {
+  border: 1px solid var(--color-border, #D8E0E8);
+  border-radius: 6px;
+  background: var(--color-bg, #F8FAFC);
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.mdEditRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+.mdEditKey {
+  flex: 0 0 8.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted, #64748B);
+}
+.mdEditVal { flex: 1; display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
+.mdEditInput {
+  flex: 1 1 9rem;
+  min-width: 7rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-border, #D8E0E8);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.75rem;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1E2A36);
+}
+.mdEditCheck { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; }
+.mdEditHint {
+  flex: 1 1 100%;
+  font-size: 0.66rem;
+  color: var(--color-text-muted, #64748B);
+  line-height: 1.35;
+}
+.mdEditActions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.mdEditBtn {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--color-border, #D8E0E8);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1E2A36);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.mdEditSave {
+  composes: mdEditBtn;
+  border-color: #16A34A;
+  background: #16A34A;
+  color: #fff;
+  font-weight: 600;
+}
+/* A corrected figure has to be tellable from a published one at a glance:
+   these numbers drive money. */
+.mdEdited {
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 5px;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  color: #92400E;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}

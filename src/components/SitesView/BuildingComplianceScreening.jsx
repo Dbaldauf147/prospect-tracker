@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
+import {
+  mandateFormValues, overridePatchFrom, overrideFor, THRESHOLD_KEYS, STATUS_OPTIONS,
+} from '../../utils/ordinanceOverrides.js';
 import { STATES, GOV_IDS, JURISDICTIONS, CITY_ROWS } from '../../data/complianceCityLookup.js';
 // Counts only — the table itself is ~70k rows and is dynamic-imported inside
 // the download handler, so it never lands in this page's chunk.
@@ -550,20 +553,164 @@ function AuditTypeCell({ res }) {
   );
 }
 
+
+// The mandate reference, editable.
+//
+// The seed behind this screening is a workbook snapshot: a jurisdiction
+// moves a deadline, publishes a penalty the sheet never had, or adopts a
+// standard that is still on file as "Pre-Development", and every figure
+// downstream is wrong until someone rebuilds the seed. This is the way to
+// correct it from the page — and because the correction is applied to the
+// reference before anything is screened, it lands on every exposure
+// total, deadline chart and export, not just the popup it was typed into.
+//
+// Only the fields that change an answer are here. Everything else stays as
+// published, and one button puts the whole category back.
+function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) {
+  const [values, setValues] = useState(() => mandateFormValues(mandate, category, overrides));
+  const set = (key, value) => setValues(v => ({ ...v, [key]: value }));
+  const setThreshold = (key, value) => setValues(v => ({ ...v, thresholds: { ...v.thresholds, [key]: value } }));
+  const keys = THRESHOLD_KEYS[category] || [];
+
+  const field = (label, input, hint) => (
+    <label className={styles.mdEditRow} key={label}>
+      <span className={styles.mdEditKey}>{label}</span>
+      <span className={styles.mdEditVal}>{input}{hint && <span className={styles.mdEditHint}>{hint}</span>}</span>
+    </label>
+  );
+
+  return (
+    <div className={styles.mdEdit}>
+      {field('Policy', (
+        <input
+          className={styles.mdEditInput}
+          value={values.policyName}
+          onChange={e => set('policyName', e.target.value)}
+          placeholder="Policy name"
+        />
+      ))}
+      {field('Status', (
+        <select
+          className={styles.mdEditInput}
+          value={STATUS_OPTIONS.some(o => o.value === values.status) ? values.status : ''}
+          onChange={(e) => {
+            const opt = STATUS_OPTIONS.find(o => o.value === e.target.value);
+            setValues(v => ({ ...v, status: e.target.value, active: opt ? opt.active : v.active }));
+          }}
+        >
+          {!STATUS_OPTIONS.some(o => o.value === values.status) && <option value="">{values.status || '(not published)'}</option>}
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
+        </select>
+      ))}
+      {field('In force', (
+        <span className={styles.mdEditCheck}>
+          <input type="checkbox" checked={!!values.active} onChange={e => set('active', e.target.checked)} />
+          <span>Counts toward exposure and deadlines</span>
+        </span>
+      ), 'Untick for a voluntary or not-yet-adopted programme: nothing screens under it.')}
+      {field('Deadline', (
+        <input
+          className={styles.mdEditInput}
+          type="date"
+          value={values.deadline || ''}
+          onChange={e => set('deadline', e.target.value)}
+        />
+      ), category === 'audits' ? 'With no date, an audit mandate has nothing due and carries no penalty.' : '')}
+      {keys.map(([key, label]) => field(`${label} ft²`, (
+        <input
+          className={styles.mdEditInput}
+          inputMode="numeric"
+          value={values.thresholds?.[key] == null ? '' : values.thresholds[key]}
+          onChange={e => setThreshold(key, e.target.value)}
+          placeholder="none published"
+        />
+      )))}
+      {field('Max penalty', (
+        <input
+          className={styles.mdEditInput}
+          inputMode="numeric"
+          value={values.maxPenalty == null ? '' : values.maxPenalty}
+          onChange={e => set('maxPenalty', e.target.value)}
+          placeholder="none published"
+        />
+      ), 'The published maximum, per year.')}
+      {category === 'bps' && field('Penalty unit', (
+        <input
+          className={styles.mdEditInput}
+          value={values.penaltyUom || ''}
+          onChange={e => set('penaltyUom', e.target.value)}
+          placeholder="$ per Year"
+        />
+      ), 'A per-ft² unit ("$ per sq ft per year") is multiplied by the building.')}
+      {field('Source', (
+        <input
+          className={styles.mdEditInput}
+          value={values.url || ''}
+          onChange={e => set('url', e.target.value)}
+          placeholder="https://"
+        />
+      ))}
+      <div className={styles.mdEditActions}>
+        <button
+          type="button"
+          className={styles.mdEditSave}
+          onClick={() => { onSave(govId, category, overridePatchFrom(values)); onDone(); }}
+        >Save for every site here</button>
+        <button type="button" className={styles.mdEditBtn} onClick={onDone}>Cancel</button>
+        {overrideFor(overrides, govId, category) && (
+          <button
+            type="button"
+            className={styles.mdEditBtn}
+            onClick={() => { onSave(govId, category, null); onDone(); }}
+            title="Drop this correction and go back to the published reference"
+          >Reset to published</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // One mandate inside the site detail popup: whether it applies, the policy
 // behind it, and the arithmetic that produced the fine on the row.
-function MandateDetail({ res, mandate, sqft }) {
+function MandateDetail({ res, mandate, sqft, overrides = null, onSaveOverride = null }) {
   const cat = res?.category;
+  const [editing, setEditing] = useState(false);
+  const govId = mandate?.govId || '';
+  const edited = !!mandate?.[cat]?.edited;
+  // The reference can be corrected whether or not the ordinance is in
+  // force here — switching a "Pre-Development" standard on is exactly the
+  // correction a jurisdiction that has since adopted one needs.
+  const editButton = onSaveOverride && govId ? (
+    <button
+      type="button"
+      className={styles.mdEditToggle}
+      onClick={() => setEditing(e => !e)}
+      title={`Correct the ${CATEGORY_LABEL[cat]} reference for ${mandate?.government || 'this jurisdiction'}. It applies to every site here, and to the exports.`}
+    >{editing ? 'Close' : edited ? 'Edit ✎ (edited)' : 'Edit ✎'}</button>
+  ) : null;
+  const editor = editing ? (
+    <MandateEditor
+      govId={govId}
+      category={cat}
+      mandate={mandate}
+      overrides={overrides}
+      onSave={onSaveOverride}
+      onDone={() => setEditing(false)}
+    />
+  ) : null;
   const basis = mandate ? penaltyBasis(mandate, cat) : null;
   const m = mandate?.[cat] || {};
   if (!res?.active) {
     return (
       <div className={styles.mdBlock}>
-        <div className={styles.mdHead} style={{ background: '#94A3B8' }}>{CATEGORY_LABEL[cat]}</div>
+        <div className={styles.mdHead} style={{ background: '#94A3B8' }}>
+          {CATEGORY_LABEL[cat]}{editButton}
+        </div>
         <div className={styles.mdBody}>
           <div className={styles.mdNot}>
             Not applicable{m.status ? `: the ordinance on file is "${m.status}"` : ': no active ordinance for this jurisdiction'}.
           </div>
+          {editor}
         </div>
       </div>
     );
@@ -576,7 +723,7 @@ function MandateDetail({ res, mandate, sqft }) {
     : res.penaltyUnsized
       ? `${usd(res.penaltyRate)} per ft²/yr: add this site's square footage to size it`
       : res.penalty != null
-        ? `${usd(res.penalty)}/yr, as published`
+        ? `${usd(res.penalty)}/yr, ${edited ? 'as corrected here' : 'as published'}`
         : 'This ordinance publishes no maximum penalty.';
   const row = (label, value) => value == null || value === '' ? null : (
     <div key={label} className={styles.mdRow}><span className={styles.mdKey}>{label}</span><span className={styles.mdVal}>{value}</span></div>
@@ -591,8 +738,17 @@ function MandateDetail({ res, mandate, sqft }) {
     : CATEGORY_COLOR[cat];
   return (
     <div className={styles.mdBlock}>
-      <div className={styles.mdHead} style={{ background: headColor }}>{CATEGORY_LABEL[cat]}: {headLabel}</div>
+      <div className={styles.mdHead} style={{ background: headColor }}>
+        {CATEGORY_LABEL[cat]}: {headLabel}{editButton}
+      </div>
       <div className={styles.mdBody}>
+        {editor}
+        {edited && (
+          <div className={styles.mdEdited}>
+            Hand-corrected: these figures were edited here, not taken from the published
+            reference. Every site in this jurisdiction is screened against them.
+          </div>
+        )}
         {row('Policy', res.policyName || '-')}
         {row('Status', res.status || '-')}
         {row('Deadline', res.deadline ? mdY(res.deadline) : (res.deadlineRaw || '-'))}
@@ -678,8 +834,8 @@ function MandateDetail({ res, mandate, sqft }) {
 
 // Full screening detail for one site: what it matched, and every mandate with
 // its fine worked through. Opened by clicking a row in the site table.
-function SiteDetailModal({ site, onClose }) {
-  const mandate = site?.govId ? getMandates(site.govId) : null;
+function SiteDetailModal({ site, onClose, ordinances = MASTER_ORDINANCES, overrides = null, onSaveOverride = null }) {
+  const mandate = site?.govId ? getMandates(site.govId, ordinances) : null;
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -717,7 +873,14 @@ function SiteDetailModal({ site, onClose }) {
             </div>
           ) : (
             CATEGORIES.map(c => (
-              <MandateDetail key={c} res={site[c]} mandate={mandate} sqft={site.sqft} />
+              <MandateDetail
+                key={c}
+                res={site[c]}
+                mandate={mandate}
+                sqft={site.sqft}
+                overrides={overrides}
+                onSaveOverride={onSaveOverride}
+              />
             ))
           )}
         </div>
@@ -918,6 +1081,14 @@ function UtilityFeedSitesModal({ label, color, state, utility, rows, onExport, o
 // branded report.
 export function BuildingComplianceScreening({
   sites = [],
+  // The mandate reference, with the user's corrections already applied.
+  // Passed in rather than read here so the page's exports screen against
+  // exactly the same figures the subtab shows.
+  ordinances = MASTER_ORDINANCES,
+  // The corrections themselves, and the way to write one — the detail
+  // popup edits them in place.
+  overrides = null,
+  onSaveOverride = null,
   // The unscoped list behind `sites` — drives the ownership toggle's
   // counts and tells an ownership-emptied view apart from no upload.
   allSites = null,
@@ -953,8 +1124,8 @@ export function BuildingComplianceScreening({
   const [printJob, setPrintJob] = useState(null);
 
   const companyLabel = useMemo(() => sitesCompanyLabel(sites), [sites]);
-  const results = useMemo(() => screenSites(sites), [sites]);
-  const bpsRows = useMemo(() => bpsPrioritization(results), [results]);
+  const results = useMemo(() => screenSites(sites, { ordinances }), [sites, ordinances]);
+  const bpsRows = useMemo(() => bpsPrioritization(results, ordinances), [results, ordinances]);
   const matchedCount = useMemo(() => results.filter(r => r.matched).length, [results]);
   const anyEligibleCount = useMemo(
     () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
@@ -1130,10 +1301,10 @@ export function BuildingComplianceScreening({
   // Manual single lookup.
   const manual = useMemo(() => {
     if (!city.trim()) return null;
-    const govId = lookupGovId(city, state);
-    const mandate = getMandates(govId);
+    const govId = lookupGovId(city, state, undefined, ordinances);
+    const mandate = getMandates(govId, ordinances);
     return { govId, mandate };
-  }, [city, state]);
+  }, [city, state, ordinances]);
 
   // ---- downloads ----------------------------------------------------------
   // City Lookup: the reference table itself — every city the screening can
@@ -1203,7 +1374,7 @@ export function BuildingComplianceScreening({
   // answers what the ordinance requires without cross-referencing the
   // jurisdiction rows on the second tab.
   function writeRawWorkbook(rowsToExport, filename, { category = null } = {}) {
-    const sourceCols = category ? categoryColumns(category) : [];
+    const sourceCols = category ? categoryColumns(category, ordinances) : [];
     const siteRows = rowsToExport.map(r => {
       const row = {
         Site: r.siteName, City: r.city, State: r.state,
@@ -1246,11 +1417,11 @@ export function BuildingComplianceScreening({
         // The obligations behind an Energy Audits hit — an energy audit, a
         // water audit, retro-commissioning, a tune-up — each of which is
         // separate work to scope.
-        if (c === 'audits') row['Energy Audits Requirements'] = e?.active ? auditRequirementsLabel(getMandates(r.govId)) : '';
+        if (c === 'audits') row['Energy Audits Requirements'] = e?.active ? auditRequirementsLabel(getMandates(r.govId, ordinances)) : '';
       }
       // One category's full reference columns, for a single-mandate export.
       if (sourceCols.length) {
-        const raw = (r.matched && getMandates(r.govId)?.categoryRaw?.[category]) || {};
+        const raw = (r.matched && getMandates(r.govId, ordinances)?.categoryRaw?.[category]) || {};
         for (const col of sourceCols) row[col] = sourceValue(col, raw[col]);
       }
       return row;
@@ -1265,7 +1436,7 @@ export function BuildingComplianceScreening({
     for (const r of rowsToExport) {
       if (!r.matched || seen.has(r.govId)) continue;
       seen.add(r.govId);
-      const g = getMandates(r.govId);
+      const g = getMandates(r.govId, ordinances);
       for (const raw of (g?.raws?.length ? g.raws : [g?.raw])) {
         if (raw) ordRows.push(raw);
       }
@@ -1885,7 +2056,19 @@ export function BuildingComplianceScreening({
                 onClose={() => setFeedDrill(null)}
               />
             )}
-            {detailSite && <SiteDetailModal site={detailSite} onClose={() => setDetailSite(null)} />}
+            {detailSite && (
+              <SiteDetailModal
+                // Re-read from the current screening rather than the row
+                // that was clicked: correcting a mandate from inside this
+                // popup has to change the popup too, not just the table
+                // behind it.
+                site={results.find(r => r.id === detailSite.id) || detailSite}
+                onClose={() => setDetailSite(null)}
+                ordinances={ordinances}
+                overrides={overrides}
+                onSaveOverride={onSaveOverride}
+              />
+            )}
           </>
         )
       ) : (
