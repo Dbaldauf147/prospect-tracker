@@ -338,7 +338,7 @@ function RevenueSection({ data, fact, loading, error, disabled, onResearch, onEd
 // Left blank means "no parent" — a company that is its own ultimate
 // parent, which is the common case and needs no ceremony.
 function ParentCompanySection({
-  value, onSave, disabled, revenue, revenueLoading, revenueError, onResearch,
+  value, onSave, disabled, revenue, revenueLoading, revenueError, onResearch, screening,
 }) {
   // Adjusted during render rather than in an effect: the saved value can
   // change underneath this input (a Master Analysis import, an edit on
@@ -415,6 +415,26 @@ function ParentCompanySection({
             {btn(revenueLoading ? 'Researching…' : 'Research parent revenue', onResearch, revenueLoading)}
           </>
         )
+      )}
+      {/* Which entity the thresholds below are actually measured at. Once a
+          parent's revenue is known the screening switches to it, and a card
+          that changed its own basis without saying so would be the worst
+          version of this feature. */}
+      {saved && (
+        <span
+          title={screening
+            ? 'The Compliance rows below are derived from this parent’s revenue, because every regime here tests the consolidated group.'
+            : 'Research the parent’s revenue and the Compliance rows below will be derived from it instead.'}
+          style={{
+            fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
+            padding: '0.1rem 0.4rem', borderRadius: 999, whiteSpace: 'nowrap',
+            border: `1px solid ${screening ? '#86EFAC' : 'var(--color-border)'}`,
+            background: screening ? '#DCFCE7' : 'var(--color-surface)',
+            color: screening ? '#166534' : 'var(--color-text-muted)',
+          }}
+        >
+          {screening ? 'thresholds use this' : 'not screened on yet'}
+        </span>
       )}
       {revenueError && (
         <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{revenueError}</span>
@@ -874,9 +894,15 @@ function answerSelectStyle(val, derived = false) {
 // company (`sharedLinks` / `onSetSharedLink`) — a statute is the same page
 // whoever is being screened. `links` is the old per-company map, read as a
 // fallback so anything saved before that stays on screen.
-function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', revenueEntity = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
+  //
+  // `revenue` is the figure the thresholds are tested against, which is not
+  // always this company's own: every regime here measures the consolidated
+  // group, so a company with a parent recorded is screened on the parent's
+  // revenue. `revenueEntity` names that parent when it is, and rides into
+  // every basis string so a verdict always says whose number cleared the bar.
   const revenueLabel = String(revenue || '').trim();
   const revenueUsd = parseRevenueUsd(revenueLabel);
   // Inputs the California criteria derive themselves from, and the
@@ -884,7 +910,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
   // gates SB 253 / SB 261 — the jurisdiction question alone only asks
   // whether the company operates or sells there.
   const criterionContext = {
-    revenueUsd, revenueLabel, caSiteCount,
+    revenueUsd, revenueLabel, revenueEntity, caSiteCount,
     employees: Number.isFinite(Number(employees)) && employees !== null && employees !== ''
       ? Number(employees) : null,
     // The CSRD figures the compliance research run turned up, plus its
@@ -1215,6 +1241,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                         : deriveRegulationVerdict(r, {
                           revenueUsd,
                           revenueLabel,
+                          revenueEntity,
                           jurisdictionAnswer: val,
                           jurisdictionLabel: q.jurisdiction,
                           doingBusiness: q.key === 'california' ? doingBusinessInCA : undefined,
@@ -1675,6 +1702,11 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ [`corporateComplianceParent.${slug}`]: String(value || '').trim() || null });
   }, [updateSettingsPath]);
 
+  const parentOf = useCallback(
+    (key) => String(parentCompanies[key] || '').trim(),
+    [parentCompanies],
+  );
+
   // Reference URLs this page used to file per company (company slug →
   // question or regulation key). Nothing writes here any more — links belong
   // to the row, not the company — but it's still read as a fallback, and the
@@ -1822,6 +1854,30 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     edits: factEdits[revenueSlug(name)] || null,
     revenueResearch: revenueResearch[revenueSlug(name)] || null,
   }), [factEdits, revenueResearch]);
+
+  /**
+   * The revenue the thresholds are tested against, and whose it is.
+   *
+   * Every regime this page screens measures the CONSOLIDATED group — CSRD
+   * catches a subsidiary through its ultimate parent, SB 253 and SB 261 are
+   * written against the parent entity's total annual revenues. So once a
+   * parent is recorded AND its revenue has been researched, that figure is
+   * the test subject and `entity` names it, so every derived verdict can say
+   * whose number cleared the bar.
+   *
+   * A parent with no revenue researched yet falls back to the company's own
+   * figure rather than screening on nothing: an unresearched parent is a gap
+   * in the working, not a reason to stop deriving. `entity` stays blank in
+   * that case, because the figure really is this company's.
+   */
+  const thresholdRevenueFor = useCallback((key, name, facts) => {
+    const own = String(facts?.revenue?.value || '').trim()
+      || String(prospectByKey.get(key)?.revenue || '').trim();
+    const parent = parentOf(key);
+    if (!parent) return { label: own, entity: '' };
+    const parentRev = String(revenueResearch[revenueSlug(parent)]?.revenue || '').trim();
+    return parentRev ? { label: parentRev, entity: parent } : { label: own, entity: '' };
+  }, [parentOf, revenueResearch, prospectByKey]);
 
   // Push a known HQ onto the matching company record — the reason this row
   // exists. Only fills blanks: an HQ Region already chosen on the popup, or
@@ -2178,6 +2234,12 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
               const hq = hqInfoFor(c.name);
               // Revenue and headcount, research with any correction on top.
               const facts = factsFor(c.name);
+              // The entity the thresholds are measured at. Every regime on
+              // this card tests the CONSOLIDATED group, so a recorded parent
+              // whose revenue has been researched IS the test subject; with
+              // no parent, or one nobody has researched yet, it stays this
+              // company's own figure and nothing changes.
+              const thresholdRevenue = thresholdRevenueFor(c.key, c.name, facts);
               return (
                 <div key={c.key || c.name} style={{
                   border: '1px solid var(--color-border)', borderRadius: 8,
@@ -2314,7 +2376,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         consolidated group, so a subsidiary's own revenue
                         can answer the wrong one. */}
                     {(() => {
-                      const parent = String(parentCompanies[c.key] || '').trim();
+                      const parent = parentOf(c.key);
                       return (
                         <CardRow label="Parent">
                           <ParentCompanySection
@@ -2325,6 +2387,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                             revenueLoading={!!(parent && revState[parent]?.loading)}
                             revenueError={(parent && revState[parent]?.error) || null}
                             onResearch={() => researchRevenue(parent)}
+                            screening={thresholdRevenue.entity === parent}
                           />
                         </CardRow>
                       );
@@ -2378,15 +2441,18 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         caSiteCount={c.california}
                         // Prefills the CSRD Employee Count row.
                         employees={facts.employees.value}
-                        // Feeds the derived SB 253 / SB 261 verdicts. Prefer
-                        // the researched figure shown in the Revenue row,
-                        // falling back to whatever the matched company
-                        // record already carries.
-                        revenue={
-                          facts.revenue.value
-                          || prospectByKey.get(c.key)?.revenue
-                          || ''
-                        }
+                        // Feeds the derived SB 253 / SB 261 verdicts.
+                        //
+                        // The threshold entity, not necessarily this company:
+                        // every regime here measures the consolidated group,
+                        // so a recorded parent whose revenue has been
+                        // researched is what the thresholds are tested
+                        // against. Without a parent — or with one nobody has
+                        // researched yet — this is the company's own figure,
+                        // preferring the researched one and falling back to
+                        // whatever the matched company record carries.
+                        revenue={thresholdRevenue.label}
+                        revenueEntity={thresholdRevenue.entity}
                         disabled={!c.key}
                         onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
                         onResearch={() => researchCompliance(c.name, c.key)}

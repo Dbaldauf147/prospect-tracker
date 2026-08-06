@@ -487,6 +487,20 @@ function fmtUsd(n) {
   return `$${n.toLocaleString()}`;
 }
 
+// The revenue figure a basis string quotes, and whose it is.
+//
+// Every regime here tests its thresholds at the CONSOLIDATED group, so when
+// a company has a parent recorded the number under test is the parent's.
+// That has to be visible wherever the verdict is explained: a basis reading
+// "revenue $23.7B >= the $1B threshold" against a subsidiary that turns over
+// a fraction of that is not a wrong verdict, it is an unsupportable one —
+// the reader cannot tell the figure was never the subsidiary's.
+function revenueShown(revenueLabel, revenueUsd, revenueEntity) {
+  const figure = revenueLabel || fmtUsd(revenueUsd);
+  const entity = String(revenueEntity || '').trim();
+  return entity ? `${figure} (parent: ${entity})` : figure;
+}
+
 // Derive one regulation's Applies? verdict. Returns { verdict, basis } — the
 // basis explains the call in the tooltip — or null when it isn't derivable:
 // no revenue threshold on this regulation, no revenue figure researched yet,
@@ -494,7 +508,7 @@ function fmtUsd(n) {
 // required because the revenue test alone doesn't create the obligation; the
 // company also has to do business there.
 export function deriveRegulationVerdict(regulation, {
-  revenueUsd, revenueLabel, jurisdictionAnswer, jurisdictionLabel, doingBusiness,
+  revenueUsd, revenueLabel, revenueEntity, jurisdictionAnswer, jurisdictionLabel, doingBusiness,
 } = {}) {
   const threshold = regulation?.revenueThresholdUsd;
   if (threshold == null) return null;
@@ -505,7 +519,7 @@ export function deriveRegulationVerdict(regulation, {
   // operates or sells there at all. Otherwise fall back to that question.
   const business = doingBusiness ?? (jurisdictionAnswer === 'Yes' ? 'Yes' : null);
   const overThreshold = revenueUsd >= threshold;
-  const shown = revenueLabel || fmtUsd(revenueUsd);
+  const shown = revenueShown(revenueLabel, revenueUsd, revenueEntity);
   // Both legs have to hold, so a revenue figure under the threshold settles
   // it on its own — no point waiting on the doing-business tests to answer a
   // question their outcome can't change.
@@ -534,7 +548,7 @@ export function deriveRegulationVerdict(regulation, {
 // For a numeric row `verdict` is the figure as a string, which is what the
 // input renders and what gets persisted if the user leaves it alone.
 export function deriveCriterion(row, {
-  revenueUsd, revenueLabel, caSiteCount, employees, csrd, csrdNotes,
+  revenueUsd, revenueLabel, revenueEntity, caSiteCount, employees, csrd, csrdNotes,
 } = {}) {
   // The compliance research run is the first source for a row that names a
   // field on its payload. A researched "Unknown" is treated as nothing found,
@@ -564,14 +578,14 @@ export function deriveCriterion(row, {
       basis: `From revenue research: ${employees.toLocaleString('en-US')} employees reported. Type over it to override.`,
     };
   }
-  return deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSiteCount });
+  return deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, revenueEntity, caSiteCount });
 }
 
-export function deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, caSiteCount } = {}) {
+export function deriveCaliforniaCriterion(row, { revenueUsd, revenueLabel, revenueEntity, caSiteCount } = {}) {
   if (row?.revenueThresholdUsd != null) {
     if (!Number.isFinite(revenueUsd)) return null;
     const verdict = revenueUsd >= row.revenueThresholdUsd ? 'Yes' : 'No';
-    const shown = revenueLabel || fmtUsd(revenueUsd);
+    const shown = revenueShown(revenueLabel, revenueUsd, revenueEntity);
     return {
       verdict,
       basis: `From revenue research: ${shown} ${verdict === 'Yes' ? '≥' : '<'} ${fmtUsd(row.revenueThresholdUsd)}. Pick a value to override.`,
