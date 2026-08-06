@@ -34,7 +34,8 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
-import { applyOrdinanceOverrides, overrideKey } from '../../utils/ordinanceOverrides';
+import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../../utils/ordinanceOverrides';
+import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership } from './ownershipScope.js';
 import CorporateCompliance from './CorporateCompliance';
@@ -4403,24 +4404,85 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return out.filter(Boolean);
   };
 
-  // Mandate data with the user's own corrections applied. Every screening
-  // on this page — the two compliance subtabs and the two exports — reads
-  // this rather than the published seed, so a corrected deadline or
-  // penalty reaches every figure instead of only the popup it was typed
-  // into. MASTER_ORDINANCES is returned unchanged when nothing is
-  // corrected, which keeps the screening's per-list caches warm.
-  const ordinanceOverrides = settings?.complianceOrdinanceOverrides || null;
+  // Mandate corrections held in the SHARED reference — one document per
+  // jurisdiction, read by every signed-in user. A city's deadline is the
+  // same deadline for everyone screening a site there, so a correction
+  // belongs to the team rather than to whoever typed it.
+  const [sharedOrdinanceOverrides, setSharedOrdinanceOverrides] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { overrides } = await loadSharedOrdinanceOverrides();
+      if (!cancelled) setSharedOrdinanceOverrides(overrides);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // The user's own copy. Written only when the shared write is refused,
+  // and laid OVER the shared layer so what they typed still stands for
+  // them — see mergeOverrideLayers.
+  const personalOrdinanceOverrides = settings?.complianceOrdinanceOverrides || null;
+  const ordinanceOverrides = useMemo(
+    () => mergeOverrideLayers(sharedOrdinanceOverrides, personalOrdinanceOverrides),
+    [sharedOrdinanceOverrides, personalOrdinanceOverrides],
+  );
+
+  // Mandate data with those corrections applied. Every screening on this
+  // page — the two compliance subtabs and the two exports — reads this
+  // rather than the published seed, so a corrected deadline or penalty
+  // reaches every figure instead of only the popup it was typed into.
+  // MASTER_ORDINANCES is returned unchanged when nothing is corrected,
+  // which keeps the screening's per-list caches warm.
   const ordinances = useMemo(
     () => applyOrdinanceOverrides(MASTER_ORDINANCES, ordinanceOverrides),
     [ordinanceOverrides],
   );
 
-  // Save (or clear, with a null patch) one jurisdiction's correction for
-  // one mandate category.
-  const saveOrdinanceOverride = useCallback((govId, category, patch) => {
+  /**
+   * Save (or clear, with a null patch) one jurisdiction's correction for
+   * one mandate category.
+   *
+   * The shared reference is written first, because that is what the
+   * correction is FOR. A refusal isn't a failure to report and walk away
+   * from: the correction is kept in the user's own settings so their
+   * screening still reflects it, and the caller is told which of the two
+   * happened so the page can say so.
+   *
+   * Returns { ok, shared, error }.
+   */
+  const saveOrdinanceOverride = useCallback(async (govId, category, patch) => {
     const key = overrideKey(govId);
-    if (!key || !category || !updateSettingsPath) return;
-    const current = settings?.complianceOrdinanceOverrides?.[key] || {};
+    if (!key || !category) return { ok: false, shared: false, error: 'Nothing to save.' };
+
+    const applyLocally = () => setSharedOrdinanceOverrides((prev) => {
+      const next = { ...(prev || {}) };
+      const entry = { ...(next[key] || {}) };
+      if (patch) entry[category] = patch; else delete entry[category];
+      if (Object.keys(entry).length) next[key] = entry; else delete next[key];
+      return next;
+    });
+
+    const result = await saveSharedOrdinanceOverride(key, category, patch);
+    if (result.ok) {
+      // Reflect it immediately rather than waiting for a re-read: the
+      // popup this was typed into is still open and showing the old
+      // figures.
+      applyLocally();
+      // A correction that made it to the shared reference doesn't need a
+      // personal copy shadowing it — and a stale personal copy would win
+      // over every future shared edit.
+      if (personalOrdinanceOverrides?.[key]?.[category] && updateSettingsPath) {
+        const rest = { ...personalOrdinanceOverrides[key] };
+        delete rest[category];
+        updateSettingsPath({
+          [`complianceOrdinanceOverrides.${key}`]: Object.keys(rest).length ? rest : null,
+        });
+      }
+      return { ok: true, shared: true, error: '' };
+    }
+
+    if (!updateSettingsPath) return { ok: false, shared: false, error: result.error };
+    const current = personalOrdinanceOverrides?.[key] || {};
     const next = { ...current };
     if (patch) next[category] = patch;
     else delete next[category];
@@ -4429,7 +4491,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // jurisdiction, so the map doesn't fill with empty objects.
       [`complianceOrdinanceOverrides.${key}`]: Object.keys(next).length ? next : null,
     });
-  }, [settings?.complianceOrdinanceOverrides, updateSettingsPath]);
+    return { ok: true, shared: false, error: result.error };
+  }, [personalOrdinanceOverrides, updateSettingsPath]);
 
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes

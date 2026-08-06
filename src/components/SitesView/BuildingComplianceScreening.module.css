@@ -1290,3 +1290,19 @@
   font-size: 0.68rem;
   line-height: 1.4;
 }
+.mdEditIntro {
+  font-size: 0.68rem;
+  color: var(--color-text-muted, #64748B);
+  line-height: 1.4;
+  margin-bottom: 0.4rem;
+}
+.mdEditWarn {
+  margin-top: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 5px;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  color: #92400E;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}

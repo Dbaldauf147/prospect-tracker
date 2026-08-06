@@ -7,11 +7,15 @@
 // quoting the wrong number — and every exposure total, deadline chart and
 // export downstream quoted it too.
 //
-// An override is a per-user correction to ONE category of ONE
-// jurisdiction. It is applied to the ordinance list before anything is
-// screened, so a corrected deadline or threshold reaches every
-// calculation the reference feeds rather than only the popup it was typed
-// into.
+// An override is a correction to ONE category of ONE jurisdiction. It is
+// applied to the ordinance list before anything is screened, so a
+// corrected deadline or threshold reaches every calculation the reference
+// feeds rather than only the popup it was typed into.
+//
+// Corrections are stored in the shared complianceOrdinances collection —
+// a city's deadline is the same for everyone screening a site there — and
+// fall back to the user's own settings when that write is refused. This
+// module is the pure half: where they are kept is ordinanceOverrideStore.js.
 //
 // Only the fields that change an answer are editable: whether the
 // ordinance is in force, when it is due, the size it reaches, and what it
@@ -207,4 +211,21 @@ export function applyOrdinanceOverrides(ordinances, overrides) {
     return next;
   });
   return touched ? out : list;
+}
+
+/**
+ * The shared corrections with a user's own laid over them.
+ *
+ * A personal correction wins for the user who made it: it is usually
+ * there BECAUSE the shared write was refused, and demoting it under the
+ * shared copy would quietly undo what they typed.
+ */
+export function mergeOverrideLayers(shared, personal) {
+  if (!shared || Object.keys(shared).length === 0) return personal || null;
+  if (!personal || Object.keys(personal).length === 0) return shared;
+  const out = { ...shared };
+  for (const [key, entry] of Object.entries(personal)) {
+    out[key] = { ...(out[key] || {}), ...(entry || {}) };
+  }
+  return out;
 }

@@ -568,6 +568,11 @@ function AuditTypeCell({ res }) {
 // published, and one button puts the whole category back.
 function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) {
   const [values, setValues] = useState(() => mandateFormValues(mandate, category, overrides));
+  // What the save did. A correction is meant for everyone screening this
+  // jurisdiction, so a write that only reached this browser has to say so
+  // rather than close and look like it published.
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(null);
   const set = (key, value) => setValues(v => ({ ...v, [key]: value }));
   const setThreshold = (key, value) => setValues(v => ({ ...v, thresholds: { ...v.thresholds, [key]: value } }));
   const keys = THRESHOLD_KEYS[category] || [];
@@ -581,6 +586,10 @@ function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) 
 
   return (
     <div className={styles.mdEdit}>
+      <div className={styles.mdEditIntro}>
+        Corrects the {CATEGORY_LABEL[category]} reference for {mandate?.government || 'this jurisdiction'} —
+        for every site here, every export, and everyone else signed in.
+      </div>
       {field('Policy', (
         <input
           className={styles.mdEditInput}
@@ -625,7 +634,11 @@ function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) 
           placeholder="none published"
         />
       )))}
-      {field('Max penalty', (
+      {/* BBS and audit penalties are flat annual maxima, so the label says
+          so and there is nothing else to explain. A BPS penalty can be a
+          per-ft² rate — the unit below decides — so its label stays
+          unqualified rather than promising a year it may not be in. */}
+      {field(category === 'bps' ? 'Max penalty' : 'Max penalty per year', (
         <input
           className={styles.mdEditInput}
           inputMode="numeric"
@@ -633,7 +646,7 @@ function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) 
           onChange={e => set('maxPenalty', e.target.value)}
           placeholder="none published"
         />
-      ), 'The published maximum, per year.')}
+      ), category === 'bps' ? 'The published maximum. The unit below decides whether it is a flat yearly fee or a per-ft² rate.' : '')}
       {category === 'bps' && field('Penalty unit', (
         <input
           className={styles.mdEditInput}
@@ -654,18 +667,39 @@ function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) 
         <button
           type="button"
           className={styles.mdEditSave}
-          onClick={() => { onSave(govId, category, overridePatchFrom(values)); onDone(); }}
-        >Save for every site here</button>
-        <button type="button" className={styles.mdEditBtn} onClick={onDone}>Cancel</button>
+          disabled={saving}
+          onClick={async () => {
+            setSaving(true);
+            setSaved(null);
+            const res = await onSave(govId, category, overridePatchFrom(values));
+            setSaving(false);
+            // A shared save is done and the form can close over it. One
+            // that fell back to this browser stays open with the reason,
+            // because it is a different outcome from the one asked for.
+            if (res?.shared) onDone();
+            else setSaved(res);
+          }}
+        >{saving ? 'Saving…' : 'Save for everyone'}</button>
+        <button type="button" className={styles.mdEditBtn} onClick={onDone} disabled={saving}>Cancel</button>
         {overrideFor(overrides, govId, category) && (
           <button
             type="button"
             className={styles.mdEditBtn}
-            onClick={() => { onSave(govId, category, null); onDone(); }}
+            disabled={saving}
+            onClick={async () => { await onSave(govId, category, null); onDone(); }}
             title="Drop this correction and go back to the published reference"
           >Reset to published</button>
         )}
       </div>
+      {saved && !saved.shared && (
+        <div className={styles.mdEditWarn}>
+          {saved.ok
+            ? 'Saved for you only: the shared reference refused the write, so this correction '
+              + 'screens on this account and nobody else’s.'
+            : 'Couldn’t save that correction.'}
+          {saved.error ? ` (${saved.error})` : ''}
+        </div>
+      )}
     </div>
   );
 }

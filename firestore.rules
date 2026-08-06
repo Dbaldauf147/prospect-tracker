@@ -68,6 +68,21 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Shared compliance-mandate corrections. The building-compliance
+    // screening runs off a committed seed built from a workbook; when a
+    // jurisdiction moves a deadline or publishes a penalty the sheet
+    // never carried, the correction is typed on the page and lands here.
+    // It is reference data about a city's ordinance, not anybody's own
+    // record, so every signed-in user reads AND writes it — a correction
+    // that only reached the person who made it would leave the rest of
+    // the team screening against the figure they already know is wrong.
+    // Each write stamps updatedBy, so a wrong correction can be traced
+    // and reverted. Tighten to isAdmin() for write if that trade stops
+    // being the right one.
+    match /complianceOrdinances/{govKey} {
+      allow read, write: if isAuthorized();
+    }
+
     // Per-user integration OAuth tokens (HubSpot/Google/Microsoft) are
     // written and read ONLY by the server (firebase-admin bypasses
     // rules). Clients must never touch them.
