@@ -2664,7 +2664,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // apart on the page and carries that split into the exports.
     const divisionCol = {
       key: 'division',
-      label: 'Division',
+      // "Division" alone under-sold what this column actually holds. In a
+      // PE-backed portfolio the level under Company Name is a portfolio
+      // company, not a division, and a header naming only one of the two
+      // reads as though the other belongs somewhere else on the page.
+      label: 'Division/Portfolio Company',
       defaultWidth: 170,
       render: (row) => {
         const v = row.__division__;
@@ -13078,7 +13082,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             <label
               htmlFor="sites-division-scope"
               style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)' }}
-            >Division</label>
+            >Division/Portfolio Company</label>
             <select
               id="sites-division-scope"
               value={divisionFilter}
@@ -13095,7 +13099,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 color: divisionFilter ? '#6B21A8' : 'var(--color-text)',
               }}
             >
-              <option value="">All divisions ({divisionOptions.reduce((n, o) => n + o.count, 0)} sites)</option>
+              {/* "All divisions" named only half of what the picker now
+                  covers, so it reads neutrally instead. */}
+              <option value="">All ({divisionOptions.reduce((n, o) => n + o.count, 0)} sites)</option>
               {divisionOptions.map(o => (
                 <option key={o.value} value={o.value}>{o.label} ({o.count})</option>
               ))}
@@ -13746,7 +13752,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'companyName', label: 'Company Name', required: false, hint: 'Company / portfolio the site belongs to. Surfaced as a column on the Utility Lookup page and used to name the Indicative Savings export file (e.g. "Acme Corp_Indicative Savings Analysis.xlsx").' },
-            { key: 'division', label: 'Division', required: false, hint: 'Division / business unit / operating brand the site belongs to — one level under Company Name. Passthrough only; surfaced as its own column on the Utility Lookup page so a portfolio spanning several divisions can be read and filtered apart.' },
+            { key: 'division', label: 'Division/Portfolio Company', required: false, hint: 'Division / portfolio company / business unit / operating brand the site belongs to — one level under Company Name. Passthrough only; surfaced as its own column on the Utility Lookup page so a portfolio spanning several divisions can be read and filtered apart.' },
             { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field: surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
             { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
