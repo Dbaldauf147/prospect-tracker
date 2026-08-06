@@ -39,7 +39,6 @@ const ClientsView = lazyView(() => import('./components/ClientsView/ClientsView'
 const ContactsView = lazyView(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
 const DraftEmailsPage = lazyView(() => import('./components/DraftEmailView/DraftEmailsPage').then(m => ({ default: m.DraftEmailsPage })));
 const DropdownsView = lazyView(() => import('./components/DropdownsView/DropdownsView').then(m => ({ default: m.DropdownsView })));
-const EmailTrackingView = lazyView(() => import('./components/EmailTrackingView/EmailTrackingView').then(m => ({ default: m.EmailTrackingView })));
 const IssuesView = lazyView(() => import('./components/IssuesView/IssuesView').then(m => ({ default: m.IssuesView })));
 const KanbanView = lazyView(() => import('./components/KanbanView/KanbanView').then(m => ({ default: m.KanbanView })));
 const ListsView = lazyView(() => import('./components/ListsView/ListsView').then(m => ({ default: m.ListsView })));
@@ -378,8 +377,10 @@ function App() {
           <Suspense fallback={<div className="loading">Loading view…</div>}>
           {dataLoading ? (
             <div className="loading">Loading prospects...</div>
-          ) : view === 'drafts' || view === 'campaigns' ? (
-            <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
+          ) : view === 'drafts' || view === 'campaigns' || view === 'tracking' ? (
+            // Campaigns and Tracking are sub-tabs of Draft Emails; the view
+            // keys stay routable so existing links land on the right tab.
+            <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'drafts' ? 'drafts' : view} />
           ) : view === 'charts' ? (
             <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'vibe' ? (
@@ -395,8 +396,6 @@ function App() {
               updateSettings={updateSettings}
               onSelectProspect={handleSelect}
             />
-          ) : view === 'tracking' ? (
-            <EmailTrackingView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
