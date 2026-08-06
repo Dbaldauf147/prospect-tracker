@@ -130,12 +130,18 @@ function HBars({ items, color, fmt = String, wide = false, empty = 'No eligible 
 // same x in the lanes and in the fines chart below them and the two can be
 // read as one picture.
 const TL = { W: 960, padL: 122, padR: 36 };
-const tlX = (t, ax) => TL.padL + ((t - ax.lo) / (ax.hi - ax.lo)) * (TL.W - TL.padL - TL.padR);
+// The chart lays itself out in viewBox units and scales to whatever width
+// its panel has, so a WIDER canvas here means the same picture drawn with
+// more room between dates — the labels come back a touch smaller, and a
+// dense lane gets the space its labels need. Every position takes the
+// width it is being drawn in rather than reading the constant, so one
+// chart can be wider than another on the same page.
+const tlX = (t, ax, W = TL.W) => TL.padL + ((t - ax.lo) / (ax.hi - ax.lo)) * (W - TL.padL - TL.padR);
 
 // Year boundaries, so the axis reads as elapsed time rather than as a row of
 // ticks. Quarters instead when the whole span is inside a couple of years,
 // which is where most portfolios sit.
-function axisTicks(ax) {
+function axisTicks(ax, W = TL.W) {
   const out = [];
   const y0 = new Date(ax.lo).getUTCFullYear(), y1 = new Date(ax.hi).getUTCFullYear();
   const byQuarter = (ax.hi - ax.lo) < 800 * DAY;
@@ -143,15 +149,15 @@ function axisTicks(ax) {
     for (const m of (byQuarter ? [0, 3, 6, 9] : [0])) {
       const t = Date.UTC(y, m, 1);
       if (t <= ax.lo || t >= ax.hi) continue;
-      out.push({ t, px: tlX(t, ax), label: m === 0 ? String(y) : `${MONTHS[m]} ${y}`, major: m === 0 });
+      out.push({ t, px: tlX(t, ax, W), label: m === 0 ? String(y) : `${MONTHS[m]} ${y}`, major: m === 0 });
     }
   }
   return out;
 }
 
 // Today, drawn the same way on both charts.
-function TodayMark({ ax, todayTime, y1, y2, label = true }) {
-  const px = tlX(todayTime, ax);
+function TodayMark({ ax, todayTime, y1, y2, label = true, W = TL.W }) {
+  const px = tlX(todayTime, ax, W);
   return (
     <g>
       <line x1={px} y1={y1} x2={px} y2={y2} stroke="#DC2626" strokeWidth="1.6" />
@@ -171,7 +177,6 @@ function TodayMark({ ax, todayTime, y1, y2, label = true }) {
 // stay exactly on their true dates either way.
 function DeadlineLanes({ lanes, ax, todayTime }) {
   const padT = 26, padB = 6;
-  const ticks = axisTicks(ax);
   // Half the width a two-line label needs. Now that the count is a bare number
   // — the legend carries the "sites" — the wider line is the M/D date under it,
   // at worst "12/31". Tied to that line's font size: shrink the text and this
@@ -183,6 +188,9 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   const TIERS = 7;
   const PITCH = 27;      // gap between labels laid out along a run
   const RUN_GAP = 12;    // clear space between one run and the next
+  // How wide the canvas may grow to fit its runs. Past this the text has
+  // shrunk far enough that a stacked lane reads better than a wide one.
+  const MAX_W = 1500;
   const LBL_Y = 14;      // a lone label sits this far under its dot
   const BRK_Y = 14;      // the bracket tying a run to its cluster
   const RUN_Y = 30;      // a run sits below that bracket
@@ -195,9 +203,50 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   //
   // The dot never moves under any of this: it is the date. A label in a run
   // does not sit over its own dot, which is the trade the bracket pays for.
-  const todayX = tlX(todayTime, ax);
+  // A lane's runs need (n-1) pitches plus a label's width for every cluster,
+  // and a gap between them. At the default width a lane filing on five or
+  // six dates a year has about one label's room for six, so every run is
+  // refused and the whole lane drops to the stacked fallback — the layout
+  // this replaced. Widening the canvas until the busiest lane's runs fit
+  // buys that room back at the cost of slightly smaller text, which is the
+  // cheaper of the two.
+  const clustersIn = (lane, W) => {
+    const out = [];
+    for (const p of lane.points) {
+      const cx = tlX(isoTime(p.date), ax, W);
+      const last = out[out.length - 1];
+      if (last && cx - last[last.length - 1].cx < HALF * 2 + 5) last.push({ ...p, cx });
+      else out.push([{ ...p, cx }]);
+    }
+    return out;
+  };
+  // What the plot has to be for a lane's runs to clear each other. A run is
+  // centred on its cluster, so between two clusters there must be room for
+  // half of each run, a label's width either side, and the gap between them
+  // — and the space actually there is that pair's share of the axis. Divide
+  // the one by the other and the answer is how wide the plot has to be.
+  const runWidth = cl => (cl.length - 1) * PITCH;
+  const midTime = cl => (isoTime(cl[0].date) + isoTime(cl[cl.length - 1].date)) / 2;
+  const plotNeededFor = (lane) => {
+    const cls = clustersIn(lane, TL.W);
+    if (!cls.length) return 0;
+    let need = Math.max(...cls.map(cl => runWidth(cl) + HALF * 2));
+    for (let i = 0; i < cls.length - 1; i += 1) {
+      const room = runWidth(cls[i]) / 2 + runWidth(cls[i + 1]) / 2 + HALF * 2 + RUN_GAP;
+      const share = (midTime(cls[i + 1]) - midTime(cls[i])) / (ax.hi - ax.lo);
+      if (share > 0) need = Math.max(need, room / share);
+    }
+    return need;
+  };
+  // A hair over what the arithmetic says: a run that fits to the pixel is one
+  // rounding away from being refused, and a refusal costs the lane every run
+  // it has.
+  const needed = Math.max(0, ...lanes.map(plotNeededFor)) * 1.03;
+  const W = Math.min(MAX_W, Math.max(TL.W, Math.round(TL.padL + TL.padR + needed)));
+
+  const todayX = tlX(todayTime, ax, W);
   const placed = lanes.map(lane => {
-    const pts = lane.points.map(p => ({ ...p, cx: tlX(isoTime(p.date), ax) }));
+    const pts = lane.points.map(p => ({ ...p, cx: tlX(isoTime(p.date), ax, W) }));
     // A cluster is a run of dates whose labels would overlap if each sat under
     // its own dot. A date far enough from its neighbours is a cluster of one
     // and just gets a label underneath, with no bracket to explain.
@@ -235,7 +284,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
         // Where the run may legally begin, given the axis ends and whatever
         // sits either side of it.
         let minStart = Math.max(TL.padL + HALF, prevRight + RUN_GAP + HALF);
-        let maxStart = Math.min(TL.W - TL.padR - HALF - width, nextLeft - RUN_GAP - HALF - width);
+        let maxStart = Math.min(W - TL.padR - HALF - width, nextLeft - RUN_GAP - HALF - width);
         // A label in a run no longer sits at its own date, so it must at least
         // stay on the correct side of the TODAY rule: a deadline that has
         // passed, labelled to the right of it, reads as still to come, which
@@ -285,12 +334,13 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
   laneHeights.reduce((top, h) => { laneTops.push(top); return top + h; }, padT);
   const bodyH = laneHeights.reduce((a, b) => a + b, 0);
   const H = padT + bodyH + padB;
+  const ticks = axisTicks(ax, W);
   return (
-    <svg width="100%" viewBox={`0 0 ${TL.W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img"
       aria-label="Compliance deadlines by mandate over time">
       {lanes.map((lane, i) => (
         i % 2 === 1 ? (
-          <rect key={`band${lane.key}`} x="0" y={laneTops[i]} width={TL.W} height={laneHeights[i]} fill="#F8FAFC" />
+          <rect key={`band${lane.key}`} x="0" y={laneTops[i]} width={W} height={laneHeights[i]} fill="#F8FAFC" />
         ) : null
       ))}
       {ticks.map(t => (
@@ -299,12 +349,12 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
           {/* The TODAY caption owns its stretch of the header — a tick label
               under it prints as one illegible word. Compared as boxes, since
               a quarter label is twice the width of a year. */}
-          {!(t.px + 4 < tlX(todayTime, ax) + 27 && t.px + 4 + (t.major ? 26 : 48) > tlX(todayTime, ax) - 27) && (
+          {!(t.px + 4 < todayX + 27 && t.px + 4 + (t.major ? 26 : 48) > todayX - 27) && (
             <text x={t.px + 4} y={padT - 15} fontSize={t.major ? 11 : 9} fontWeight={t.major ? 800 : 600} fill={t.major ? '#94A3B8' : '#CBD5E1'}>{t.label}</text>
           )}
         </g>
       ))}
-      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 10} y2={padT + bodyH} />
+      <TodayMark ax={ax} todayTime={todayTime} y1={padT - 10} y2={padT + bodyH} W={W} />
       {lanes.map((lane, i) => {
         const dotY = laneTops[i] + 15;
         return (
@@ -315,7 +365,7 @@ function DeadlineLanes({ lanes, ax, todayTime }) {
                 ? `${lane.total} site${lane.total === 1 ? '' : 's'}`
                 : 'no dated deadlines'}
             </text>
-            <line x1={TL.padL} y1={dotY} x2={TL.W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
+            <line x1={TL.padL} y1={dotY} x2={W - TL.padR} y2={dotY} stroke="#E2E8F0" strokeWidth="1" />
             {/* One bracket per run: a stub down from the middle of the cluster,
                 then a rule with a tick turned down at each end of the labels.
                 The rule runs to whichever is further out, the labels or the
