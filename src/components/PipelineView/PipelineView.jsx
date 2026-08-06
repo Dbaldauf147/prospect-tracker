@@ -990,7 +990,7 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
                   </td>
                 </tr>
               ) : services.map(key => {
-                const cov = coverageByService.get(key) || { explored: [], notExplored: [], total: clients.length, pct: 0 };
+                const cov = coverageByService.get(key) || { explored: [], exploredActive: [], na: [], notExplored: [], total: clients.length, pct: 0 };
                 const isOpen = expanded.has(key);
                 return (
                   <Fragment key={key}>
@@ -1026,9 +1026,9 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
                         <td colSpan={4}>
                           <div className={styles.svcCovLists}>
                             <div className={styles.svcCovCol}>
-                              <div className={styles.svcCovListHead}>Explored ({cov.explored.length})</div>
+                              <div className={styles.svcCovListHead}>Explored ({cov.exploredActive.length})</div>
                               <div className={styles.svcCovChips}>
-                                {cov.explored.length ? cov.explored.map(({ p, status }) => (
+                                {cov.exploredActive.length ? cov.exploredActive.map(({ p, status }) => (
                                   <span
                                     key={p.id}
                                     className={`${styles.svcCovChip} ${styles.svcCovChipYes}`}
@@ -1039,6 +1039,24 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
                                     <span className={styles.svcCovChipStatus}>{status}</span>
                                   </span>
                                 )) : <span className={styles.svcCovNone}>No clients have explored this service yet.</span>}
+                              </div>
+                            </div>
+                            {/* N/A gets its own column: the service doesn't apply to these
+                                clients, so listing them beside real activity overstates it.
+                                They still count toward the row's coverage number. */}
+                            <div className={styles.svcCovCol}>
+                              <div className={styles.svcCovListHead}>N/A ({cov.na.length})</div>
+                              <div className={styles.svcCovChips}>
+                                {cov.na.length ? cov.na.map(({ p }) => (
+                                  <span
+                                    key={p.id}
+                                    className={`${styles.svcCovChip} ${styles.svcCovChipNa}`}
+                                    onClick={(e) => { e.stopPropagation(); openProspect(p); }}
+                                    title={`${p.company}: not applicable`}
+                                  >
+                                    {p.company}
+                                  </span>
+                                )) : <span className={styles.svcCovNone}>No clients marked this service N/A.</span>}
                               </div>
                             </div>
                             <div className={styles.svcCovCol}>

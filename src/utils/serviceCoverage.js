@@ -199,27 +199,46 @@ export function coverageExclusions(prospects, cdmName, exclusions = {}) {
   return { cancelling, untracked, total: cancelling + untracked };
 }
 
+// Is this service status the "N/A" marker — the service doesn't apply to this
+// client? It's a real, deliberate answer (so it still counts as explored), but
+// it's not exploration activity, which is why callers can split it out.
+export function isNotApplicableStatus(status) {
+  return String(status || '').trim().toLowerCase() === 'n/a';
+}
+
 // Coverage of one service across a client list: who's explored it (with each
 // client's status) and who hasn't, plus the rolled-up count / percentage. A
 // client counts as "explored" when its company page would show a status for
 // the service — a manual servicesExplored value OR an opportunity naming the
 // service in its Scope (In Progress / Sold / etc.). `oppStagesByClient` carries
 // the opp-derived statuses; pass it so this matches each company page.
+//
+// The returned lists overlap on purpose: `explored` is every client with a
+// status (the coverage count / percentage), and it splits into `exploredActive`
+// (a real exploration status) plus `na` (the service doesn't apply). Callers
+// that only want the headline number keep using `explored`.
 export function computeServiceCoverage(clients, serviceKey, oppStagesByClient) {
   const explored = [];
+  const exploredActive = [];
+  const na = [];
   const notExplored = [];
   for (const p of clients) {
     const status = serviceKey ? effectiveServiceStatus(p, serviceKey, oppStagesByClient) : '';
     if (status) {
-      explored.push({ p, status });
+      const entry = { p, status };
+      explored.push(entry);
+      if (isNotApplicableStatus(status)) na.push(entry);
+      else exploredActive.push(entry);
     } else {
       notExplored.push({ p });
     }
   }
   const byName = (a, b) => String(a.p.company || '').localeCompare(String(b.p.company || ''));
   explored.sort(byName);
+  exploredActive.sort(byName);
+  na.sort(byName);
   notExplored.sort(byName);
   const total = clients.length;
   const pct = total ? Math.round((explored.length / total) * 100) : 0;
-  return { explored, notExplored, total, pct };
+  return { explored, exploredActive, na, notExplored, total, pct };
 }
