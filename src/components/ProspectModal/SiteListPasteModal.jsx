@@ -3,10 +3,16 @@ import { useState, useMemo } from 'react';
 // Canonical site-list columns the company popup maps pasted Excel data
 // onto. Kept in this fixed order so the combined Site List Overview on the
 // Email Drafts page lines every company's sites up under the same headers.
+// Size and Division are spelled exactly as the Utility Lookup page writes
+// them when it saves an analysed list, so a company fed from both paths
+// ends up with ONE Size column rather than "Size (ft²)" beside
+// "Size (sq ft)" — the merge unions headers by name.
 const SITE_LIST_COLUMNS = [
   'Company',
+  'Division',
   'Site Name',
   'Property Type',
+  'Size (ft²)',
   'Street Address',
   'City',
   'State / Province',
@@ -29,6 +35,45 @@ const ALIASES = {
   propertytype: 'Property Type',
   type: 'Property Type',
   assettype: 'Property Type',
+  buildingtype: 'Property Type',
+  propertyclass: 'Property Type',
+  usetype: 'Property Type',
+  // The division / business unit the site sits under — a sub-level of
+  // Company, not another name for it, so the company aliases above stay
+  // clear of these.
+  division: 'Division',
+  divisionname: 'Division',
+  businessunit: 'Division',
+  businessunitname: 'Division',
+  bu: 'Division',
+  subsidiary: 'Division',
+  operatingcompany: 'Division',
+  operatingunit: 'Division',
+  operatingbrand: 'Division',
+  opco: 'Division',
+  banner: 'Division',
+  // Building size. Every spelling lands on the one canonical column so a
+  // company's sites can be summed whatever the source sheet called it.
+  sizeft: 'Size (ft²)',
+  sizeft2: 'Size (ft²)',
+  sizesqft: 'Size (ft²)',
+  size: 'Size (ft²)',
+  sqft: 'Size (ft²)',
+  sqfeet: 'Size (ft²)',
+  squarefeet: 'Size (ft²)',
+  squarefoot: 'Size (ft²)',
+  squarefootage: 'Size (ft²)',
+  sf: 'Size (ft²)',
+  rsf: 'Size (ft²)',
+  gsf: 'Size (ft²)',
+  area: 'Size (ft²)',
+  floorarea: 'Size (ft²)',
+  grossarea: 'Size (ft²)',
+  grosssquarefeet: 'Size (ft²)',
+  buildingsize: 'Size (ft²)',
+  buildingarea: 'Size (ft²)',
+  propertysize: 'Size (ft²)',
+  totalsqft: 'Size (ft²)',
   address: 'Street Address',
   streetaddress: 'Street Address',
   street: 'Street Address',
@@ -171,7 +216,9 @@ export function SiteListPasteModal({ companyName = '', onClose, onImport }) {
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>
-            {stage === 'paste' ? `Paste site list from Excel${companyName ? ` (${companyName}` : ''}` : `Map columns), ${rawRows.length} rows`}
+            {stage === 'paste'
+              ? `Paste site list from Excel${companyName ? ` (${companyName})` : ''}`
+              : `Map columns, ${rawRows.length} rows`}
           </strong>
           <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
         </div>
