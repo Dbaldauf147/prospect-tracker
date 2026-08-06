@@ -20,6 +20,7 @@
 // (scripts/callHistory.test.mjs), where extensionless specifiers don't
 // resolve. Vite is happy either way.
 import { talkTimeSplit } from './talkTime.js';
+import { oppTagStateOf, oppTagLabelOf } from './callOppTag.js';
 
 // How each source reads in the table. Kept here rather than in the view
 // so the exported spreadsheet says the same words as the screen.
@@ -114,6 +115,13 @@ export function historyRowFromRecord(record) {
     company: textOf(record.company),
     oppLabel: textOf(record.oppLabel),
     oppId: textOf(record.oppId),
+    // 'tagged' | 'na' | 'none'. Kept beside the label rather than folded
+    // into it: the label is what a cell reads, this is what a filter and
+    // a sort need, and "N/A" as a label must not be mistaken for the
+    // name of an opportunity somebody called N/A.
+    oppTag: oppTagStateOf(record),
+    oppTagLabel: oppTagLabelOf(record),
+    oppNaAt: textOf(record.oppNaAt),
     attendees: external.map(a => textOf(a?.name) || textOf(a?.email)).filter(Boolean).join(', '),
     attendeeEmails: external.map(a => textOf(a?.email)).filter(Boolean).join(', '),
     attendeeCount: external.length,
@@ -162,7 +170,7 @@ export function filterHistoryRows(rows, query) {
   const term = String(query || '').trim().toLowerCase();
   if (!term) return rows || [];
   return (rows || []).filter(row => [
-    row.name, row.company, row.oppLabel, row.attendees, row.attendeeEmails,
+    row.name, row.company, row.oppLabel, row.oppTagLabel, row.attendees, row.attendeeEmails,
     row.sourceLabel, row.stageLabel, row.meetingType, row.folders,
     row.summary, row.granolaSummary,
   ].filter(Boolean).join(' ').toLowerCase().includes(term));
@@ -181,10 +189,14 @@ export function historyTotals(rows) {
     summarized: 0,
     pushed: 0,
     withCompany: 0,
+    // Calls with neither an opp nor an N/A on them — the queue, and the
+    // only one of these numbers that names work still to do.
+    needsOppTag: 0,
     durationSeconds: 0,
   };
   for (const row of list) {
     if (row.hasTranscript) totals.transcribed += 1;
+    if (row.oppTag === 'none') totals.needsOppTag += 1;
     // Cumulative, not exclusive: a pushed call has been summarised, and
     // a count that said otherwise would read as work still to do.
     if (row.stageRank >= STAGE_ORDER.summarized) totals.summarized += 1;

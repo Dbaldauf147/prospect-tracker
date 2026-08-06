@@ -473,6 +473,22 @@
   white-space: nowrap;
 }
 
+/* "Belongs to no opportunity" — a decision, so it gets a chip like a
+   real tag does, but a quiet one: it says this call is settled, not
+   that anything came of it. */
+.oppChipNa {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
 .autoPush {
   display: inline-flex;
   align-items: center;
@@ -754,6 +770,91 @@
 .historyTotals {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+/* Triage filters: four piles, one of them the queue. */
+.historyFilters {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.historyFilterOn,
+.historyFilterOff {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.55rem;
+  border: none;
+  border-left: 1px solid var(--color-border);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.historyFilterOn:first-child,
+.historyFilterOff:first-child {
+  border-left: none;
+}
+
+.historyFilterOff {
+  background: #fff;
+  color: var(--color-text-secondary);
+}
+
+.historyFilterOn {
+  background: #009530;
+  color: #fff;
+}
+
+.historyFilterCount {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.historyFilterOn .historyFilterCount {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+/* An N/A in the Opportunity column: settled, and visibly not a deal. */
+.historyNa {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
+}
+
+/* Tag / N/A on an untriaged row, so the queue can be worked through in
+   the table that shows it rather than card by card on another tab. */
+.historyTagActions {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.historyTagBtn {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.historyTagBtn:hover {
+  border-color: #009530;
+  color: #009530;
 }
 
 .historyDate {
