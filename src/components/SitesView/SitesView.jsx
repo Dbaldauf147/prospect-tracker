@@ -6706,7 +6706,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (s.includes('annual lottery')) return 'lottery';   // CA
         if (s.includes('market cap')) return 'cap';            // MI
         if (s.includes('annual election')) return 'election';  // OR
-        if (s.includes('5 mw') || s.includes('limited opportunity')) return 'va5mw'; // VA
+        if (s.includes('5 mw')) return 'va5mw';                        // VA
+        if (s.includes('third-party supply')) return 'az_prior_supply'; // AZ
+        // Any other limited-opportunity wording falls to the generic amber
+        // rather than borrowing one of the named states' rules. These two
+        // used to share a bucket, which put Virginia's 5 MW minimum in the
+        // legend against Arizona's shape — a restriction Arizona doesn't
+        // have. A rule the legend can't name is better left unnamed.
+        if (s.includes('limited opportunity')) return 'limited';
         return 'dereg';
       };
       const ngStatusByKey = new Map();
@@ -6730,6 +6737,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         direct_access: '#3B82F6', // sky blue
         // Electric-power program-specific buckets (EP legend).
         va5mw:         '#F5C400', // gold  — VA 5 MW minimum
+        // Bronze: the same warm family as the gold above, so Arizona still
+        // reads as restricted at a glance, but far enough apart in lightness
+        // that the two don't merge into one band on the map.
+        az_prior_supply: '#A16207',
         election:      '#A9DEEC', // light cyan — OR annual election period
         cap:           '#4C535A', // dark grey — MI market cap
         lottery:       '#E07D18', // orange — CA market cap + annual lottery
@@ -6740,6 +6751,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         limited:       'Limited Deregulation',
         direct_access: 'Direct Access only',
         va5mw:         'Deregulated – Limited Opportunity – utility account must be 5 MW',
+        az_prior_supply: 'Deregulated – Limited Opportunity – site must already have third-party supply',
         election:      'Deregulated with annual election period',
         cap:           'Deregulated with market cap',
         lottery:       'Deregulated, eligibility for new third-party supply subject to market cap and annual lottery',
@@ -6952,7 +6964,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
       };
       drawPanelLegend(PAD, ['dereg', 'limited', 'reg']); // Natural Gas
-      drawVerticalLegend(PAD * 2 + MAP_W, ['reg', 'dereg', 'va5mw', 'election', 'cap', 'lottery']); // Electric Power
+      // Electric Power. Filtered to the buckets the map actually used, so a
+      // legend row can't describe a colour that isn't on the panel — the
+      // generic 'limited' fallback exists for wordings none of the current
+      // categories carry, and listing it unconditionally would put an
+      // unexplained swatch under every export.
+      {
+        const used = new Set(epStatusByKey.values());
+        const EP_LEGEND_ORDER = ['reg', 'dereg', 'va5mw', 'az_prior_supply', 'limited', 'election', 'cap', 'lottery'];
+        drawVerticalLegend(PAD * 2 + MAP_W, EP_LEGEND_ORDER.filter(t => used.has(t)));
+      }
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
