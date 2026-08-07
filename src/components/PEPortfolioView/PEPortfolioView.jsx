@@ -12,6 +12,7 @@ import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOp
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
@@ -2195,6 +2196,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   // popup — set by clicking a Services In Progress cell that has a
   // current opp on the company.
   const [oppsModalRow, setOppsModalRow] = useState(null);
+  const [servicesReportOpen, setServicesReportOpen] = useState(false);
 
   // Set-equality guard (same as Opps 2's handler): returning prev when
   // the ids haven't changed stops the notify → setState → re-render →
@@ -2643,6 +2645,30 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
     return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
   }, [search, rows]);
 
+  // Which companies the services report covers. Checking rows scopes it to
+  // those (the same selection the bulk-edit bar acts on); otherwise it
+  // takes whatever the search and the table's column filters have left on
+  // screen. Either way it reports on what the user is looking at rather
+  // than on a set they'd have to go and verify.
+  const servicesReportScope = useMemo(() => {
+    if (selectedIds.size > 0) {
+      return {
+        companies: rows.filter(r => selectedIds.has(r.id)).map(r => r._prospect),
+        note: `${selectedIds.size} selected compan${selectedIds.size === 1 ? 'y' : 'ies'}`,
+      };
+    }
+    // filteredRowIds is empty until the DataTable has reported once (and
+    // when the table isn't rendered at all), so fall back to the search
+    // results rather than reporting on nothing.
+    const onScreen = filteredRowIds.size > 0
+      ? filtered.filter(r => filteredRowIds.has(r.id))
+      : filtered;
+    const note = onScreen.length === rows.length
+      ? ''
+      : `filtered to ${onScreen.length} of ${rows.length}`;
+    return { companies: onScreen.map(r => r._prospect), note };
+  }, [selectedIds, filteredRowIds, filtered, rows]);
+
   // Apply a confirmed paste plan (from PasteAddModal in upsert mode):
   // adds go through onAddProspect (idempotent by company key), updates
   // through onUpdateProspect with only the changed fields. The table —
@@ -2796,6 +2822,15 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+        <button
+          type="button"
+          onClick={() => setServicesReportOpen(true)}
+          disabled={rows.length === 0}
+          title={rows.length === 0
+            ? `No ${firmLabel} companies to report on`
+            : `Pick services and see where each of these ${servicesReportScope.companies.length} compan${servicesReportScope.companies.length === 1 ? 'y' : 'ies'} stands on them`}
+          style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: rows.length === 0 ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: rows.length === 0 ? '#94A3B8' : '#334155', cursor: rows.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Services Report</button>
         {(onAddProspect || onUpdateProspect) && (
           <button
             type="button"
@@ -2829,6 +2864,18 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           opps={oppsModalRow._oppRecords}
           onClose={() => setOppsModalRow(null)}
           onOpenCompany={() => { const p = oppsModalRow._prospect; setOppsModalRow(null); onSelectProspect?.(p); }}
+        />
+      )}
+      {servicesReportOpen && (
+        <PEServicesReportModal
+          companies={servicesReportScope.companies}
+          firmLabel={firmLabel}
+          scopeNote={servicesReportScope.note}
+          oppsRecords={oppsRecords}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelectProspect={onSelectProspect}
+          onClose={() => setServicesReportOpen(false)}
         />
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>

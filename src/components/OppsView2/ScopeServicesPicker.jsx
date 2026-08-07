@@ -20,29 +20,13 @@ import { createPortal } from 'react-dom';
 import { SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
+import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 
 // Same palette the company card's services board uses, so a service reads
 // the same colour in both places.
-const STATUS_COLORS = {
-  'Sold': { bg: '#DCFCE7', color: '#166534' },
-  'Verbal': { bg: '#DCFCE7', color: '#166534' },
-  'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
-  'In Progress': { bg: '#FEF9C3', color: '#854D0E' },
-  'Exploring': { bg: '#FEF9C3', color: '#854D0E' },
-  'Qualifying': { bg: '#FEF9C3', color: '#854D0E' },
-  'Quoting': { bg: '#FEF9C3', color: '#854D0E' },
-  'Quoted': { bg: '#DBEAFE', color: '#1E40AF' },
-  'Proposed': { bg: '#DBEAFE', color: '#1E40AF' },
-  'Lead': { bg: '#FEF9C3', color: '#854D0E' },
-  'Not Started': { bg: '#FEF9C3', color: '#854D0E' },
-  'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
-  'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
-  // Derived rather than picked today, but coloured here too so the status
-  // reads purple if it is ever added to the selectable statuses.
-  [TRYING_AGAIN]: { bg: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color },
-};
+const STATUS_COLORS = SERVICE_STATUS_COLORS;
 
 // Which stage wins when several of an account's opps name the same service.
 // Mirrors the company card's ordering: closed-won beats in-flight beats lost.

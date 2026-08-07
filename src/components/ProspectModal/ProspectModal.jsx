@@ -16,6 +16,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
+import { serviceStatusColor } from '../../utils/serviceStatusColors';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
@@ -6720,26 +6721,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             // how the row is painted — the saved status below
                             // is untouched.
                             const retry = isTryingAgain(manualStatus, oppStage);
-                            const statusColors = {
-                              'Sold': { bg: '#DCFCE7', color: '#166534' },
-                              'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
-                              'Verbal': { bg: '#DCFCE7', color: '#166534' },
-                              'In Progress': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Exploring': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Qualifying': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Quoting': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Quoted': { bg: '#DBEAFE', color: '#1E40AF' },
-                              'Proposed': { bg: '#DBEAFE', color: '#1E40AF' },
-                              'Lead': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Not Started': { bg: '#FEF9C3', color: '#854D0E' },
-                              'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
-                              'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
-                              // Derived rather than picked today, but coloured
-                              // here too so it reads purple if it is ever added
-                              // to the selectable statuses.
-                              [TRYING_AGAIN]: { bg: TRYING_AGAIN_COLORS.bg, color: TRYING_AGAIN_COLORS.color },
-                            };
-                            const colors = statusColors[effectiveStatus] || {};
+                            const colors = serviceStatusColor(effectiveStatus);
 
                             if (servicesEditMode) {
                               return (

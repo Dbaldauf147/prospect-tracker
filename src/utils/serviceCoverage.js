@@ -4,8 +4,10 @@
 // Pipeline page's coverage table / Excel export, and the Issues tab's
 // "service coverage below 100%" detector. One implementation means the
 // Issues row can never disagree with the row it's warning about.
-import { SERVICE_CATEGORIES } from '../data/enums';
-import { matchesCdm } from './cdmMatch';
+// Extensions spelled out so this module loads under plain Node too — the
+// tests in scripts/ run without Vite's resolver.
+import { SERVICE_CATEGORIES } from '../data/enums.js';
+import { matchesCdm } from './cdmMatch.js';
 import { scopeTokens, scopeTokenMatchesService } from './scopeMatch.js';
 
 // Loose company-name match for joining opp Account values to a prospect's
