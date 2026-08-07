@@ -11,6 +11,7 @@ import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
+import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
 import { AGENTS_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
@@ -102,6 +103,13 @@ function App() {
   const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
   const { openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   useSheetSync(user);
+  // Pull new Granola calls hourly from wherever the user is. It lives here
+  // rather than on the Call Recordings page because that page is lazily
+  // mounted — a sync tied to it only ran while it was open, so a morning
+  // spent on Opps brought nothing in. Gated on settings having loaded: the
+  // sync watermark is in there, and syncing without it re-walks the whole
+  // back-fill window.
+  useGranolaAutoSync(user, settings, updateSettings, prospects, settingsLoaded);
   const {
     filtered, searchTerm, setSearchTerm,
     filters, filterOptions, toggleFilter, clearFilters, loadSavedFilter, activeFilterCount,
