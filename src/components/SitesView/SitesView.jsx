@@ -5183,6 +5183,45 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // sheet (modeled consumption, rate-derived cost, indicative rates).
     const SE_EST = 'FFB45309';
 
+    // Total line for the three tier-overview tables (Portfolio Overview,
+    // NAM, Europe). The tiers partition one population, so the total is
+    // the portfolio in that scope — without it the reader has to add four
+    // rows by hand to answer "and what is the whole thing?", which is the
+    // first question the table invites. Bold on the light green band, with
+    // a rule above it, so it reads as a summary rather than a fifth tier.
+    //
+    // `totals` carries the already-rounded per-row values, so the line
+    // agrees with the column above it to the digit.
+    const writeOverviewTotalRow = (ws, rowIdx, colCount, totals, pct) => {
+      const r = ws.getRow(rowIdx);
+      r.getCell(1).value = 'Total';
+      r.getCell(2).value = totals.eSites;
+      r.getCell(3).value = pct(totals.eSites);
+      r.getCell(4).value = totals.gSites;
+      r.getCell(5).value = pct(totals.gSites);
+      r.getCell(6).value = totals.kwh;
+      r.getCell(7).value = totals.dth;
+      r.getCell(8).value = totals.cost;
+      r.getCell(3).numFmt = '0.0%';
+      r.getCell(5).numFmt = '0.0%';
+      r.getCell(6).numFmt = '#,##0';
+      r.getCell(7).numFmt = '#,##0';
+      r.getCell(8).numFmt = '"$"#,##0';
+      for (let ci = 1; ci <= colCount; ci++) {
+        const cell = r.getCell(ci);
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        cell.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'hair', color: { argb: SE_BORDER } },
+          right:  { style: 'hair', color: { argb: SE_BORDER } },
+        };
+      }
+      r.height = 20;
+      return r;
+    };
+
     // Mexico-specific helpers. Baja California / Baja California Sur
     // run on a grid separate from CFE's national system, so they
     // never count as a CFE sourcing opportunity. CFE is the only
@@ -5900,32 +5939,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         buckets.get(key).count++;
       }
 
-      // Tier totals across mapped buckets for the Overview table.
-      // Site count rolls up per-bucket; load + cost aggregate over
-      // the original rows array so we get per-site precision. Cost
-      // uses the actual upload value when present and falls back to
-      // the consumption × rate estimate.
-      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
-      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
+      // How many sites the map itself could place, for the subtitle
+      // below the title. This is a statement about the map, not about
+      // the portfolio — the Overview table counts every row (see
+      // below), and the two figures differ by exactly skippedCount.
       let mappedSites = 0;
-      for (const b of buckets.values()) {
-        mappedSites += b.count;
-        if (b.elecTier === 'dereg') elecDereg += b.count;
-        else if (b.elecTier === 'some') elecSome += b.count;
-        else if (b.elecTier === 'reg') elecReg += b.count;
-        else elecUnknown += b.count;
-        if (b.gasTier === 'dereg') gasDereg += b.count;
-        else if (b.gasTier === 'some') gasSome += b.count;
-        else if (b.gasTier === 'reg') gasReg += b.count;
-        else gasUnknown += b.count;
-      }
-      // Per-tier load + cost — keyed by the same tier label the
+      for (const b of buckets.values()) mappedSites += b.count;
+
+      // Per-tier sites + load + cost — keyed by the same tier label the
       // Overview table uses. `electric` tracks electric-tier
       // attribution (kWh + electric cost); `gas` tracks gas-tier
       // attribution (therms + gas cost).
-      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      //
+      // Sites are counted here, in the same per-row pass that attributes
+      // the load and the cost, rather than off the map buckets. Taking
+      // them from the buckets meant the two halves of each row described
+      // different populations: a site whose country has no centroid is
+      // skipped for the dot, so it added nothing to any tier's site
+      // count, while this pass still booked its kWh and its spend. The
+      // table then showed tiers carrying millions in cost against zero
+      // sites, which reads as a bug in the numbers rather than as a gap
+      // in the geographic reference. One pass, one population.
+      const blankTierAgg = () => ({ sites: 0, kwh: 0, therms: 0, cost: 0 });
       const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
       const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
+      // Denominator for the tier percentages, and the site figure the
+      // Total row reports. Every row lands in exactly one electric tier
+      // and one gas tier, so each commodity's column sums to this.
+      let overviewSites = 0;
       const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
         if (isUS && US_STATE_CENTERS[stateCode]) {
           const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
@@ -5944,6 +5985,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const isCA = /^(canada|ca)$/i.test(country);
         const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
         const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
+        electricTierAgg[eTier].sites++;
+        gasTierAgg[gTier].sites++;
+        overviewSites++;
         if (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) electricTierAgg[eTier].kwh += r.__kwh__;
         if (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) gasTierAgg[gTier].therms += r.__therms__;
         const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
@@ -6248,26 +6292,37 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       });
       hdr.height = 22;
       const tierRows = [
-        ['Deregulated',          'dereg',   elecDereg,   gasDereg],
-        ['Some deregulation',    'some',    elecSome,    gasSome],
-        ['Regulated / unlikely', 'reg',     elecReg,     gasReg],
-        ['No data',              'unknown', elecUnknown, gasUnknown],
+        ['Deregulated',          'dereg'],
+        ['Some deregulation',    'some'],
+        ['Regulated / unlikely', 'reg'],
+        ['No data',              'unknown'],
       ];
-      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      const pct = (n) => overviewSites > 0 ? n / overviewSites : 0;
+      // Totals accumulate the values actually written into each tier
+      // row, so the Total line adds up to the column above it rather
+      // than to a separately-rounded figure nobody can reconcile.
+      const totals = { eSites: 0, gSites: 0, kwh: 0, dth: 0, cost: 0 };
       tierRows.forEach((tr, i) => {
         const r = ws.getRow(tableHeaderRow + 1 + i);
-        const [label, tierKey, eSites, gSites] = tr;
-        const kwh = electricTierAgg[tierKey]?.kwh || 0;
-        const therms = gasTierAgg[tierKey]?.therms || 0;
-        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        const [label, tierKey] = tr;
+        const eSites = electricTierAgg[tierKey]?.sites || 0;
+        const gSites = gasTierAgg[tierKey]?.sites || 0;
+        const kwh = Math.round(electricTierAgg[tierKey]?.kwh || 0);
+        const dth = Math.round((gasTierAgg[tierKey]?.therms || 0) / 10); // therms → Dth
+        const cost = Math.round((electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0));
+        totals.eSites += eSites;
+        totals.gSites += gSites;
+        totals.kwh += kwh;
+        totals.dth += dth;
+        totals.cost += cost;
         r.getCell(1).value = label;
         r.getCell(2).value = eSites;
         r.getCell(3).value = pct(eSites);
         r.getCell(4).value = gSites;
         r.getCell(5).value = pct(gSites);
-        r.getCell(6).value = Math.round(kwh);
-        r.getCell(7).value = Math.round(therms / 10); // therms → Dth
-        r.getCell(8).value = Math.round(cost);
+        r.getCell(6).value = kwh;
+        r.getCell(7).value = dth;
+        r.getCell(8).value = cost;
         r.getCell(3).numFmt = '0.0%';
         r.getCell(5).numFmt = '0.0%';
         r.getCell(6).numFmt = '#,##0';
@@ -6283,6 +6338,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
         r.height = 20;
       });
+      writeOverviewTotalRow(ws, tableHeaderRow + 1 + tierRows.length, overviewHeaders.length, totals, pct);
 
       // ---- Country breakdown table -----------------------------
       // One row per country in the portfolio: dereg status, site
@@ -6290,7 +6346,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // by descending site count so the heaviest concentrations
       // sit at the top.
       if (countryRows.length > 0) {
-        const countryHdrRow = tableHeaderRow + tierRows.length + 3;
+        // +1 over the tier rows for the Total line, then the same
+        // blank-row gap this table has always had below the Overview.
+        const countryHdrRow = tableHeaderRow + tierRows.length + 4;
         ws.mergeCells(countryHdrRow, 1, countryHdrRow, COLS);
         const cHdr = ws.getCell(countryHdrRow, 1);
         cHdr.value = 'Country level view';
@@ -6405,8 +6463,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           gasTier = 'dereg';
         } else {
           // NA row whose state code we don't have a centroid for
-          // (rare — usually a malformed state). Counts towards the
-          // total but doesn't get a dot.
+          // (rare — usually a malformed state). No dot on the map, but
+          // it is still one of the company's sites: the per-row pass
+          // below books it, its load and its spend under the "No data"
+          // tier, so it has to be counted there too.
           continue;
         }
         if (!buckets.has(key)) {
@@ -6415,23 +6475,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         buckets.get(key).count++;
       }
 
-      // Tier roll-up — sites bucket by tier on the map, load + cost
-      // attribute per-row.
-      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
-      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
-      let mappedSites = 0;
-      for (const b of buckets.values()) {
-        mappedSites += b.count;
-        if (b.elecTier === 'dereg') elecDereg += b.count;
-        else if (b.elecTier === 'some') elecSome += b.count;
-        else if (b.elecTier === 'reg') elecReg += b.count;
-        else elecUnknown += b.count;
-        if (b.gasTier === 'dereg') gasDereg += b.count;
-        else if (b.gasTier === 'some') gasSome += b.count;
-        else if (b.gasTier === 'reg') gasReg += b.count;
-        else gasUnknown += b.count;
-      }
-      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      // Tier roll-up. Sites are counted in the same per-row pass that
+      // attributes the load and the cost (below) rather than off the map
+      // buckets: a site the map can't place is skipped for the dot, so
+      // taking the counts from the buckets left the "No data" tier
+      // reporting 24 M kWh and $4.5 M against 0 sites — the load was
+      // real, the site behind it just never made it into the count.
+      const blankTierAgg = () => ({ sites: 0, kwh: 0, therms: 0, cost: 0 });
       const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
       const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
       const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
@@ -6442,6 +6492,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
         return 'unknown';
       };
+      // Denominator for the tier percentages, and the site figure the
+      // Total row reports: every NA row lands in exactly one electric
+      // tier and one gas tier, so each commodity's column sums to this.
+      let naSites = 0;
       // Per-state aggregation for the breakdown table at the bottom.
       const stateAggs = new Map();
       for (const r of rows) {
@@ -6453,6 +6507,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (!isUS && !isCA) continue;
         const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
         const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
+        electricTierAgg[eTier].sites++;
+        gasTierAgg[gTier].sites++;
+        naSites++;
         const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
         const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
         const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
@@ -6806,26 +6863,37 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       });
       hdr.height = 22;
       const tierRows = [
-        ['Deregulated',          'dereg',   elecDereg,   gasDereg],
-        ['Some deregulation',    'some',    elecSome,    gasSome],
-        ['Regulated / unlikely', 'reg',     elecReg,     gasReg],
-        ['No data',              'unknown', elecUnknown, gasUnknown],
+        ['Deregulated',          'dereg'],
+        ['Some deregulation',    'some'],
+        ['Regulated / unlikely', 'reg'],
+        ['No data',              'unknown'],
       ];
-      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      const pct = (n) => naSites > 0 ? n / naSites : 0;
+      // Totals accumulate the values actually written into each tier
+      // row, so the Total line adds up to the column above it rather
+      // than to a separately-rounded figure nobody can reconcile.
+      const totals = { eSites: 0, gSites: 0, kwh: 0, dth: 0, cost: 0 };
       tierRows.forEach((tr, i) => {
         const r = ws.getRow(tableHeaderRow + 1 + i);
-        const [label, tierKey, eSites, gSites] = tr;
-        const kwh = electricTierAgg[tierKey]?.kwh || 0;
-        const therms = gasTierAgg[tierKey]?.therms || 0;
-        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        const [label, tierKey] = tr;
+        const eSites = electricTierAgg[tierKey]?.sites || 0;
+        const gSites = gasTierAgg[tierKey]?.sites || 0;
+        const kwh = Math.round(electricTierAgg[tierKey]?.kwh || 0);
+        const dth = Math.round((gasTierAgg[tierKey]?.therms || 0) / 10);
+        const cost = Math.round((electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0));
+        totals.eSites += eSites;
+        totals.gSites += gSites;
+        totals.kwh += kwh;
+        totals.dth += dth;
+        totals.cost += cost;
         r.getCell(1).value = label;
         r.getCell(2).value = eSites;
         r.getCell(3).value = pct(eSites);
         r.getCell(4).value = gSites;
         r.getCell(5).value = pct(gSites);
-        r.getCell(6).value = Math.round(kwh);
-        r.getCell(7).value = Math.round(therms / 10);
-        r.getCell(8).value = Math.round(cost);
+        r.getCell(6).value = kwh;
+        r.getCell(7).value = dth;
+        r.getCell(8).value = cost;
         r.getCell(3).numFmt = '0.0%';
         r.getCell(5).numFmt = '0.0%';
         r.getCell(6).numFmt = '#,##0';
@@ -6841,6 +6909,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
         r.height = 20;
       });
+      writeOverviewTotalRow(ws, tableHeaderRow + 1 + tierRows.length, overviewHeaders.length, totals, pct);
 
       // Per state / per province deregulation reference. Sourced from
       // the same US_MARKETS + CA_MARKETS dataset that drives the
@@ -6864,7 +6933,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           return String(a.code).localeCompare(String(b.code));
         });
       if (marketRows.length > 0) {
-        const stateHdrRow = tableHeaderRow + tierRows.length + 3;
+        // +1 over the tier rows for the Total line, then the same
+        // blank-row gap this table has always had below the Overview.
+        const stateHdrRow = tableHeaderRow + tierRows.length + 4;
         ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
         const sHdr = ws.getCell(stateHdrRow, 1);
         sHdr.value = 'State / Province deregulation status';
@@ -7977,20 +8048,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ['No data',               'unknown', elecUnknown, gasUnknown],
       ];
       const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      // Totals accumulate the values actually written into each tier
+      // row, so the Total line adds up to the column above it rather
+      // than to a separately-rounded figure nobody can reconcile.
+      const totals = { eSites: 0, gSites: 0, kwh: 0, dth: 0, cost: 0 };
       tierRows.forEach((tr, i) => {
         const r = ws.getRow(tableHeaderRow + 1 + i);
         const [label, tierKey, eSites, gSites] = tr;
-        const kwh = electricTierAgg[tierKey]?.kwh || 0;
-        const therms = gasTierAgg[tierKey]?.therms || 0;
-        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        const kwh = Math.round(electricTierAgg[tierKey]?.kwh || 0);
+        const dth = Math.round((gasTierAgg[tierKey]?.therms || 0) / 10);
+        const cost = Math.round((electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0));
+        totals.eSites += eSites;
+        totals.gSites += gSites;
+        totals.kwh += kwh;
+        totals.dth += dth;
+        totals.cost += cost;
         r.getCell(1).value = label;
         r.getCell(2).value = eSites;
         r.getCell(3).value = pct(eSites);
         r.getCell(4).value = gSites;
         r.getCell(5).value = pct(gSites);
-        r.getCell(6).value = Math.round(kwh);
-        r.getCell(7).value = Math.round(therms / 10);
-        r.getCell(8).value = Math.round(cost);
+        r.getCell(6).value = kwh;
+        r.getCell(7).value = dth;
+        r.getCell(8).value = cost;
         r.getCell(3).numFmt = '0.0%';
         r.getCell(5).numFmt = '0.0%';
         r.getCell(6).numFmt = '#,##0';
@@ -8006,6 +8086,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
         r.height = 20;
       });
+      writeOverviewTotalRow(ws, tableHeaderRow + 1 + tierRows.length, overviewHeaders.length, totals, pct);
 
       // Per-country deregulation table — only countries with portfolio
       // sites (same rule as the NAM state table), ranked by Annual Cost
@@ -8014,7 +8095,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const euCountryRows = [...countryAggs.values()]
         .sort((a, b) => (b.cost - a.cost) || String(a.country).localeCompare(String(b.country)));
       if (euCountryRows.length > 0) {
-        const cHdrRow = tableHeaderRow + tierRows.length + 3;
+        // +1 over the tier rows for the Total line, then the same
+        // blank-row gap this table has always had below the Overview.
+        const cHdrRow = tableHeaderRow + tierRows.length + 4;
         ws.mergeCells(cHdrRow, 1, cHdrRow, COLS);
         const cHdr = ws.getCell(cHdrRow, 1);
         cHdr.value = 'Country deregulation status';
