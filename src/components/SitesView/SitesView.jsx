@@ -3611,63 +3611,77 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // out of the regulated-hide filter) but every savings column
   // resolves to $0. Anything not in this map falls through to
   // status 'no'.
+  //
+  // US coverage is a closed list, corrected against the seller's own
+  // read of the gas markets: AL, ID, MS, MT, ND and SD are the only
+  // large-load-only states, Vermont is the only regulated one (so it is
+  // the one US code deliberately absent below), and every other state
+  // plus DC is fully competitive at 2 - 4 %. Canada is unchanged and is
+  // NOT covered by that rule — AB, BC and MB stay large-load-only.
+  //
+  // Editing this map moves money: it sets the indicative gas savings
+  // band for every site in the state. naMarkets.js mirrors the status
+  // for display and has to be updated alongside it.
   const GAS_DEREGULATION = {
     AK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    AL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    CT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    AR: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    AZ: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    CA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     CO: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    CT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     DC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     DE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    IL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     FL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     GA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    ID: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    HI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    IA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    IL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     IN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     KS: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     KY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     LA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     MD: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     ME: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MO: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NB: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     NH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     NJ: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MS: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NB: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    ND: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NM: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NV: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     NY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     OH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    OK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     ON: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     OR: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     PA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    RI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    TX: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     QC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    CA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    RI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     SC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    SD: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     SK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    TN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    TX: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     UT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     VA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     WA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    WI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    WV: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    WY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    // Large-load-only markets — retail choice is restricted to
+    // industrial / large-volume customers.
     AB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    AR: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    AZ: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    AL: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
     BC: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    IA: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    ID: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MN: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MO: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MS: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MT: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    NC: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    NM: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    NV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    OK: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    TN: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    WI: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    WV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    ND: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    SD: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
 
   // Deregulation status → the tier the Overview tables and the map dots
