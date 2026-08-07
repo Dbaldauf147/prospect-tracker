@@ -441,9 +441,11 @@ export function oppMeetingsFromRecords(records, {
       location: m._location || '',
       company: override?.account || matched?.account || m._company || '',
       bfoOpp,
-      // The matched opp's BFO record, so a row that arrived without
-      // anyone logging it is still one click from the place to log it.
-      bfoUrl: matched ? (bfoUrlFor(matched) || '') : '',
+      // The BFO record behind this row, so a meeting nobody logged is
+      // still one click from the place to log it. The override is passed
+      // through because a row whose opp was picked by hand has no
+      // `matched` to take an address from.
+      bfoUrl: bfoUrlFor(matched, override?.bfoOpp || '') || '',
       overrideKey,
       isManual: Boolean(override),
       source: 'granola',
