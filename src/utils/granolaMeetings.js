@@ -369,3 +369,107 @@ export function groupMeetingsByDay(rows, { order = 'desc' } = {}) {
       meetings: group.meetings.sort((a, b) => (msOf(a._meetingStart) ?? 0) - (msOf(b._meetingStart) ?? 0)),
     }));
 }
+
+// ---- Opp-tied meetings, for the Agents page's Activity table -----------
+//
+// A different question from the one above. The Activity page asks "what
+// was my day", so it shows every meeting from every source. The Agents
+// page asks "what did I do against the pipeline today", which is a
+// narrower set: only the calls that land on an opp belong on it, and the
+// rest of that table is already shaped around a matched BFO opportunity.
+//
+// Kept here, pure, because the interesting part is the filtering — the
+// day window, the ignore list, the manual override beating the automatic
+// match, and dropping the ones that tie to nothing — and none of that
+// needs a browser to be wrong in a way worth catching.
+
+/**
+ * Granola records → Activity rows for one day, reduced to the meetings
+ * that resolve to an opportunity.
+ *
+ * `resolve(email, company)` is the caller's opp matcher; it should return
+ * something with `{ account, bfoOpp }` or a falsy value. It is called with
+ * each external attendee in turn, then with the note's company, then with
+ * its title — the same widening walk the HubSpot meetings use, because a
+ * customer call is often on a colleague's invite and the only thing naming
+ * the customer is the subject line.
+ *
+ * `overrides` is keyed the way the Agents page keys them: the first
+ * external attendee's email when there is one, else `meeting:<id>`. An
+ * override always wins, including over a match that found something else —
+ * it is the user saying which opp this was.
+ */
+export function oppMeetingsFromRecords(records, {
+  start, end,
+  isIgnored = () => false,
+  overrides = {},
+  resolve = () => null,
+  bfoUrlFor = () => '',
+} = {}) {
+  const rows = [];
+  for (const m of granolaMeetingsFromRecords(records)) {
+    const startMs = msOf(m._meetingStart);
+    if (startMs == null) continue;
+    if (Number.isFinite(start) && startMs < start) continue;
+    if (Number.isFinite(end) && startMs >= end) continue;
+    const id = String(m.id || '');
+    if (!id || isIgnored(id)) continue;
+
+    let matched = null;
+    let primaryEmail = '';
+    for (const a of (m._attendeeDetails || [])) {
+      const email = String(a?.email || '').toLowerCase();
+      if (email && !primaryEmail) primaryEmail = email;
+      matched = resolve(email, m._company || '');
+      if (matched) break;
+    }
+    if (!matched && m._company) matched = resolve('', m._company);
+    if (!matched && m._subject) matched = resolve('', m._subject);
+
+    const overrideKey = primaryEmail || `meeting:${id}`;
+    const override = overrides[overrideKey] || null;
+    const bfoOpp = override?.bfoOpp || matched?.bfoOpp || '';
+    // Tied to nothing: not this table's business.
+    if (!bfoOpp) continue;
+
+    rows.push({
+      id,
+      ts: m._meetingStart,
+      endTs: m._meetingEnd,
+      title: m._subject,
+      outcome: '',
+      location: m._location || '',
+      company: override?.account || matched?.account || m._company || '',
+      bfoOpp,
+      // The matched opp's BFO record, so a row that arrived without
+      // anyone logging it is still one click from the place to log it.
+      bfoUrl: matched ? (bfoUrlFor(matched) || '') : '',
+      overrideKey,
+      isManual: Boolean(override),
+      source: 'granola',
+      attendees: m._attendees || '',
+      granolaUrl: m._granolaUrl || '',
+    });
+  }
+  return rows.sort((a, b) => (msOf(a.ts) ?? 0) - (msOf(b.ts) ?? 0));
+}
+
+/**
+ * Add the Granola rows a logged-meetings list doesn't already cover.
+ *
+ * A call Granola sat in and HubSpot also logged is one meeting, not two.
+ * isSameMeeting is the rule the Activity page reconciles sources with —
+ * same start within the window, matching title — and the logged copy wins,
+ * because it is the one carrying the outcome someone typed.
+ *
+ * Both sides are passed in the Agents page's row shape, so only the three
+ * fields that rule reads are handed across.
+ */
+export function withUnloggedGranolaMeetings(logged, granolaRows) {
+  const extras = (granolaRows || []).filter(g => !(logged || []).some(h => isSameMeeting(
+    { _source: 'hubspot', _subject: h.title, _meetingStart: h.ts },
+    { _source: 'granola', _subject: g.title, _meetingStart: g.ts },
+  )));
+  if (extras.length === 0) return logged || [];
+  return [...(logged || []), ...extras].sort((a, b) => (msOf(a.ts) ?? 0) - (msOf(b.ts) ?? 0));
+}
