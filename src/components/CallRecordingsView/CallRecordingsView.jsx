@@ -82,6 +82,16 @@ const SUBTABS = new Set(['calls', 'history', 'breakdown']);
 // Refresh a little early so a long page session doesn't hit a 401 mid-click.
 const EXPIRY_SKEW_MS = 120000;
 const POLL_MS = 5000;
+// How stale the call list is allowed to get before the tab re-pulls on its
+// own. Every load — automatic or a button press — pushes this out, so the
+// hour is measured from the last time the list was actually current.
+const AUTO_REFRESH_MS = 60 * 60 * 1000;
+// The ticker checks the clock rather than being the hour itself. A browser
+// tab in the background has its timers throttled hard (and a sleeping
+// laptop stops them altogether), so an interval set to an hour can land
+// well past one; checking every minute means the first tick after the tab
+// wakes up finds the refresh overdue and runs it straight away.
+const AUTO_REFRESH_CHECK_MS = 60 * 1000;
 
 function fmtSize(bytes) {
   if (!bytes) return '';
@@ -435,7 +445,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   const probeRun = useRef(0);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState('');
-  const autoSynced = useRef(false);
+  // When the visible call list was last brought up to date, for any
+  // source and by any route (first load, the Refresh / Sync buttons, the
+  // hourly ticker). 0 means "never on this account", which is what makes
+  // the first visit pull immediately instead of waiting out the hour.
+  const lastRefreshedAt = useRef(0);
   // Local-folder state.
   const [folderHandle, setFolderHandle] = useState(null);
   const [folderName, setFolderName] = useState('');
@@ -546,27 +560,41 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     }
   }, []);
 
-  const loadRecordings = useCallback(async (folderPath) => {
-    setError('');
+  // `background` is the hourly ticker rather than a button: it draws no
+  // spinner, and a failure leaves the list and the error banner exactly as
+  // they were. A refresh nobody asked for should never blank the cards
+  // someone is reading, or plant an error over a page that is working —
+  // pressing Refresh is still there to surface the real state.
+  const loadRecordings = useCallback(async (folderPath, { background = false } = {}) => {
+    // Stamped on the first line — before any await, and whatever the
+    // outcome — so the mount load and the Refresh button both push the
+    // hour out. Waiting until after `await getToken()` would let the
+    // ticker, which re-runs the moment `connected` flips, start a second
+    // listing on top of the one already in flight.
+    lastRefreshedAt.current = Date.now();
+    if (!background) setError('');
     const token = await getToken();
     if (!token) {
       setConnected(false);
-      setRecordings([]);
+      if (!background) setRecordings([]);
       return;
     }
     setConnected(true);
-    setLoading(true);
+    if (!background) setLoading(true);
     try {
       const r = await apiFetch(`/api/onedrive-recordings?folder=${encodeURIComponent(folderPath)}`, {
         headers: { 'X-MS-Token': token },
       });
       const data = await r.json().catch(() => ({}));
       if (r.status === 401) {
+        // The token is genuinely dead, so the badge flips either way —
+        // that's the prompt to reconnect. Only the list is spared.
         setConnected(false);
-        setRecordings([]);
+        if (!background) setRecordings([]);
         return;
       }
       if (!r.ok) {
+        if (background) return;
         setError(data.error || `Could not read OneDrive (HTTP ${r.status})`);
         setRecordings([]);
         return;
@@ -574,26 +602,30 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       setRecordings(data.recordings || []);
       setSkipped(data.skipped || 0);
     } catch (err) {
-      setError(err?.message || String(err));
+      if (!background) setError(err?.message || String(err));
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [getToken]);
 
   // ---- local folder --------------------------------------------------------
-  const readLocalFolder = useCallback(async (handle) => {
-    setError('');
-    setLoading(true);
+  // Same background contract as loadRecordings: the hourly re-read is
+  // silent, and a folder that has since been moved or had its permission
+  // revoked leaves the listing alone rather than emptying it.
+  const readLocalFolder = useCallback(async (handle, { background = false } = {}) => {
+    lastRefreshedAt.current = Date.now();
+    if (!background) { setError(''); setLoading(true); }
     try {
       const { recordings: found, skipped: skip, truncated: cut } = await listFolderRecordings(handle);
       setRecordings(found);
       setSkipped(skip);
       setTruncated(cut);
     } catch (err) {
+      if (background) return;
       setError(err?.message || String(err));
       setRecordings([]);
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
@@ -644,6 +676,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   function switchSource(next) {
     setSource(next);
     updateSettings?.({ callRecordingsSource: next });
+    // The new source has never been loaded in this session, whatever the
+    // old one's clock said — let it pull immediately.
+    lastRefreshedAt.current = 0;
     setRecordings([]);
     setSkipped(0);
     setTruncated(false);
@@ -797,8 +832,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     // records in the gap before theirs arrive.
     setRecords({});
     setRecordsLoaded(false);
-    // A different account gets its own first-visit Granola sync.
-    autoSynced.current = false;
+    // A different account gets its own first-visit pull rather than
+    // inheriting the previous one's place in the hour.
+    lastRefreshedAt.current = 0;
     if (!uid) return undefined;
     let cancelled = false;
     (async () => {
@@ -1250,11 +1286,11 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
    */
   const syncGranola = useCallback(async ({ full = false } = {}) => {
     if (!uid || syncing) return;
-    // Any sync satisfies the once-per-session pull, including one the
-    // user started by hand. Without this, a manual sync that clears a
-    // timed-out status would let the auto-sync effect fire straight
-    // after it and walk the same window twice.
-    autoSynced.current = true;
+    // Any sync resets the hourly clock, including one the user started by
+    // hand. Without this, a manual sync that clears a timed-out status
+    // would let the ticker fire straight after it and walk the same
+    // window twice.
+    lastRefreshedAt.current = Date.now();
     setSyncing(true);
     setError('');
     setSyncNote('Checking Granola for new calls…');
@@ -1389,15 +1425,80 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       : 'No unlinked call matched a company by attendee email.');
   }, [prospects, persist]);
 
-  // First visit to the tab in this page session pulls anything new.
-  // Waits for the stored records so the incremental check has something
-  // to compare against — without it every note would be re-fetched.
+  // Pulled out as a plain boolean so the ticker below can depend on the
+  // probe's verdict without re-arming every time the status object is
+  // rebuilt with the same answer.
+  const granolaOk = !!granolaStatus?.ok;
+
+  // One pull of whichever source is selected: Granola syncs the notes
+  // changed since its watermark, OneDrive and a local folder re-list
+  // their files. Granola waits on the stored records so the incremental
+  // check has something to compare against — without it every note would
+  // be re-fetched.
+  //
+  // Returns whether a pull was actually started. A source that isn't
+  // ready yet — Granola before its records land, OneDrive before the
+  // token check — must NOT count as a refresh, or the first visit would
+  // stamp the clock without pulling and then sit out the whole hour.
+  const refreshNow = useCallback(() => {
+    if (source === 'granola') {
+      if (!uid || !recordsLoaded || !granolaOk) return false;
+      syncGranola({});
+      return true;
+    }
+    if (source === 'onedrive') {
+      if (!connected) return false;
+      loadRecordings(folder, { background: true });
+      return true;
+    }
+    // The <input webkitdirectory> fallback leaves no handle to re-read,
+    // and a folder whose permission has lapsed needs a user gesture — so
+    // neither can be refreshed without the user, and both sit this out.
+    if (!folderHandle || needsPermission) return false;
+    readLocalFolder(folderHandle, { background: true });
+    return true;
+  }, [
+    source, uid, recordsLoaded, granolaOk, syncGranola,
+    connected, folder, loadRecordings, folderHandle, needsPermission, readLocalFolder,
+  ]);
+
+  // Read through a ref so the ticker below doesn't have to list
+  // refreshNow as a dependency: it changes identity on nearly every
+  // render (syncGranola closes over `settings` and `syncing`), which
+  // would tear down and re-arm the interval constantly.
+  const refreshNowRef = useRef(refreshNow);
+  refreshNowRef.current = refreshNow;
+
+  // Keep the tab current on its own: pull on the first visit, then once
+  // an hour for as long as it stays open. OneDrive and a local folder
+  // already load on mount, which stamps the clock, so their first tick
+  // lands an hour out rather than immediately.
+  //
+  // The deps are the readiness signals rather than the callback, so a
+  // source that becomes ready — Granola's records landing, OneDrive
+  // connecting — gets its first pull the moment it can serve one instead
+  // of waiting up to a minute for the next tick.
   useEffect(() => {
-    if (source !== 'granola' || !uid || !recordsLoaded) return;
-    if (!granolaStatus?.ok || autoSynced.current) return;
-    autoSynced.current = true;
-    syncGranola({});
-  }, [source, uid, recordsLoaded, granolaStatus, syncGranola]);
+    const tick = () => {
+      if (Date.now() - lastRefreshedAt.current < AUTO_REFRESH_MS) return;
+      // Stamp when the pull starts, not when it lands: it is asynchronous
+      // and the ticker runs again in a minute, so an unstamped in-flight
+      // refresh would be started over and over until it finished. A pull
+      // that failed still counts, which keeps a broken source from being
+      // retried every minute for the rest of the session.
+      if (refreshNowRef.current()) lastRefreshedAt.current = Date.now();
+    };
+    tick();
+    const timer = setInterval(tick, AUTO_REFRESH_CHECK_MS);
+    // Coming back to a tab that has been in the background is the moment
+    // a stale list is most obvious, and the throttled ticker may not have
+    // noticed yet.
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [source, uid, recordsLoaded, granolaOk, connected, folderHandle, needsPermission]);
 
   // ---- company + opportunity tagging ---------------------------------------
   function linkTo(recordingId, prospect) {
