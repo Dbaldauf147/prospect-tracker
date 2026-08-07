@@ -1445,7 +1445,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       key: '__bulkSelect__',
       label: '',
       defaultWidth: 36,
-      sticky: false,
+      // Pinned with Progress and Client Name below. A checkbox that scrolled
+      // out from under the frozen block would slide behind it and read as
+      // broken, so the whole leading block travels together.
+      sticky: true,
       renderHeader: () => null,
       render: (row) => (
         <input
@@ -1485,8 +1488,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       },
       getFilterValue: () => '',
     };
-    // Drop sticky from the original first column (Client Name) — only
-    // one column can be left-anchored at a time. Also decorate the cell
+    // Client Name stays pinned alongside Progress, so the two columns that
+    // say which deal a row is stay on screen however far right the sheet is
+    // scrolled — there are forty-odd columns after them, and a commission
+    // figure with no client against it is unreadable. Also decorate the cell
     // with a ⚠ warning when the deal's Client Name matches no company
     // in the Table View roster — directly or through a hand-mapping to
     // a client. This is broader than the "Mapped to Client" helper,
@@ -1500,7 +1505,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     const clientNameBaseRender = baseColumns[0].render;
     const clientNameCol = {
       ...baseColumns[0],
-      sticky: false,
+      sticky: true,
       render: (row) => {
         const raw = String(row['Client Name'] || '').trim();
         const norm = normClient(raw);
