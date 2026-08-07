@@ -10,7 +10,8 @@ import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
-import { computeCloseNotSoldOpps, detectBfoUrl } from '../../utils/closeNotSoldOpps';
+import { computeCloseNotSoldOpps, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
+import { buildActivityAddressLines } from '../../utils/activityAddressLines';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { loadCallRecords } from '../../utils/callRecordingsStore';
 import { oppMeetingsFromRecords, withUnloggedGranolaMeetings } from '../../utils/granolaMeetings';
@@ -2030,23 +2031,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         const bfoOpp = override?.bfoOpp || matchedOpp?.bfoOpp || '';
         const company = account || hubspotCompany || domainCompanyGuess(recipients[0]);
         // Resolve the full opp record for this row's BFO URL / Next
-        // Steps. Prefer a manual override's named opp, else the opp we
-        // actually matched. Re-looking an auto-match up by name (the old
-        // behavior) could land on a *different* record that shares the
-        // BFO Opportunity Name — e.g. a duplicate that has no BFO Address
-        // — which dropped the BFO Link even though the real opp has one.
-        let oppForRow = override?.bfoOpp
-          ? oppIndex.byBfoOpp.get(override.bfoOpp.toLowerCase())
-          : matchedOpp;
-        // If the chosen record has no BFO Address but another opp with
-        // the same BFO Opportunity Name does, use that one for the link.
-        if (bfoOpp && !detectBfoUrl(oppForRow?.raw)) {
-          const key = bfoOpp.toLowerCase();
-          const withUrl = oppIndex.allOpps.find(
-            o => o.bfoOpp && o.bfoOpp.toLowerCase() === key && detectBfoUrl(o.raw),
-          );
-          if (withUrl) oppForRow = withUrl;
-        }
+        // Steps — a manual override's named opp, else the one we matched,
+        // preferring a record that actually carries a BFO Address. Shared
+        // with the meeting rows so both resolve the same way.
+        const oppForRow = resolveOppForRow(oppIndex, override?.bfoOpp, matchedOpp);
         const bfoUrl = detectBfoUrl(oppForRow?.raw);
         const nextStepsType = detectNextStepsType(oppForRow?.raw);
         return {
@@ -2121,6 +2109,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         const account = override?.account || matchedOpp?.account || '';
         const bfoOpp = override?.bfoOpp || matchedOpp?.bfoOpp || '';
         const company = account || primaryCompany;
+        // Same resolution the email rows use. Without this a logged
+        // meeting reached the table with no BFO address at all, so it
+        // could neither be opened from the BFO Link column nor be logged
+        // by the Activity prompt — the email to the same account was the
+        // only touch that made it through.
+        const oppForRow = resolveOppForRow(oppIndex, override?.bfoOpp, matchedOpp);
         return {
           id: meetingId,
           ts: m.hs_meeting_start_time || m.hs_timestamp,
@@ -2130,6 +2124,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           location: m.hs_meeting_location || '',
           company,
           bfoOpp,
+          bfoUrl: detectBfoUrl(oppForRow?.raw),
           overrideKey,
           isManual: Boolean(override),
         };
@@ -2187,7 +2182,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       isIgnored: (id) => ignoredMeetingIds.has(id),
       overrides,
       resolve: (email, company) => findOppForRecipient(email, company),
-      bfoUrlFor: (opp) => (opp?.raw ? detectBfoUrl(opp.raw) : ''),
+      // Resolved the same way the email and HubSpot-meeting rows are, so
+      // a Granola call whose opp was picked by hand still carries the
+      // address of the opp that was picked.
+      bfoUrlFor: (opp, overrideBfoOpp) => detectBfoUrl(
+        resolveOppForRow(oppIndex, overrideBfoOpp, opp)?.raw,
+      ),
     });
     // findOppForRecipient is derived from oppIndex, which is listed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2754,36 +2754,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // would produce; sections are separated by a heading rule so the
   // assistant can still tell them apart.
   const masterPromptBundle = useMemo(() => {
-    const activityLines = ['BFO Address'];
-    {
-      // Same precedence as the Activity section's own Copy button:
-      // meetings (marked on the Opps tab) win over calls win over
-      // emails, so the strongest touch is the one that gets logged.
-      const seen = new Set();
-      for (const o of markedMeetingOpps) {
-        if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
-        activityLines.push(`${o.bfoUrl}: Type meeting`);
-        seen.add(o.bfoUrl);
-      }
-      for (const o of calledOpps) {
-        if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
-        activityLines.push(`${o.bfoUrl}: Type called`);
-        seen.add(o.bfoUrl);
-      }
-      for (const e of todaysOutbound) {
-        if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
-        activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
-        seen.add(e.bfoUrl);
-      }
-      // Log the same email touch on any matched Marketing Lead's
-      // Salesforce record too. Lead links live on their own SF records,
-      // so they never collide with the opp BFO addresses above.
-      for (const e of todaysOutbound) {
-        if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
-        activityLines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
-        seen.add(e.leadSfUrl);
-      }
-    }
+    const activityLines = buildActivityAddressLines({
+      meetings: allTodaysMeetings,
+      markedMeetings: markedMeetingOpps,
+      calls: calledOpps,
+      emails: todaysOutbound,
+    });
     const activityBlock = activityLines.join('\n');
 
     const newBfoLines = ['BFO Opportunities to Create', 'BFO Company Name | Project Name | Product Line | Local Project Name'];
@@ -2850,7 +2826,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
-    bfoPrepPrompt, todaysOutbound, calledOpps, markedMeetingOpps, newBfoOpps, closeDateOpps,
+    bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
     marketingLeadsPrompt, marketingLeadsMissing,
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
@@ -3530,37 +3506,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       </section>
 
       {(() => {
-        // Build the BFO Address block from today's outbound emails, the
-        // Called section, AND meetings marked on the Opps tab so the AI
-        // prompt covers all three touch types in one pass. Dedupe by URL
-        // so an opp that appears in several lists only gets one line —
-        // meetings win over calls win over emails, so the strongest
-        // touch is the one that gets logged.
-        const lines = ['BFO Address'];
-        const seen = new Set();
-        for (const o of markedMeetingOpps) {
-          if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
-          lines.push(`${o.bfoUrl}: Type meeting`);
-          seen.add(o.bfoUrl);
-        }
-        for (const o of calledOpps) {
-          if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
-          lines.push(`${o.bfoUrl}: Type called`);
-          seen.add(o.bfoUrl);
-        }
-        for (const e of todaysOutbound) {
-          if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
-          lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
-          seen.add(e.bfoUrl);
-        }
-        // Log the same email touch on any matched Marketing Lead's
-        // Salesforce record too (see the master bundle for rationale).
-        for (const e of todaysOutbound) {
-          if (!e.leadSfUrl || seen.has(e.leadSfUrl)) continue;
-          lines.push(`${e.leadSfUrl}: Type ${e.nextStepsType}`);
-          seen.add(e.leadSfUrl);
-        }
-        const addressBlock = lines.join('\n');
+        const addressBlock = buildActivityAddressLines({
+          meetings: allTodaysMeetings,
+          markedMeetings: markedMeetingOpps,
+          calls: calledOpps,
+          emails: todaysOutbound,
+        }).join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
           try {

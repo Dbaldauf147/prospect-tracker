@@ -8,7 +8,9 @@
 // the Issues tab always agree on which rows are incomplete — there's one
 // definition, not two that can drift apart.
 
-import { lookupCloseNotSold } from '../data/closeNotSoldRules';
+// Extension spelled out so this module loads under plain Node too — the
+// tests in scripts/ run without Vite's resolver.
+import { lookupCloseNotSold } from '../data/closeNotSoldRules.js';
 
 // Comparison key for a BFO Opportunity Name — trimmed, lower-cased,
 // internal whitespace collapsed, so a stray double space in either the
@@ -30,6 +32,42 @@ export function detectBfoUrl(rawOpp) {
     if (m) return m[0];
   }
   return '';
+}
+
+/**
+ * The opp record an Activity row should link to.
+ *
+ * Every Activity row — an email, a HubSpot meeting, a Granola call —
+ * lands on an opp the same two ways: the user picked one with the inline
+ * picker (the override), or the page matched one by recipient / company.
+ * The picked one wins.
+ *
+ * The second step is the one worth having in a shared function. A BFO
+ * Opportunity Name can appear on more than one Opps row, and only some of
+ * them carry the BFO Address — so resolving the name to the FIRST record
+ * that matches can hand back a duplicate with no address, and the row
+ * loses its link even though the opportunity has one. Prefer a record
+ * that actually has an address.
+ *
+ *   oppIndex        { byBfoOpp, allOpps } from the Agents page
+ *   overrideBfoOpp  the BFO Opportunity Name the user picked, if any
+ *   matchedOpp      the opp the page matched on its own, if any
+ */
+export function resolveOppForRow(oppIndex, overrideBfoOpp, matchedOpp) {
+  const picked = String(overrideBfoOpp || '').trim();
+  let opp = picked
+    ? oppIndex?.byBfoOpp?.get(picked.toLowerCase()) || null
+    : matchedOpp || null;
+
+  const name = picked || opp?.bfoOpp || '';
+  if (name && !detectBfoUrl(opp?.raw)) {
+    const key = name.toLowerCase();
+    const withUrl = (oppIndex?.allOpps || []).find(
+      o => o.bfoOpp && o.bfoOpp.toLowerCase() === key && detectBfoUrl(o.raw),
+    );
+    if (withUrl) opp = withUrl;
+  }
+  return opp || null;
 }
 
 // Blank / placeholder markers Opps uses for "no value yet".
