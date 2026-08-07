@@ -27,10 +27,10 @@
 // the tier every Overview table counts by. This file only decides how
 // that status is worded and coloured.
 //
-// The two had drifted apart on 23 of the 64 entries here, so the State /
-// Province table read "Deregulated" for markets the Overview counted as
-// limited (and vice versa) on the very same sheet. The assignments below
-// were reconciled against those maps; the rule is:
+// The two once drifted apart, so the State / Province table read
+// "Deregulated" for markets the Overview counted as limited (and vice
+// versa) on the very same sheet. The assignments below are kept in step
+// with those maps; the rule is:
 //
 //   dereg-map status         →  this table's status string
 //   ------------------------    -------------------------------------
@@ -112,14 +112,14 @@ export const NA_CATEGORIES = {
     fill: 'FFD68910',
     fg:   'FFFFFFFF',
   },
-  // Arizona: limited on both sides — gas is large-load-only, and retail
-  // electric choice is gated on the site already having had a
-  // third-party supplier. The only entry here restricted on both
-  // commodities, hence its own category.
-  DEREG_LTD_NG_EP: {
-    key: 'DEREG_LTD_NG_EP',
-    label: 'Deregulated – Limited Opportunity: NG & EP',
-    ng: 'Deregulated – Limited Opportunity',
+  // Arizona: competitive gas market, but retail electric choice is gated
+  // on the site already having had a third-party supplier. Same shape as
+  // VA / CA / MI — deregulated gas, restricted electric — with the
+  // caption naming Arizona's own restriction.
+  AZ_DEREG_LTD_EP: {
+    key: 'AZ_DEREG_LTD_EP',
+    label: 'Deregulated: NG; Deregulated – Limited Opportunity (prior third-party supply): EP',
+    ng: 'Deregulated',
     ep: 'Deregulated – Limited Opportunity (prior third-party supply required)',
     fill: 'FF9A6700',
     fg:   'FFFFFFFF',
@@ -137,16 +137,16 @@ export const NA_CATEGORIES = {
   },
 };
 
-// US states + DC: full name + assigned category, reconciled against the
-// dereg maps named above. Hawaii and Vermont are absent from both maps
-// for both commodities, so they stay fully regulated. Alaska carries
-// deregulated gas (it is in GAS_DEREGULATION at 2 – 4 %) with a
-// regulated electric market.
+// US states + DC: full name + assigned category, mirroring the dereg
+// maps named above. On the gas side that is a closed list: AL, ID, MS,
+// MT, ND and SD are the only limited-opportunity states, Vermont is the
+// only regulated one, and every other state plus DC is deregulated.
+// Electric status varies independently and is unaffected by that rule.
 export const US_MARKETS = [
-  { code: 'AL', name: 'Alabama',         category: 'DEREG_NG' },
+  { code: 'AL', name: 'Alabama',         category: 'DEREG_LTD_NG' },
   { code: 'AK', name: 'Alaska',          category: 'DEREG_NG' },
-  { code: 'AZ', name: 'Arizona',         category: 'DEREG_LTD_NG_EP' },
-  { code: 'AR', name: 'Arkansas',        category: 'DEREG_LTD_NG' },
+  { code: 'AZ', name: 'Arizona',         category: 'AZ_DEREG_LTD_EP' },
+  { code: 'AR', name: 'Arkansas',        category: 'DEREG_NG' },
   { code: 'CA', name: 'California',      category: 'CA_DEREG_LOTTERY' },
   { code: 'CO', name: 'Colorado',        category: 'DEREG_NG' },
   { code: 'CT', name: 'Connecticut',     category: 'DEREG_NG_EP' },
@@ -154,11 +154,11 @@ export const US_MARKETS = [
   { code: 'DE', name: 'Delaware',        category: 'DEREG_NG_EP' },
   { code: 'FL', name: 'Florida',         category: 'DEREG_NG' },
   { code: 'GA', name: 'Georgia',         category: 'DEREG_NG' },
-  { code: 'HI', name: 'Hawaii',          category: 'REG_NG_EP' },
-  { code: 'ID', name: 'Idaho',           category: 'DEREG_NG' },
+  { code: 'HI', name: 'Hawaii',          category: 'DEREG_NG' },
+  { code: 'ID', name: 'Idaho',           category: 'DEREG_LTD_NG' },
   { code: 'IL', name: 'Illinois',        category: 'DEREG_NG_EP' },
   { code: 'IN', name: 'Indiana',         category: 'DEREG_NG' },
-  { code: 'IA', name: 'Iowa',            category: 'DEREG_LTD_NG' },
+  { code: 'IA', name: 'Iowa',            category: 'DEREG_NG' },
   { code: 'KS', name: 'Kansas',          category: 'DEREG_NG' },
   { code: 'KY', name: 'Kentucky',        category: 'DEREG_NG' },
   { code: 'LA', name: 'Louisiana',       category: 'DEREG_NG' },
@@ -166,34 +166,34 @@ export const US_MARKETS = [
   { code: 'MD', name: 'Maryland',        category: 'DEREG_NG_EP' },
   { code: 'MA', name: 'Massachusetts',   category: 'DEREG_NG_EP' },
   { code: 'MI', name: 'Michigan',        category: 'MI_DEREG_CAP' },
-  { code: 'MN', name: 'Minnesota',       category: 'DEREG_LTD_NG' },
-  { code: 'MS', name: 'Mississippi',     category: 'DEREG_NG' },
-  { code: 'MO', name: 'Missouri',        category: 'DEREG_LTD_NG' },
+  { code: 'MN', name: 'Minnesota',       category: 'DEREG_NG' },
+  { code: 'MS', name: 'Mississippi',     category: 'DEREG_LTD_NG' },
+  { code: 'MO', name: 'Missouri',        category: 'DEREG_NG' },
   { code: 'MT', name: 'Montana',         category: 'DEREG_LTD_NG' },
   { code: 'NE', name: 'Nebraska',        category: 'DEREG_NG' },
-  { code: 'NV', name: 'Nevada',          category: 'DEREG_LTD_NG' },
+  { code: 'NV', name: 'Nevada',          category: 'DEREG_NG' },
   { code: 'NH', name: 'New Hampshire',   category: 'DEREG_NG_EP' },
   { code: 'NJ', name: 'New Jersey',      category: 'DEREG_NG_EP' },
-  { code: 'NM', name: 'New Mexico',      category: 'DEREG_LTD_NG' },
+  { code: 'NM', name: 'New Mexico',      category: 'DEREG_NG' },
   { code: 'NY', name: 'New York',        category: 'DEREG_NG_EP' },
-  { code: 'NC', name: 'North Carolina',  category: 'DEREG_LTD_NG' },
-  { code: 'ND', name: 'North Dakota',    category: 'DEREG_NG' },
+  { code: 'NC', name: 'North Carolina',  category: 'DEREG_NG' },
+  { code: 'ND', name: 'North Dakota',    category: 'DEREG_LTD_NG' },
   { code: 'OH', name: 'Ohio',            category: 'DEREG_NG_EP' },
-  { code: 'OK', name: 'Oklahoma',        category: 'DEREG_LTD_NG' },
+  { code: 'OK', name: 'Oklahoma',        category: 'DEREG_NG' },
   { code: 'OR', name: 'Oregon',          category: 'OR_DEREG_ELECTION' },
   { code: 'PA', name: 'Pennsylvania',    category: 'DEREG_NG_EP' },
   { code: 'RI', name: 'Rhode Island',    category: 'DEREG_NG_EP' },
   { code: 'SC', name: 'South Carolina',  category: 'DEREG_NG' },
-  { code: 'SD', name: 'South Dakota',    category: 'DEREG_NG' },
-  { code: 'TN', name: 'Tennessee',       category: 'DEREG_LTD_NG' },
+  { code: 'SD', name: 'South Dakota',    category: 'DEREG_LTD_NG' },
+  { code: 'TN', name: 'Tennessee',       category: 'DEREG_NG' },
   { code: 'TX', name: 'Texas',           category: 'DEREG_NG_EP' },
   { code: 'UT', name: 'Utah',            category: 'DEREG_NG' },
   { code: 'VT', name: 'Vermont',         category: 'REG_NG_EP' },
   { code: 'VA', name: 'Virginia',        category: 'VA_DEREG_LTD_EP' },
   { code: 'WA', name: 'Washington',      category: 'DEREG_NG' },
-  { code: 'WV', name: 'West Virginia',   category: 'DEREG_LTD_NG' },
-  { code: 'WI', name: 'Wisconsin',       category: 'DEREG_LTD_NG' },
-  { code: 'WY', name: 'Wyoming',         category: 'DEREG_LTD_NG' },
+  { code: 'WV', name: 'West Virginia',   category: 'DEREG_NG' },
+  { code: 'WI', name: 'Wisconsin',       category: 'DEREG_NG' },
+  { code: 'WY', name: 'Wyoming',         category: 'DEREG_NG' },
 ];
 
 // Canadian provinces + territories.
