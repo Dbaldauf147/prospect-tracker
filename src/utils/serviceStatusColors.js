@@ -37,13 +37,49 @@ export function serviceStatusColor(status) {
 // The outcome a status rolls up to when a report counts them. Deliberately
 // coarser than the status list: a report answers "where does this stand",
 // and Exploring / Quoting / Verbal are all the same answer to that.
+//
+// `color` / `bg` paint the on-screen report. `xlsx` paints the Excel
+// export's Detail grid, and is NOT the same palette — the export is read
+// as a RAG status sheet, so an unexplored service has to stand out as
+// work to do (yellow) rather than recede as an empty cell. That pushes
+// the in-flight statuses off amber and onto blue, which is the only way
+// the two stay tellable apart on the page.
+//
+// `exportLabel` is the wording in the workbook: "Sold" is internal
+// pipeline vocabulary, and a portfolio review reads better as what the
+// company actually has today.
 export const SERVICE_BUCKETS = [
-  { key: 'sold', label: 'Sold', color: '#166534', bg: '#DCFCE7' },
-  { key: 'inProgress', label: 'In progress', color: '#854D0E', bg: '#FEF9C3' },
-  { key: 'notSold', label: 'Not sold', color: '#991B1B', bg: '#FEE2E2' },
-  { key: 'na', label: 'N/A', color: '#94A3B8', bg: '#F1F5F9' },
-  { key: 'none', label: 'Not explored', color: '#94A3B8', bg: '#FFFFFF' },
+  { key: 'sold', label: 'Sold', exportLabel: 'Existing service', color: '#166534', bg: '#DCFCE7', xlsx: { bg: 'FFDCFCE7', color: 'FF166534' } },
+  { key: 'inProgress', label: 'In progress', color: '#854D0E', bg: '#FEF9C3', xlsx: { bg: 'FFDBEAFE', color: 'FF1E40AF' } },
+  { key: 'notSold', label: 'Not sold', color: '#991B1B', bg: '#FEE2E2', xlsx: { bg: 'FFFEE2E2', color: 'FF991B1B' } },
+  { key: 'na', label: 'N/A', color: '#94A3B8', bg: '#F1F5F9', xlsx: { bg: 'FFE2E8F0', color: 'FF475569' } },
+  { key: 'none', label: 'Not explored', color: '#94A3B8', bg: '#FFFFFF', xlsx: { bg: 'FFFEF9C3', color: 'FF854D0E' } },
 ];
+
+const BUCKET_BY_KEY = new Map(SERVICE_BUCKETS.map(b => [b.key, b]));
+
+/** A bucket by key, or undefined. */
+export function serviceBucket(key) {
+  return BUCKET_BY_KEY.get(key);
+}
+
+/** How a bucket is named in the Excel export. */
+export function bucketExportLabel(bucket) {
+  return bucket.exportLabel || bucket.label;
+}
+
+/**
+ * How one cell of the export's Detail grid reads. An unexplored service
+ * says so rather than sitting blank — a blank cell in a status grid is
+ * ambiguous between "nothing here" and "nobody filled this in" — and a
+ * sold one uses the export's own wording. Every other status is reported
+ * verbatim, so the sheet still says Exploring vs Quoting vs Verbal.
+ */
+export function exportStatusLabel(status) {
+  const bucket = serviceStatusBucket(status);
+  if (bucket === 'sold' || bucket === 'none') return bucketExportLabel(BUCKET_BY_KEY.get(bucket));
+  return String(status || '').trim();
+}
 
 /**
  * Which bucket a status falls in. Mirrors how the PE Overview table
