@@ -3601,6 +3601,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
 
+  // Deregulation status → the tier the Overview tables and the map dots
+  // bucket by.
+  //
+  // The two maps above spell partial deregulation differently:
+  // ELECTRIC_DEREGULATION says 'Limited' (AZ, CA, MI, and VA once a site
+  // clears the large-load threshold), GAS_DEREGULATION says 'Large load
+  // only' (AB, AR, AZ, BC, IA, MB, MN, MO, MT, NC, NM, NV, OK, TN, WI,
+  // WV, WY). Every caller used to test for a literal 'large', which
+  // neither map has ever contained — so nothing could reach the 'some'
+  // tier, "Some deregulation" read 0 on every portfolio ever exported,
+  // and those markets were silently counted under "Regulated /
+  // unlikely" instead. Matched case-insensitively, on both spellings,
+  // so a relabel in either map can't quietly empty the row again.
+  //
+  // A state absent from its map stays regulated, which is the maps' own
+  // stated rule — 'unknown' is reserved for rows with no US/CA state at
+  // all and is assigned by the callers, not here.
+  const deregStatusTier = (entry) => {
+    const s = String(entry?.status ?? '').trim().toLowerCase();
+    if (s === 'yes') return 'dereg';
+    if (s === 'limited' || s.startsWith('large load')) return 'some';
+    return 'reg';
+  };
+  // Display spelling of each tier, for the per-state status columns.
+  const DEREG_TIER_LABEL = { dereg: 'Deregulated', some: 'Some deregulation', reg: 'Regulated' };
+
   // ST / Prov only applies to US and Canada sites. International uploads
   // sometimes carry a US-state-like code in the state column (e.g. a
   // France site tagged "GA"); that value is meaningless abroad, so we
@@ -5857,8 +5883,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // 'large' → some deregulation; otherwise regulated.
           const e = ELECTRIC_DEREGULATION[stateCode];
           const g = GAS_DEREGULATION[stateCode];
-          elecTier = e?.status === 'yes' ? 'dereg' : (e?.status === 'large' ? 'some' : 'reg');
-          gasTier  = g?.status === 'yes' ? 'dereg' : (g?.status === 'large' ? 'some' : 'reg');
+          elecTier = deregStatusTier(e);
+          gasTier  = deregStatusTier(g);
         } else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) {
           key = `CA/${stateCode}`;
           location = CANADA_PROVINCE_CENTERS[stateCode];
@@ -5916,7 +5942,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
         if (isUS && US_STATE_CENTERS[stateCode]) {
           const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
-          return m?.status === 'yes' ? 'dereg' : (m?.status === 'large' ? 'some' : 'reg');
+          return deregStatusTier(m);
         }
         if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
         const c = COUNTRY_DEREGULATION[country];
@@ -6399,8 +6425,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           label = `${stateCode}, USA`;
           const e = ELECTRIC_DEREGULATION[stateCode];
           const g = GAS_DEREGULATION[stateCode];
-          elecTier = e?.status === 'yes' ? 'dereg' : (e?.status === 'large' ? 'some' : 'reg');
-          gasTier  = g?.status === 'yes' ? 'dereg' : (g?.status === 'large' ? 'some' : 'reg');
+          elecTier = deregStatusTier(e);
+          gasTier  = deregStatusTier(g);
         } else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) {
           key = `CA/${stateCode}`;
           location = CANADA_PROVINCE_CENTERS[stateCode];
@@ -6433,7 +6459,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
         if (isUS && US_STATE_CENTERS[stateCode]) {
           const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
-          return m?.status === 'yes' ? 'dereg' : (m?.status === 'large' ? 'some' : 'reg');
+          return deregStatusTier(m);
         }
         if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
         return 'unknown';
@@ -6476,8 +6502,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           agg = {
             label: stateCode || '-',
             country: isUS ? 'United States' : 'Canada',
-            elecStatus: isCA ? 'Deregulated' : (eDereg?.status === 'yes' ? 'Deregulated' : (eDereg?.status === 'large' ? 'Some deregulation' : 'Regulated')),
-            gasStatus:  isCA ? 'Deregulated' : (gDereg?.status === 'yes' ? 'Deregulated' : (gDereg?.status === 'large' ? 'Some deregulation' : 'Regulated')),
+            elecStatus: isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(eDereg)],
+            gasStatus:  isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(gDereg)],
             sites: 0,
             kwh: 0,
             therms: 0,
