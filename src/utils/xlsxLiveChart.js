@@ -392,7 +392,23 @@ export async function injectLiveLineChart(buffer, options) {
       zip.file('[Content_Types].xml', ctXml);
     }
 
-    return await zip.generateAsync({ type: 'arraybuffer' });
+    // DEFLATE, explicitly: JSZip's generateAsync defaults to STORE, so the
+    // re-zip here was writing back every part the workbook already had —
+    // all the per-site detail sheets included — uncompressed. An 8,300-site
+    // Master Analysis came out of ExcelJS around 5 MB and left this
+    // function at 100 MB+, over the save-to-company ceiling, on a workbook
+    // whose only change was a few KB of chart XML.
+    //
+    // It is also the faster option, not a trade: parts loaded from the
+    // incoming (deflated) zip and left untouched are passed straight
+    // through as their existing compressed bytes when the output
+    // compression matches, so asking for DEFLATE skips the inflate that
+    // STORE forces on every part.
+    return await zip.generateAsync({
+      type: 'arraybuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
   } catch (err) {
     console.warn('injectLiveLineChart: falling back to chart-less workbook -', err);
     return buffer;
