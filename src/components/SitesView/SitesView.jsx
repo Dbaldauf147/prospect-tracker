@@ -6725,9 +6725,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       });
 
       // Overview table — same tier rollup as Portfolio Overview but
-      // scoped to NA sites only. Anchored at row 37 so the table
-      // clears the bottom edge of the 638-px map image above.
-      const SUMMARY_START = 37;
+      // scoped to NA sites only. Anchored at row 43: the map image
+      // above actually overlaps down through row 41, so row 37 put the
+      // header and the first tier rows underneath it. 43 leaves a
+      // one-row gap below the image's true bottom edge. Every row
+      // below (tier rows, the State / Province table) offsets from
+      // this constant, so the whole sheet shifts with it.
+      const SUMMARY_START = 43;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'NA Overview';
