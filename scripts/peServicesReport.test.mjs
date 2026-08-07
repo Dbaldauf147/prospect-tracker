@@ -9,7 +9,9 @@
 // every status lands in the right outcome bucket. A miscounted bucket
 // makes a service look covered when it isn't.
 import { buildPeServicesReport, sortReportRows } from '../src/utils/peServicesReport.js';
-import { serviceStatusBucket } from '../src/utils/serviceStatusColors.js';
+import {
+  SERVICE_BUCKETS, bucketExportLabel, exportStatusLabel, serviceBucket, serviceStatusBucket,
+} from '../src/utils/serviceStatusColors.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -133,6 +135,31 @@ eq(buildPeServicesReport({}).totals.companies, 0, 'no companies is not a crash')
   eq(sortReportRows(rows, 'mostSold').map(r => r.company), ['Acme', 'Boreal', 'Crestline'],
     'most sold first');
   eq(rows.map(r => r.company), ['Crestline', 'Acme', 'Boreal'], 'sorting does not mutate the input');
+}
+
+// --- how the Excel export words and colours a status ---------------------
+eq(exportStatusLabel('Sold'), 'Existing service', 'a sold service reads as what the company already has');
+eq(exportStatusLabel(''), 'Not explored', 'an unexplored one says so rather than sitting blank');
+eq(exportStatusLabel('-'), 'Not explored', 'and so does the auto sentinel');
+eq(exportStatusLabel('Not Sold'), 'Not Sold', 'Not Sold is reported verbatim — it is not "Sold"');
+eq(exportStatusLabel('Exploring'), 'Exploring', 'an in-flight status keeps its own wording');
+eq(exportStatusLabel('Quoting'), 'Quoting', 'so the sheet still tells Exploring from Quoting');
+eq(exportStatusLabel('N/A'), 'N/A', 'N/A is reported verbatim');
+eq(bucketExportLabel(serviceBucket('sold')), 'Existing service', 'the sold column is renamed too');
+eq(bucketExportLabel(serviceBucket('notSold')), 'Not sold', 'buckets without an export name keep theirs');
+
+{
+  const fill = (key) => serviceBucket(key).xlsx.bg;
+  eq(fill('sold'), 'FFDCFCE7', 'an existing service is green');
+  eq(fill('notSold'), 'FFFEE2E2', 'not sold is red');
+  eq(fill('na'), 'FFE2E8F0', 'N/A is grey');
+  eq(fill('none'), 'FFFEF9C3', 'not explored is yellow — the work to do, not an empty cell');
+  eq(fill('inProgress'), 'FFDBEAFE', 'in flight is blue, so it cannot be mistaken for a gap');
+
+  const fills = SERVICE_BUCKETS.map(b => b.xlsx.bg);
+  eq(new Set(fills).size, SERVICE_BUCKETS.length, 'every bucket is a different colour on the sheet');
+  eq(SERVICE_BUCKETS.every(b => /^FF[0-9A-F]{6}$/.test(b.xlsx.bg) && /^FF[0-9A-F]{6}$/.test(b.xlsx.color)),
+    true, 'and every one is a valid ARGB that exceljs will accept');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

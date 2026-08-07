@@ -16,9 +16,9 @@ import { createPortal } from 'react-dom';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { buildOppStagesByClient, buildServiceCatalog, serviceLabelMap } from '../../utils/serviceCoverage.js';
 import { buildPeServicesReport, sortReportRows, PE_SERVICES_SORTS } from '../../utils/peServicesReport.js';
-import { SERVICE_BUCKETS, serviceStatusColor } from '../../utils/serviceStatusColors.js';
-
-const BUCKET_BY_KEY = new Map(SERVICE_BUCKETS.map(b => [b.key, b]));
+import {
+  SERVICE_BUCKETS, bucketExportLabel, exportStatusLabel, serviceBucket, serviceStatusColor,
+} from '../../utils/serviceStatusColors.js';
 
 // Settings key holding the last picked services, so the report opens ready
 // to re-run rather than empty every time.
@@ -42,7 +42,7 @@ function StatusChip({ status, bucket }) {
     return <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>;
   }
   const colors = serviceStatusColor(status);
-  const meta = BUCKET_BY_KEY.get(bucket);
+  const meta = serviceBucket(bucket);
   return (
     <span
       title={`${status}${meta && meta.label !== status ? ` · ${meta.label}` : ''}`}
@@ -191,15 +191,23 @@ export function PEServicesReportModal({
         row.height = 26;
       };
 
-      const body = (ws, values, startRow = 4) => {
+      // styleFor(rowIndex, colIndex) may return { bg, color } to paint one
+      // cell as a status. A painted cell opts out of the zebra stripe —
+      // two backgrounds on one cell would just mud the status colour.
+      const body = (ws, values, { startRow = 4, styleFor = null } = {}) => {
         values.forEach((vals, ri) => {
           const r = ws.getRow(startRow + ri);
           vals.forEach((val, ci) => {
             const cell = r.getCell(ci + 1);
             cell.value = val === '' || val == null ? null : val;
-            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT } };
+            const style = styleFor ? styleFor(ri, ci) : null;
+            cell.font = {
+              name: 'Nunito Sans', size: 10, bold: !!style,
+              color: { argb: style?.color || SE_TEXT },
+            };
             cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-            if (ri % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+            if (style?.bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: style.bg } };
+            else if (ri % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
             cell.border = {
               bottom: { style: 'thin', color: { argb: SE_BORDER } },
               left: { style: 'thin', color: { argb: SE_BORDER } },
@@ -214,7 +222,9 @@ export function PEServicesReportModal({
         + `${report.totals.services === 1 ? '' : 's'}${scopeNote ? ` · ${scopeNote}` : ''}`;
 
       // --- Summary -------------------------------------------------------
-      const sumHeaders = ['Service', ...SERVICE_BUCKETS.map(b => b.label), 'Explored', 'Coverage %'];
+      // Bucket columns carry the export's wording so the two sheets don't
+      // name the same thing differently.
+      const sumHeaders = ['Service', ...SERVICE_BUCKETS.map(bucketExportLabel), 'Explored', 'Coverage %'];
       const summary = wb.addWorksheet('Summary', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ state: 'frozen', ySplit: 3 }],
@@ -234,7 +244,12 @@ export function PEServicesReportModal({
       summary.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: sumHeaders.length } };
 
       // --- Detail --------------------------------------------------------
-      const detHeaders = ['Company', ...report.services.map(s => s.label), 'Explored', 'Sold'];
+      const detHeaders = [
+        'Company',
+        ...report.services.map(s => s.label),
+        'Explored',
+        bucketExportLabel(serviceBucket('sold')),
+      ];
       const detail = wb.addWorksheet('Detail', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }],
@@ -244,10 +259,18 @@ export function PEServicesReportModal({
       headerRow(detail, detHeaders);
       body(detail, visibleRows.map(r => [
         r.company,
-        ...report.services.map(s => r.statuses[s.key] || 'Not explored'),
+        ...report.services.map(s => exportStatusLabel(r.statuses[s.key])),
         `${r.explored} of ${report.totals.services}`,
         r.sold,
-      ]));
+      ]), {
+        // Only the service columns are statuses — column 0 is the company
+        // and the last two are counts, which stay on the zebra.
+        styleFor: (ri, ci) => {
+          if (ci < 1 || ci > report.services.length) return null;
+          const row = visibleRows[ri];
+          return serviceBucket(row?.buckets[report.services[ci - 1].key])?.xlsx || null;
+        },
+      });
       detail.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: detHeaders.length } };
 
       sanitizeExcelWorkbook(wb);
