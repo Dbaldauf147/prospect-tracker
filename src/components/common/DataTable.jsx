@@ -1046,6 +1046,39 @@ export function DataTable({
   let visibleColumns = orderedColumns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
   if (visibleColumns.length === 0 && orderedColumns.length > 0) visibleColumns = orderedColumns;
 
+  // Where each pinned column parks while the table scrolls sideways: the
+  // summed width of the pinned columns to its left. Any column can carry
+  // `sticky: true` and a table can pin several — without an offset they all
+  // anchor at 0 and stack on top of each other.
+  //
+  // Measured off `visibleColumns` and the live widths, so hiding or resizing
+  // a pinned column moves the ones after it rather than leaving a gap or an
+  // overlap. The last pinned column keeps the edge shadow that separates the
+  // frozen block from the scrolling one; the ones inside it don't, or the
+  // block reads as several panes instead of one.
+  const stickyLefts = new Map();
+  let lastStickyKey = null;
+  {
+    let left = 0;
+    for (const col of visibleColumns) {
+      if (!col.sticky) continue;
+      stickyLefts.set(col.key, left);
+      lastStickyKey = col.key;
+      left += getWidth(col);
+    }
+  }
+  // `position` is restated here because the header cell sets
+  // `position: relative` inline (for its resize handle) and an inline
+  // declaration beats the class's `position: sticky`. A sticky box is itself
+  // a positioned ancestor, so the handle still anchors to it.
+  const stickyStyle = (col) => (col.sticky
+    ? {
+        position: 'sticky',
+        left: stickyLefts.get(col.key),
+        ...(col.key === lastStickyKey ? null : { boxShadow: 'none' }),
+      }
+    : null);
+
   function toggleCol(key) {
     if (alwaysVisible.includes(key)) return;
     setVisibleCols(prev => {
@@ -1235,7 +1268,7 @@ export function DataTable({
                     return (
                     <th
                       key={col.key}
-                      style={{ width: getWidth(col), position: 'relative' }}
+                      style={{ width: getWidth(col), position: 'relative', ...stickyStyle(col) }}
                       onClick={() => handleSort(col.key)}
                       className={col.sticky ? styles.stickyCol : undefined}
                       title={headerTitle}
@@ -1266,7 +1299,7 @@ export function DataTable({
                       return (
                         <th
                           key={col.key}
-                          style={{ width: getWidth(col), padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}
+                          style={{ width: getWidth(col), padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)', ...stickyStyle(col) }}
                           onClick={e => e.stopPropagation()}
                           className={col.sticky ? styles.stickyCol : undefined}
                         >
@@ -1377,7 +1410,12 @@ export function DataTable({
                             <td
                               key={col.key}
                               className={col.sticky ? styles.stickyCol : undefined}
-                              style={computedRowStyle}
+                              // Pass the row style straight through when the
+                              // column isn't pinned: this runs for every cell
+                              // of every rendered row, and merging into a
+                              // fresh object per cell is a cost the common
+                              // case shouldn't pay.
+                              style={col.sticky ? { ...computedRowStyle, ...stickyStyle(col) } : computedRowStyle}
                             >
                               {col.render ? col.render(row) : (row[col.key] ?? '-')}
                             </td>

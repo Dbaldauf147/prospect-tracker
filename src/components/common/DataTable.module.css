@@ -222,9 +222,12 @@
   background: var(--color-accent-light);
 }
 
+/* `left` is set inline per column, not here: a table can pin several
+   columns and each one parks at the summed width of the pinned columns
+   before it (see stickyStyle in DataTable.jsx). Pinning them all at 0
+   here would stack them on top of each other. */
 .stickyCol {
   position: sticky;
-  left: 0;
   z-index: 5;
   background: var(--color-surface, #fff);
   box-shadow: 2px 0 4px rgba(0,0,0,0.06);
