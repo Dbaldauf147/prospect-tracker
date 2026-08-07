@@ -52,6 +52,7 @@ import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
+import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -3717,122 +3718,135 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return match || headers[0] || '';
   }, [sitesData]);
 
-  // Build per-commodity overview rows grouped by (company, state).
-  // Each row summarizes sites, deregulated-only consumption/spend,
-  // and an indicative savings range.
+  // Build per-commodity overview rows grouped by (group, state), where
+  // `groupOf(row)` names the group a site belongs to — the company for the
+  // Electric / Gas Overview sheets and the Summary tab, the division for the
+  // Master Analysis' Divisions tab. A group name of '' leaves the site out.
+  // Each row summarizes sites, deregulated-only consumption/spend, and an
+  // indicative savings range.
+  //
+  // One implementation for both so the same portfolio can't come out with
+  // one savings number on the Summary tab and another on the Divisions tab:
+  // the market classifier, the per-state deregulation tables and the savings
+  // percentages are applied here and nowhere else.
+  function buildMarketOverview(commodity, groupOf, groupKey = 'Company') {
+    const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
+    const costKey = `__${commodity}Cost__`;
+    const groups = new Map();
+    for (const r of rows) {
+      const company = String(groupOf(r) ?? '').trim();
+      const state = r.__state__ || '';
+      if (!company) continue;
+      const key = `${company}||${state}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          company,
+          state,
+          totalSites: 0,
+          deregulatedSites: 0,
+          deregulatedConsumption: 0,
+          deregulatedSpend: 0,
+        };
+        groups.set(key, g);
+      }
+      g.totalSites++;
+      // Same classifier as the page's Market card and the Indicative
+      // Savings by State sheets — this tab used to gate electric on the
+      // state map but let gas through on the provider alone, so its
+      // Deregulated Sites column disagreed with both.
+      if (classifyMarket(r, commodity) !== 'Deregulated') continue;
+      g.deregulatedSites++;
+      const consumption = r[consumptionKey];
+      if (typeof consumption === 'number' && Number.isFinite(consumption)) {
+        g.deregulatedConsumption += consumption;
+      }
+      const cost = r[costKey];
+      if (typeof cost === 'number' && Number.isFinite(cost)) {
+        g.deregulatedSpend += cost;
+      }
+    }
+
+    const consumptionLabel = commodity === 'electric'
+      ? 'Annual Deregulated Consumption kWh'
+      : 'Annual Deregulated Consumption therms';
+    const out = [];
+    for (const g of groups.values()) {
+      let status;
+      let range;
+      let lowPct;
+      let highPct;
+      if (commodity === 'electric') {
+        const entry = ELECTRIC_DEREGULATION[g.state];
+        status = entry?.status || 'no';
+        range = entry?.range ?? '';
+        lowPct = entry?.lowPct ?? null;
+        highPct = entry?.highPct ?? null;
+      } else {
+        if (g.deregulatedSites > 0) {
+          status = 'yes';
+          range = GAS_SAVINGS.range;
+          lowPct = GAS_SAVINGS.lowPct;
+          highPct = GAS_SAVINGS.highPct;
+        } else {
+          status = 'no';
+          range = '';
+          lowPct = null;
+          highPct = null;
+        }
+      }
+      // Regulated markets get zero savings by construction — the
+      // lowPct/highPct nulls resolve to blanks below.
+      const low = (lowPct != null && g.deregulatedSpend > 0)
+        ? Math.round(g.deregulatedSpend * lowPct * 100) / 100
+        : (lowPct != null ? 0 : '');
+      const high = (highPct != null && g.deregulatedSpend > 0)
+        ? Math.round(g.deregulatedSpend * highPct * 100) / 100
+        : (highPct != null ? 0 : '');
+      out.push({
+        [groupKey]: g.company,
+        'ST/Prov': g.state,
+        'Deregulated Status': status,
+        'Total Sites': g.totalSites,
+        'Deregulated Sites': g.deregulatedSites,
+        [consumptionLabel]: Math.round(g.deregulatedConsumption),
+        'Annual Deregulated Spend': Math.round(g.deregulatedSpend * 100) / 100,
+        'Indicative Savings Range': range,
+        'Indicative Savings Low': low,
+        'Indicative Savings High': high,
+      });
+    }
+    out.sort((a, b) => {
+      if (a[groupKey] !== b[groupKey]) return a[groupKey].localeCompare(b[groupKey]);
+      return a['ST/Prov'].localeCompare(b['ST/Prov']);
+    });
+    return out;
+  }
+
   const overviewByCommodity = useMemo(() => {
     if (!utility?.zipMap || !rows.length || !siteCompanyColumn) {
       return { electric: [], gas: [] };
     }
-
-    function buildFor(commodity) {
-      const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
-      const costKey = `__${commodity}Cost__`;
-      const groups = new Map();
-      for (const r of rows) {
-        const company = String(r[siteCompanyColumn] ?? '').trim();
-        const state = r.__state__ || '';
-        if (!company) continue;
-        const key = `${company}||${state}`;
-        let g = groups.get(key);
-        if (!g) {
-          g = {
-            company,
-            state,
-            totalSites: 0,
-            deregulatedSites: 0,
-            deregulatedConsumption: 0,
-            deregulatedSpend: 0,
-          };
-          groups.set(key, g);
-        }
-        g.totalSites++;
-        // Same classifier as the page's Market card and the Indicative
-        // Savings by State sheets — this tab used to gate electric on the
-        // state map but let gas through on the provider alone, so its
-        // Deregulated Sites column disagreed with both.
-        if (classifyMarket(r, commodity) !== 'Deregulated') continue;
-        g.deregulatedSites++;
-        const consumption = r[consumptionKey];
-        if (typeof consumption === 'number' && Number.isFinite(consumption)) {
-          g.deregulatedConsumption += consumption;
-        }
-        const cost = r[costKey];
-        if (typeof cost === 'number' && Number.isFinite(cost)) {
-          g.deregulatedSpend += cost;
-        }
-      }
-
-      const consumptionLabel = commodity === 'electric'
-        ? 'Annual Deregulated Consumption kWh'
-        : 'Annual Deregulated Consumption therms';
-      const out = [];
-      for (const g of groups.values()) {
-        let status;
-        let range;
-        let lowPct;
-        let highPct;
-        if (commodity === 'electric') {
-          const entry = ELECTRIC_DEREGULATION[g.state];
-          status = entry?.status || 'no';
-          range = entry?.range ?? '';
-          lowPct = entry?.lowPct ?? null;
-          highPct = entry?.highPct ?? null;
-        } else {
-          if (g.deregulatedSites > 0) {
-            status = 'yes';
-            range = GAS_SAVINGS.range;
-            lowPct = GAS_SAVINGS.lowPct;
-            highPct = GAS_SAVINGS.highPct;
-          } else {
-            status = 'no';
-            range = '';
-            lowPct = null;
-            highPct = null;
-          }
-        }
-        // Regulated markets get zero savings by construction — the
-        // lowPct/highPct nulls resolve to blanks below.
-        const low = (lowPct != null && g.deregulatedSpend > 0)
-          ? Math.round(g.deregulatedSpend * lowPct * 100) / 100
-          : (lowPct != null ? 0 : '');
-        const high = (highPct != null && g.deregulatedSpend > 0)
-          ? Math.round(g.deregulatedSpend * highPct * 100) / 100
-          : (highPct != null ? 0 : '');
-        out.push({
-          Company: g.company,
-          'ST/Prov': g.state,
-          'Deregulated Status': status,
-          'Total Sites': g.totalSites,
-          'Deregulated Sites': g.deregulatedSites,
-          [consumptionLabel]: Math.round(g.deregulatedConsumption),
-          'Annual Deregulated Spend': Math.round(g.deregulatedSpend * 100) / 100,
-          'Indicative Savings Range': range,
-          'Indicative Savings Low': low,
-          'Indicative Savings High': high,
-        });
-      }
-      out.sort((a, b) => {
-        if (a.Company !== b.Company) return a.Company.localeCompare(b.Company);
-        return a['ST/Prov'].localeCompare(b['ST/Prov']);
-      });
-      return out;
-    }
-
-    return { electric: buildFor('electric'), gas: buildFor('gas') };
+    const groupOf = (r) => String(r[siteCompanyColumn] ?? '').trim();
+    return {
+      electric: buildMarketOverview('electric', groupOf),
+      gas: buildMarketOverview('gas', groupOf),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, utility, siteCompanyColumn]);
 
-  // Combined Summary: one row per company, rolling up both electric
-  // and gas across every state the company operates in. State-level
-  // detail stays on the per-commodity overview tabs; this view is
-  // the executive roll-up.
-  const summaryRows = useMemo(() => {
+  // Roll a pair of per-(group, state) overview lists up to one row per
+  // group, combining both commodities across every state the group operates
+  // in. State-level detail stays on the per-commodity overview tabs; this is
+  // the executive roll-up — the Summary tab's company rows, and the
+  // Divisions tab's division rows, off the same arithmetic.
+  function rollupMarketOverview(electricRows, gasRows, groupKey = 'Company') {
     const byKey = new Map();
     const toNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
     function ensureRow(company) {
       if (!byKey.has(company)) {
         byKey.set(company, {
-          Company: company,
+          [groupKey]: company,
           'Total Sites': 0,
           'States Covered': new Set(),
           'Electric Deregulated Sites': 0,
@@ -3850,8 +3864,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       }
       return byKey.get(company);
     }
-    // Track per-company total-site counts by state so we don't
-    // double-count when a company appears in both the electric and
+    // Track per-group total-site counts by state so we don't
+    // double-count when a group appears in both the electric and
     // gas overviews for the same state.
     const siteTotalsByCompanyState = new Map();
     function recordSites(company, state, total) {
@@ -3860,25 +3874,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         siteTotalsByCompanyState.set(key, toNum(total));
       }
     }
-    for (const e of overviewByCommodity.electric) {
-      const row = ensureRow(e.Company);
+    for (const e of electricRows) {
+      const row = ensureRow(e[groupKey]);
       row['States Covered'].add(e['ST/Prov'] || '-');
       row['Electric Deregulated Sites'] += toNum(e['Deregulated Sites']);
       row['Electric Annual Spend']      += toNum(e['Annual Deregulated Spend']);
       row['Electric Savings Low']       += toNum(e['Indicative Savings Low']);
       row['Electric Savings High']      += toNum(e['Indicative Savings High']);
-      recordSites(e.Company, e['ST/Prov'] || '-', e['Total Sites']);
+      recordSites(e[groupKey], e['ST/Prov'] || '-', e['Total Sites']);
     }
-    for (const g of overviewByCommodity.gas) {
-      const row = ensureRow(g.Company);
+    for (const g of gasRows) {
+      const row = ensureRow(g[groupKey]);
       row['States Covered'].add(g['ST/Prov'] || '-');
       row['Gas Deregulated Sites'] += toNum(g['Deregulated Sites']);
       row['Gas Annual Spend']      += toNum(g['Annual Deregulated Spend']);
       row['Gas Savings Low']       += toNum(g['Indicative Savings Low']);
       row['Gas Savings High']      += toNum(g['Indicative Savings High']);
-      recordSites(g.Company, g['ST/Prov'] || '-', g['Total Sites']);
+      recordSites(g[groupKey], g['ST/Prov'] || '-', g['Total Sites']);
     }
-    // Fold per-(company, state) site totals back into each company row.
+    // Fold per-(group, state) site totals back into each group's row.
     for (const [key, total] of siteTotalsByCompanyState.entries()) {
       const [company] = key.split('||');
       const row = byKey.get(company);
@@ -3904,9 +3918,49 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       row['Total Savings High']    = Math.round((row['Electric Savings High'] + row['Gas Savings High']) * 100) / 100;
       out.push(row);
     }
-    out.sort((a, b) => a.Company.localeCompare(b.Company));
+    out.sort((a, b) => a[groupKey].localeCompare(b[groupKey]));
     return out;
-  }, [overviewByCommodity]);
+  }
+
+  const summaryRows = useMemo(
+    () => rollupMarketOverview(overviewByCommodity.electric, overviewByCommodity.gas),
+    [overviewByCommodity],
+  );
+
+  // The same procurement roll-up cut by division instead of by company, for
+  // the Master Analysis' Divisions tab. Keyed by divisionLabel() so it joins
+  // to the rest of that tab, and gated exactly as the company overview is —
+  // without a utility rates file no site resolves a serving utility, and the
+  // two views would otherwise disagree about how many sites are in a
+  // competitive market.
+  //
+  // Sites with no division fall into their own bucket rather than being
+  // dropped: they carry spend like any other, and a savings figure that
+  // quietly excluded them wouldn't add up to the Summary tab's.
+  const divisionSavings = useMemo(() => {
+    if (!utility?.zipMap || !rows.length) return {};
+    const groupOf = (r) => divisionLabel(r.__division__);
+    const rolled = rollupMarketOverview(
+      buildMarketOverview('electric', groupOf, 'Division'),
+      buildMarketOverview('gas', groupOf, 'Division'),
+      'Division',
+    );
+    const out = {};
+    for (const row of rolled) {
+      out[row.Division] = {
+        electricDeregSites: row['Electric Deregulated Sites'],
+        electricSpend: row['Electric Annual Spend'],
+        electricLow: row['Electric Savings Low'],
+        electricHigh: row['Electric Savings High'],
+        gasDeregSites: row['Gas Deregulated Sites'],
+        gasSpend: row['Gas Annual Spend'],
+        gasLow: row['Gas Savings Low'],
+        gasHigh: row['Gas Savings High'],
+      };
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, utility]);
 
   // Contract Overview — one row per (site, commodity) where there's
   // any contract data filled in (supplier, contract name, dates, or
@@ -11972,6 +12026,54 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Written by both the Site List export and the Master Analysis, so a
   // Master Analysis saved to a company can be pulled back onto the page
   // exactly as it left.
+
+  // One flat record per site for the Master Analysis' Divisions tab: the
+  // division it belongs to, the ISO / RTO its zip resolves to, and the two
+  // per-site verdicts the tab breaks down — its utility-mapping / interval
+  // classification and its building-compliance screening.
+  //
+  // Both are joined onto `rows` by site id rather than recomputed, so the
+  // Divisions tab reports the same answer for a site as the Utility Mapping
+  // Site Detail and the Compliance Site Detail sheets do. `compliance` stays
+  // null for a site the screening didn't cover — the screening runs on owned
+  // buildings by default, and counting a leased site as screened-with-no-
+  // mandates would read as a clean bill of health it was never given.
+  function collectDivisionSiteFacts(complianceResults, mappingSiteRows) {
+    const mappingById = new Map();
+    for (const m of (mappingSiteRows || [])) {
+      if (m?.siteId != null) mappingById.set(m.siteId, m);
+    }
+    const complianceById = new Map();
+    for (const c of (complianceResults || [])) {
+      if (c?.id != null) complianceById.set(c.id, c);
+    }
+    return rows.map((r) => {
+      const m = mappingById.get(r.id);
+      const c = complianceById.get(r.id);
+      let compliance = null;
+      if (c) {
+        let penalty = null;
+        for (const cat of CATEGORIES) {
+          if (c[cat]?.eligible !== true) continue;
+          const p = c[cat].penalty;
+          if (typeof p === 'number' && Number.isFinite(p)) penalty = (penalty ?? 0) + p;
+        }
+        compliance = {
+          matched: !!c.matched,
+          eligible: Object.fromEntries(CATEGORIES.map(cat => [cat, c[cat]?.eligible === true])),
+          penalty,
+        };
+      }
+      return {
+        division: r.__division__ || '',
+        iso: r.__iso__?.iso || null,
+        mapped: m?.status === 'Mapped',
+        interval: m?.intervalData === 'Yes' ? true : (m?.intervalData === 'No' ? false : null),
+        compliance,
+      };
+    });
+  }
+
   // Gather everything the Corporate Compliance page knows about a company
   // into one blob for the export's round-trip sheet. Returns null when the
   // company has no research yet, so an export doesn't carry an empty
@@ -12214,7 +12316,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //     already built that sheet. Appended below whatever it ended on.
     appendIntervalDataSummary(wb.getWorksheet('Summary'), mappingCoverage);
 
-    // 6. Round-trip sheets — the Site List the whole workbook was built
+    // 6. Divisions — every sheet above, read one level below the company:
+    //    the procurement savings opportunity, the compliance exposure, the
+    //    interval-data coverage and the ISO / RTO footprint, per division.
+    //    Runs here because it joins three things the steps above produced —
+    //    the compliance screening (step 2), the per-site utility mapping
+    //    (step 5) and the per-division savings roll-up — onto the division
+    //    each site carries.
+    buildDivisionsSheet(wb, summarizeDivisions(
+      collectDivisionSiteFacts(complianceResults, mappingCoverage?.siteRows),
+      divisionSavings,
+    ), {
+      generatedAt: new Date().toLocaleString('en-US'),
+      companyName: company,
+      scopeNote: divisionFilter
+        ? `Scoped to ${activeDivisionLabel()} — clear the Division filter on the Utility Lookup page to export every division`
+        : '',
+    });
+
+    // 7. Round-trip sheets — the Site List the whole workbook was built
     //    from, plus the hidden state sheet. These are what let the
     //    analysis be imported back onto the Utility Lookup page (and
     //    from there onto every subtab) later, from this company's
@@ -12357,6 +12477,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (cls.requirements) sb.requirements.add(cls.requirements);
       }
       detailRows.push({
+        // Not columns on the Site Detail sheet (which lists its own): the
+        // row's identity and division, so the Master Analysis' Divisions tab
+        // can break this same classification down by division rather than
+        // re-deriving it and risking a different answer.
+        siteId: r.id,
+        division: String(r.__division__ || '').trim(),
         siteName,
         state: stateDisplay,
         country: rawCountry,
@@ -12730,7 +12856,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // Embedded in another workbook (Master Analysis): the caller writes and
     // downloads the merged file, so stop here.
-    if (targetWb) return { totalSites, mapped: totMapped, intervalYes: totIntervalYes, coverageLine };
+    if (targetWb) {
+      return {
+        totalSites, mapped: totMapped, intervalYes: totIntervalYes, coverageLine,
+        // Per-site mapping / interval classification, for callers that need
+        // to cut it a different way (the Divisions tab).
+        siteRows: detailRows,
+      };
+    }
 
     sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
