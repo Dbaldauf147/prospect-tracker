@@ -12,6 +12,8 @@ import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
 import { computeCloseNotSoldOpps, detectBfoUrl } from '../../utils/closeNotSoldOpps';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
+import { loadCallRecords } from '../../utils/callRecordingsStore';
+import { oppMeetingsFromRecords, withUnloggedGranolaMeetings } from '../../utils/granolaMeetings';
 import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 import {
@@ -2141,6 +2143,63 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail, leadSfByEmail]);
 
+  // Granola notes from the Call Recordings page, as meetings.
+  //
+  // HubSpot only knows about a meeting once it has been logged against a
+  // deal, which is work that happens after the fact — so a day spent in
+  // customer calls could show an empty Activity table. Granola sits in
+  // those calls and writes a note for each, and the Call Recordings page
+  // has already stored them, so they are a record of the day that exists
+  // whether or not anything was logged.
+  //
+  // Read-only here: this reads what that page stored and never syncs.
+  // Keeping the import on one page means this one can't race it, and a
+  // stale read costs a missing row rather than a wrong one.
+  const [granolaRecords, setGranolaRecords] = useState({});
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) { setGranolaRecords({}); return undefined; }
+    let cancelled = false;
+    loadCallRecords(uid)
+      .then(records => { if (!cancelled) setGranolaRecords(records || {}); })
+      // A page that can't reach the store still has HubSpot's meetings.
+      // Losing the Granola ones is worth less than an error banner over
+      // an Activity table that is otherwise fine.
+      .catch(err => { if (!cancelled) console.warn('Could not load call recordings for the Activity table:', err); });
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  // Those notes as Activity rows — scoped to the reference day, matched
+  // to an opp the same way the HubSpot meetings are, and reduced to the
+  // ones that landed on one.
+  //
+  // Tied-to-an-opp is the filter because this table is the day's work
+  // against the pipeline: an internal stand-up Granola also sat in isn't
+  // that, and the notes carry plenty of those. A meeting that IS with a
+  // customer but didn't match can still be tagged by hand from the
+  // Meetings section of the Call Recordings page, or logged in HubSpot,
+  // and it arrives here the moment it is.
+  const granolaMeetingRows = useMemo(() => {
+    const bounds = boundsForDate(referenceDate);
+    return oppMeetingsFromRecords(granolaRecords, {
+      start: bounds.start,
+      end: bounds.end,
+      isIgnored: (id) => ignoredMeetingIds.has(id),
+      overrides,
+      resolve: (email, company) => findOppForRecipient(email, company),
+      bfoUrlFor: (opp) => (opp?.raw ? detectBfoUrl(opp.raw) : ''),
+    });
+    // findOppForRecipient is derived from oppIndex, which is listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [granolaRecords, referenceDate, ignoredMeetingIds, overrides, oppIndex]);
+
+  // One meeting list for the table: the logged meetings plus the Granola
+  // calls nobody has logged yet.
+  const allTodaysMeetings = useMemo(
+    () => withUnloggedGranolaMeetings(todaysMeetings, granolaMeetingRows),
+    [todaysMeetings, granolaMeetingRows],
+  );
+
   // Opps that count as "called" in the activity window. Two signals:
   //   • An explicit mark from the Opps tab's Called button (`_calledOn`
   //     stamp on the reference day or the previous business day), OR
@@ -2323,15 +2382,15 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     ? todaysOutbound.filter(e => !lastActivityOnReference(e.bfoOpp))
     : todaysOutbound;
   const visibleMeetings = hideActivityOnDate
-    ? todaysMeetings.filter(m => !lastActivityOnReference(m.bfoOpp))
-    : todaysMeetings;
+    ? allTodaysMeetings.filter(m => !lastActivityOnReference(m.bfoOpp))
+    : allTodaysMeetings;
   const visibleMarkedMeetings = hideActivityOnDate
     ? markedMeetingOpps.filter(o => !lastActivityOnReference(o.bfoOpp))
     : markedMeetingOpps;
   const activityHiddenCount =
     (calledOpps.length - visibleCalledOpps.length)
     + (todaysOutbound.length - visibleOutbound.length)
-    + (todaysMeetings.length - visibleMeetings.length)
+    + (allTodaysMeetings.length - visibleMeetings.length)
     + (markedMeetingOpps.length - visibleMarkedMeetings.length);
 
   // Unified Activity rows: Sent emails + Called + Meetings, normalized to
@@ -2365,10 +2424,13 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     for (const m of visibleMeetings) {
       rows.push({
         rowKey: `meeting:${m.id}`, type: 'meeting', ts: m.ts, endTs: m.endTs,
-        title: m.title, to: '', rawTo: '', recipients: [],
-        company: m.company, bfoOpp: m.bfoOpp, bfoUrl: '',
+        // A HubSpot meeting carries no attendee list in this shape, so
+        // `to` stays blank for those and reads as the dash it always has.
+        title: m.title, to: m.attendees || '', rawTo: m.attendees || '', recipients: [],
+        company: m.company, bfoOpp: m.bfoOpp, bfoUrl: m.bfoUrl || '',
         outcome: m.outcome || '', location: m.location || '', overrideKey: m.overrideKey,
         isManual: m.isManual, editable: true, meetingId: m.id,
+        source: m.source || '', granolaUrl: m.granolaUrl || '',
       });
     }
     // Meetings marked on the Opps tab — read-only like calls, since they
@@ -3006,7 +3068,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       )}
       {senderEmail ? (
         <p className={styles.subnote}>
-          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
+          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. Meetings come from HubSpot and from the Granola notes the Call Recordings page has stored &mdash; a Granola call that nobody has logged in HubSpot yet is added if it ties to an opportunity, badged <em>Granola</em>, and linked to its note. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
         </p>
       ) : (
         <div className={styles.staleBanner}>
@@ -3017,7 +3079,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       <div className={styles.tallies}>
         <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails</div>
         <div className={styles.tally}><strong>{calledOpps.length}</strong>call{calledOpps.length === 1 ? '' : 's'}</div>
-        <div className={styles.tally}><strong>{todaysMeetings.length + markedMeetingOpps.length}</strong>meeting{(todaysMeetings.length + markedMeetingOpps.length) === 1 ? '' : 's'}</div>
+        <div className={styles.tally}><strong>{allTodaysMeetings.length + markedMeetingOpps.length}</strong>meeting{(allTodaysMeetings.length + markedMeetingOpps.length) === 1 ? '' : 's'}</div>
       </div>
 
       {!cache && (
@@ -3098,10 +3160,38 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                     }}
                   >Opps ✓</span>
                 ) : null;
+                // A meeting that came from a Granola note rather than from
+                // a HubSpot log. Says where the row is from — and that
+                // nobody has logged it yet — and links straight to the note.
+                const granolaChip = r.source === 'granola' ? (
+                  r.granolaUrl ? (
+                    <a
+                      href={r.granolaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="From a Granola note on the Call Recordings page — open the note"
+                      style={{
+                        marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
+                        color: '#5B21B6', background: '#EDE9FE', border: '1px solid #C4B5FD',
+                        borderRadius: 999, verticalAlign: 'middle', whiteSpace: 'nowrap',
+                        textDecoration: 'none',
+                      }}
+                    >Granola ↗</a>
+                  ) : (
+                    <span
+                      title="From a Granola note on the Call Recordings page"
+                      style={{
+                        marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
+                        color: '#5B21B6', background: '#EDE9FE', border: '1px solid #C4B5FD',
+                        borderRadius: 999, verticalAlign: 'middle', whiteSpace: 'nowrap',
+                      }}
+                    >Granola</span>
+                  )
+                ) : null;
                 return (
                 <tr key={r.rowKey}>
                   {isActivityColVisible('time') && <td className={r.ts ? '' : styles.muted}>{r.ts ? `${fmtTime(r.ts)}${r.endTs ? ` – ${fmtTime(r.endTs)}` : ''}` : '-'}</td>}
-                  {isActivityColVisible('type') && <td>{typeLabel}{markedChip}</td>}
+                  {isActivityColVisible('type') && <td>{typeLabel}{markedChip}{granolaChip}</td>}
                   {isActivityColVisible('subject') && <td className={r.title ? '' : styles.muted} title={r.title}>{r.title || '-'}</td>}
                   {isActivityColVisible('to') && <td title={r.rawTo}>{r.to || <span className={styles.muted}>-</span>}</td>}
                   {isActivityColVisible('company') && <td className={r.company ? '' : styles.muted}>{r.company || '-'}</td>}
