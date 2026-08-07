@@ -244,6 +244,127 @@ export function normalizeGasUom(raw) {
   return '';
 }
 
+// ---- Contract price units -----------------------------------------------
+// The per-unit denominator a supply contract's PRICE is quoted against —
+// $/kWh vs $/MWh, $/therm vs $/Dth. Separate from the consumption units
+// above: a file can hold consumption in Dth and a price in $/MMBtu, and the
+// two are read independently.
+//
+// Nothing converts a contract price. The page carries it exactly as the file
+// wrote it and every downstream label calls it $/kWh or $/therm. These
+// helpers exist so that assumption can be CHECKED rather than left silent:
+// when a file says its gas price is per Dth, resolveContractPriceUom
+// surfaces that and the page flags the price as being read in the wrong
+// unit (a $4.50/Dth contract read as $4.50/therm is ten times high).
+
+// The unit each commodity's price is assumed to be in when nothing says
+// otherwise — and the only unit the figures downstream are correct for.
+export const CANONICAL_PRICE_UOM = { electric: 'kWh', gas: 'therm' };
+
+export function normalizeElectricPriceUom(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (/\bmwh\b|megawatt/.test(s)) return 'MWh';
+  if (/\bkwh\b|kilowatt/.test(s)) return 'kWh';
+  return '';
+}
+
+export function normalizeGasPriceUom(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  // MMBtu before the Dth / Btu tests: "$/MMBtu" contains neither "dth" nor a
+  // standalone "btu", but a looser order would still be a trap worth
+  // avoiding if these patterns are ever widened.
+  if (/\bmmbtu\b/.test(s)) return 'MMBtu';
+  if (/\b(dth|dekatherm|decatherm)\b/.test(s)) return 'Dth';
+  if (/\bmcf\b/.test(s)) return 'Mcf';
+  if (/\bccf\b/.test(s)) return 'Ccf';
+  if (/\bmwh\b|megawatt/.test(s)) return 'MWh';
+  if (/\btherms?\b/.test(s)) return 'therm';
+  return '';
+}
+
+// What unit a contract price is quoted in, and how we know.
+//
+//   cellValue — the row's "… Contract Price UoM" cell, when the file
+//               carries that column. Most explicit, so it wins.
+//   header    — the price column's own header ("Electric Contract Price
+//               ($/MWh)"). Weaker, but it's what most real files carry.
+//
+// Returns { unit, source, canonical }. `source: 'default'` means nothing
+// said, so the assumed unit stands and there is nothing to warn about — an
+// unrecognized unit string is NOT treated as a mismatch, because "we can't
+// read this" and "this is in the wrong unit" are different claims and only
+// the second is worth putting in front of someone.
+export function resolveContractPriceUom(commodity, { cellValue, header } = {}) {
+  const canonicalUnit = CANONICAL_PRICE_UOM[commodity] || '';
+  const normalize = commodity === 'electric' ? normalizeElectricPriceUom : normalizeGasPriceUom;
+  const fromCell = normalize(cellValue);
+  if (fromCell) return { unit: fromCell, source: 'column', canonical: fromCell === canonicalUnit };
+  // Only the price-per-unit part of a header counts. "Gas Contract Price"
+  // beside a "Gas Consumption (Dth)" column must not read as $/Dth, so the
+  // unit has to be attached to a price: "$/Dth", "per Dth", "(Dth)".
+  //
+  // Each marker is followed by the next few words rather than just one, and
+  // every marker is tried: the word straight after one is often a false
+  // start. "($ per Dth)" opens on a bracket followed by a currency and then
+  // "per", and stopping at either would miss the unit entirely. Only a word
+  // that reads as a real unit ends the search, so the extra reach costs
+  // nothing on a header that names no unit at all.
+  const h = String(header || '');
+  let fromHeader = '';
+  for (const m of h.matchAll(/\$\s*\/|\bper\b|\(/g)) {
+    const after = h.slice(m.index + m[0].length).match(/[A-Za-z]+/g) || [];
+    for (const word of after.slice(0, 3)) {
+      const hit = normalize(word);
+      if (hit) { fromHeader = hit; break; }
+    }
+    if (fromHeader) break;
+  }
+  if (fromHeader) return { unit: fromHeader, source: 'header', canonical: fromHeader === canonicalUnit };
+  return { unit: canonicalUnit, source: 'default', canonical: true };
+}
+
+export function priceUomLabel(commodity, unit) {
+  return '$/' + (unit || CANONICAL_PRICE_UOM[commodity] || '');
+}
+
+// Roll the per-site resolutions up into the one line the page puts in front
+// of someone: how many contract prices are quoted in a unit nothing converts,
+// and which units those are.
+//
+// `entries` is one { electric, gas } pair per site, each side the object
+// resolveContractPriceUom returned, or null where that site has no price.
+// Returns null when there is nothing to say — a portfolio whose prices are
+// all in the assumed unit, or that carries no prices at all, must not raise
+// a warning, and callers render on the null.
+export function summarizePriceUomFlags(entries) {
+  const byCommodity = { electric: new Map(), gas: new Map() };
+  let total = 0;
+  for (const e of (entries || [])) {
+    for (const commodity of ['electric', 'gas']) {
+      const uom = e?.[commodity];
+      if (!uom || uom.canonical) continue;
+      const m = byCommodity[commodity];
+      m.set(uom.unit, (m.get(uom.unit) || 0) + 1);
+      total += 1;
+    }
+  }
+  if (total === 0) return null;
+
+  const describe = (commodity) => [...byCommodity[commodity].entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([unit, n]) => `${n} ${priceUomLabel(commodity, unit)}`)
+    .join(', ');
+  const parts = [];
+  for (const commodity of ['electric', 'gas']) {
+    if (!byCommodity[commodity].size) continue;
+    const label = commodity === 'electric' ? 'Electric' : 'Gas';
+    parts.push(`${label}: ${describe(commodity)} (read as ${priceUomLabel(commodity)})`);
+  }
+  return { total, detail: parts.join(' · ') };
+}
+
 // Detect the unit of a consumption column so we can convert to the
 // table's canonical unit ($/kWh × kWh for electric, $/therm × therms
 // for gas). Defaults to the canonical unit when the header is quiet.

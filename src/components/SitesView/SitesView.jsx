@@ -20,6 +20,9 @@ import {
   detectConsumptionUnit,
   normalizeElectricUom,
   normalizeGasUom,
+  resolveContractPriceUom,
+  priceUomLabel,
+  summarizePriceUomFlags,
   toKwh,
   toTherms,
   stateRate,
@@ -182,6 +185,10 @@ function parseSourceDate(v) {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+// A header that names a unit of measure rather than carrying a value.
+// Used to hold those columns out of the price detection below.
+const notUom = (h) => !/\b(uom|unit\s*of\s*measure|units?)\b/i.test(String(h));
+
 function detectColumn(headers, patterns) {
   for (const pat of patterns) {
     const hit = headers.find(h => pat.test(String(h)));
@@ -230,12 +237,16 @@ function detectSitesMapping(headers) {
     gasSupplier: detectColumn(headers, [/gas.*(supplier|provider|vendor)/i, /(supplier|provider|vendor).*gas/i]) || '',
     electricStart: detectColumn(headers, [/electric.*contract.*start/i, /electric.*start.*date/i, /electric.*begin/i]) || '',
     electricEnd: detectColumn(headers, [/electric.*contract.*end/i, /electric.*(end|expir).*date/i, /electric.*term.*end/i]) || '',
-    electricContractPrice: detectColumn(headers, [/electric.*contract.*(price|rate)/i, /electric.*\$\s*\/\s*kwh/i, /electric.*supply\s*(price|rate)/i, /(power|electricity).*contract.*price/i]) || '',
+    // `notUom` keeps a price from binding to its own "… Contract Price UoM"
+    // column, which every one of these patterns also matches. detectColumn
+    // takes the first header in file order, so without the guard a file that
+    // lists the UoM column first maps the price to a unit string.
+    electricContractPrice: detectColumn(headers.filter(notUom), [/electric.*contract.*(price|rate)/i, /electric.*\$\s*\/\s*kwh/i, /electric.*supply\s*(price|rate)/i, /(power|electricity).*contract.*price/i]) || '',
     electricContractName: detectColumn(headers, [/electric.*contract.*name/i, /(power|electricity).*contract.*name/i, /electric.*deal\s*name/i]) || '',
     electricProductType: detectColumn(headers, [/electric.*product/i, /(power|electricity).*product/i, /electric.*structure/i]) || '',
     gasStart: detectColumn(headers, [/gas.*contract.*start/i, /gas.*start.*date/i, /gas.*begin/i]) || '',
     gasEnd: detectColumn(headers, [/gas.*contract.*end/i, /gas.*(end|expir).*date/i, /gas.*term.*end/i]) || '',
-    gasContractPrice: detectColumn(headers, [/gas.*contract.*(price|rate)/i, /gas.*\$\s*\/\s*(therm|mmbtu|dth)/i, /gas.*supply\s*(price|rate)/i]) || '',
+    gasContractPrice: detectColumn(headers.filter(notUom), [/gas.*contract.*(price|rate)/i, /gas.*\$\s*\/\s*(therm|mmbtu|dth)/i, /gas.*supply\s*(price|rate)/i]) || '',
     gasContractName: detectColumn(headers, [/gas.*contract.*name/i, /gas.*deal\s*name/i]) || '',
     gasProductType: detectColumn(headers, [/gas.*product/i, /gas.*structure/i]) || '',
   };
@@ -1920,6 +1931,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
   }, [detectedConsumption, electricColOverride, gasColOverride]);
 
+  // The uploaded file's "… Contract Price UoM" columns, if it carries them.
+  //
+  // Detected off the headers rather than mapped on the header bar like every
+  // other column, because nothing on the page CONSUMES these: a contract
+  // price is carried exactly as the file wrote it, in whatever unit that
+  // was. They're read only so the page can tell you when that unit isn't the
+  // one every downstream label assumes ($/kWh, $/therm) — a warning it can
+  // raise best-effort or not at all, which isn't worth a mapping row.
+  const contractPriceUomColumns = useMemo(() => {
+    const headers = cleanSitesData.length ? Object.keys(cleanSitesData[0]) : [];
+    return {
+      electric: detectColumn(headers, [
+        /electric.*contract.*price.*\b(uom|unit)/i,
+        /\b(uom|unit)\b.*electric.*contract.*price/i,
+        /(power|electricity).*price.*\b(uom|unit)/i,
+      ]),
+      gas: detectColumn(headers, [
+        /gas.*contract.*price.*\b(uom|unit)/i,
+        /\b(uom|unit)\b.*gas.*contract.*price/i,
+      ]),
+    };
+  }, [cleanSitesData]);
+
   const siteHeaders = useMemo(() => sitesData.length ? Object.keys(sitesData[0]) : [], [sitesData]);
 
   // Compact { siteName, city, state } list fed to the Building Compliance
@@ -2153,6 +2187,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       };
       const electricContractPrice = electricContractPriceOverride ? parseRate(r[electricContractPriceOverride]) : null;
       const gasContractPrice = gasContractPriceOverride ? parseRate(r[gasContractPriceOverride]) : null;
+      // What unit the file says each contract price is quoted in. Nothing
+      // converts it — the number is carried as written and every downstream
+      // label reads it as $/kWh or $/therm — so this is here to say when
+      // that assumption is wrong rather than to act on it. A price quoted
+      // per Dth and read per therm is ten times high, and until now nothing
+      // said so. Resolved only where there IS a price: a unit with no
+      // figure against it is nothing to warn about.
+      const electricPriceUom = electricContractPrice == null ? null : resolveContractPriceUom('electric', {
+        cellValue: contractPriceUomColumns.electric ? r[contractPriceUomColumns.electric] : '',
+        header: electricContractPriceOverride,
+      });
+      const gasPriceUom = gasContractPrice == null ? null : resolveContractPriceUom('gas', {
+        cellValue: contractPriceUomColumns.gas ? r[contractPriceUomColumns.gas] : '',
+        header: gasContractPriceOverride,
+      });
       const estElectricCost = electricRate != null && elecValueFinal != null ? electricRate * elecValueFinal : null;
       const estGasCost = gasRate != null && gasValueFinal != null ? gasRate * gasValueFinal : null;
       // Actual cost columns from the file when the user mapped them.
@@ -2350,17 +2399,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __electricStart__: electricStartOverride ? parseSourceDate(r[electricStartOverride]) : null,
         __electricEnd__: electricEndOverride ? parseSourceDate(r[electricEndOverride]) : null,
         __electricContractPrice__: electricContractPrice,
+        __electricPriceUom__: electricPriceUom,
         __electricContractName__: electricContractNameOverride ? String(r[electricContractNameOverride] || '').trim() || null : null,
         __electricProductType__: electricProductTypeOverride ? String(r[electricProductTypeOverride] || '').trim() || null : null,
         __gasStart__: gasStartOverride ? parseSourceDate(r[gasStartOverride]) : null,
         __gasEnd__: gasEndOverride ? parseSourceDate(r[gasEndOverride]) : null,
         __gasContractPrice__: gasContractPrice,
+        __gasPriceUom__: gasPriceUom,
         __gasContractName__: gasContractNameOverride ? String(r[gasContractNameOverride] || '').trim() || null : null,
         __gasProductType__: gasProductTypeOverride ? String(r[gasProductTypeOverride] || '').trim() || null : null,
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // The analysis set: every derived site except those whose property type was
   // mapped to N/A. Defining it here means the whole page — counts, spend, the
@@ -2414,6 +2465,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // What the N/A mapping took out, for the notice next to the site count.
   // Scoped to the active division for the same reason the site count is:
   // the two sit side by side and would otherwise describe different sets.
+  // Contract prices the file quotes in a unit the page doesn't read them in.
+  //
+  // Nothing converts a contract price: the figure is carried as written and
+  // labelled $/kWh or $/therm wherever it surfaces — the Contract Overview
+  // sheet, the Supplier Contracts rollup's consumption-weighted average. So
+  // a portfolio whose gas prices are per Dth reports them ten times high
+  // against a per-therm assumption, silently. This is what the page needs to
+  // say out loud.
+  //
+  // Only sites that HAVE a price count, and only where the file actually
+  // names a different unit — an unreadable or absent unit resolves as
+  // canonical, so a file that says nothing raises nothing.
+  const contractPriceUomFlags = useMemo(
+    () => summarizePriceUomFlags(rows.map(r => ({ electric: r.__electricPriceUom__, gas: r.__gasPriceUom__ }))),
+    [rows],
+  );
+
   const excludedSites = useMemo(() => {
     const byType = new Map();
     for (const r of allRows) {
@@ -3962,6 +4030,30 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, utility]);
 
+  // Cell text for a contract price whose unit isn't the one the page reads
+  // it in. Empty for a price that is (or that the file said nothing about),
+  // so the column stays blank on a clean portfolio instead of repeating
+  // "OK" down every row.
+  function priceUomWarning(commodity, uom) {
+    if (!uom || uom.canonical) return '';
+    return `⚠ Quoted ${priceUomLabel(commodity, uom.unit)} but carried unconverted and read as ${priceUomLabel(commodity)}`;
+  }
+
+  // Same warning for a rolled-up group, which can be wrong two ways: its
+  // sites disagreed about the unit (so the blended average is arithmetic
+  // over incompatible numbers), or they agreed on a unit that isn't the one
+  // the Price Unit column names.
+  function priceUnitsWarning(commodity, units) {
+    const seen = [...(units || [])].filter(Boolean);
+    const canonical = priceUomLabel(String(commodity).toLowerCase());
+    if (seen.length === 0) return '';
+    if (seen.length > 1) {
+      return `⚠ Blended across mixed price units (${seen.join(', ')}) — the average is not in any one of them`;
+    }
+    if (seen[0] === canonical) return '';
+    return `⚠ Quoted ${seen[0]} but carried unconverted and read as ${canonical}`;
+  }
+
   // Contract Overview — one row per (site, commodity) where there's
   // any contract data filled in (supplier, contract name, dates, or
   // contract price). Suppresses empty-shell rows so the sheet stays
@@ -3990,7 +4082,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           'Contract Start': r.__electricStart__ || '',
           'Contract End': r.__electricEnd__ || '',
           'Contract Price': r.__electricContractPrice__ ?? '',
-          'Price Unit': r.__electricContractPrice__ != null ? '$/kWh' : '',
+          // The unit the SOURCE FILE quoted, not the one the page assumes.
+          // The price is carried unconverted, so printing a flat $/kWh
+          // against a figure the file said was per MWh states something
+          // untrue about the number in the cell beside it.
+          'Price Unit': r.__electricContractPrice__ != null ? priceUomLabel('electric', r.__electricPriceUom__?.unit) : '',
+          'Price Unit Warning': priceUomWarning('electric', r.__electricPriceUom__),
           'Annual Consumption': r.__kwh__ ?? '',
           'Consumption Unit': r.__kwh__ != null ? 'kWh' : '',
           'Annual Cost': r.__electricCost__ ?? '',
@@ -4009,7 +4106,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           'Contract Start': r.__gasStart__ || '',
           'Contract End': r.__gasEnd__ || '',
           'Contract Price': r.__gasContractPrice__ ?? '',
-          'Price Unit': r.__gasContractPrice__ != null ? '$/therm' : '',
+          'Price Unit': r.__gasContractPrice__ != null ? priceUomLabel('gas', r.__gasPriceUom__?.unit) : '',
+          'Price Unit Warning': priceUomWarning('gas', r.__gasPriceUom__),
           'Annual Consumption': r.__therms__ ?? '',
           'Consumption Unit': r.__therms__ != null ? 'therms' : '',
           'Annual Cost': r.__gasCost__ ?? '',
@@ -4026,7 +4124,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const contractSummaryRows = useMemo(() => {
     if (!siteCompanyColumn) return [];
     const groups = new Map();
-    const upsert = (commodity, supplier, contractName, productType, start, end, price, consumption, cost, consumptionUnit, priceUnit, company) => {
+    const upsert = (commodity, supplier, contractName, productType, start, end, price, consumption, cost, consumptionUnit, priceUnit, company, priceUom) => {
       // Skip rows that have no contract signal at all — supplier,
       // contract name, dates, and price all empty means there's
       // nothing to summarize for this fuel at this site.
@@ -4041,6 +4139,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           siteCount: 0, totalConsumption: 0, totalCost: 0,
           weightedPriceNum: 0, weightedPriceDenom: 0,
           consumptionUnit, priceUnit,
+          // Every price unit that fed this group's blended average. More
+          // than one and the average is arithmetic over incompatible
+          // numbers — $4.50/Dth and $0.45/therm are the same price, and
+          // averaging them yields neither.
+          priceUnits: new Set(),
         };
         groups.set(key, g);
       }
@@ -4058,6 +4161,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (typeof price === 'number' && Number.isFinite(price) && typeof consumption === 'number' && Number.isFinite(consumption) && consumption > 0) {
         g.weightedPriceNum += price * consumption;
         g.weightedPriceDenom += consumption;
+        g.priceUnits.add(priceUomLabel(commodity.toLowerCase(), priceUom?.unit));
       }
       if (!g.productType && productType) g.productType = productType;
     };
@@ -4068,11 +4172,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       upsert('Electric',
         r.__electricSupplier__, r.__electricContractName__, r.__electricProductType__,
         r.__electricStart__, r.__electricEnd__, r.__electricContractPrice__,
-        r.__kwh__, r.__electricCost__, 'kWh', '$/kWh', company);
+        r.__kwh__, r.__electricCost__, 'kWh', '$/kWh', company, r.__electricPriceUom__);
       upsert('Gas',
         r.__gasSupplier__, r.__gasContractName__, r.__gasProductType__,
         r.__gasStart__, r.__gasEnd__, r.__gasContractPrice__,
-        r.__therms__, r.__gasCost__, 'therms', '$/therm', company);
+        r.__therms__, r.__gasCost__, 'therms', '$/therm', company, r.__gasPriceUom__);
     }
 
     const fmtD = (d) => d ? `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}` : '';
@@ -4093,6 +4197,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         'Total Annual Cost': g.totalCost ? Math.round(g.totalCost * 100) / 100 : '',
         'Avg Contract Price': avg != null ? Math.round(avg * 10000) / 10000 : '',
         'Price Unit': g.priceUnit,
+        // The average is weighted by consumption across sites, so a group
+        // whose sites quoted different units produced a number that means
+        // nothing — and one whose sites all quoted a non-canonical unit is
+        // in that unit, not the one the column claims.
+        'Price Unit Warning': priceUnitsWarning(g.commodity, g.priceUnits),
       });
     }
     out.sort((a, b) => {
@@ -10206,6 +10315,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         { label: 'Contract End',        key: 'Contract End',        width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
         { label: 'Contract Price',      key: 'Contract Price',      width: 16, numFmt: '"$"0.0000' },
         { label: 'Price Unit',          key: 'Price Unit',          width: 11 },
+        // Blank on every row of a clean portfolio; carries the unit caveat
+        // where the source file quoted a price in something other than the
+        // unit this sheet reads it in.
+        { label: 'Price Unit Warning',  key: 'Price Unit Warning',  width: 46, warnColumn: true },
         { label: 'Annual Consumption',  key: 'Annual Consumption',  width: 18, numFmt: '#,##0' },
         { label: 'Consumption Unit',    key: 'Consumption Unit',    width: 14 },
         { label: 'Annual Cost',         key: 'Annual Cost',         width: 16, numFmt: '"$"#,##0' },
@@ -10242,7 +10355,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           if (v === '' || v == null) cell.value = ' ';
           else if (c.dateColumn) cell.value = toExcelDate(v);
           else cell.value = v;
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          // A unit caveat has to read as one. In amber and bold it can't be
+          // skimmed past on a sheet whose other columns are all plain data.
+          const warn = c.warnColumn && v;
+          cell.font = { name: 'Nunito Sans', size: 10, bold: !!warn, color: { argb: warn ? 'FF92400E' : SE_TEXT_DARK } };
+          if (warn) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           if (c.numFmt) cell.numFmt = c.numFmt;
           cell.border = {
@@ -13395,6 +13512,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               >
                 {' '}({excludedSites.total.toLocaleString()} excluded as N/A: {excludedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
                 {excludedSites.byType.length > 3 ? ` +${excludedSites.byType.length - 3} more` : ''})
+              </span>
+            )}
+            {/* Contract prices quoted in a unit nothing converts. Sits in the
+                headline rather than inside a tab because the figure it
+                affects is read from the Contract Overview and the Supplier
+                Contracts rollup, neither of which is on screen here — by the
+                time you're looking at one, nothing is left to tell you. */}
+            {contractPriceUomFlags && (
+              <span
+                style={{
+                  color: '#92400E', background: '#FEF3C7', border: '1px solid #FCD34D',
+                  borderRadius: 999, padding: '0.05rem 0.5rem', fontWeight: 700,
+                  marginLeft: '0.35rem', cursor: 'help', whiteSpace: 'nowrap',
+                }}
+                title={`${contractPriceUomFlags.detail}.\n\nContract prices are carried exactly as the file wrote them — nothing converts between units — but every column that reports one calls it ${priceUomLabel('electric')} or ${priceUomLabel('gas')}. A dekatherm is ten therms, so a $4.50/Dth price read as $/therm reports 10× the real rate; $45/MWh read as $/kWh reports 1000×. The Supplier Contracts rollup also averages prices across sites by consumption, which mixes units where they differ.\n\nRestate the affected prices in ${priceUomLabel('electric')} / ${priceUomLabel('gas')} in the source file, or read those columns as the units listed above.`}
+              >
+                ⚠ {contractPriceUomFlags.total.toLocaleString()} contract price{contractPriceUomFlags.total === 1 ? '' : 's'} not in {priceUomLabel('electric')} or {priceUomLabel('gas')}
               </span>
             )}
             {matchStats && (
