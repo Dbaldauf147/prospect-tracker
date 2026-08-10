@@ -113,6 +113,31 @@ function resolveCallIn(r) {
   return null;
 }
 
+// One palette for a PE Stage, shared by everything that paints one: the
+// PE Stages board, the Days in Stage board, and the PE Stage column on the
+// Portfolio table. It lived twice, copied between the two boards, and a
+// third copy for the column would have made a drift between them a matter
+// of time.
+const PE_STAGE_META = [
+  { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+  { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+  { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+  { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
+  { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+];
+
+// A firm's stage as one of the five above — anything unrecognised (blank,
+// or a value retired from PE_STAGES) reads as Unassigned rather than
+// painting an unstyled chip.
+function peStageOf(peStage) {
+  return PE_STAGES.includes(peStage) ? peStage : 'Unassigned';
+}
+
+function peStageMeta(peStage) {
+  const stage = peStageOf(peStage);
+  return PE_STAGE_META.find(m => m.stage === stage) || PE_STAGE_META[PE_STAGE_META.length - 1];
+}
+
 // Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
@@ -350,33 +375,41 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
       return { ...DEFAULT_COL_WIDTHS, ...saved };
     } catch { return DEFAULT_COL_WIDTHS; }
   });
-  const [sortKey, setSortKey] = useState(() => localStorage.getItem('pe-portfolio:sort-key') || 'ratio');
+  const [sortKey, setSortKey] = useState(() => {
+    const saved = localStorage.getItem('pe-portfolio:sort-key') || 'ratio';
+    // A table sorted by one of the retired per-stage tick columns now
+    // sorts by the combined one, rather than falling through to the
+    // default comparator with no sort arrow to explain it.
+    return ['discovery', 'piloting', 'existingPartnership', 'notSold'].includes(saved) ? 'peStage' : saved;
+  });
   const [sortDir, setSortDir] = useState(() => localStorage.getItem('pe-portfolio:sort-dir') || 'desc');
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
       if (Array.isArray(saved)) {
         const next = new Set([...saved, 'company']);
-        // One-time migration: reveal the PE Stage columns for users whose
-        // saved set predates them, so they show up without a manual opt-in.
-        if (!localStorage.getItem('pe-portfolio:cols-pe-stage')) {
-          next.add('discovery'); next.add('piloting'); next.add('existingPartnership');
-          try { localStorage.setItem('pe-portfolio:cols-pe-stage', '1'); } catch {}
-        }
-        // One-time migration: reveal the Not Sold PE Stage column for
-        // users whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-not-sold')) {
-          next.add('notSold');
-          try { localStorage.setItem('pe-portfolio:cols-not-sold', '1'); } catch {}
+        // The four one-per-stage tick columns (discovery / piloting /
+        // existingPartnership / notSold) are now the single peStage
+        // column. Anyone who had any of them showing gets the combined
+        // one; the retired keys are dropped below so the "n/m" count and
+        // the saved width map don't keep carrying them.
+        const RETIRED_STAGE_COLS = ['discovery', 'piloting', 'existingPartnership', 'notSold'];
+        if (RETIRED_STAGE_COLS.some(k => next.has(k))) next.add('peStage');
+        for (const k of RETIRED_STAGE_COLS) next.delete(k);
+        // …and for a saved set old enough to predate the tick columns
+        // entirely, reveal the combined one once.
+        if (!localStorage.getItem('pe-portfolio:cols-pe-stage-combined')) {
+          next.add('peStage');
+          try { localStorage.setItem('pe-portfolio:cols-pe-stage-combined', '1'); } catch {}
         }
         // One-time migration: reveal the PC Download column for users
         // whose saved set predates it.
@@ -1015,18 +1048,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           cmp = rank(sa) - rank(sb);
           break;
         }
-        case 'discovery':
-          cmp = (a.peStage === 'Discovery' ? 1 : 0) - (b.peStage === 'Discovery' ? 1 : 0);
+        case 'peStage': {
+          // PE_STAGES order — the same order the Stages board lays its
+          // columns out in. Unassigned ranks below every real stage, so
+          // it lands at one end rather than sorting as "D" for Discovery.
+          const rank = (p) => PE_STAGES.indexOf(p.peStage);
+          cmp = rank(a) - rank(b);
           break;
-        case 'piloting':
-          cmp = (a.peStage === 'Piloting' ? 1 : 0) - (b.peStage === 'Piloting' ? 1 : 0);
-          break;
-        case 'existingPartnership':
-          cmp = (a.peStage === 'Existing Partnership' ? 1 : 0) - (b.peStage === 'Existing Partnership' ? 1 : 0);
-          break;
-        case 'notSold':
-          cmp = (a.peStage === 'Not Sold' ? 1 : 0) - (b.peStage === 'Not Sold' ? 1 : 0);
-          break;
+        }
         default:
           cmp = 0;
       }
@@ -1220,8 +1249,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               topPc: 'Top PC',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
-              discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
-              notSold: 'Not Sold',
+              peStage: 'PE Stage',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -1285,10 +1313,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
-            { key: 'discovery', label: 'Discovery', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Discovery' },
-            { key: 'piloting', label: 'Piloting', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Piloting' },
-            { key: 'existingPartnership', label: 'Existing Partnership', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Existing Partnership' },
-            { key: 'notSold', label: 'Not Sold', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Not Sold' },
+            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage, set in its company popup: ${PE_STAGES.join(' / ')}. Sorts in that order, with unassigned firms at one end.` },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -1602,24 +1627,28 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                       </div>
                       )}
 
-                      {[
-                        { key: 'discovery', stage: 'Discovery' },
-                        { key: 'piloting', stage: 'Piloting' },
-                        { key: 'existingPartnership', stage: 'Existing Partnership' },
-                        { key: 'notSold', stage: 'Not Sold' },
-                      ].map(({ key, stage }) => visibleCols.has(key) && (
-                        <div
-                          key={key}
-                          title={pe.peStage === stage
-                            ? `PE Stage set to "${stage}" in this firm's company popup`
-                            : pe.peStage
-                              ? `PE Stage is "${pe.peStage}", not "${stage}"`
+                      {visibleCols.has('peStage') && (() => {
+                        const meta = peStageMeta(pe.peStage);
+                        const assigned = meta.stage !== 'Unassigned';
+                        return (
+                          <div
+                            title={assigned
+                              ? `PE Stage set to "${meta.stage}" in this firm's company popup`
                               : 'No PE Stage set on this firm\'s company popup'}
-                          style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: pe.peStage === stage ? '#7C3AED' : '#CBD5E1' }}
-                        >
-                          {pe.peStage === stage ? '✓' : '-'}
-                        </div>
-                      ))}
+                            style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
+                          >
+                            <span
+                              style={{
+                                display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+                                textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                                padding: '1px 8px', borderRadius: 999,
+                                background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
+                                fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
+                              }}
+                            >{assigned ? meta.stage : 'Unassigned'}</span>
+                          </div>
+                        );
+                      })()}
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}
@@ -3011,14 +3040,8 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
 // Excel via the toolbar button.
 function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
   const [query, setQuery] = useState('');
-  const STAGE_META = [
-    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
-    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
-    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
-    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
-    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-  ];
-  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const STAGE_META = PE_STAGE_META;
+  const stageOf = (pe) => peStageOf(pe.peStage);
   const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
   const q = query.trim().toLowerCase();
   const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
@@ -3215,14 +3238,8 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
 function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
   const [query, setQuery] = useState('');
   const [hideUnassigned, setHideUnassigned] = useState(false);
-  const STAGE_META = [
-    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
-    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
-    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
-    { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
-    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-  ];
-  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const STAGE_META = PE_STAGE_META;
+  const stageOf = (pe) => peStageOf(pe.peStage);
   const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
   // Days the firm has sat in its current PE Stage. null when there's no
   // entry date recorded (Unassigned firms, or ones not yet stamped).
