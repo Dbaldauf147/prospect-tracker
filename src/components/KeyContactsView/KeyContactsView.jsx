@@ -48,6 +48,11 @@ function InlineCell({
   disabled = false,
   flagIssue = null,
   flagFix = null,
+  // A flagged value the user has chosen to accept as-is. The warning stops
+  // shouting — no amber, no Fix — but a muted marker stays, because a
+  // silently suppressed warning is one nobody can find their way back to.
+  flagIgnored = false,
+  onToggleFlagIgnored = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -94,6 +99,33 @@ function InlineCell({
   }
   if (!editing) {
     const empty = value === null || value === undefined || value === '';
+    // A flag the user has told to be quiet: the cell reads like any other,
+    // with a small grey marker to say the warning is still there and can be
+    // brought back.
+    if (flagIssue && flagIgnored) {
+      return (
+        <div
+          onClick={startEdit}
+          title={title || 'Click to edit'}
+          style={{
+            padding: '0.45rem 0.6rem', fontSize, fontWeight,
+            color: empty ? emptyColor : textColor, textAlign: align,
+            cursor: disabled ? 'default' : 'text',
+            display: 'flex', alignItems: 'center', gap: 4,
+          }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{empty ? placeholder : value}</span>
+          {onToggleFlagIgnored && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onToggleFlagIgnored(false); }}
+              title={`Warning ignored: ${flagIssue}. Click to show it again.`}
+              style={{ flexShrink: 0, background: 'none', border: 'none', padding: 0, color: '#CBD5E1', fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+            >⚠</button>
+          )}
+        </div>
+      );
+    }
     // Non-standard value: amber background, a ⚠ marker, and a one-click
     // Fix button when a standardized replacement is available.
     if (flagIssue) {
@@ -114,7 +146,22 @@ function InlineCell({
             gap: 4,
           }}
         >
-          <span style={{ flexShrink: 0, color: '#B45309', fontWeight: 700 }}>⚠</span>
+          {/* The marker doubles as the dismiss control when the caller
+              allows ignoring. These columns run as narrow as 80px, where a
+              separate Ignore button squeezed the value itself out of the
+              cell — and the value is the one thing that has to stay
+              readable. Same glyph brings it back afterwards. */}
+          {onToggleFlagIgnored ? (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onToggleFlagIgnored(true); }}
+              aria-label="Ignore this warning"
+              title={`${flagIssue}\n\nClick the ⚠ to ignore: accept this value as-is and stop warning about it.`}
+              style={{ flexShrink: 0, background: 'none', border: 'none', padding: 0, color: '#B45309', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1 }}
+            >⚠</button>
+          ) : (
+            <span style={{ flexShrink: 0, color: '#B45309', fontWeight: 700 }}>⚠</span>
+          )}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{empty ? placeholder : value}</span>
           {flagFix && flagFix !== value && (
             <button
@@ -1994,6 +2041,35 @@ function KeyContactsViewInner({
   // not a HubSpot tag. Prefer the saved local value; fall back to the legacy
   // HubSpot tag for contacts that haven't been touched yet, so existing
   // tagged contacts keep counting until they're explicitly set.
+  // Contacts whose non-standard State the user has accepted. Some states
+  // genuinely aren't in the standard list — foreign regions, a deliberate
+  // shorthand — and a warning that can't be dismissed just trains you to
+  // stop reading the amber. Keyed by contact id in Firestore settings, so
+  // an ignore made here holds on every device and on every page that
+  // renders this table.
+  // Memoized: the `|| {}` fallback would hand a fresh object to the
+  // callbacks below on every render, re-deriving every row's flag with it.
+  const stateWarningIgnored = useMemo(() => settings?.contactStateWarningIgnored || {}, [settings?.contactStateWarningIgnored]);
+  const isStateWarningIgnored = useCallback((c) => {
+    const id = String(c?.id || c?.vid || '');
+    return !!(id && stateWarningIgnored[id]);
+  }, [stateWarningIgnored]);
+  const toggleStateWarningIgnored = useCallback((c, on) => {
+    const id = String(c?.id || c?.vid || '');
+    if (!id) return;
+    const next = { ...stateWarningIgnored };
+    if (on) next[id] = true; else delete next[id];
+    updateSettings({ contactStateWarningIgnored: next });
+  }, [stateWarningIgnored, updateSettings]);
+  // The State check as the page should act on it: an ignored contact has no
+  // flag at all, so it drops out of the cleanup count and the "needs
+  // cleanup" filter as well as losing the amber cell. One definition, so
+  // the badge can't claim work the table won't show.
+  const stateFlagOf = useCallback(
+    (c) => (isStateWarningIgnored(c) ? null : checkState(c?.state)),
+    [isStateWarningIgnored],
+  );
+
   const metInPersonMap = settings?.contactMetInPerson || {};
   const resolveMetInPerson = useCallback((c) => {
     const id = String(c?.id || c?.vid || '');
@@ -2347,8 +2423,8 @@ function KeyContactsViewInner({
   // How many loaded contacts have a non-standard City or State — drives
   // the "needs cleanup" filter badge.
   const locationFlaggedCount = useMemo(
-    () => flatContacts.reduce((n, c) => (checkCity(c.city) || checkState(c.state) ? n + 1 : n), 0),
-    [flatContacts]
+    () => flatContacts.reduce((n, c) => (checkCity(c.city) || stateFlagOf(c) ? n + 1 : n), 0),
+    [flatContacts, stateFlagOf]
   );
 
   const sortedContacts = useMemo(() => {
@@ -2530,7 +2606,7 @@ function KeyContactsViewInner({
       if (travelState && String(c.state || '').trim().toLowerCase() !== travelState.trim().toLowerCase()) return false;
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
-    if (onlyLocationFlagged && !checkCity(c.city) && !checkState(c.state)) return false;
+    if (onlyLocationFlagged && !checkCity(c.city) && !stateFlagOf(c)) return false;
     // Campaign membership gate — 'in' keeps contacts already emailed in
     // the picked campaign, 'out' keeps everyone else. skipCampaign lets
     // the In/Not-in counts measure against the pre-gate roster.
@@ -3717,6 +3793,10 @@ function KeyContactsViewInner({
                       );
                     })()}
                     {visibleSet.has('state') && (() => {
+                      // The raw check, not stateFlagOf: an ignored contact
+                      // still needs its issue text for the muted marker's
+                      // tooltip, so the cell is told both what the warning
+                      // says and that it's been ignored.
                       const flag = checkState(c.state);
                       return (
                         <InlineCell
@@ -3727,6 +3807,8 @@ function KeyContactsViewInner({
                           fontSize="0.7rem"
                           flagIssue={flag?.issue || null}
                           flagFix={flag?.fix || null}
+                          flagIgnored={isStateWarningIgnored(c)}
+                          onToggleFlagIgnored={on => toggleStateWarningIgnored(c, on)}
                         />
                       );
                     })()}
