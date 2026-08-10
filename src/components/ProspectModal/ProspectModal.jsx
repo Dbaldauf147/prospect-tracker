@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG } from '../../utils/contactTagReview';
 import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
@@ -578,16 +579,7 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 // still persisted as a `dans_tags` value (so existing tagged contacts show
 // up checked automatically and the PE Portfolio "Met in Person" counts keep
 // working); the checkbox just reads/writes that one value.
-const MET_IN_PERSON_TAG = 'Met In Person';
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'Test', 'EU', 'Hide', 'Left'];
 
-// Tags left out of the Tagged % on the contact popup. Hide and Left decide
-// whether a contact appears at all and Test is a scratch value — none of
-// them says anything about who the person is, so counting them would put a
-// ceiling on the score for reasons that have nothing to do with how well
-// the contact is understood. They stay answerable rows; they just don't
-// count towards the total.
-const TAG_SCORE_EXCLUDED = new Set(['hide', 'left', 'test']);
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
