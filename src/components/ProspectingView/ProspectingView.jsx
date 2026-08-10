@@ -5,10 +5,25 @@
 // Each step links to the tab where that work actually happens, so the page
 // is a starting point for the day rather than a wall of text. Editing the
 // playbook means editing PROSPECTING_STEPS — nothing else reads the order.
+//
+// The Status column answers the question the ladder implies but didn't
+// answer: is this step clear? Steps with a real number behind them
+// (overdue Call Ins, client renewals still needing a status) categorize
+// themselves; the rest the user marks caught up for the day. See
+// utils/prospectingStatus.js for why a manual mark expires overnight.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { countOverdueCallIns } from '../../utils/oppsCallIn';
+import {
+  categorizeStep,
+  caughtUpSnapshot,
+  countRenewalWork,
+  isMarkedCaughtUp,
+  readCaughtUpSnapshot,
+  setStepCaughtUp,
+  subscribeCaughtUp,
+} from '../../utils/prospectingStatus';
 import { useAuth } from '../../contexts/AuthContext';
 
 const PROSPECTING_STEPS = [
@@ -18,6 +33,11 @@ const PROSPECTING_STEPS = [
     detail: 'Opportunities already in flight. Nothing new gets worked until these are moving.',
     view: 'opps2',
     viewLabel: 'Opps',
+    // Steps carrying a `workLabel` are counted for the user; the rest are
+    // marked caught up by hand.
+    workLabel: n => `${n} overdue`,
+    workTitle: n => `${n} open ${n === 1 ? 'opp is' : 'opps are'} past their Call In date`,
+    clearTitle: 'No open opp is past its Call In date',
   },
   {
     key: 'market-updates',
@@ -32,6 +52,9 @@ const PROSPECTING_STEPS = [
     detail: 'Contracts coming up on clients you already hold — the shortest path to the next conversation.',
     view: 'clients',
     viewLabel: 'Clients',
+    workLabel: n => `${n} to work`,
+    workTitle: n => `${n} client ${n === 1 ? 'renewal needs' : 'renewals need'} attention: expired, or renewing soon with no Renewal Status set`,
+    clearTitle: 'No client renewal is expired or waiting on a Renewal Status',
   },
   {
     key: 'targeted-services',
@@ -67,6 +90,17 @@ const RANK_COLORS = [
   { badge: '#94A3B8', ring: '#E2E8F0', tint: '#FCFCFD' },
 ];
 
+// Fixed widths so the two right-hand cells line up as columns across
+// rows of different heights — and so the header labels sit over them.
+const STATUS_COL = 132;
+const ACTION_COL = 128;
+
+const STATUS_STYLES = {
+  'caught-up': { background: '#DCFCE7', border: '#BBF7D0', color: '#166534' },
+  work: { background: '#FEE2E2', border: '#FECACA', color: '#991B1B' },
+  open: { background: '#fff', border: '#CBD5E1', color: '#64748B' },
+};
+
 // Read the Opps 2 store the way the other consumer pages do — newest of the
 // local cache and Firestore. Kept local rather than imported from
 // KeyContactsView so this lazy chunk doesn't pull that whole page in for a
@@ -87,14 +121,58 @@ function useOppsRecords(userId) {
   return records;
 }
 
-export function ProspectingView({ onNavigate }) {
+// One cell of the Status column. Untracked steps render a button (the
+// mark is the user's to set); counted steps render static text, since
+// clicking couldn't change what the data says.
+function StatusCell({ state, label, title, onToggle }) {
+  if (state === 'unknown') return <div style={{ width: STATUS_COL, flexShrink: 0 }} />;
+  const c = STATUS_STYLES[state];
+  const base = {
+    // Explicit border-box so the pill and the button below it are the
+    // same 132px wide — a button gets it from the UA stylesheet, a div
+    // only from the app's own reset.
+    width: STATUS_COL, boxSizing: 'border-box', flexShrink: 0, alignSelf: 'center',
+    padding: '0.3rem 0.5rem', borderRadius: 999,
+    border: `1px solid ${c.border}`, background: c.background, color: c.color,
+    fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+    letterSpacing: '0.02em', textAlign: 'center', whiteSpace: 'nowrap',
+    overflow: 'hidden', textOverflow: 'ellipsis',
+  };
+  if (!onToggle) return <div style={base} title={title}>{label}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={title}
+      aria-pressed={state === 'caught-up'}
+      style={{ ...base, cursor: 'pointer' }}
+    >
+      {label}
+    </button>
+  );
+}
+
+export function ProspectingView({ onNavigate, issues = null }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
+  // The hand-marked steps, straight off localStorage: another tab's mark,
+  // the user id landing after login, and the date rolling over all reach
+  // the page this way rather than through mirrored state.
+  const snapshot = useSyncExternalStore(subscribeCaughtUp, caughtUpSnapshot);
+  const { today, map: caughtUpMap } = useMemo(() => readCaughtUpSnapshot(snapshot), [snapshot]);
   // null until the store answers — a "0 overdue" badge shown while the read
   // is still in flight would read as "you're all clear" when it isn't known.
   const overdueCallIns = useMemo(
     () => (oppsRecords ? countOverdueCallIns(oppsRecords) : null),
     [oppsRecords],
+  );
+  // Renewal work comes from the issue rows the Issues tab already builds,
+  // so this step and that tab can't disagree. null until they arrive.
+  const renewalWork = useMemo(() => countRenewalWork(issues), [issues]);
+
+  const counts = useMemo(
+    () => ({ opps: overdueCallIns, renewals: renewalWork }),
+    [overdueCallIns, renewalWork],
   );
 
   return (
@@ -103,15 +181,40 @@ export function ProspectingView({ onNavigate }) {
         <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Prospecting</h2>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           The order prospecting work gets done, ranked. Start at the top and work down —
-          each step is warmer than the one below it.
+          each step is warmer than the one below it. The Status column says whether a step
+          is clear: counted steps answer for themselves, the rest you mark caught up for the day.
         </div>
       </div>
 
       <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: 860 }}>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.75rem',
+            padding: '0 calc(0.85rem + 1px)',
+            fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.06em',
+            textTransform: 'uppercase', color: '#94A3B8',
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }} />
+          <div style={{ width: STATUS_COL, flexShrink: 0, textAlign: 'center' }}>Status</div>
+          {onNavigate && <div style={{ width: ACTION_COL, flexShrink: 0 }} />}
+        </div>
+
         {PROSPECTING_STEPS.map((step, i) => {
           const rank = i + 1;
           const colors = RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
           const isLast = rank === PROSPECTING_STEPS.length;
+          const tracked = typeof step.workLabel === 'function';
+          const count = tracked ? counts[step.key] : undefined;
+          const marked = isMarkedCaughtUp(caughtUpMap, step.key, today);
+          const state = categorizeStep({ count, marked });
+          const label = state === 'work' ? step.workLabel(count)
+            : state === 'caught-up' ? 'All caught up'
+              : 'Mark caught up';
+          const title = state === 'work' ? step.workTitle(count)
+            : state === 'caught-up'
+              ? (tracked ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
+              : 'Nothing counts this step automatically — click once you\'ve worked it today';
           return (
             <div
               key={step.key}
@@ -145,24 +248,6 @@ export function ProspectingView({ onNavigate }) {
                       Start here
                     </span>
                   )}
-                  {/* How many opps have gone negative on Call In. Red when
-                      there's work owed, green when the list is clear —
-                      absent entirely until the opps store has answered. */}
-                  {step.key === 'opps' && overdueCallIns != null && (
-                    <span
-                      title={overdueCallIns > 0
-                        ? `${overdueCallIns} open ${overdueCallIns === 1 ? 'opp is' : 'opps are'} past their Call In date`
-                        : 'No open opp is past its Call In date'}
-                      style={{
-                        padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700,
-                        letterSpacing: '0.03em', textTransform: 'uppercase',
-                        background: overdueCallIns > 0 ? '#FEE2E2' : '#DCFCE7',
-                        color: overdueCallIns > 0 ? '#991B1B' : '#166534',
-                      }}
-                    >
-                      {overdueCallIns > 0 ? `${overdueCallIns} overdue` : 'None overdue'}
-                    </span>
-                  )}
                   {isLast && (
                     <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase', background: '#F1F5F9', color: '#475569' }}>
                       Last
@@ -173,13 +258,19 @@ export function ProspectingView({ onNavigate }) {
                   {step.detail}
                 </div>
               </div>
+              <StatusCell
+                state={state}
+                label={label}
+                title={title}
+                onToggle={tracked ? null : () => setStepCaughtUp(step.key, !marked, today)}
+              />
               {onNavigate && (
                 <button
                   type="button"
                   onClick={() => onNavigate(step.view)}
                   title={`Open the ${step.viewLabel} tab`}
                   style={{
-                    flexShrink: 0, alignSelf: 'center',
+                    width: ACTION_COL, flexShrink: 0, alignSelf: 'center',
                     padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',
                     border: `1px solid ${colors.ring}`, background: '#fff',
                     color: colors.badge, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
