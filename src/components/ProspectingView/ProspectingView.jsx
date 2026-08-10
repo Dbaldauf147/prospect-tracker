@@ -19,6 +19,7 @@ import {
   categorizeStep,
   caughtUpSnapshot,
   countRenewalWork,
+  countServiceGaps,
   isMarkedCaughtUp,
   readCaughtUpSnapshot,
   setStepCaughtUp,
@@ -62,6 +63,9 @@ const PROSPECTING_STEPS = [
     detail: 'Services an existing client has not explored yet. The relationship is already there.',
     view: 'clients',
     viewLabel: 'Clients',
+    workLabel: n => `${n} service${n === 1 ? '' : 's'}`,
+    workTitle: n => `${n} tracked ${n === 1 ? 'service is' : 'services are'} below 100% coverage across your active clients`,
+    clearTitle: 'Every tracked service has been explored by all of your active clients',
   },
   {
     key: 'pe-intros',
@@ -152,7 +156,43 @@ function StatusCell({ state, label, title, onToggle }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null }) {
+// The services still short of full coverage, listed under their step. This
+// is the work itself, not a summary of it: which service, how far along it
+// is, and who is left to talk to. It used to sit on the Issues tab, where
+// it read as something broken rather than as the next set of calls.
+const COVERAGE_NAMES_SHOWN = 6;
+function ServiceGapList({ gaps }) {
+  if (!gaps || gaps.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      {gaps.map((g) => {
+        const left = g.notExplored.length;
+        const shown = g.notExplored.slice(0, COVERAGE_NAMES_SHOWN).join(', ');
+        const extra = left - COVERAGE_NAMES_SHOWN;
+        return (
+          <div
+            key={g.id}
+            title={`${g.explored} of ${g.total} client${g.total === 1 ? '' : 's'} (${g.pct}%) have explored ${g.label}`}
+            style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', fontSize: '0.72rem', lineHeight: 1.35 }}
+          >
+            <span style={{ fontWeight: 700, color: '#334155', flexShrink: 0 }}>{g.label}</span>
+            {/* The percentage is the Pipeline table's own figure, so the two
+                pages read the same. Tabular figures keep the column straight
+                down the list. */}
+            <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+              {g.pct}% · {left} to go
+            </span>
+            <span style={{ color: '#64748B', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {shown}{extra > 0 ? ` +${extra} more` : ''}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function ProspectingView({ onNavigate, issues = null, serviceGaps = null }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   // The hand-marked steps, straight off localStorage: another tab's mark,
@@ -169,10 +209,13 @@ export function ProspectingView({ onNavigate, issues = null }) {
   // Renewal work comes from the issue rows the Issues tab already builds,
   // so this step and that tab can't disagree. null until they arrive.
   const renewalWork = useMemo(() => countRenewalWork(issues), [issues]);
+  // Tracked services still under 100% coverage. Same rows the list under
+  // the step prints, so the badge and the list can't disagree.
+  const serviceWork = useMemo(() => countServiceGaps(serviceGaps), [serviceGaps]);
 
   const counts = useMemo(
-    () => ({ opps: overdueCallIns, renewals: renewalWork }),
-    [overdueCallIns, renewalWork],
+    () => ({ opps: overdueCallIns, renewals: renewalWork, 'targeted-services': serviceWork }),
+    [overdueCallIns, renewalWork, serviceWork],
   );
 
   return (
@@ -257,6 +300,7 @@ export function ProspectingView({ onNavigate, issues = null }) {
                 <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: 3 }}>
                   {step.detail}
                 </div>
+                {step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
               </div>
               <StatusCell
                 state={state}

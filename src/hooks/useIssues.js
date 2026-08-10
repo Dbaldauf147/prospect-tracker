@@ -6,7 +6,7 @@ import { loadIssueSnoozedMap, issueSnoozeState, pruneExpiredSnoozes, ISSUE_SNOOZ
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { dbGet } from '../utils/db';
 import { loadOppsFromCache } from '../utils/oppsCache';
-import { computeIssues } from '../utils/clientIssues';
+import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
 import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
 
 // BFO Activity rows are pasted on the BFO Activity tab and persisted in this
@@ -142,14 +142,24 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides]);
+
+  // Services the client base hasn't explored yet. Not issues — outreach —
+  // so they're returned alongside rather than mixed in, and the snooze map
+  // is left out of it: nothing on the Prospecting ladder can be snoozed, so
+  // honouring an old Issues-tab snooze would hide a service with no way to
+  // bring it back.
+  const serviceGaps = useMemo(
+    () => computeServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }),
+    [prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap],
+  );
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
-  return { issues, openCount };
+  return { issues, openCount, serviceGaps };
 }

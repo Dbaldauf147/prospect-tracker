@@ -12,7 +12,7 @@
 // The store helpers touch localStorage, which doesn't exist here; userLs
 // swallows that, so only the pure functions are exercised below.
 import {
-  categorizeStep, countRenewalWork, isMarkedCaughtUp, parseCaughtUpMap,
+  categorizeStep, countRenewalWork, countServiceGaps, isMarkedCaughtUp, parseCaughtUpMap,
   readCaughtUpSnapshot, todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
 
@@ -56,6 +56,22 @@ eq(countRenewalWork(null), null, 'issues not loaded yet stay unknown');
 eq(countRenewalWork(undefined), null, 'a missing issues prop stays unknown');
 eq(RENEWAL_ISSUE_TYPES.every(t => countRenewalWork([{ type: t }]) === 1), true,
   'every listed renewal type is counted');
+
+// ---- targeted services, from the coverage rows ------------------------------
+// One count per service under 100%, matching the Pipeline table's rows —
+// not per client left to call, which would be a much bigger number for the
+// same amount of work.
+
+eq(countServiceGaps([{ id: 'a', notExplored: ['X', 'Y'] }, { id: 'b', notExplored: ['Z'] }]), 2,
+  'each service below 100% counts once, however many clients are behind it');
+eq(countServiceGaps([]), 0, 'every service at full coverage means the step is clear');
+eq(countServiceGaps(null), null, 'coverage rows not loaded yet stay unknown');
+eq(countServiceGaps(undefined), null, 'a missing serviceGaps prop stays unknown');
+// The guard that matters: unknown must not categorize as caught up.
+eq(categorizeStep({ count: countServiceGaps(null) }), 'unknown',
+  'the targeted-services step shows nothing until its rows arrive');
+eq(categorizeStep({ count: countServiceGaps([]) }), 'caught-up',
+  'no gaps left categorizes the step as caught up');
 
 // ---- reading the stored marks ----------------------------------------------
 

@@ -102,12 +102,15 @@ function App() {
   // Is the Agents tab's "run the prompts" reminder up? Gated on settings
   // having loaded so the badge doesn't flash before the stamp arrives.
   const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
-  const { issues, openCount: openIssuesCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
+  const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows. While the
   // prospects are still loading the detectors see an empty roster and
   // find nothing — passing null instead keeps that from reading as
   // "all caught up" before the data has arrived.
   const prospectingIssues = dataLoading ? null : issues;
+  // Same guard for the targeted-services step: an empty roster yields no
+  // coverage rows, which would read as "every service is at 100%".
+  const prospectingServiceGaps = dataLoading ? null : serviceGaps;
   useSheetSync(user);
   // Pull new Granola calls hourly from wherever the user is. It lives here
   // rather than on the Call Recordings page because that page is lazily
@@ -449,7 +452,7 @@ function App() {
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
           ) : view === 'prospecting' ? (
-            <ProspectingView onNavigate={setView} issues={prospectingIssues} />
+            <ProspectingView onNavigate={setView} issues={prospectingIssues} serviceGaps={prospectingServiceGaps} />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (

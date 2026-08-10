@@ -515,9 +515,14 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
 // ---- Service Exploration Coverage below 100% ----
 // Mirrors the Pipeline page's "Service Exploration Coverage" table: each
 // tracked service is a row showing what share of your active clients have
-// explored it. Any row under 100% has clients still to talk to, so it
-// becomes an issue — one row per service (matching the table), listing the
-// clients that haven't explored it yet.
+// explored it. Any row under 100% has clients still to talk to.
+//
+// These are not Issues-tab rows. Nothing here is wrong or overdue — a
+// service under 100% is a list of conversations still to have, which is
+// prospecting work, so it belongs on the Prospecting ladder's "Reach out
+// to existing clients for targeted services" step rather than in a queue
+// of things to fix. The row is returned structured (rather than as a
+// pre-written sentence) because that step draws it as its own list.
 //
 // `coverageServices` is the tracked-service list persisted with the
 // Pipeline dashboard; with none tracked there's nothing to check. The
@@ -526,8 +531,7 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
 // Suppressed while there are no matching clients (pre-load, or no clients
 // for the CDM) — that's the table's own "No active clients found" state,
 // where every row would otherwise read 0%.
-const COVERAGE_DETAIL_NAMES = 6;
-function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {}, untrackedMap = {} }) {
+export function computeServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {}, untrackedMap = {} }) {
   if (!Array.isArray(coverageServices) || coverageServices.length === 0) return [];
   // Same client set as the table — including its "Cancelling for Sure" /
   // "Don't Track" exclusions, so a warning can't count clients the table
@@ -536,26 +540,24 @@ function detectServiceCoverageGaps({ prospects = [], cdmName, coverageServices =
   if (clients.length === 0) return [];
   const oppStagesByClient = buildOppStagesByClient(clients, oppsCache?.records || []);
   const labels = serviceLabelMap(buildServiceCatalog(serviceCatalogSettings));
-  const issues = [];
+  const rows = [];
   for (const key of coverageServices) {
     const cov = computeServiceCoverage(clients, key, oppStagesByClient);
     if (cov.pct >= 100 && cov.notExplored.length === 0) continue;
-    const label = labels.get(key) || key;
-    const names = cov.notExplored.map(({ p }) => p.company || '-');
-    const shown = names.slice(0, COVERAGE_DETAIL_NAMES).join(', ');
-    const extra = names.length - COVERAGE_DETAIL_NAMES;
-    issues.push({
+    rows.push({
       id: `svc-coverage:${key}`,
-      source: 'Pipeline',
-      type: 'Service coverage below 100%',
-      company: label,
-      prospectId: null,
-      daysUntil: null,
-      expirationDate: null,
-      detail: `${cov.explored.length} of ${cov.total} client${cov.total === 1 ? '' : 's'} (${cov.pct}%) have explored ${label}: not yet explored: ${shown}${extra > 0 ? ` +${extra} more` : ''}`,
+      service: key,
+      label: labels.get(key) || key,
+      pct: cov.pct,
+      explored: cov.explored.length,
+      total: cov.total,
+      notExplored: cov.notExplored.map(({ p }) => p.company || '-'),
     });
   }
-  return issues;
+  // Widest gap first: the service with the most clients left to talk to is
+  // the one with the most outreach in it.
+  rows.sort((a, b) => b.notExplored.length - a.notExplored.length || a.label.localeCompare(b.label));
+  return rows;
 }
 
 // Issue #10: a sold deal whose post-sale follow-up is past the 60-day goal.
@@ -639,7 +641,10 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 
 // Build the full list of outstanding issues. Each detector contributes
 // rows; add more detectors here as new issue classes are mapped.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, coverageServices = [], serviceCatalogSettings = {} }) {
+//
+// Service Exploration Coverage is deliberately not among them — see
+// computeServiceCoverageGaps above; it feeds the Prospecting ladder.
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
@@ -651,7 +656,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects }));
-  issues.push(...detectServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
   return issues;
 }

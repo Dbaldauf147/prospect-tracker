@@ -112,6 +112,15 @@ export function countRenewalWork(issues) {
   return n;
 }
 
+// How many tracked services still have clients who haven't explored them,
+// from the coverage rows the Pipeline page's Service Exploration Coverage
+// table is built on. One per service under 100%, matching that table's
+// rows — so the step counts services to work, not clients to call.
+// `null` when they haven't loaded, for the same reason as above.
+export function countServiceGaps(gaps) {
+  return Array.isArray(gaps) ? gaps.length : null;
+}
+
 // The categorization the Status column renders:
 //   'unknown'    — tracked step whose count hasn't arrived yet (show nothing)
 //   'caught-up'  — nothing outstanding, or marked done today
