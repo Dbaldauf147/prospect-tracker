@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
 import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
-import { loadIssueSnoozedMap, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
+import { loadIssueSnoozedMap, issueSnoozeState, pruneExpiredSnoozes, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { dbGet } from '../utils/db';
 import { loadOppsFromCache } from '../utils/oppsCache';
@@ -100,9 +100,17 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     // Pipeline dashboard (IndexedDB): the tracked coverage services. Refreshed
     // on the Pipeline page's own save event and on focus, same as the above.
     function refreshPipeline() { loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {}); }
+    // A timed snooze has to lapse on its own: pruning drops entries whose
+    // time is up and fires ISSUE_SNOOZED_EVENT when it actually removed
+    // something, which re-reads the map below. Checked on focus and once a
+    // minute, so an issue comes back without a reload.
+    function pruneSnoozes() { pruneExpiredSnoozes(); }
     refreshBfo();
     refreshOpps();
     refreshPipeline();
+    pruneSnoozes();
+    const snoozeTimer = setInterval(pruneSnoozes, 60 * 1000);
+    window.addEventListener('focus', pruneSnoozes);
     window.addEventListener('focus', refreshBfo);
     window.addEventListener('focus', refreshOpps);
     window.addEventListener('focus', refreshPipeline);
@@ -116,6 +124,8 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     return () => {
+      clearInterval(snoozeTimer);
+      window.removeEventListener('focus', pruneSnoozes);
       window.removeEventListener('focus', refreshBfo);
       window.removeEventListener('focus', refreshOpps);
       window.removeEventListener('focus', refreshPipeline);
@@ -133,7 +143,10 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
 
   const issues = useMemo(() => {
     const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings });
-    return rows.map((r) => ({ ...r, snoozed: !!snoozedMap[r.id] }));
+    return rows.map((r) => {
+      const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
+      return { ...r, snoozed, snoozeUntil: until };
+    });
   }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, coverageServices, serviceCatalogSettings]);
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
