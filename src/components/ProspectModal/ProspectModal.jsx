@@ -20,6 +20,7 @@ import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } fr
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
+import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
@@ -9444,23 +9445,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           contactOldCompany={settings.contactOldCompany || {}}
           onSaveOldCompany={handleSaveContactOldCompany}
           onSaveCompanyOverride={(contactId, value) => {
-            // value === null clears the override; a string pins it. Stored
-            // in settings.contactLocalFields, the same map App.jsx reads to
+            // value === null clears the pin; a string sets it. Stored in
+            // settings.contactLocalFields, the same map App.jsx reads to
             // make _companyOverride win over the HubSpot-synced company text
             // everywhere the contact is shown.
-            const cur = settings.contactLocalFields || {};
-            const merged = { ...(cur[contactId] || {}) };
-            if (value === null) {
-              if (merged._companyOverride === undefined) return;
-              delete merged._companyOverride;
-            } else {
-              if (merged._companyOverride === value) return;
-              merged._companyOverride = value;
-            }
-            const next = { ...cur };
-            if (Object.keys(merged).length === 0) delete next[contactId];
-            else next[contactId] = merged;
-            updateSettings({ contactLocalFields: next });
+            const next = withCompanyOverride(settings.contactLocalFields, contactId, value);
+            if (next) updateSettings({ contactLocalFields: next });
           }}
           contactNicknames={settings.contactNicknames || {}}
           onSaveNickname={handleSaveContactNickname}
