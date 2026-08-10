@@ -49,6 +49,38 @@ function contactTagList(c) {
     .filter(Boolean);
 }
 
+// The three answers the contact popup records against a tag, in the order
+// the filter offers them.
+const TAG_STATUSES = [
+  { key: 'yes',    label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag' },
+  { key: 'unsure', label: 'Not sure', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Contacts answered "Not sure" for this tag in the contact popup' },
+  { key: 'no',     label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
+];
+
+// One contact's answer for one tag, read the same way the contact popup
+// reads it: the tag being present IS the Yes — HubSpot only ever holds tags
+// that apply — while No and Not sure are answers HubSpot can't express and
+// live in settings.contactTagReview. No answer at all returns ''.
+//
+// That asymmetry is why this page could only ever show the Yes contacts
+// under a tag: answering No takes the tag off, so the contact left the tag
+// filter along with the answer.
+function contactTagStatus(c, tag, reviewMap) {
+  if (!tag) return '';
+  const lower = tag.toLowerCase();
+  if (contactTagList(c).some(t => t.toLowerCase() === lower)) return 'yes';
+  const cid = c?.id ?? c?.vid;
+  const answers = cid == null ? null : reviewMap?.[cid];
+  if (!answers || typeof answers !== 'object') return '';
+  // Keyed by the tag as the popup spelled it, so match case-insensitively
+  // for the same reason the tag filter itself does.
+  for (const [k, v] of Object.entries(answers)) {
+    if (k.toLowerCase() !== lower) continue;
+    return (v === 'no' || v === 'unsure') ? v : '';
+  }
+  return '';
+}
+
 // Cheap fuzzy company-name compare — used to mirror the dedicated
 // Active page's open-opp gate (an opp Account often differs in
 // suffix / abbreviation from the contact's HubSpot Company text).
@@ -192,6 +224,10 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // Chosen Dan's Tag, or '' for no tag gate. Transient like categoryFilter
   // (not persisted) — it's an exploration filter, not a page preference.
   const [tagFilter, setTagFilter] = useState('');
+  // Which of the three tag answers to show, as a Set of TAG_STATUSES keys.
+  // Empty means no status gate — the tag filter behaves as it always has,
+  // showing the contacts that carry the tag. Transient, like the tag itself.
+  const [tagStatusFilter, setTagStatusFilter] = useState(() => new Set());
   useEffect(() => {
     try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
   }, [showHidden]);
@@ -469,6 +505,30 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     tagFilter && tagOptions.some(o => o.tag.toLowerCase() === tagFilter.toLowerCase()) ? tagFilter : ''
   ), [tagFilter, tagOptions]);
 
+  // The tag review answers, and the status gate actually in force. Statuses
+  // only mean anything against one tag — an answer is per contact per tag —
+  // so with no tag chosen the toggles are inert (and disabled in the UI).
+  // Memoized: the `|| {}` fallback would otherwise hand a fresh object to
+  // the memo and the selector on every render, re-filtering the whole page.
+  const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+  const activeStatuses = activeTag ? tagStatusFilter : null;
+  const statusGateOn = !!activeStatuses && activeStatuses.size > 0;
+
+  // How many contacts sit behind each status for the chosen tag. Counted off
+  // the roster gate rather than the current selection, so the numbers on the
+  // pills don't collapse as you toggle them — same reason the tag dropdown
+  // counts before its own gate.
+  const tagStatusCounts = useMemo(() => {
+    const out = { yes: 0, unsure: 0, no: 0 };
+    if (!activeTag) return out;
+    for (const c of hubspotContacts) {
+      if (!rosterSelector(c)) continue;
+      const s = contactTagStatus(c, activeTag, tagReviewMap);
+      if (s) out[s] += 1;
+    }
+    return out;
+  }, [hubspotContacts, rosterSelector, activeTag, tagReviewMap]);
+
   // Combined selector — the roster gate plus the chosen tag. Filtering here
   // rather than at the row level means the whole page follows the tag: the
   // flat table, the By Company rollup, Travel, and every column's filter
@@ -476,10 +536,14 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   const combinedSelector = useCallback((c) => {
     if (!rosterSelector(c)) return false;
     if (!activeTag) return true;
+    // With statuses toggled on, the gate is the contact's answer for this
+    // tag — which is the only way a No / Not sure contact can appear at all,
+    // since neither carries the tag.
+    if (statusGateOn) return activeStatuses.has(contactTagStatus(c, activeTag, tagReviewMap));
     // Exact match per tag, not substring — "Key" must not sweep in every
     // "Dan Key Target" contact.
     return contactTagList(c).some(t => t.toLowerCase() === activeTag.toLowerCase());
-  }, [rosterSelector, activeTag]);
+  }, [rosterSelector, activeTag, statusGateOn, activeStatuses, tagReviewMap]);
 
   const subtitle = (
     <>
@@ -540,7 +604,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         {activeTag ? (
           <button
             type="button"
-            onClick={() => setTagFilter('')}
+            onClick={() => { setTagFilter(''); setTagStatusFilter(new Set()); }}
             title="Clear the tag filter"
             style={{
               padding: '1px 8px', borderRadius: 999,
@@ -549,6 +613,45 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             }}
           >Clear</button>
         ) : null}
+        {/* Tag statuses. The answers live per contact per tag, so they only
+            mean anything once a tag is chosen — disabled until then rather
+            than hidden, so the control doesn't appear out of nowhere. */}
+        <span
+          style={{ fontSize: '0.7rem', color: activeTag ? '#475569' : '#94A3B8', fontWeight: 700, marginLeft: 6 }}
+          title={activeTag ? undefined : 'Pick a tag first — an answer is recorded per contact per tag'}
+        >Tag statuses:</span>
+        {TAG_STATUSES.map(({ key, label, bg, border, color, tip }) => {
+          const on = activeTag && tagStatusFilter.has(key);
+          const count = tagStatusCounts[key];
+          return (
+            <button
+              key={key}
+              type="button"
+              disabled={!activeTag}
+              aria-pressed={!!on}
+              onClick={() => setTagStatusFilter((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key); else next.add(key);
+                return next;
+              })}
+              title={activeTag
+                ? `${tip}. Toggle to show only the answers you pick; with none picked the tag filter behaves as before.`
+                : 'Pick a tag first — an answer is recorded per contact per tag'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '1px 8px', borderRadius: 999,
+                background: !activeTag ? '#F8FAFC' : on ? color : bg,
+                border: `1px solid ${!activeTag ? '#E2E8F0' : on ? color : border}`,
+                color: !activeTag ? '#CBD5E1' : on ? '#fff' : color,
+                fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
+                cursor: activeTag ? 'pointer' : 'not-allowed',
+                boxShadow: on ? `0 0 0 2px ${border}` : 'none',
+              }}
+            >
+              {label}{activeTag ? <span style={{ fontWeight: 800 }}>{count}</span> : null}
+            </button>
+          );
+        })}
       </div>
       <div style={{ marginTop: 4 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
