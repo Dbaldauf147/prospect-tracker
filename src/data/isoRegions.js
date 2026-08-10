@@ -28,7 +28,7 @@
 // split-state cases; they are best-effort and fall through to the dominant
 // state when nothing more specific matches.
 
-import { zipToState } from '../utils/utilityRates';
+import { zipToState, zipPrefix3 } from '../utils/utilityRates';
 
 // Ordered west-to-east, US markets then Canadian, matching the legend /
 // reference-map reading order. `fill` hues are validated for adjacent-pair
@@ -243,7 +243,10 @@ export function isoForProvince(provinceCode) {
 export function isoForZip(zip) {
   const z = String(zip || '').trim();
   if (!z) return null;
-  const z3 = z.slice(0, 3).padStart(3, '0');
+  // Same reconstruction zipToState uses — slicing the raw value padded a
+  // foreign postcode into the 000-band and mis-sliced Excel-stripped ZIPs.
+  const z3 = zipPrefix3(z);
+  if (!z3) return null;
   if (ZIP3_TO_ISO.has(z3)) return ZIP3_TO_ISO.get(z3);
   return isoForState(zipToState(z));
 }

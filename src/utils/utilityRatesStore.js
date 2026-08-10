@@ -38,14 +38,30 @@ function openDB() {
 // Normalize a zip code to its 5-digit form. Handles numbers (leading
 // zero dropped by Excel), ZIP+4 ("12345-6789"), and surrounding
 // whitespace. Returns '' when nothing usable.
+// Normalize a US ZIP to its 5-digit form, or '' when the value isn't one.
+//
+// The zero-padding here exists for one real case: Excel stores a ZIP as a
+// number and drops the leading zero, so Boston's 02108 arrives as 2108.
+// Padding anything shorter invents a ZIP rather than restoring one, and it
+// invents it in the worst possible place — 000xx–009xx is Puerto Rico, the
+// US Virgin Islands and military mail. A Canadian "M5V 3A8" stripped to its
+// digits is "538", which padded to "00538" reads as Puerto Rico; the site
+// then takes PR as its state, overriding the State column the user actually
+// mapped, and lands in the compliance exports as PR.
+//
+// So: letters mean it isn't a US ZIP at all (Canadian, UK, Dutch postcodes
+// all carry them), one or two digits are too little to reconstruct from,
+// and only 3–4 digits are treated as a ZIP that lost leading zeros.
 export function normalizeZip(value) {
   if (value == null) return '';
   const raw = String(value).trim();
   if (!raw) return '';
-  const digits = raw.split('-')[0].replace(/\D/g, '');
-  if (!digits) return '';
+  const head = raw.split('-')[0];
+  if (/[A-Za-z]/.test(head)) return '';
+  const digits = head.replace(/\D/g, '');
   if (digits.length >= 5) return digits.slice(0, 5);
-  return digits.padStart(5, '0');
+  if (digits.length >= 3) return digits.padStart(5, '0');
+  return '';
 }
 
 export async function saveUtilityRates(zipMap, meta = {}) {

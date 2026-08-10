@@ -106,9 +106,15 @@ export function buildCityStateZipFallback(list) {
 // importing it to keep this module dependency-light.
 function normalizeFallbackZip(value) {
   if (value == null) return '';
-  const digits = String(value).trim().split('-')[0].replace(/\D/g, '');
-  if (!digits) return '';
-  return digits.length >= 5 ? digits.slice(0, 5) : digits.padStart(5, '0');
+  const head = String(value).trim().split('-')[0];
+  // Letters mean a non-US postcode, and one or two digits are too little to
+  // reconstruct a ZIP from — padding either invents a 000xx (Puerto Rico /
+  // military) ZIP. See normalizeZip in utilityRatesStore.js.
+  if (/[A-Za-z]/.test(head)) return '';
+  const digits = head.replace(/\D/g, '');
+  if (digits.length >= 5) return digits.slice(0, 5);
+  if (digits.length >= 3) return digits.padStart(5, '0');
+  return '';
 }
 
 // Estimate a zip for a (city, state) pair. The user-uploaded `fallback`

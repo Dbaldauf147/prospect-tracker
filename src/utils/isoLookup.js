@@ -58,9 +58,15 @@ export const ISO_CONFIDENCE = {
 // zero-padded the same way. Returns '' when there's nothing usable.
 function normalizeZip5(value) {
   if (value == null) return '';
-  const digits = String(value).trim().split('-')[0].replace(/\D/g, '');
-  if (!digits) return '';
-  return digits.length >= 5 ? digits.slice(0, 5) : digits.padStart(5, '0');
+  const head = String(value).trim().split('-')[0];
+  // Letters mean a non-US postcode, and one or two digits are too little to
+  // reconstruct a ZIP from — padding either invents a 000xx (Puerto Rico /
+  // military) ZIP. See normalizeZip in utilityRatesStore.js.
+  if (/[A-Za-z]/.test(head)) return '';
+  const digits = head.replace(/\D/g, '');
+  if (digits.length >= 5) return digits.slice(0, 5);
+  if (digits.length >= 3) return digits.padStart(5, '0');
+  return '';
 }
 
 // Collapse an ISO value to a market key for seam detection: every "None (...)"
