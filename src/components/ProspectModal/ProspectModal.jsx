@@ -673,7 +673,7 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -746,6 +746,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // "Invited to Louisville" — another local-only flag (never in HubSpot).
   const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
     metCid != null ? !!contactInvitedToLouisville[metCid] : false
+  );
+  // Per-tag review answers that HubSpot can't hold: { tag: 'no' | 'unsure' }.
+  // "Yes" isn't in here — that's the tag itself, read off the contact — so
+  // this map only ever records the two verdicts an absent tag can't
+  // distinguish between.
+  const [tagVerdicts, setTagVerdicts] = useState(() =>
+    (metCid != null && contactTagReview[metCid] && typeof contactTagReview[metCid] === 'object')
+      ? { ...contactTagReview[metCid] }
+      : {}
   );
   // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
   // met-in-person flag, which is reattached from its checkbox on save).
@@ -1008,12 +1017,37 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     }
   }
 
-  function toggleTag(tag) {
-    setCheckedTags(prev => {
-      const next = new Set(prev);
-      next.has(tag) ? next.delete(tag) : next.add(tag);
-      persistDansTags(buildTagsStringFrom(next));
-      return next;
+  // Set one tag's review verdict.
+  //
+  // Yes is the tag itself — it goes to HubSpot, which only ever holds tags
+  // that apply. No and Not sure are answers HubSpot has no way to express
+  // (an absent tag means "doesn't apply", "haven't looked" and "don't know"
+  // all at once), so they're kept locally against the contact, and only the
+  // Yes set is ever pushed. Clicking the current answer again clears it back
+  // to unreviewed.
+  function setTagVerdict(tag, verdict) {
+    const current = tagVerdicts[tag] || (checkedTags.has(tag) ? 'yes' : '');
+    const next = current === verdict ? '' : verdict;
+    // Yes owns the HubSpot tag; every other answer means the tag comes off.
+    const shouldBeTagged = next === 'yes';
+    if (shouldBeTagged !== checkedTags.has(tag)) {
+      setCheckedTags(prev => {
+        const set = new Set(prev);
+        if (shouldBeTagged) set.add(tag); else set.delete(tag);
+        persistDansTags(buildTagsStringFrom(set));
+        return set;
+      });
+    }
+    // Only the local-only answers are stored. Yes is read back from the tag
+    // itself, so a tag changed anywhere else can't leave a stale "yes" here
+    // contradicting HubSpot.
+    setTagVerdicts(prev => {
+      const map = { ...prev };
+      if (next === 'no' || next === 'unsure') map[tag] = next;
+      else delete map[tag];
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
+      return map;
     });
   }
 
@@ -1846,30 +1880,88 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               </span>
               <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
             </button>
-            {tagsOpen && (
-              <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-                {visibleTagOptions.map(tag => {
-                  const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
-                  return (
-                    <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.45rem 0.7rem', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', background: checkedTags.has(tag) ? (bucket?.headerBg || '#F0F9FF') : '#fff' }}
-                      onMouseEnter={e => { if (!checkedTags.has(tag)) e.currentTarget.style.background = '#F8FAFC'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = checkedTags.has(tag) ? (bucket?.headerBg || '#F0F9FF') : '#fff'; }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checkedTags.has(tag)}
-                        onChange={() => toggleTag(tag)}
-                        style={{ accentColor: bucket?.accent || '#0078D4', width: '14px', height: '14px', cursor: 'pointer' }}
-                      />
-                      <span style={{ fontSize: '0.78rem', fontWeight: checkedTags.has(tag) ? 600 : 400, color: checkedTags.has(tag) ? (bucket?.headerColor || '#1E293B') : '#374151' }}>{tag}</span>
-                      {checkedTags.has(tag) && bucket && (
-                        <span style={{ marginLeft: 'auto', fontSize: '0.6rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: '999px' }}>{bucket.label}</span>
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
+            {tagsOpen && (() => {
+              // One row per tag, answered Yes / No / Not sure. Yes is the tag
+              // and goes to HubSpot; the other two are recorded here only, so
+              // a tag left off can say WHY it's off — decided against, or not
+              // yet known — rather than being indistinguishable from one
+              // nobody has looked at.
+              const verdictOf = (tag) => (checkedTags.has(tag) ? 'yes' : (tagVerdicts[tag] || ''));
+              const answered = visibleTagOptions.filter(t => verdictOf(t)).length;
+              const total = visibleTagOptions.length;
+              const done = answered === total;
+              const CHOICES = [
+                { key: 'yes',    label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' } },
+                { key: 'no',     label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' } },
+                { key: 'unsure', label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' } },
+              ];
+              return (
+                <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0',
+                    background: done ? '#F0FDF4' : '#F8FAFC',
+                    fontSize: '0.68rem', fontWeight: 700,
+                    color: done ? '#166534' : '#475569',
+                  }}>
+                    <span>{done ? '✓ All tags reviewed' : `${answered} of ${total} tags reviewed`}</span>
+                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>Only “Yes” is sent to HubSpot</span>
+                  </div>
+                  <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                      <thead>
+                        <tr style={{ background: '#F1F5F9', color: '#475569' }}>
+                          <th style={{ textAlign: 'left', padding: '0.3rem 0.7rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
+                          {CHOICES.map(c => (
+                            <th key={c.key} style={{ width: 74, textAlign: 'center', padding: '0.3rem 0.2rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{c.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleTagOptions.map(tag => {
+                          const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
+                          const v = verdictOf(tag);
+                          return (
+                            <tr key={tag} style={{ borderBottom: '1px solid #F1F5F9', background: v ? '#fff' : '#FCFCFD' }}>
+                              <td style={{ padding: '0.3rem 0.7rem' }}>
+                                <span style={{ fontWeight: v === 'yes' ? 600 : 400, color: v === 'yes' ? (bucket?.headerColor || '#1E293B') : (v ? '#475569' : '#94A3B8') }}>{tag}</span>
+                                {v === 'yes' && bucket && (
+                                  <span style={{ marginLeft: 6, fontSize: '0.58rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: 999 }}>{bucket.label}</span>
+                                )}
+                              </td>
+                              {CHOICES.map(c => {
+                                const active = v === c.key;
+                                return (
+                                  <td key={c.key} style={{ textAlign: 'center', padding: '0.25rem 0.2rem' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setTagVerdict(tag, c.key)}
+                                      title={active
+                                        ? `${tag}: ${c.label} — click again to clear`
+                                        : (c.key === 'yes'
+                                          ? `Tag ${tag} on this contact (pushes to HubSpot)`
+                                          : `Record ${tag} as “${c.label}” — kept here, not sent to HubSpot`)}
+                                      style={{
+                                        width: 58, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
+                                        fontFamily: 'inherit', fontSize: '0.68rem',
+                                        fontWeight: active ? 700 : 500,
+                                        border: `1px solid ${active ? c.on.border : '#E2E8F0'}`,
+                                        background: active ? c.on.bg : '#fff',
+                                        color: active ? c.on.color : '#94A3B8',
+                                      }}
+                                    >{active ? c.label : '·'}</button>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
@@ -9373,6 +9465,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveMetInPerson={handleSaveContactMetInPerson}
           contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
+          contactTagReview={settings.contactTagReview || {}}
+          onSaveTagReview={(cid, map) => {
+            if (cid == null) return;
+            updateSettings({ contactTagReview: { ...(settings.contactTagReview || {}), [cid]: map } });
+          }}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
           companyContacts={companyContacts}

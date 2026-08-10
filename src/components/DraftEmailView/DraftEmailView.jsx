@@ -2593,6 +2593,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             if (cid == null) return;
             updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
           }}
+          contactTagReview={settings?.contactTagReview || {}}
+          onSaveTagReview={(cid, map) => {
+            if (cid == null) return;
+            updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
+          }}
           companyContacts={editCompanyContacts}
           emailDomains={editEmailDomains}
           companyNames={editCompanyNames}
