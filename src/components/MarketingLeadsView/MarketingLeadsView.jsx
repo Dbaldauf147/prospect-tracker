@@ -210,6 +210,18 @@ function isClosedRecycle(row) {
   return String(row?.status || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 'closedrecycle';
 }
 
+// A lead Salesforce has moved to "Working" — someone is actively on it.
+// Matched with the same punctuation-blind normalisation as Closed-Recycle,
+// and by prefix so the sub-statuses ("Working - Contacted") count too.
+//
+// This is the one status that outranks whatever a duplicate already has:
+// a Salesforce list shows the dead copy of a lead alongside the live one
+// (Chris Kirk is Closed-Recycle from June and Working from July), and the
+// live one is the truth.
+function isWorkingStatus(status) {
+  return String(status || '').toLowerCase().replace(/[^a-z0-9]/g, '').startsWith('working');
+}
+
 // Lead-status classification for the close-rate summary. Statuses are
 // free-form text pasted from the Salesforce Leads list, so we match
 // loosely: a converted lead is a "win", a Closed-Recycle lead is a
@@ -1703,9 +1715,26 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     // Emails seen so far in THIS paste, so a block that itself repeats a
     // contact only imports it once.
     const seenInPaste = new Set();
+    // Saved leads by email, so a duplicate that has since gone Working can
+    // carry that status back to the lead already on the page. A Salesforce
+    // list shows both copies of a recycled-then-reworked lead, and the
+    // pasted block is usually the newer truth.
+    const savedByEmail = new Map();
+    for (const r of persistedRows) {
+      const k = emailKey(r);
+      if (k && !savedByEmail.has(k)) savedByEmail.set(k, r);
+    }
+    // id → the Working status to write onto a saved lead. Only Working is
+    // promoted: the reverse (a stale Closed-Recycle copy overwriting a
+    // lead you are actively working) is exactly what this must not do.
+    const statusUpdates = new Map();
+    // Same rule inside one paste — first row wins the import, but a later
+    // Working duplicate still sets its status.
+    const incomingByEmail = new Map();
     const incoming = [];
     let blockedByHidden = 0;
     let blockedByDuplicate = 0;
+    let statusPromoted = 0;
     for (const cells of rows) {
       const fresh = emptyRow();
       let any = false;
@@ -1719,9 +1748,24 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         fresh[t.key] = v;
       }
       if (!any) continue;
+      const email = (fresh.email || '').toLowerCase().trim();
+      // A Working duplicate updates the lead it duplicates before any of
+      // the skips below: the row itself is still not imported twice, but
+      // the status it carries is news. Runs for hidden leads too — the
+      // stored status stays true — without unhiding them.
+      if (email && isWorkingStatus(fresh.status)) {
+        const saved = savedByEmail.get(email);
+        const earlier = incomingByEmail.get(email);
+        if (saved && !isWorkingStatus(saved.status) && !statusUpdates.has(saved.id)) {
+          statusUpdates.set(saved.id, fresh.status);
+          statusPromoted += 1;
+        } else if (earlier && !isWorkingStatus(earlier.status)) {
+          earlier.status = fresh.status;
+          statusPromoted += 1;
+        }
+      }
       // Skip leads that match a hidden lead's email — don't resurrect
       // something the user deliberately hid.
-      const email = (fresh.email || '').toLowerCase().trim();
       if (email && hiddenEmails.has(email)) { blockedByHidden += 1; continue; }
       // Skip duplicates: an email already saved, or already imported
       // earlier in this same paste.
@@ -1741,11 +1785,21 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
       // Flip "Last, First" → "First Last" AFTER the link lookup above,
       // which matches on the raw name as it appears in the pasted HTML.
       fresh.name = normalizeLeadName(fresh.name);
+      if (email) incomingByEmail.set(email, fresh);
       incoming.push(fresh);
     }
-    if (incoming.length) persist([...persistedRows, ...incoming]);
+    const updatedSaved = statusUpdates.size
+      ? persistedRows.map(r => (statusUpdates.has(r.id) ? { ...r, status: statusUpdates.get(r.id) } : r))
+      : persistedRows;
+    if (incoming.length || statusUpdates.size) persist([...updatedSaved, ...incoming]);
     setPasteModal(null);
     const notes = [];
+    if (statusPromoted > 0) {
+      notes.push(
+        `${statusPromoted} lead${statusPromoted === 1 ? '' : 's'} moved to Working ` +
+        `from a duplicate in the paste.`
+      );
+    }
     if (blockedByDuplicate > 0) {
       notes.push(
         `${blockedByDuplicate} duplicate${blockedByDuplicate === 1 ? '' : 's'} skipped ` +
