@@ -48,6 +48,7 @@ function Badge({ kind, children }) {
 
 function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onResult }) {
   const isMeeting = draft.type === 'meeting';
+  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [rawHtml, setRawHtml] = useState(false);
@@ -87,6 +88,14 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
     const html = currentBodyHtml();
     setForm(f => ({ ...f, bodyHtml: html }));
     setRawHtml(v => !v);
+  }
+
+  // The body editor is uncontrolled, so its edits live in the DOM until they
+  // are read back. Collapsing the card unmounts it — capture first, or typing
+  // then collapsing would silently discard the work.
+  function toggleOpen() {
+    if (open && editing && form) setForm(f => ({ ...f, bodyHtml: currentBodyHtml() }));
+    setOpen(v => !v);
   }
 
   function save() {
@@ -144,15 +153,24 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
 
   return (
     <div className={styles.card}>
+      {/* Collapsed, the card is just the draft's name — the list stays a
+          scannable index of the templates. Everything else opens on click. */}
+      <button
+        type="button"
+        className={styles.cardHeader}
+        onClick={toggleOpen}
+        aria-expanded={open}
+      >
+        <span className={styles.chevron} aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className={styles.cardName}>{draft.name}</span>
+        <Badge kind={isMeeting ? 'badgeMeeting' : 'badgeEmail'}>{isMeeting ? 'Meeting' : 'Email'}</Badge>
+        {isEdited && <Badge kind="badgeEdited">Edited</Badge>}
+      </button>
+
+      {open && (
+      <div className={styles.cardBody}>
       <div className={styles.cardTop}>
-        <div style={{ minWidth: 0 }}>
-          <h3 className={styles.cardName}>
-            {draft.name}
-            <Badge kind={isMeeting ? 'badgeMeeting' : 'badgeEmail'}>{isMeeting ? 'Meeting' : 'Email'}</Badge>
-            {isEdited && <Badge kind="badgeEdited">Edited</Badge>}
-          </h3>
-          <p className={styles.blurb}>{draft.blurb}</p>
-        </div>
+        <p className={styles.blurb}>{draft.blurb}</p>
         <div className={styles.actions}>
           <button type="button" className={styles.primaryBtn} onClick={download} disabled={editing}>
             {isMeeting ? 'Download .ics' : 'Download .eml'}
@@ -284,6 +302,8 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
             <button type="button" className={styles.secondaryBtn} onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </div>
+      )}
+      </div>
       )}
     </div>
   );
