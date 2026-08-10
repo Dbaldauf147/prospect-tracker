@@ -113,6 +113,57 @@ eq(pickTopPortfolioCompany([
   pc('Zug Chemicals', 97, 'Zug', 'Switzerland'),
 ], statuses), null, 'nothing eligible means no pick at all');
 
+// ---- status set on the PC row itself ----------------------------------------
+//
+// The reported case: a company marked Hold Off in the pop-up's Portfolio
+// Companies table kept coming back as the firm's Top PC, because the filter
+// only ever read the tracker prospect record. The row's own Status column is
+// the more specific signal — set by hand, on this firm's portfolio — so it
+// wins, and it works whether or not the company is tracked separately.
+
+const rowPc = (companyName, opportunityScore, status) =>
+  ({ companyName, opportunityScore, status, hqCity: 'Charlotte', hqCountry: 'USA' });
+
+eq(pickTopPortfolioCompany([
+  rowPc('Sealed Air', 82, 'Hold Off'),
+  rowPc('Riverbend Plastics', 30, ''),
+], new Map()).companyName, 'Riverbend Plastics',
+'a Hold Off set on the PC row takes it out of the running');
+eq(pickTopPortfolioCompany([rowPc('Sealed Air', 82, 'Hold Off')], new Map()), null,
+  'even with no tracker record of its own to carry the status');
+eq(pickTopPortfolioCompany([
+  rowPc('Sealed Air', 82, 'Hold Off'),
+  rowPc('Riverbend Plastics', 30, ''),
+], new Map()).skippedStatus, 1, 'and it counts as a status skip like any other');
+
+// Row beats record, both ways round: the row is what the user set last.
+const RECORD_SAYS = buildStatusIndex([
+  { company: 'Sealed Air', status: 'Qualifying' },
+  { company: 'Riverbend Plastics', status: 'Hold Off' },
+]);
+eq(pickTopPortfolioCompany([rowPc('Sealed Air', 82, 'Hold Off')], RECORD_SAYS), null,
+  "a row's Hold Off overrides a live tracker status");
+eq(pickTopPortfolioCompany([rowPc('Riverbend Plastics', 30, 'Qualifying')], RECORD_SAYS)?.companyName,
+  'Riverbend Plastics', "…and a row's live status overrides a parked tracker record");
+
+// An eligible row status is reported as the pick's status, and flagged as
+// the row's own so the tooltip can say where it came from.
+const fromRow = pickTopPortfolioCompany([rowPc('Contoso Metals', 64, 'Inside Sales')], RECORD_SAYS);
+eq([fromRow.status, fromRow.statusFromRow, fromRow.statusCompany], ['Inside Sales', true, ''],
+  'the pick reports the row status and that it came from the row');
+
+// A blank row status is not a status — fall back to the tracker record.
+eq(pickTopPortfolioCompany([rowPc('Riverbend Plastics', 30, '   ')], RECORD_SAYS), null,
+  'a blank row status falls through to the tracker record');
+const fromRecord = pickTopPortfolioCompany([rowPc('Sealed Air', 82, '')], RECORD_SAYS);
+eq([fromRecord.status, fromRecord.statusFromRow], ['Qualifying', false],
+  '…and an inherited status is flagged as not the row\'s own');
+
+// A row status outside the house vocabulary (an uploaded sheet's wording)
+// isn't one of the three excluded values, so it can't quietly drop a row.
+eq(pickTopPortfolioCompany([rowPc('Sealed Air', 82, 'Pending close')], new Map())?.companyName,
+  'Sealed Air', 'an unrecognised row status does not exclude the company');
+
 // ---- name matching ----------------------------------------------------------
 
 eq(topPcCompanyKey('Acme Foods, Inc.'), topPcCompanyKey('acme foods'),
@@ -236,7 +287,7 @@ const counted = pickTopPortfolioCompany([
   pc('Contoso Metals', 64, 'Chicago', 'United States'),      // the pick
 ], statuses);
 eq({ ...counted, hqCity: undefined, hqCountry: undefined, hqLocation: undefined }, {
-  companyName: 'Contoso Metals', score: 64, status: 'Qualifying', statusCompany: '',
+  companyName: 'Contoso Metals', score: 64, status: 'Qualifying', statusFromRow: false, statusCompany: '',
   hqCity: undefined, hqCountry: undefined, hqLocation: undefined,
   total: 5, eligible: 2, skippedRegion: 1, skippedStatus: 2, skippedNoScore: 1,
 }, 'the counts add up to the portfolio');

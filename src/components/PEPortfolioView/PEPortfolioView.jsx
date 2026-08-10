@@ -1343,7 +1343,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'topPc', label: 'Top PC', align: 'left', tip: `The firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
-            { key: 'topPcStatus', label: 'Top PC Status', align: 'center', tip: 'The Table View status of the Top PC on this row. Blank when that company has no prospect record of its own — the Top PC filter only excludes companies it can see are closed.' },
+            { key: 'topPcStatus', label: 'Top PC Status', align: 'center', tip: "The Top PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither — the Top PC filter only excludes companies it can see are closed." },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
@@ -1603,7 +1603,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                               `${top.companyName} — Opportunity Score ${top.score}`,
                               top.hqLocation ? `HQ: ${top.hqLocation}` : '',
                               top.status
-                                ? `Status: ${top.status}${top.statusCompany ? ` (from "${top.statusCompany}")` : ''}`
+                                ? `Status: ${top.status}${top.statusFromRow ? ' (set on this firm\'s Portfolio Companies list)' : (top.statusCompany ? ` (from "${top.statusCompany}")` : '')}`
                                 : 'Not tracked as its own prospect',
                               `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
                               skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
@@ -1639,17 +1639,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             >-</div>
                           );
                         }
-                        // A Top PC with no prospect record of its own is a
-                        // real state, not missing data: the Top PC filter
-                        // only excludes companies it can see are closed, so
-                        // an untracked one is eligible and lands here.
+                        // A Top PC with no status anywhere is a real state,
+                        // not missing data: the Top PC filter only excludes
+                        // companies it can see are closed, so an untracked
+                        // one is eligible and lands here.
                         const color = STATUS_COLORS[top.status];
                         return (
                           <div
                             style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
                             title={top.status
-                              ? `${top.statusCompany || top.companyName} is set to "${top.status}" in the Table View${top.statusCompany ? `, matched to this row's "${top.companyName}"` : ''}`
-                              : `${top.companyName} has no prospect record of its own, so it carries no status`}
+                              ? (top.statusFromRow
+                                ? `${top.companyName} is set to "${top.status}" on this firm's Portfolio Companies list`
+                                : `${top.statusCompany || top.companyName} is set to "${top.status}" in the Table View${top.statusCompany ? `, matched to this row's "${top.companyName}"` : ''}`)
+                              : `${top.companyName} has no status on this firm's Portfolio Companies list and no prospect record of its own`}
                           >
                             <span
                               style={{
