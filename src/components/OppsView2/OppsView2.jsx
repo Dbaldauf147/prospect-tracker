@@ -10593,6 +10593,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveMetInPerson={saveContactMetInPerson}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={saveContactInvitedToLouisville}
+          contactTagReview={settings?.contactTagReview || {}}
+          onSaveTagReview={(cid, map) => {
+            if (cid == null) return;
+            updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
+          }}
           events={settings?.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
           companyContacts={(hubspotContacts || []).filter(c => {

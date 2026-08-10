@@ -4373,6 +4373,11 @@ function KeyContactsViewInner({
               const current = settings?.contactInvitedToLouisville || {};
               updateSettings({ contactInvitedToLouisville: { ...current, [contactId]: !!invited } });
             }}
+            contactTagReview={settings?.contactTagReview || {}}
+            onSaveTagReview={(cid, map) => {
+              if (cid == null) return;
+              updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
+            }}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}
