@@ -11,6 +11,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 import { addQueuedLeads } from '../../utils/draftLeadsQueue';
+import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -1509,6 +1510,14 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     updateSettings({ [mapKey]: next });
   }, [settings, updateSettings]);
 
+  // Pin the Company name typed in the Edit HubSpot Contact popup, so the
+  // next HubSpot refresh doesn't rewrite it back from the Company record
+  // the contact is associated with. See utils/contactCompanyOverride.js.
+  const saveCompanyOverride = (contactId, value) => {
+    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
+    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+  };
+
   function persist(next) {
     updateSettings({ marketingLeads: next });
   }
@@ -2824,6 +2833,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
           onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
           contactOldCompany={settings?.contactOldCompany || {}}
           onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
+          onSaveCompanyOverride={saveCompanyOverride}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
           contactTeamNames={settings?.contactTeamNames || {}}

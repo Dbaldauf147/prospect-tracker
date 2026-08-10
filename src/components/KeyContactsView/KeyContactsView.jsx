@@ -16,6 +16,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -613,21 +614,10 @@ function KeyContactsViewInner({
     //   - associate fallback matched a different name → keep override
     //   - rename succeeded (or names already matched) → clear override
     if (field === 'company') {
-      const cur = settings?.contactLocalFields || {};
-      const merged = { ...(cur[id] || {}) };
-      let didChange = false;
       // Always pin the typed value locally so it survives a refresh
       // regardless of HubSpot sync/association timing; the API also renamed
       // the linked Company record. (Empty string → clear the override.)
-      if (next) {
-        if (merged._companyOverride !== next) {
-          merged._companyOverride = next;
-          didChange = true;
-        }
-      } else if (merged._companyOverride !== undefined) {
-        delete merged._companyOverride;
-        didChange = true;
-      }
+      const nextLocal = withCompanyOverride(settings?.contactLocalFields, id, next);
       if (companyAssignment?.ok === false) {
         const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
         setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what}: Prospect Tracker will keep your typed value here.` });
@@ -636,14 +626,21 @@ function KeyContactsViewInner({
       } else if (companyAssignment?.mode === 'renamed') {
         setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '-'}" → "${next}" (updates every contact linked to it).` });
       }
-      if (didChange) {
-        const nextLocal = { ...cur };
-        if (Object.keys(merged).length === 0) delete nextLocal[id];
-        else nextLocal[id] = merged;
-        updateSettings({ contactLocalFields: nextLocal });
-      }
+      if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
     }
   }
+
+  // The same pin, from the Edit HubSpot Contact popup. Without it the
+  // popup's Company edit lives only in the local HubSpot cache, and the
+  // next refresh — My Accounts loading, the Contacts tab's Refresh, another
+  // device syncing — rewrites the contact's company from the Company record
+  // HubSpot has it associated with, putting the old name back. The inline
+  // cell has always pinned it; the popup is the way a contact already mapped
+  // to a prospect gets edited at all, since that cell renders as a link.
+  const saveCompanyOverride = useCallback((contactId, value) => {
+    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
+    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+  }, [settings?.contactLocalFields, updateSettings]);
 
   // Persist the "New Company" a changed-jobs contact moved to. Stored in
   // the same per-contact local settings bag as _companyOverride, under
@@ -4393,6 +4390,7 @@ function KeyContactsViewInner({
             onSaveOldEmails={handleSaveContactOldEmails}
             contactOldCompany={settings?.contactOldCompany || {}}
             onSaveOldCompany={handleSaveContactOldCompany}
+            onSaveCompanyOverride={saveCompanyOverride}
             contactNicknames={settings?.contactNicknames || {}}
             onSaveNickname={handleSaveContactNickname}
             contactTeamNames={settings?.contactTeamNames || {}}

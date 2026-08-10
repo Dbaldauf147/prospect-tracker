@@ -64,6 +64,7 @@ import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
+import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -7487,6 +7488,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (val && val.trim()) next[cid] = val; else delete next[cid];
     updateSettings({ contactOldCompany: next });
   }, [settings?.contactOldCompany, updateSettings]);
+
+  // Pin the Company name typed in the Edit HubSpot Contact popup, so the
+  // next HubSpot refresh doesn't rewrite it back from the Company record
+  // the contact is associated with. See utils/contactCompanyOverride.js.
+  const saveCompanyOverride = (contactId, value) => {
+    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
+    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+  };
   const saveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
     const next = { ...cur };
@@ -10577,6 +10586,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveOldEmails={saveContactOldEmails}
           contactOldCompany={settings?.contactOldCompany || {}}
           onSaveOldCompany={saveContactOldCompany}
+          onSaveCompanyOverride={saveCompanyOverride}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={saveContactNickname}
           contactTeamNames={settings?.contactTeamNames || {}}

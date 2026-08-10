@@ -13,6 +13,7 @@ import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from 
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import styles from './DraftEmailView.module.css';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
@@ -1091,6 +1092,14 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     const next = { ...cur };
     if (value && String(value).trim()) next[cid] = value; else delete next[cid];
     updateSettings({ [mapKey]: next });
+  };
+
+  // Pin the Company name typed in the Edit HubSpot Contact popup, so the
+  // next HubSpot refresh doesn't rewrite it back from the Company record
+  // the contact is associated with. See utils/contactCompanyOverride.js.
+  const saveCompanyOverride = (contactId, value) => {
+    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
+    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
   };
 
   // Same-company HubSpot contacts + company-name autocomplete for the popup's
@@ -2556,6 +2565,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
           contactOldCompany={settings?.contactOldCompany || {}}
           onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
+          onSaveCompanyOverride={saveCompanyOverride}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
           contactTeamNames={settings?.contactTeamNames || {}}
