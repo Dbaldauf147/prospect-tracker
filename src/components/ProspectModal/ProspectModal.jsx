@@ -53,6 +53,7 @@ import {
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
+import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -1130,9 +1131,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         // (Empty string → clear the override instead.)
         onSaveCompanyOverride(savedCid, hsProps.company || null);
         if (ca && ca.ok === false) {
-          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
           const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
-          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`);
+          setCompanyNote(`Saved "${hsProps.company}" locally. HubSpot couldn't ${what}${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`);
         } else if (ca && ca.ok === true) {
           if (ca.mode === 'renamed') {
             setCompanyNote(`Renamed the HubSpot Company "${ca.oldName || '-'}" → "${hsProps.company}". This updates it for every contact linked to that company.`);

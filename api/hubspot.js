@@ -1,4 +1,5 @@
 import { withAuth } from './_lib/http.js';
+import { describeHubSpotResponse } from './_lib/hubspotError.js';
 
 const BASE = 'https://api.hubapi.com';
 
@@ -210,9 +211,7 @@ async function createCompanyByName(token, rawName) {
       if (data.id) return { ok: true, id: String(data.id) };
       return { ok: false, status: res.status, errorText: 'Create returned no id' };
     }
-    let errorText = '';
-    try { errorText = (await res.text()).slice(0, 300); } catch { /* noop */ }
-    return { ok: false, status: res.status, errorText };
+    return { ok: false, status: res.status, errorText: await describeHubSpotResponse(res) };
   } catch (err) {
     return { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300) };
   }
@@ -232,9 +231,7 @@ async function setContactPrimaryCompany(token, contactId, companyId) {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
     if (res.ok) return { ok: true };
-    let errorText = '';
-    try { errorText = (await res.text()).slice(0, 300); } catch {}
-    return { ok: false, status: res.status, errorText };
+    return { ok: false, status: res.status, errorText: await describeHubSpotResponse(res) };
   } catch (err) {
     return { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300) };
   }
@@ -356,9 +353,15 @@ async function renameContactCompany(token, contactId, rawName) {
     if (res.ok) {
       return { ok: true, mode: 'renamed', companyId, oldName, newName, requestedName: newName, nameDiffers: false };
     }
-    let errorText = '';
-    try { errorText = (await res.text()).slice(0, 300); } catch { /* noop */ }
-    return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: res.status, errorText };
+    return {
+      ok: false,
+      mode: 'rename-failed',
+      companyId,
+      oldName,
+      requestedName: newName,
+      status: res.status,
+      errorText: await describeHubSpotResponse(res),
+    };
   } catch (err) {
     return { ok: false, mode: 'rename-failed', companyId, oldName, requestedName: newName, status: 0, errorText: String(err?.message || err).slice(0, 300) };
   }
