@@ -8,6 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { tagReviewScore } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -1441,7 +1442,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, lastOutreach: 160, emailCampaigns: 240,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, emailCampaigns: 240,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1449,7 +1450,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', ...(storagePrefix === 'all-contacts' ? ['taggedPct'] : []), 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1513,6 +1514,17 @@ function KeyContactsViewInner({
           if (!localStorage.getItem(campMigKey) && !next.includes('emailCampaigns')) {
             try { localStorage.setItem(campMigKey, '1'); } catch {}
             next = [...next, 'emailCampaigns'];
+          }
+          // Same for the "Tagged %" column — surfaced once, after Tags, for
+          // users whose saved visibility predates it. Sticky flag so hiding
+          // it again sticks.
+          const taggedMigKey = lsKey('visible-cols-mig-taggedPct');
+          if (!localStorage.getItem(taggedMigKey) && !next.includes('taggedPct')) {
+            try { localStorage.setItem(taggedMigKey, '1'); } catch { /* private mode — column just re-offers next load */ }
+            const tIdx = next.indexOf('tags');
+            next = tIdx >= 0
+              ? [...next.slice(0, tIdx + 1), 'taggedPct', ...next.slice(tIdx + 1)]
+              : [...next, 'taggedPct'];
           }
         }
         return next;
@@ -1616,6 +1628,15 @@ function KeyContactsViewInner({
   }, [hubspotCache]);
 
   // Activity cache (emails / calls / meetings) populated by the
+  // Tag review completeness per contact, for the Tagged % column. Same
+  // helper the contact popup's header runs on, so the number in the table
+  // and the number in the popup are the same number.
+  const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+  const tagScoreFor = useCallback(
+    (c) => tagReviewScore(c.raw || c, tagReviewMap[String(c.id || c.vid || '')]),
+    [tagReviewMap],
+  );
+
   // Activity tab — used to drive the "Last Outreach" column. Read on
   // mount and refreshed on the custom event from ActivityView's
   // saveCache plus the cross-tab `storage` event.
@@ -2353,6 +2374,7 @@ function KeyContactsViewInner({
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
+        case 'taggedPct': cmp = tagScoreFor(a).pct - tagScoreFor(b).pct; break;
         case 'lastOutreach': {
           const av = contactLastOutreach.get(String(a.id || ''))?.tsMs || 0;
           const bv = contactLastOutreach.get(String(b.id || ''))?.tsMs || 0;
@@ -2378,7 +2400,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign, tagScoreFor]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -2484,6 +2506,7 @@ function KeyContactsViewInner({
     salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
+    taggedPct: c => `${tagScoreFor(c).pct}%`,
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
     toCc:     c => {
@@ -3277,6 +3300,10 @@ function KeyContactsViewInner({
               // Combined To / CC recipients from the contact popup — All Contacts only.
               ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
               { key: 'tags',     label: 'Tags', sortable: false },
+              // How much of this contact's tag review is done, from the
+              // popup's Yes / No / Not sure table. All Contacts only, like
+              // the other columns that report on the popup's local fields.
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
               { key: 'lastOutreach', label: 'Last Outreach' },
               ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
             ].filter(Boolean);
@@ -3856,6 +3883,29 @@ function KeyContactsViewInner({
                             minWidth: 0,
                           }}
                         >{tagStr || '-'}</div>
+                      );
+                    })()}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('taggedPct') && (() => {
+                      // How far through the popup's Yes / No / Not sure table
+                      // this contact is. Banded rather than plain text so a
+                      // column of numbers reads as "which of these still need
+                      // working through" at a glance.
+                      const { answered, total, pct, done } = tagScoreFor(c);
+                      const band = done
+                        ? { bg: '#DCFCE7', color: '#166534' }
+                        : pct >= 50 ? { bg: '#FEF3C7', color: '#92400E' }
+                        : pct > 0 ? { bg: '#FFEDD5', color: '#9A3412' }
+                        : { bg: '#F1F5F9', color: '#94A3B8' };
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', minWidth: 0 }}
+                          title={`${answered} of ${total} tags mapped. Hide, Left and Test aren't counted. Open the contact to answer the rest.`}
+                        >
+                          <span style={{
+                            display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+                            background: band.bg, color: band.color, fontWeight: 700,
+                          }}>{pct}%</span>
+                        </div>
                       );
                     })()}
                     {visibleSet.has('lastOutreach') && (() => {
