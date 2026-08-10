@@ -6,8 +6,11 @@
 // picks that one company per firm, under two filters the user asked for:
 //
 //   - HQ in North America, and
-//   - not a company we've already closed off (status Lost - Not Sold, or
-//     parked at Hold Off).
+//   - not a company that's already settled one way or the other: closed
+//     off (Lost - Not Sold), parked (Hold Off), or already won (Client).
+//     The column answers "who should I be working", and none of those
+//     three is the answer — an existing Client least of all, since it's
+//     already counted a column over under PC Clients.
 //
 // Two things are worth being careful about, because both would quietly
 // mislead rather than visibly break:
@@ -28,7 +31,7 @@ import { computePortfolioFitScore } from './portfolioCompaniesWorkbook.js';
 
 // The statuses that take a company out of the running. "Not Sold" is
 // written 'Lost - Not Sold' on the prospect record (see data/enums.js).
-export const TOP_PC_EXCLUDED_STATUSES = ['Lost - Not Sold', 'Hold Off'];
+export const TOP_PC_EXCLUDED_STATUSES = ['Lost - Not Sold', 'Hold Off', 'Client'];
 
 const EXCLUDED = new Set(TOP_PC_EXCLUDED_STATUSES.map(s => s.toLowerCase()));
 
@@ -104,10 +107,11 @@ export function buildStatusIndex(prospects) {
     if (full && !primary.has(full)) primary.set(full, entry);
     for (const key of rest) {
       const existing = alt.get(key);
-      // Where several records collapse onto one alternate key, a closed
-      // status wins. The cost of being wrong runs one way here: showing a
-      // company the user has already parked is the failure they asked this
-      // filter to prevent, and the tooltip names the record either way.
+      // Where several records collapse onto one alternate key, an
+      // excluded status wins. The cost of being wrong runs one way here:
+      // showing a company the user has already settled is the failure they
+      // asked this filter to prevent, and the tooltip names the record
+      // either way.
       if (!existing || (!EXCLUDED.has(existing.status.toLowerCase())
         && EXCLUDED.has(entry.status.toLowerCase()))) alt.set(key, entry);
     }
