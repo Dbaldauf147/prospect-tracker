@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import styles from './Sidebar.module.css';
-import { AGENTS_RUN_INTERVAL_DAYS } from '../utils/agentsRunReminder';
+import { AGENTS_RUN_INTERVAL_BUSINESS_DAYS } from '../utils/agentsRunReminder';
 
 // Predictive company + contact search shown in the sidebar header (replaces
 // the old "Sales Pipeline" subtitle). Type a company name, or a contact's
@@ -359,7 +359,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           className={view === 'agents' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agents')}
           title={agentsRunDue
-            ? `The agent prompts haven't been run in ${AGENTS_RUN_INTERVAL_DAYS}+ days: open Agents, run them, then hit "Agents Ran".`
+            ? `The agent prompts haven't been run in ${AGENTS_RUN_INTERVAL_BUSINESS_DAYS}+ business days: open Agents, run them, then hit "Agents Ran".`
             : undefined}
         >
           <span className={styles.navIcon}>&#129302;</span>

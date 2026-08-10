@@ -19,7 +19,7 @@ import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 import {
   AGENTS_SETTINGS_KEY,
-  AGENTS_RUN_INTERVAL_DAYS,
+  AGENTS_RUN_INTERVAL_BUSINESS_DAYS,
   agentsDaysSinceRun,
   agentsDaysUntilDue,
   agentsLastRunMs,
@@ -2937,14 +2937,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               ? 'No run recorded yet.'
               : `Last run ${agentsLastRunLabel} (${agentsDaysSince} day${agentsDaysSince === 1 ? '' : 's'} ago).`}
             {' '}Work through the prompts below, then mark the run to clear this
-            alert: it comes back every {AGENTS_RUN_INTERVAL_DAYS} days.
+            alert: it comes back every {AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.
           </div>
           <button
             type="button"
             className={styles.runAlertBtn}
             onClick={markAgentsRan}
             disabled={!updateSettings}
-            title={`Record that you've run the agent prompts. Clears this alert and the red dot on the Agents tab for ${AGENTS_RUN_INTERVAL_DAYS} days.`}
+            title={`Record that you've run the agent prompts. Clears this alert and the red dot on the Agents tab for ${AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.`}
           >Agents Ran</button>
         </div>
       ) : (
