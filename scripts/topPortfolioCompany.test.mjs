@@ -1,0 +1,172 @@
+// Assertion tests for the PE Portfolio "Top PC" pick. Plain Node — no test
+// framework (the project has none). Run:
+//   node scripts/topPortfolioCompany.test.mjs
+//
+// The column names one company per firm, which is exactly the kind of
+// output that is never obviously wrong. Three ways it could lie quietly:
+//
+//   - scoring the filtered list instead of the whole portfolio, so the
+//     number here disagrees with the same company's score on All PCs;
+//   - a loose name match pulling someone else's "Hold Off" over and
+//     knocking the real top company out;
+//   - an unscored (N/A) row being read as zero and winning a portfolio
+//     where nothing else is scored either.
+import {
+  pickTopPortfolioCompany,
+  buildStatusByCompany,
+  topPcCompanyKey,
+  TOP_PC_EXCLUDED_STATUSES,
+} from '../src/utils/topPortfolioCompany.js';
+import { computePortfolioFitScore } from '../src/utils/portfolioCompaniesWorkbook.js';
+
+let passed = 0, failed = 0;
+function eq(actual, expected, name) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a === e) { passed++; console.log(`PASS  ${name}`); }
+  else { failed++; console.log(`FAIL  ${name}\n        expected ${e}\n        got      ${a}`); }
+}
+
+// An explicit Opportunity Score is used verbatim, which keeps these cases
+// readable — the composite methodology has its own tests upstream.
+const pc = (companyName, opportunityScore, hqCity, hqCountry) =>
+  ({ companyName, opportunityScore, hqCity, hqCountry });
+
+// ---- the pick ---------------------------------------------------------------
+
+eq(pickTopPortfolioCompany([], new Map()), null, 'no portfolio, no pick');
+eq(pickTopPortfolioCompany(undefined, new Map()), null, 'a firm with nothing mapped is handled');
+
+const basic = [
+  pc('Acme Foods', 71, 'Dallas', 'United States'),
+  pc('Northwind Logistics', 88, 'Toronto', 'Canada'),
+  pc('Contoso Metals', 64, 'Chicago', 'United States'),
+];
+eq(pickTopPortfolioCompany(basic, new Map()).companyName, 'Northwind Logistics',
+  'the highest score wins');
+eq(pickTopPortfolioCompany(basic, new Map()).score, 88, 'and carries its score');
+
+// ---- the North America filter ----------------------------------------------
+
+const mixed = [
+  pc('Zug Chemicals', 97, 'Zug', 'Switzerland'),
+  pc('Acme Foods', 71, 'Dallas', 'United States'),
+];
+eq(pickTopPortfolioCompany(mixed, new Map()).companyName, 'Acme Foods',
+  'a higher-scoring company outside North America is passed over');
+eq(pickTopPortfolioCompany(mixed, new Map()).skippedRegion, 1, 'and is counted as skipped');
+
+// A US state with no country still places a row; a bare city that nothing
+// recognises does not, and an unplaceable HQ is left out rather than
+// assumed domestic.
+eq(pickTopPortfolioCompany([pc('State Only', 50, 'Austin', 'Texas')], new Map())?.companyName,
+  'State Only', 'a US state alone is North America');
+eq(pickTopPortfolioCompany([pc('No HQ', 50, '', '')], new Map()), null,
+  'a row with no HQ at all is not assumed to be North American');
+eq(pickTopPortfolioCompany([pc('City Only', 50, 'Springfield', '')], new Map()), null,
+  'an unplaceable city is left out too');
+
+// ---- the status filter ------------------------------------------------------
+
+eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off'],
+  '"Not Sold" is the tracker\'s Lost - Not Sold');
+
+const PROSPECTS = [
+  { company: 'Northwind Logistics', status: 'Lost - Not Sold' },
+  { company: 'Acme Foods, Inc.', status: 'Hold Off' },
+  { company: 'Contoso Metals', status: 'Client' },
+];
+const statuses = buildStatusByCompany(PROSPECTS);
+
+const filtered = pickTopPortfolioCompany(basic, statuses);
+eq(filtered.companyName, 'Contoso Metals', 'Not Sold and Hold Off are both passed over');
+eq(filtered.skippedStatus, 2, 'both are counted as status skips');
+eq(filtered.status, 'Client', 'the pick carries the status it was allowed on');
+
+// A company with no prospect record has no status to fail — the filter
+// drops what we know is closed, not what we know nothing about.
+eq(pickTopPortfolioCompany([pc('Unknown Co', 90, 'Boston', 'United States')], statuses)?.companyName,
+  'Unknown Co', 'a PC with no tracker record stays eligible');
+
+// Everything filtered out is a blank cell, not a fallback to the best
+// excluded row.
+eq(pickTopPortfolioCompany([
+  pc('Northwind Logistics', 88, 'Toronto', 'Canada'),
+  pc('Zug Chemicals', 97, 'Zug', 'Switzerland'),
+], statuses), null, 'nothing eligible means no pick at all');
+
+// ---- name matching ----------------------------------------------------------
+
+eq(topPcCompanyKey('Acme Foods, Inc.'), topPcCompanyKey('acme foods'),
+  'legal suffixes and punctuation fall away');
+eq(topPcCompanyKey('Acme Foods') === topPcCompanyKey('Acme Foods Manufacturing'), false,
+  'but a longer, different name is not the same company');
+eq(pickTopPortfolioCompany([pc('Acme Foods Manufacturing', 71, 'Dallas', 'United States')], statuses)?.companyName,
+  'Acme Foods Manufacturing', 'a near-name does not inherit another company\'s Hold Off');
+
+// First writer wins, so a stale duplicate can't knock out a live record.
+eq(buildStatusByCompany([
+  { company: 'Acme Foods', status: 'Client' },
+  { company: 'Acme Foods', status: 'Hold Off' },
+]).get(topPcCompanyKey('Acme Foods')), 'Client', 'the first record for a name wins');
+
+// ---- unscored rows ----------------------------------------------------------
+
+const withNa = [
+  pc('Credit Fund I', 'N/A', 'New York', 'United States'),
+  pc('Acme Foods', 71, 'Dallas', 'United States'),
+];
+eq(pickTopPortfolioCompany(withNa, new Map()).companyName, 'Acme Foods', 'an N/A score cannot win');
+eq(pickTopPortfolioCompany(withNa, new Map()).skippedNoScore, 1, 'and is counted separately');
+eq(pickTopPortfolioCompany([pc('Credit Fund I', 'N/A', 'New York', 'United States')], new Map()),
+  null, 'a portfolio of nothing but N/A has no top company');
+
+// ---- scoring basis ----------------------------------------------------------
+
+// The score is normalized within the firm's whole portfolio, so a row that
+// the filters remove still sets the maxima. This is what keeps the number
+// in this column equal to the same company's score on the All PCs tab.
+const composite = [
+  { companyName: 'Euro Giant', sector: 'Industrial / Manufacturing', energyGwh: 1000, siteCount: 200, acquisitionYear: 2020, hqCity: 'Zug', hqCountry: 'Switzerland' },
+  { companyName: 'Domestic Mid', sector: 'Industrial / Manufacturing', energyGwh: 100, siteCount: 20, acquisitionYear: 2021, hqCity: 'Dallas', hqCountry: 'United States' },
+  { companyName: 'Domestic Small', sector: 'Industrial / Manufacturing', energyGwh: 10, siteCount: 2, acquisitionYear: 2022, hqCity: 'Chicago', hqCountry: 'United States' },
+];
+// Full basis: the two domestic rows are both tiny against the Euro Giant's
+// 1000 GWh / 200 sites, so recency separates them — Small (39) edges Mid
+// (37). Scoring only the eligible rows would rebase the maxima onto Mid
+// and hand it 84, flipping the winner. So this is not a cosmetic
+// difference in the number: getting the basis wrong names a different
+// company than the All PCs tab does.
+const top = pickTopPortfolioCompany(composite, new Map());
+eq([computePortfolioFitScore(composite[1], 1000, 200, { min: 2020, max: 2022 }),
+  computePortfolioFitScore(composite[2], 1000, 200, { min: 2020, max: 2022 })],
+[37, 39], 'the full-portfolio basis scores Mid 37, Small 39');
+eq([computePortfolioFitScore(composite[1], 100, 20, { min: 2021, max: 2022 }),
+  computePortfolioFitScore(composite[2], 100, 20, { min: 2021, max: 2022 })],
+[84, 45], '…an eligible-only basis would score them 84 and 45 — a different winner');
+eq(top.companyName, 'Domestic Small', 'the pick follows the full-portfolio basis');
+eq(top.score, 39, 'and reports the score All PCs shows for it');
+eq(top.skippedRegion, 1, 'the ineligible row still counted toward the maxima');
+
+// ---- the counts behind the tooltip ------------------------------------------
+
+const counted = pickTopPortfolioCompany([
+  pc('Acme Foods', 71, 'Dallas', 'United States'),          // Hold Off
+  pc('Northwind Logistics', 88, 'Toronto', 'Canada'),        // Lost - Not Sold
+  pc('Zug Chemicals', 97, 'Zug', 'Switzerland'),             // not NAM
+  pc('Credit Fund I', 'N/A', 'New York', 'United States'),   // unscored
+  pc('Contoso Metals', 64, 'Chicago', 'United States'),      // the pick
+], statuses);
+eq({ ...counted, hqCity: undefined, hqCountry: undefined, hqLocation: undefined }, {
+  companyName: 'Contoso Metals', score: 64, status: 'Client',
+  hqCity: undefined, hqCountry: undefined, hqLocation: undefined,
+  total: 5, eligible: 2, skippedRegion: 1, skippedStatus: 2, skippedNoScore: 1,
+}, 'the counts add up to the portfolio');
+
+// Ties break on name so the column doesn't flicker between equals.
+eq(pickTopPortfolioCompany([
+  pc('Bravo Inc', 80, 'Dallas', 'United States'),
+  pc('Alpha Inc', 80, 'Boston', 'United States'),
+], new Map()).companyName, 'Alpha Inc', 'a tie breaks on name, not portfolio order');
+
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);

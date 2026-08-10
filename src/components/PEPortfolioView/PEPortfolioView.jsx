@@ -11,6 +11,7 @@ import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { pickTopPortfolioCompany, buildStatusByCompany, topPcCompanyKey, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
@@ -349,9 +350,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150, notSold: 100 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership', 'notSold'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -382,6 +383,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
           next.add('pcDownload');
           try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
+        }
+        // One-time migration: reveal the Top PC column for users whose
+        // saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-top-pc')) {
+          next.add('topPc');
+          try { localStorage.setItem('pe-portfolio:cols-top-pc', '1'); } catch {}
         }
         return next;
       }
@@ -822,6 +829,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   //                           active = non-closed non-invalid stage;
   //                           total = every non-invalid stage
   //   pcClientCount       : PCs where status === 'Client'
+  // Status by company name, for the Top PC column's filter. Built once
+  // over every prospect rather than per firm: the mapped PC rows carry no
+  // status of their own, so it comes off the tracker record that shares
+  // the company's name.
+  const statusByCompany = useMemo(() => buildStatusByCompany(prospects), [prospects]);
+
+  // Same keying, but back to the whole record, so clicking a Top PC opens
+  // it in the Table View when the company is tracked.
+  const prospectByPcKey = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects) {
+      const k = topPcCompanyKey(p?.company);
+      if (k && !m.has(k)) m.set(k, p);
+    }
+    return m;
+  }, [prospects]);
+
   const stageStatsByFirm = useMemo(() => {
     const out = new Map();
     for (const pe of peFirms) {
@@ -912,7 +936,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         ? 'yes'
         : (caseStudyInProgressNames.length > 0 ? 'in-progress' : 'no');
 
+      // Best portfolio company to work next: highest Opportunity Score
+      // among North America-based PCs we haven't already closed off.
+      const topPc = pickTopPortfolioCompany(pe.portfolioCompanies, statusByCompany);
+
       out.set(pe.id, {
+        topPc,
         decisionMakerNames: dmNames,
         decisionMakerEntries: dmEntries,
         metInPersonCount,
@@ -935,7 +964,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords]);
+  }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords, statusByCompany]);
 
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
@@ -967,6 +996,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           cmp = (sa.activeOpps || 0) - (sb.activeOpps || 0);
           if (cmp === 0) cmp = (sa.totalOpps || 0) - (sb.totalOpps || 0);
           break;
+        case 'topPc': {
+          // Firms with nothing eligible rank below every firm that has a
+          // pick — last descending, first ascending — rather than mixing
+          // in among the genuinely low scores as a zero would.
+          const rank = (st) => (st.topPc ? st.topPc.score : -1);
+          cmp = rank(sa) - rank(sb);
+          break;
+        }
         case 'clients':
           cmp = (sa.pcClientCount || 0) - (sb.pcClientCount || 0);
           break;
@@ -1181,6 +1218,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
+              topPc: 'Top PC',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
               notSold: 'Not Sold',
@@ -1243,6 +1281,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
+            { key: 'topPc', label: 'Top PC', align: 'left', tip: `The firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
@@ -1476,6 +1515,55 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         return (
                           <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title={tipText}>
                             {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
+                          </div>
+                        );
+                      })()}
+
+                      {visibleCols.has('topPc') && (() => {
+                        const top = stats.topPc;
+                        if (!top) {
+                          return (
+                            <div
+                              style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}
+                              title={stats.pcMapped
+                                ? `No portfolio company on this firm is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
+                                : 'No portfolio companies mapped on this firm yet — fill in its Portfolio Companies tab.'}
+                            >-</div>
+                          );
+                        }
+                        const match = prospectByPcKey.get(topPcCompanyKey(top.companyName));
+                        const skipped = [
+                          top.skippedRegion ? `${top.skippedRegion} outside North America` : '',
+                          top.skippedStatus ? `${top.skippedStatus} ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` : '',
+                          top.skippedNoScore ? `${top.skippedNoScore} with no score` : '',
+                        ].filter(Boolean);
+                        return (
+                          <div
+                            style={{ padding: '0.55rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}
+                            title={[
+                              `${top.companyName} — Opportunity Score ${top.score}`,
+                              top.hqLocation ? `HQ: ${top.hqLocation}` : '',
+                              top.status ? `Status: ${top.status}` : 'Not tracked as its own prospect',
+                              `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
+                              skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
+                              match ? 'Click to open it in the Table View.' : '',
+                            ].filter(Boolean).join('\n')}
+                            onClick={match ? (e) => { e.stopPropagation(); onSelectProspect?.(match); } : undefined}
+                          >
+                            <span
+                              style={{
+                                flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                fontSize: '0.75rem', fontWeight: 600,
+                                color: match ? '#7C3AED' : '#1E293B',
+                                textDecoration: match ? 'underline' : 'none',
+                              }}
+                            >{top.companyName}</span>
+                            <span
+                              style={{
+                                flex: '0 0 auto', fontSize: '0.68rem', fontWeight: 700, color: '#0F172A',
+                                background: '#E0E7FF', borderRadius: 4, padding: '0.05rem 0.3rem',
+                              }}
+                            >{top.score}</span>
                           </div>
                         );
                       })()}
