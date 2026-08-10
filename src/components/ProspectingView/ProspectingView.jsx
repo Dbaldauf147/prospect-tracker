@@ -8,9 +8,15 @@
 //
 // The Status column answers the question the ladder implies but didn't
 // answer: is this step clear? Steps with a real number behind them
-// (overdue Call Ins, client renewals still needing a status) categorize
+// (overdue Call Ins, client renewals still needing a status, services
+// under full coverage, Top PCs not yet at Qualifying) categorize
 // themselves; the rest the user marks caught up for the day. See
 // utils/prospectingStatus.js for why a manual mark expires overnight.
+//
+// Two steps list their work in place rather than only counting it: the
+// services still short of coverage, and the Top PC of every PE firm that
+// isn't already Qualifying — so the calls to make are on the page rather
+// than a tab away.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Newest } from '../../utils/opps2Store';
@@ -26,6 +32,7 @@ import {
   setStepCaughtUp,
   subscribeCaughtUp,
 } from '../../utils/prospectingStatus';
+import { collectTopPcIntros } from '../../utils/topPcOutreach';
 import { useAuth } from '../../contexts/AuthContext';
 
 const PROSPECTING_STEPS = [
@@ -76,6 +83,9 @@ const PROSPECTING_STEPS = [
     detail: 'Warm intros through the PE relationship into their highest-scoring portfolio companies.',
     view: 'pe',
     viewLabel: 'PE Portfolio',
+    workLabel: n => `${n} to ask`,
+    workTitle: n => `${n} Top ${n === 1 ? 'PC is' : 'PCs are'} not at Qualifying yet — an intro still to ask the PE partner for`,
+    clearTitle: 'Every PE firm\'s Top PC is already at Qualifying',
   },
   {
     key: 'cold',
@@ -130,15 +140,17 @@ function useOppsRecords(userId) {
 
 // One cell of the Status column. Untracked steps render a button (the
 // mark is the user's to set); counted steps render static text, since
-// clicking couldn't change what the data says.
-function StatusCell({ state, label, title, onToggle }) {
+// clicking couldn't change what the data says. A row tall enough to hold
+// a list aligns its cells to the top instead of floating them in the
+// middle of all that space.
+function StatusCell({ state, label, title, onToggle, align = 'center' }) {
   if (state === 'unknown') return <div style={{ width: STATUS_COL, flexShrink: 0 }} />;
   const c = STATUS_STYLES[state];
   const base = {
     // Explicit border-box so the pill and the button below it are the
     // same 132px wide — a button gets it from the UA stylesheet, a div
     // only from the app's own reset.
-    width: STATUS_COL, boxSizing: 'border-box', flexShrink: 0, alignSelf: 'center',
+    width: STATUS_COL, boxSizing: 'border-box', flexShrink: 0, alignSelf: align,
     padding: '0.3rem 0.5rem', borderRadius: 999,
     border: `1px solid ${c.border}`, background: c.background, color: c.color,
     fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
@@ -195,7 +207,120 @@ function ServiceGapList({ gaps }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null, serviceGaps = null }) {
+// How many intros show without expanding. They're ranked warmest first,
+// so the top of the list is the part worth reading anyway.
+const TOP_PC_PREVIEW = 5;
+
+// One intro to ask for: the portfolio company, the firm to ask, and where
+// that company already stands. Both names click through to their record
+// when there is one — a Top PC with no prospect of its own is plain text,
+// which is itself the tell that nobody has opened it yet.
+function TopPcRow({ row, onSelectProspect, byId, last }) {
+  // Company and firm names run long ("TowerBrook Capital Partners (a Blue
+  // Owl co.)"), so each gets its own line and truncates rather than
+  // wrapping mid-name. Title attributes carry the full text either way.
+  const nameStyle = {
+    padding: 0, border: 0, background: 'none', font: 'inherit', textAlign: 'left',
+    cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#CBD5E1',
+    textUnderlineOffset: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    display: 'block', maxWidth: '100%',
+  };
+  const flatStyle = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block', maxWidth: '100%' };
+  const open = (id) => { const p = byId?.get(id); if (p) onSelectProspect(p); };
+  // Where the status came from matters when it's the reason a company is
+  // (or isn't) on this list — the PE page's own tooltips say the same.
+  const statusTitle = !row.status
+    ? 'This company has no status on the firm\'s portfolio list and no prospect record of its own'
+    : row.statusFromRow
+      ? `Status set on ${row.firm}'s Portfolio Companies list`
+      : `Table View status${row.statusCompany ? ` of ${row.statusCompany}` : ''}`;
+  return (
+    <div style={{ padding: '4px 0', borderBottom: last ? 'none' : '1px dashed #EEF0FA', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+        <span
+          title="Opportunity Score — the same one the PE Portfolio table ranks by"
+          style={{
+            flexShrink: 0, minWidth: 26, textAlign: 'center', padding: '1px 5px', borderRadius: 4,
+            background: '#EEF2FF', color: '#4338CA', fontSize: '0.65rem', fontWeight: 700,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {Math.round(row.score)}
+        </span>
+        <div style={{ flex: 1, minWidth: 0, color: '#1E293B', fontWeight: 700 }}>
+          {row.companyId && onSelectProspect
+            ? <button type="button" style={{ ...nameStyle, color: '#1E293B', fontWeight: 700 }} onClick={() => open(row.companyId)} title={`Open ${row.company}`}>{row.company}</button>
+            : <span style={flatStyle} title={`${row.company} — no prospect record yet`}>{row.company}</span>}
+        </div>
+        <span
+          title={statusTitle}
+          style={{
+            flexShrink: 0, padding: '0 6px', borderRadius: 999,
+            border: '1px solid #E2E8F0', background: '#fff',
+            fontSize: '0.62rem', fontWeight: 700,
+            color: row.status ? '#334155' : '#94A3B8',
+            fontStyle: row.status ? 'normal' : 'italic',
+          }}
+        >
+          {row.status || 'Not tracked'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: '0.3rem', paddingLeft: 'calc(26px + 0.8rem)', minWidth: 0, color: '#64748B', fontSize: '0.68rem' }}>
+        <span style={{ flexShrink: 0, color: '#94A3B8' }}>via</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {row.firmId && onSelectProspect
+            ? <button type="button" style={{ ...nameStyle, color: '#475569', fontWeight: 600 }} onClick={() => open(row.firmId)} title={`Open ${row.firm}`}>{row.firm}</button>
+            : <span style={flatStyle}>{row.firm}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The intros still to ask for, under their step. Long lists preview the
+// warmest few and expand on demand, so a 200-firm portfolio doesn't push
+// the rest of the ladder off the page.
+function TopPcIntroList({ rows, expanded, onExpand, onSelectProspect, byId }) {
+  if (!rows || rows.length === 0) return null;
+  const shown = expanded ? rows : rows.slice(0, TOP_PC_PREVIEW);
+  const hidden = rows.length - shown.length;
+  return (
+    <div style={{ marginTop: 6, fontSize: '0.72rem' }}>
+      <div
+        style={{
+          border: '1px solid #E3E4FA', borderRadius: 6, background: '#fff',
+          padding: '0.25rem 0.5rem',
+          maxHeight: expanded ? 260 : 'none', overflowY: expanded ? 'auto' : 'visible',
+        }}
+      >
+        {shown.map((row, i) => (
+          <TopPcRow
+            key={`${row.firmId || row.firm}:${row.company}`}
+            row={row}
+            onSelectProspect={onSelectProspect}
+            byId={byId}
+            last={i === shown.length - 1}
+          />
+        ))}
+      </div>
+      {(hidden > 0 || expanded) && (
+        <button
+          type="button"
+          onClick={onExpand}
+          style={{
+            marginTop: 4, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
+            border: '1px solid #E3E4FA', background: '#fff', color: '#4F46E5',
+            fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+          }}
+        >
+          {expanded ? 'Show fewer' : `Show all ${rows.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   // The hand-marked steps, straight off localStorage: another tab's mark,
@@ -215,10 +340,26 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null 
   // Tracked services still under 100% coverage. Same rows the list under
   // the step prints, so the badge and the list can't disagree.
   const serviceWork = useMemo(() => countServiceGaps(serviceGaps), [serviceGaps]);
+  // Every PE firm's Top PC that isn't at Qualifying yet — the intros still
+  // to ask for. null until the prospects load, same reasoning as above.
+  const topPcIntros = useMemo(() => collectTopPcIntros(prospects), [prospects]);
+  const [showAllTopPcs, setShowAllTopPcs] = useState(false);
+  // Click-through for that list: id → the record itself, since the page is
+  // handed prospects rather than a lookup.
+  const prospectById = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) if (p?.id) m.set(p.id, p);
+    return m;
+  }, [prospects]);
 
   const counts = useMemo(
-    () => ({ opps: overdueCallIns, renewals: renewalWork, 'targeted-services': serviceWork }),
-    [overdueCallIns, renewalWork, serviceWork],
+    () => ({
+      opps: overdueCallIns,
+      renewals: renewalWork,
+      'targeted-services': serviceWork,
+      'pe-intros': topPcIntros ? topPcIntros.length : null,
+    }),
+    [overdueCallIns, renewalWork, serviceWork, topPcIntros],
   );
 
   return (
@@ -261,6 +402,11 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null 
             : state === 'caught-up'
               ? (tracked ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
               : 'Nothing counts this step automatically — click once you\'ve worked it today';
+          // Two steps print their work under the detail line rather than
+          // only counting it — those rows are tall, so their right-hand
+          // cells sit at the top rather than floating in the middle.
+          const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
+            || (step.key === 'pe-intros' && topPcIntros?.length);
           return (
             <div
               key={step.key}
@@ -304,11 +450,21 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null 
                   {step.detail}
                 </div>
                 {step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
+                {step.key === 'pe-intros' && (
+                  <TopPcIntroList
+                    rows={topPcIntros}
+                    expanded={showAllTopPcs}
+                    onExpand={() => setShowAllTopPcs(v => !v)}
+                    onSelectProspect={onSelectProspect}
+                    byId={prospectById}
+                  />
+                )}
               </div>
               <StatusCell
                 state={state}
                 label={label}
                 title={title}
+                align={hasList ? 'flex-start' : 'center'}
                 onToggle={tracked ? null : () => setStepCaughtUp(step.key, !marked, today)}
               />
               {onNavigate && (
@@ -317,7 +473,7 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null 
                   onClick={() => onNavigate(step.view)}
                   title={`Open the ${step.viewLabel} tab`}
                   style={{
-                    width: ACTION_COL, flexShrink: 0, alignSelf: 'center',
+                    width: ACTION_COL, flexShrink: 0, alignSelf: hasList ? 'flex-start' : 'center',
                     padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',
                     border: `1px solid ${colors.ring}`, background: '#fff',
                     color: colors.badge, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
