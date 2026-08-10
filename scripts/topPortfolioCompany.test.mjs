@@ -69,20 +69,37 @@ eq(pickTopPortfolioCompany([pc('City Only', 50, 'Springfield', '')], new Map()),
 
 // ---- the status filter ------------------------------------------------------
 
-eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off'],
-  '"Not Sold" is the tracker\'s Lost - Not Sold');
+eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off', 'Client'],
+  'closed, parked and already-won are all out of the running');
 
 const PROSPECTS = [
   { company: 'Northwind Logistics', status: 'Lost - Not Sold' },
   { company: 'Acme Foods, Inc.', status: 'Hold Off' },
-  { company: 'Contoso Metals', status: 'Client' },
+  { company: 'Contoso Metals', status: 'Qualifying' },
 ];
 const statuses = buildStatusIndex(PROSPECTS);
 
 const filtered = pickTopPortfolioCompany(basic, statuses);
 eq(filtered.companyName, 'Contoso Metals', 'Not Sold and Hold Off are both passed over');
 eq(filtered.skippedStatus, 2, 'both are counted as status skips');
-eq(filtered.status, 'Client', 'the pick carries the status it was allowed on');
+eq(filtered.status, 'Qualifying', 'the pick carries the status it was allowed on');
+
+// A Client is already won — it belongs in the PC Clients column, not in
+// "who should I be working next".
+const withClient = buildStatusIndex([
+  ...PROSPECTS.filter(p => p.company !== 'Contoso Metals'),
+  { company: 'Contoso Metals', status: 'Client' },
+]);
+eq(pickTopPortfolioCompany(basic, withClient), null, 'a Client is passed over too');
+eq(pickTopPortfolioCompany([
+  ...basic,
+  pc('Riverbend Plastics', 30, 'Akron', 'United States'),
+], withClient).companyName, 'Riverbend Plastics',
+'…and the next company down takes the row');
+eq(pickTopPortfolioCompany([
+  ...basic,
+  pc('Riverbend Plastics', 30, 'Akron', 'United States'),
+], withClient).skippedStatus, 3, 'all three excluded statuses count as status skips');
 
 // A company with no prospect record has no status to fail — the filter
 // drops what we know is closed, not what we know nothing about.
@@ -154,14 +171,16 @@ const BOTH = buildStatusIndex([
 eq(lookupCompanyStatus(BOTH, 'Consolidated Precision Products')?.status, 'Client',
   'the record whose full name matches wins over an alternate');
 
-// When several records share one alternate key, a closed status wins —
-// the filter exists to stop parked companies being recommended.
+// When several records share one alternate key, an excluded status wins —
+// the filter exists to stop settled companies being recommended. (The
+// first record here is deliberately a status that ISN'T excluded, so the
+// rule is what decides rather than write order.)
 const CLASH = buildStatusIndex([
-  { company: 'Northwind Logistics (a Blackstone Co.)', status: 'Client' },
+  { company: 'Northwind Logistics (a Blackstone Co.)', status: 'Qualifying' },
   { company: 'Northwind Logistics (a Blue Owl Co.)', status: 'Hold Off' },
 ]);
 eq(lookupCompanyStatus(CLASH, 'Northwind Logistics')?.status, 'Hold Off',
-  'a clash on an alternate key resolves to the closed one');
+  'a clash on an alternate key resolves to the excluded one');
 
 // First writer wins, so a stale duplicate can't knock out a live record.
 eq(lookupCompanyStatus(buildStatusIndex([
@@ -217,7 +236,7 @@ const counted = pickTopPortfolioCompany([
   pc('Contoso Metals', 64, 'Chicago', 'United States'),      // the pick
 ], statuses);
 eq({ ...counted, hqCity: undefined, hqCountry: undefined, hqLocation: undefined }, {
-  companyName: 'Contoso Metals', score: 64, status: 'Client', statusCompany: '',
+  companyName: 'Contoso Metals', score: 64, status: 'Qualifying', statusCompany: '',
   hqCity: undefined, hqCountry: undefined, hqLocation: undefined,
   total: 5, eligible: 2, skippedRegion: 1, skippedStatus: 2, skippedNoScore: 1,
 }, 'the counts add up to the portfolio');
