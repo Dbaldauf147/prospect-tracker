@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { countOverdueCallIns } from '../../utils/oppsCallIn';
+import { RENEWAL_WARNING_DAYS } from '../../utils/clientIssues';
 import {
   categorizeStep,
   caughtUpSnapshot,
@@ -54,8 +55,10 @@ const PROSPECTING_STEPS = [
     view: 'clients',
     viewLabel: 'Clients',
     workLabel: n => `${n} to work`,
-    workTitle: n => `${n} client ${n === 1 ? 'renewal needs' : 'renewals need'} attention: expired, or renewing soon with no Renewal Status set`,
-    clearTitle: 'No client renewal is expired or waiting on a Renewal Status',
+    // Named the same way the Clients tab names its red rows, because they
+    // are the same rows.
+    workTitle: n => `${n} client${n === 1 ? '' : 's'} whose soonest contract expires within ${RENEWAL_WARNING_DAYS} days (or already has) with the Status column still blank`,
+    clearTitle: `No client with a contract expiring within ${RENEWAL_WARNING_DAYS} days is missing a Status`,
   },
   {
     key: 'targeted-services',
