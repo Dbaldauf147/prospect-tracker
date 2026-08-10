@@ -46,17 +46,90 @@ export function topPcCompanyKey(name) {
     .trim();
 }
 
-// company key → status, from the tracker's prospect records. Built once
-// per prospect list and shared across every firm's row.
-export function buildStatusByCompany(prospects) {
-  const map = new Map();
-  for (const p of (prospects || [])) {
-    const key = topPcCompanyKey(p?.company);
-    // First writer wins: a duplicate name shouldn't let an old dead record
-    // knock a live one out of the running.
-    if (key && p?.status && !map.has(key)) map.set(key, p.status);
+// …but the tracker writes a company's name three ways the mapped PC rows
+// generally don't, and a bare key match misses every one of them:
+//
+//   "CPP - Consolidated Precision Products"        acronym prefix
+//   "TowerBrook Capital Partners (a Blue Owl co.)" trailing parenthetical
+//   "Perform Properties fka ShopCore"              former name
+//
+// The parenthetical alone accounts for roughly one account name in ten, so
+// this isn't an edge case: without it, a company the user has marked Hold
+// Off keeps getting recommended, which is the exact opposite of what the
+// filter is for. Every key a name should be findable under, most specific
+// first — the full name always leads, so an exact match still wins.
+export function topPcCompanyKeys(name) {
+  const raw = String(name || '').trim();
+  const out = [];
+  const add = (v) => {
+    const k = topPcCompanyKey(v);
+    if (k && !out.includes(k)) out.push(k);
+  };
+  add(raw);
+
+  const noParen = raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (noParen && noParen !== raw) add(noParen);
+
+  for (const base of [raw, noParen]) {
+    if (!base) continue;
+    // A short leading token before a dash or colon is an acronym for what
+    // follows, not part of the name. Capped at 6 characters so a real
+    // first word ("Perform - …") isn't thrown away.
+    const acronym = base.match(/^[A-Za-z0-9&.]{1,6}\s*[-–—:|]\s+(\S.*)$/);
+    if (acronym) add(acronym[1]);
+    // Both sides of an fka/dba: the row may name either.
+    const aka = base.split(/\s+(?:fka|f\/k\/a|dba|d\/b\/a)\b\.?\s+/i);
+    if (aka.length > 1) aka.forEach(add);
   }
-  return map;
+  return out;
+}
+
+/**
+ * Company name → status, from the tracker's prospect records, built once
+ * per prospect list and shared across every firm's row.
+ *
+ * Two tiers, because the alternate keys above are looser than the full
+ * name and shouldn't be able to outrank it: `primary` holds full-name
+ * keys only, `alt` the rest. A lookup tries every primary before any alt.
+ */
+export function buildStatusIndex(prospects) {
+  const primary = new Map();
+  const alt = new Map();
+  for (const p of (prospects || [])) {
+    if (!p?.status) continue;
+    const entry = { status: p.status, company: String(p.company || '').trim() };
+    const [full, ...rest] = topPcCompanyKeys(p?.company);
+    // First writer wins on the full name: a duplicate shouldn't let an old
+    // dead record knock a live one out of the running.
+    if (full && !primary.has(full)) primary.set(full, entry);
+    for (const key of rest) {
+      const existing = alt.get(key);
+      // Where several records collapse onto one alternate key, a closed
+      // status wins. The cost of being wrong runs one way here: showing a
+      // company the user has already parked is the failure they asked this
+      // filter to prevent, and the tooltip names the record either way.
+      if (!existing || (!EXCLUDED.has(existing.status.toLowerCase())
+        && EXCLUDED.has(entry.status.toLowerCase()))) alt.set(key, entry);
+    }
+  }
+  return { primary, alt };
+}
+
+// The status for a PC row's company name, or null when nothing matches.
+// Returns the record it matched so callers can say WHICH one, which is the
+// difference between a surprising status and an explicable one.
+export function lookupCompanyStatus(index, companyName) {
+  if (!index) return null;
+  const keys = topPcCompanyKeys(companyName);
+  for (const key of keys) {
+    const hit = index.primary?.get(key);
+    if (hit) return hit;
+  }
+  for (const key of keys) {
+    const hit = index.alt?.get(key);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 // Where a mapped PC row says it's headquartered, as one string for
@@ -76,7 +149,7 @@ function hqLocationOf(row) {
  * The counts are for the tooltip — a single name with no sense of what it
  * was picked from invites "is that really the top one?".
  */
-export function pickTopPortfolioCompany(portfolioCompanies, statusByCompany) {
+export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
   const rows = Array.isArray(portfolioCompanies) ? portfolioCompanies : [];
   if (rows.length === 0) return null;
 
@@ -87,7 +160,6 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusByCompany) {
   const years = rows.map(r => Number(r?.acquisitionYear)).filter(y => y > 0);
   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
 
-  const statuses = statusByCompany || new Map();
   let best = null;
   let skippedRegion = 0, skippedStatus = 0, skippedNoScore = 0, eligible = 0;
 
@@ -98,7 +170,8 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusByCompany) {
     const hqLocation = hqLocationOf(row);
     if (classifyHqRegion(hqLocation) !== NORTH_AMERICA) { skippedRegion++; continue; }
 
-    const status = statuses.get(topPcCompanyKey(companyName)) || '';
+    const match = lookupCompanyStatus(statusIndex, companyName);
+    const status = match?.status || '';
     if (EXCLUDED.has(status.toLowerCase())) { skippedStatus++; continue; }
 
     eligible++;
@@ -110,7 +183,12 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusByCompany) {
 
     if (!best || score > best.score
       || (score === best.score && companyName.localeCompare(best.companyName) < 0)) {
-      best = { companyName, score, hqCity: row?.hqCity || '', hqCountry: row?.hqCountry || '', hqLocation, status };
+      best = {
+        companyName, score, hqCity: row?.hqCity || '', hqCountry: row?.hqCountry || '', hqLocation, status,
+        // The record the status came from, when it isn't the PC row's own
+        // name — so "why does this say Client?" has an answer on screen.
+        statusCompany: match?.company && match.company !== companyName ? match.company : '',
+      };
     }
   }
 
