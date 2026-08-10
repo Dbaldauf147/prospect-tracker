@@ -295,6 +295,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           My Accounts
         </button>
         <button
+          className={view === 'prospecting' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('prospecting')}
+        >
+          <span className={styles.navIcon}>&#127919;</span>
+          Prospecting
+        </button>
+        <button
           className={view === 'lists' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('lists')}
         >

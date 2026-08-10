@@ -48,6 +48,7 @@ const OppsView = lazyView(() => import('./components/OppsView/OppsView').then(m 
 const OppsView2 = lazyView(() => import('./components/OppsView2/OppsView2').then(m => ({ default: m.OppsView2 })));
 const PEPortfolioView = lazyView(() => import('./components/PEPortfolioView/PEPortfolioView').then(m => ({ default: m.PEPortfolioView })));
 const PricingView = lazyView(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
+const ProspectingView = lazyView(() => import('./components/ProspectingView/ProspectingView').then(m => ({ default: m.ProspectingView })));
 const ProspectModal = lazyView(() => import('./components/ProspectModal/ProspectModal').then(m => ({ default: m.ProspectModal })));
 const TableView = lazyView(() => import('./components/TableView/TableView').then(m => ({ default: m.TableView })));
 const UploadedListView = lazyView(() => import('./components/UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
@@ -442,6 +443,8 @@ function App() {
             />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
+          ) : view === 'prospecting' ? (
+            <ProspectingView onNavigate={setView} />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
