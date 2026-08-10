@@ -12,8 +12,9 @@ import { DraftEmailView } from './DraftEmailView';
 import { EmailCampaignView } from '../EmailCampaignView/EmailCampaignView';
 import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
 import { SiteListOverview } from './SiteListOverview';
+import { DansDraftsView } from './DansDraftsView';
 
-const TABS = ['drafts', 'campaigns', 'tracking', 'sitelists'];
+const TABS = ['drafts', 'dansdrafts', 'campaigns', 'tracking', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -49,12 +50,16 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, initialTa
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', marginBottom: '0.75rem' }}>
         {tabBtn('drafts', 'Drafts')}
+        {tabBtn('dansdrafts', "Dan's Drafts")}
         {tabBtn('campaigns', 'Email Campaigns')}
         {tabBtn('tracking', 'Email Tracking')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
         <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+      )}
+      {tab === 'dansdrafts' && (
+        <DansDraftsView settings={settings} updateSettings={updateSettings} />
       )}
       {tab === 'campaigns' && (
         <EmailCampaignView
