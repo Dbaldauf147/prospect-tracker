@@ -127,7 +127,7 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 const NO_DIVISION = '__no-division__';
 
 // Does a derived row fall inside the active division scope? '' scopes to
-// everything. Shared by the analysis set and the excluded-site tally so
+// everything. Shared by the analysis set and the unestimated-site tally so
 // the count next to the site total can't disagree with the table.
 function rowInDivision(row, divisionFilter) {
   if (!divisionFilter) return true;
@@ -480,8 +480,8 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
     return seed;
   });
   const chosen = Object.values(draft).filter(Boolean).length;
-  // Types marked N/A, and how many sites that drops — the consequence is worth
-  // stating before the mapping is applied.
+  // Types marked N/A, and how many sites carry them — the consequence is
+  // worth stating before the mapping is applied.
   const excludedKeys = items.filter(it => draft[it.key] === PROPERTY_TYPE_EXCLUDED);
   const excludedSiteCount = excludedKeys.reduce((n, it) => n + (it.count || 0), 0);
   // Rows still without a target, judged against the draft so the copy
@@ -522,10 +522,11 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
             )}
             {items.length > 0 && (
               <div style={{ marginTop: '0.35rem' }}>
-                Pick <strong>{PROPERTY_TYPE_EXCLUDED_LABEL}</strong> for anything that isn&apos;t a building you
-                analyse: parking lots, ATMs, cell towers. Those sites drop out of the site count,
-                the spend and account estimates, and the compliance and procurement screening. They
-                stay in your file, so you can map them back at any time.
+                Pick <strong>{PROPERTY_TYPE_EXCLUDED_LABEL}</strong> for anything with no usage worth
+                modelling: parking lots, ATMs, cell towers. Those sites still count, still screen for
+                compliance and still appear in every export — they just carry no estimated
+                electricity or gas, so they add nothing to the spend and savings figures. Any usage
+                your own file supplies for them is still used.
               </div>
             )}
           </div>
@@ -553,10 +554,10 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
               {items.map((it) => (
                 <tr key={it.key}>
                   <td style={{ padding: '0.4rem 0.5rem 0.4rem 0', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
-                    <div style={{ fontWeight: 600, color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#94A3B8' : '#1E293B', wordBreak: 'break-word', textDecoration: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? 'line-through' : 'none' }}>{it.raw}</div>
+                    <div style={{ fontWeight: 600, color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#94A3B8' : '#1E293B', wordBreak: 'break-word' }}>{it.raw}</div>
                     <div style={{ fontSize: '0.68rem', color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#B45309' : '#94A3B8' }}>
                       {it.count} {it.count === 1 ? 'site' : 'sites'}
-                      {draft[it.key] === PROPERTY_TYPE_EXCLUDED ? ' · excluded from the analysis' : ''}
+                      {draft[it.key] === PROPERTY_TYPE_EXCLUDED ? ' · no usage estimated' : ''}
                     </div>
                   </td>
                   <td style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
@@ -590,7 +591,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
             {excludedKeys.length > 0 && (
               <span style={{ color: '#B45309', fontWeight: 600 }}>
                 {' · '}{excludedKeys.length} marked N/A
-                {excludedSiteCount > 0 ? ` (${excludedSiteCount.toLocaleString()} site${excludedSiteCount === 1 ? '' : 's'} excluded)` : ''}
+                {excludedSiteCount > 0 ? ` (${excludedSiteCount.toLocaleString()} site${excludedSiteCount === 1 ? '' : 's'} left unestimated)` : ''}
               </span>
             )}
           </span>
@@ -2040,10 +2041,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     [zipFallback]
   );
 
-  // Every site in the file, derived. `rows` below is this minus the ones a
-  // property-type mapping marked N/A — keep both so the mapping modal can
-  // still count what it excluded and the round-trip export can still carry
-  // those rows out.
+  // Every site in the file, derived. `rows` below is this narrowed to the
+  // active division — the two differ only by that scope, since a property
+  // type mapped to N/A now withholds the usage estimate rather than
+  // removing the site.
   const allRows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
       const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
@@ -2414,27 +2415,31 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
-  // The analysis set: every derived site except those whose property type was
-  // mapped to N/A. Defining it here means the whole page — counts, spend, the
-  // compliance screening, the indicative-savings maths and every export built
-  // from `rows` — drops them without each consumer having to remember to.
-  // The Division scope narrows the same set, so every consumer of `rows`
-  // — the table, the stats, all four other tabs and every export — sees
-  // one division without any of them having to know the filter exists.
+  // The analysis set. The Division scope narrows it, so every consumer of
+  // `rows` — the table, the stats, all four other tabs and every export —
+  // sees one division without any of them having to know the filter exists.
+  //
+  // Sites whose property type was mapped to N/A used to be dropped here,
+  // which took them out of the site count, the compliance screening and
+  // every export — a site in the portfolio vanishing from the Master
+  // Analysis. An N/A mapping says the type gives no basis for modelling
+  // usage, not that the building isn't there. It already means that on its
+  // own: the mapping resolves to no canonical property type, and the
+  // consumption estimate is keyed off exactly that, so these rows carry no
+  // estimated kWh / therms wherever they appear. Nothing else needed
+  // suppressing.
   const rows = useMemo(
-    () => allRows.filter(r => !r.__excludedType__ && rowInDivision(r, divisionFilter)),
+    () => allRows.filter(r => rowInDivision(r, divisionFilter)),
     [allRows, divisionFilter],
   );
 
   // Every division present in the upload, with its site count. Built from
   // allRows rather than `rows` so choosing one doesn't collapse the list
-  // to the choice just made. N/A-excluded sites are left out so the counts
-  // here match what the page would actually show.
+  // to the choice just made.
   const divisionOptions = useMemo(() => {
     const counts = new Map();
     let blank = 0;
     for (const r of allRows) {
-      if (r.__excludedType__) continue;
       const d = String(r.__division__ || '').trim();
       if (!d) { blank++; continue; }
       counts.set(d, (counts.get(d) || 0) + 1);
@@ -2483,7 +2488,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     [rows],
   );
 
-  const excludedSites = useMemo(() => {
+  // Sites whose property type is mapped to N/A. They're in the analysis set
+  // like any other site; what they don't get is a modelled consumption
+  // figure, since the estimate is keyed off a canonical property type and
+  // N/A resolves to none. Counted so the headline can say which sites are
+  // carrying no usage number and why.
+  const unestimatedSites = useMemo(() => {
     const byType = new Map();
     for (const r of allRows) {
       if (!r.__excludedType__) continue;
@@ -2500,8 +2510,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
   // Sorted by how many sites carry each value so the biggest wins are
-  // at the top. Read from `allRows`: a type mapped to N/A is a decision, not
-  // an unresolved value, and its sites are gone from `rows`.
+  // at the top. A type mapped to N/A is skipped: that's a decision already
+  // taken, not a value still waiting to be resolved.
   const unmappedPropertyTypes = useMemo(() => {
     const counts = new Map();
     for (const r of allRows) {
@@ -12475,11 +12485,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // fuzzy-match canonicalization, zip-derived state, rates-file utility
       // lookups. Keep the raw source values for every other column.
       //
-      // `allRows`, not `rows`: sites excluded by an N/A property-type mapping
-      // still belong in the Site List tab. The mapping rides along in the
-      // round-trip state below and re-excludes them on import, so carrying the
-      // rows costs nothing and keeps the decision reversible — dropping them
-      // would make it permanent the moment the analysis is saved.
+      // `allRows`, not `rows`: the Site List tab carries the whole uploaded
+      // file, not just whichever division is in scope on screen. The mapping
+      // rides along in the round-trip state below, so an import restores the
+      // same view rather than inheriting whatever scope the export was taken
+      // under.
       const enrichedRows = allRows.map(r => {
         const out = {};
         for (const h of sourceHeaders) out[h] = r[h];
@@ -13599,16 +13609,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             <div className={styles.subtitle}>
             {rows.length} {rows.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
-            {/* Sites an N/A property-type mapping took out. Named, with the
-                types behind them, so a headline count smaller than the file
-                reads as a decision rather than a lost upload. */}
-            {excludedSites.total > 0 && (
+            {/* Sites an N/A property-type mapping leaves without a modelled
+                usage figure. They're counted in the headline and carried
+                through every export; this says which ones are contributing
+                no consumption, and why. */}
+            {unestimatedSites.total > 0 && (
               <span
                 style={{ color: '#B45309' }}
-                title={`Excluded by property type: ${excludedSites.byType.map(t => `${t.raw} (${t.count})`).join(', ')}`}
+                title={`No consumption estimated for these property types (they're still included everywhere): ${unestimatedSites.byType.map(t => `${t.raw} (${t.count})`).join(', ')}`}
               >
-                {' '}({excludedSites.total.toLocaleString()} excluded as N/A: {excludedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
-                {excludedSites.byType.length > 3 ? ` +${excludedSites.byType.length - 3} more` : ''})
+                {' '}(incl. {unestimatedSites.total.toLocaleString()} not estimated — N/A: {unestimatedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
+                {unestimatedSites.byType.length > 3 ? ` +${unestimatedSites.byType.length - 3} more` : ''})
               </span>
             )}
             {/* Contract prices quoted in a unit nothing converts. Sits in the

@@ -110,14 +110,23 @@ export const ACCOUNT_ESTIMATES = {
 export const PROPERTY_TYPE_OPTIONS = Object.keys(CONSUMPTION_ESTIMATES);
 
 // Sentinel target for the property-type mapping: rather than pointing a
-// source value at one of the canonical types, mark it as not-a-building so
-// every site carrying it drops out of the analysis. Parking lots, ATMs,
-// cell towers and the like have no meaningful consumption, compliance
-// obligation or procurement opportunity, and counting them inflates every
-// figure on the page. Stored as a mapping value, so it round-trips with the
-// rest of the mapping and can be undone from the same dropdown.
+// source value at one of the canonical types, mark it as a type with no
+// usage worth modelling. Parking lots, ATMs, cell towers and the like have
+// no representative consumption, so estimating one from their square
+// footage would invent spend that isn't there.
+//
+// It suppresses the estimate and nothing else. Sites carrying it stay in the
+// site count, the compliance screening and every export — they're part of
+// the portfolio whether or not this page can model their usage, and dropping
+// them meant a building in the file going missing from the Master Analysis.
+// Consumption the user's own file supplies is still used; only the modelled
+// fallback is withheld, because the estimate is keyed off a canonical
+// property type and this resolves to none.
+//
+// Stored as a mapping value, so it round-trips with the rest of the mapping
+// and can be undone from the same dropdown.
 export const PROPERTY_TYPE_EXCLUDED = '__excluded__';
-export const PROPERTY_TYPE_EXCLUDED_LABEL = 'N/A: exclude these sites';
+export const PROPERTY_TYPE_EXCLUDED_LABEL = "N/A: don't estimate usage";
 
 // Common alternate spellings the user's sheets carry. Normalized
 // against a punctuation-light, case-folded key so "Office High Rise",
