@@ -326,10 +326,38 @@ function getAnalysisCol(prospectId) {
 // small field/metadata overhead.
 const ANALYSIS_CHUNK_SIZE = 900_000;
 
-const analysisChunkIndex = (id) => {
-  const m = /^chunk-(\d+)$/.exec(id);
-  return m ? Number(m[1]) : null;
+// Chunk doc ids carry the generation that wrote them: `chunk-<gen>-<i>`.
+//
+// They used to be plain `chunk-<i>`, which meant a save that died partway
+// left the collection holding a mix of two workbooks — the chunks it managed
+// to overwrite, and the older ones it didn't reach. The `main` doc still
+// pointed at the previous chunkCount, so the next read reassembled across
+// that seam and produced base64 that decoded to a broken zip. The symptom
+// was a error from deep inside the xlsx reader ("Bad compressed size:
+// 5714 != 6246") with nothing to connect it back to a half-finished upload.
+//
+// Generation-stamped ids make a partial save inert instead: its chunks are
+// under an id no `main` references, so readers keep seeing the last complete
+// workbook until a save finishes and swings `main` over to the new
+// generation. The stale ones are pruned on the next successful save.
+const newAnalysisGen = () => {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID().slice(0, 8);
+  } catch { /* fall through to the timestamp form */ }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 };
+
+const analysisChunkId = (gen, i) => (gen ? `chunk-${gen}-${i}` : `chunk-${i}`);
+
+// True for any doc id that is a payload chunk, of any generation — what
+// pruning needs in order to recognise the docs it may delete. `main` and
+// anything else in the collection are left alone.
+const isAnalysisChunkId = (id) => /^chunk-(?:[a-z0-9-]+-)?\d+$/i.test(String(id || ''));
+
+// Base64 length for a payload of `sizeBytes`: 4 characters per 3 bytes,
+// padded up. Lets a read check the reassembled string against the size the
+// writer recorded without decoding it first.
+const base64LenForBytes = (sizeBytes) => Math.ceil(Number(sizeBytes || 0) / 3) * 4;
 
 // Persist an Indicative Savings XLSX (base64) against a prospect. The
 // payload is split across sibling `chunk-<i>` docs in the analyses
@@ -340,27 +368,38 @@ const analysisChunkIndex = (id) => {
 export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64, sizeBytes }) {
   const col = getAnalysisCol(prospectId);
   const data = String(dataBase64 || '');
+  const gen = newAnalysisGen();
   const chunks = [];
   for (let i = 0; i < data.length; i += ANALYSIS_CHUNK_SIZE) {
     chunks.push(data.slice(i, i + ANALYSIS_CHUNK_SIZE));
   }
-  // Learn what's already stored so a shrinking save doesn't leave stale
-  // tail chunks behind that a reader would reassemble into corrupt data.
+  // Learn what's already stored so the previous generation's chunks can be
+  // pruned once this one is live.
   const existing = await getDocs(col);
   // Write every chunk first, then the `main` metadata doc LAST, so a live
-  // subscriber only reassembles once all referenced chunks exist.
-  await Promise.all(chunks.map((c, i) => setDoc(doc(col, `chunk-${i}`), { i, data: c })));
-  await Promise.all(existing.docs
-    .filter((d) => { const idx = analysisChunkIndex(d.id); return idx != null && idx >= chunks.length; })
-    .map((d) => deleteDoc(d.ref)));
+  // subscriber only reassembles once all referenced chunks exist. Under a
+  // fresh generation, so nothing here touches the docs the current `main`
+  // points at — if any of these writes fails, the previous analysis is
+  // still whole and still what readers get.
+  await Promise.all(chunks.map((c, i) => setDoc(doc(col, analysisChunkId(gen, i)), { i, gen, data: c })));
   // setDoc without merge so any legacy inline `dataBase64` on the main doc
   // is dropped when re-saving over an older single-doc analysis.
   await setDoc(doc(col, ANALYSIS_DOC_ID), {
     fileName,
     sizeBytes,
     chunkCount: chunks.length,
+    gen,
     capturedAt: serverTimestamp(),
   });
+  // Only now that `main` names the new generation is the old one
+  // unreferenced. Best-effort: a failure here wastes storage but leaves the
+  // analysis readable, so it must not fail the save.
+  const stale = existing.docs.filter((d) => isAnalysisChunkId(d.id));
+  if (stale.length) {
+    await Promise.all(stale.map((d) => deleteDoc(d.ref))).catch((err) => {
+      console.warn('Analysis chunk cleanup failed (old chunks left behind):', err);
+    });
+  }
 }
 
 // Metadata-only read of a saved analysis: fetches just the `main` doc and
@@ -400,13 +439,41 @@ export async function loadIndicativeAnalysis(prospectId) {
   if (typeof meta.dataBase64 === 'string') return { ...base, dataBase64: meta.dataBase64 };
   const chunkCount = Number(meta.chunkCount) || 0;
   if (chunkCount === 0) return { ...base, dataBase64: '' };
+  // Analyses written before generations are stored under plain `chunk-<i>`.
+  const gen = typeof meta.gen === 'string' ? meta.gen : '';
   const all = await getDocs(col);
-  const parts = new Array(chunkCount).fill('');
-  all.forEach((d) => {
-    const idx = analysisChunkIndex(d.id);
-    if (idx != null && idx >= 0 && idx < chunkCount) parts[idx] = d.data()?.data || '';
-  });
-  return { ...base, dataBase64: parts.join('') };
+  const byId = new Map();
+  all.forEach((d) => { byId.set(d.id, d.data()?.data || ''); });
+  const parts = new Array(chunkCount);
+  const missing = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const part = byId.get(analysisChunkId(gen, i));
+    if (!part) missing.push(i + 1);
+    parts[i] = part || '';
+  }
+  // A gap used to join into a shorter string and reach the xlsx reader as a
+  // truncated zip, which failed with a byte-count mismatch that said nothing
+  // about the real problem. Name it here instead.
+  if (missing.length) {
+    throw new Error(
+      `This company's saved analysis is incomplete — ${missing.length} of its ${chunkCount} parts `
+      + `${missing.length === 1 ? 'is' : 'are'} missing (${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}). `
+      + 'Re-save it from the Utility Lookup page to replace it.',
+    );
+  }
+  const dataBase64 = parts.join('');
+  // Every part present but the total is the wrong length: the stored parts
+  // don't add up to the workbook the writer recorded, so decoding would
+  // again fail somewhere unhelpful.
+  const expected = base64LenForBytes(base.sizeBytes);
+  if (base.sizeBytes > 0 && dataBase64.length !== expected) {
+    throw new Error(
+      `This company's saved analysis is corrupt — it reassembled to ${dataBase64.length} characters `
+      + `where ${expected} were expected for a ${base.sizeBytes}-byte workbook. `
+      + 'Re-save it from the Utility Lookup page to replace it.',
+    );
+  }
+  return { ...base, dataBase64 };
 }
 
 // Live metadata for a prospect's saved analysis — { fileName, sizeBytes,

@@ -4983,7 +4983,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setTimeout(() => setImportStatus({ state: 'idle', message: '' }), 5000);
     } catch (err) {
       console.error('Import saved analysis failed:', err);
-      setImportStatus({ state: 'error', message: err?.message || 'Import failed.' });
+      // A workbook that reassembled to the right length but wrong bytes gets
+      // as far as the xlsx reader and dies inside the zip parser, with a
+      // message about byte counts that gives the user nothing to act on.
+      // Say what it means and what fixes it.
+      const raw = String(err?.message || '');
+      const unreadableZip = /Bad (compressed|uncompressed) size|Bad CRC32|Unsupported ZIP|end of central directory|Corrupted zip|Cannot find file/i.test(raw);
+      setImportStatus({
+        state: 'error',
+        message: unreadableZip
+          ? `${label}'s saved analysis is damaged and can't be read (${raw}). Re-save it from this page to replace it.`
+          : (raw || 'Import failed.'),
+      });
     }
   }
 
