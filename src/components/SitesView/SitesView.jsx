@@ -33,7 +33,8 @@ import {
 } from '../../utils/utilityRates';
 import { isCaliforniaSite } from '../../utils/siteRegion';
 import { mergeIntoSiteList } from '../../utils/siteListMerge';
-import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
+import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
+import { salvageWorkbook, looksLikeZipDamage, describeLostEntries } from '../../utils/salvageWorkbook';
 import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
 import { BuildingComplianceScreening } from './BuildingComplianceScreening';
 import { ComplianceRoadmap } from './ComplianceRoadmap';
@@ -4930,14 +4931,35 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const binary = atob(saved.dataBase64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const rt = readRoundTripState(bytes);
-      const sheets = parseAllSheets(bytes).map(s => ({
+      const toSheets = (buf) => parseAllSheets(buf).map(s => ({
         sheetName: s.sheetName,
         rows: s.rows,
         headers: s.headers,
         mapping: detectSitesMapping(s.headers),
         isMerged: false,
       }));
+      let rt, sheets;
+      // Damage confined to one sheet's zip entry makes the strict reader
+      // refuse the whole workbook, even when the Site List is untouched.
+      // Rebuild from the entries that still decompress and read that.
+      let salvageNote = '';
+      try {
+        rt = readRoundTripState(bytes);
+        sheets = toSheets(bytes);
+      } catch (parseErr) {
+        if (!looksLikeZipDamage(parseErr)) throw parseErr;
+        setImportStatus({ state: 'loading', message: `${label}'s analysis is damaged — trying to recover it…` });
+        const { bytes: repaired, lost } = await salvageWorkbook(bytes);
+        rt = readRoundTripState(repaired);
+        sheets = toSheets(repaired);
+        // Names off the rebuilt workbook, not the parsed sheets: a lost
+        // sheet is absent from the latter, so indexing it would name the
+        // wrong tab.
+        const names = describeLostEntries(lost, readSheetNames(repaired));
+        salvageNote = names.length
+          ? ` Recovered from a damaged file — ${names.join(', ')} could not be read.`
+          : ' Recovered from a damaged file.';
+      }
       const siteListIdx = sheets.findIndex(s => s.sheetName === 'Site List');
       if (siteListIdx < 0) {
         // Pre-round-trip analysis. Hand the workbook to the mapping modal
@@ -4978,9 +5000,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const n = siteList.rows.length;
       setImportStatus({
         state: 'success',
-        message: `Imported ${n} site${n === 1 ? '' : 's'} from ${label}'s Master Analysis.`,
+        message: `Imported ${n} site${n === 1 ? '' : 's'} from ${label}'s Master Analysis.${salvageNote}`,
       });
-      setTimeout(() => setImportStatus({ state: 'idle', message: '' }), 5000);
+      // A salvaged import leaves the user a decision to make (re-save to
+      // replace the damaged copy), so hold that message rather than
+      // clearing it out from under them.
+      if (!salvageNote) setTimeout(() => setImportStatus({ state: 'idle', message: '' }), 5000);
     } catch (err) {
       console.error('Import saved analysis failed:', err);
       // A workbook that reassembled to the right length but wrong bytes gets
@@ -4992,7 +5017,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setImportStatus({
         state: 'error',
         message: unreadableZip
-          ? `${label}'s saved analysis is damaged and can't be read (${raw}). Re-save it from this page to replace it.`
+          ? `${label}'s saved analysis is damaged past recovery (${raw}). Download it from the company popup and try opening it in Excel, which can often repair a file this page can't, then upload the result here as a sites file.`
           : (raw || 'Import failed.'),
       });
     }
