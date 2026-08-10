@@ -11,7 +11,7 @@ import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
-import { pickTopPortfolioCompany, buildStatusByCompany, topPcCompanyKey, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
+import { pickTopPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
@@ -872,18 +872,30 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   // over every prospect rather than per firm: the mapped PC rows carry no
   // status of their own, so it comes off the tracker record that shares
   // the company's name.
-  const statusByCompany = useMemo(() => buildStatusByCompany(prospects), [prospects]);
+  const statusByCompany = useMemo(() => buildStatusIndex(prospects), [prospects]);
 
   // Same keying, but back to the whole record, so clicking a Top PC opens
-  // it in the Table View when the company is tracked.
+  // it in the Table View when the company is tracked. Indexed under every
+  // alternate name too, so the link follows the same join the status does
+  // — otherwise a company could show a status and still not be clickable.
   const prospectByPcKey = useMemo(() => {
     const m = new Map();
     for (const p of prospects) {
-      const k = topPcCompanyKey(p?.company);
-      if (k && !m.has(k)) m.set(k, p);
+      for (const k of topPcCompanyKeys(p?.company)) {
+        if (!m.has(k)) m.set(k, p);
+      }
     }
     return m;
   }, [prospects]);
+
+  // The record a Top PC links to, under the same alternate-name rules.
+  const prospectForPc = useCallback((name) => {
+    for (const k of topPcCompanyKeys(name)) {
+      const hit = prospectByPcKey.get(k);
+      if (hit) return hit;
+    }
+    return null;
+  }, [prospectByPcKey]);
 
   const stageStatsByFirm = useMemo(() => {
     const out = new Map();
@@ -1578,7 +1590,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             >-</div>
                           );
                         }
-                        const match = prospectByPcKey.get(topPcCompanyKey(top.companyName));
+                        const match = prospectForPc(top.companyName);
                         const skipped = [
                           top.skippedRegion ? `${top.skippedRegion} outside North America` : '',
                           top.skippedStatus ? `${top.skippedStatus} ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` : '',
@@ -1590,7 +1602,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             title={[
                               `${top.companyName} — Opportunity Score ${top.score}`,
                               top.hqLocation ? `HQ: ${top.hqLocation}` : '',
-                              top.status ? `Status: ${top.status}` : 'Not tracked as its own prospect',
+                              top.status
+                                ? `Status: ${top.status}${top.statusCompany ? ` (from "${top.statusCompany}")` : ''}`
+                                : 'Not tracked as its own prospect',
                               `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
                               skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
                               match ? 'Click to open it in the Table View.' : '',
@@ -1634,7 +1648,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                           <div
                             style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
                             title={top.status
-                              ? `${top.companyName} is set to "${top.status}" in the Table View`
+                              ? `${top.statusCompany || top.companyName} is set to "${top.status}" in the Table View${top.statusCompany ? `, matched to this row's "${top.companyName}"` : ''}`
                               : `${top.companyName} has no prospect record of its own, so it carries no status`}
                           >
                             <span

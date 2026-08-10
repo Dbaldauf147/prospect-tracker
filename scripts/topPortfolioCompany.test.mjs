@@ -13,8 +13,10 @@
 //     where nothing else is scored either.
 import {
   pickTopPortfolioCompany,
-  buildStatusByCompany,
+  buildStatusIndex,
+  lookupCompanyStatus,
   topPcCompanyKey,
+  topPcCompanyKeys,
   TOP_PC_EXCLUDED_STATUSES,
 } from '../src/utils/topPortfolioCompany.js';
 import { computePortfolioFitScore } from '../src/utils/portfolioCompaniesWorkbook.js';
@@ -75,7 +77,7 @@ const PROSPECTS = [
   { company: 'Acme Foods, Inc.', status: 'Hold Off' },
   { company: 'Contoso Metals', status: 'Client' },
 ];
-const statuses = buildStatusByCompany(PROSPECTS);
+const statuses = buildStatusIndex(PROSPECTS);
 
 const filtered = pickTopPortfolioCompany(basic, statuses);
 eq(filtered.companyName, 'Contoso Metals', 'Not Sold and Hold Off are both passed over');
@@ -103,11 +105,69 @@ eq(topPcCompanyKey('Acme Foods') === topPcCompanyKey('Acme Foods Manufacturing')
 eq(pickTopPortfolioCompany([pc('Acme Foods Manufacturing', 71, 'Dallas', 'United States')], statuses)?.companyName,
   'Acme Foods Manufacturing', 'a near-name does not inherit another company\'s Hold Off');
 
+// ---- the names the tracker actually uses ------------------------------------
+//
+// Three shapes the mapped PC rows generally don't carry. Each one used to
+// read as "not tracked", so the status filter never saw the record and the
+// column kept recommending a company the user had closed off.
+
+eq(topPcCompanyKeys('CPP - Consolidated Precision Products').includes(
+  topPcCompanyKey('Consolidated Precision Products')), true,
+'an acronym prefix is an alternate name, not part of it');
+eq(topPcCompanyKeys('TowerBrook Capital Partners (a Blue Owl co.)').includes(
+  topPcCompanyKey('TowerBrook Capital Partners')), true,
+'a trailing parenthetical falls away');
+eq(topPcCompanyKeys('Perform Properties fka ShopCore').includes(
+  topPcCompanyKey('ShopCore')), true, 'a former name is findable too');
+eq(topPcCompanyKeys('Acme Foods')[0], topPcCompanyKey('Acme Foods'),
+  'the full name always leads, so an exact match still wins');
+
+// A leading word long enough to be a real one is left alone.
+eq(topPcCompanyKeys('Perform - Properties').includes(topPcCompanyKey('Properties')), false,
+  'a 7-letter first word is not treated as an acronym');
+
+const REAL_NAMES = buildStatusIndex([
+  { company: 'CPP - Consolidated Precision Products', status: 'Hold Off' },
+  { company: 'TowerBrook Capital Partners (a Blue Owl co.)', status: 'Lost - Not Sold' },
+  { company: 'Perform Properties fka ShopCore', status: 'Client' },
+]);
+eq(lookupCompanyStatus(REAL_NAMES, 'Consolidated Precision Products')?.status, 'Hold Off',
+  'the reported case: the Hold Off is found');
+eq(lookupCompanyStatus(REAL_NAMES, 'Consolidated Precision Products')?.company,
+  'CPP - Consolidated Precision Products', 'and names the record it matched');
+eq(lookupCompanyStatus(REAL_NAMES, 'TowerBrook Capital Partners')?.status, 'Lost - Not Sold',
+  'a parenthetical suffix no longer hides a Not Sold');
+eq(lookupCompanyStatus(REAL_NAMES, 'ShopCore')?.status, 'Client', 'a former name resolves');
+eq(lookupCompanyStatus(REAL_NAMES, 'Contoso Metals'), null, 'an unrelated name still matches nothing');
+
+// The reported row, end to end.
+eq(pickTopPortfolioCompany(
+  [pc('Consolidated Precision Products', 65, 'Cleveland', 'United States'),
+    pc('Summit Rail', 40, 'Boston', 'United States')], REAL_NAMES).companyName,
+'Summit Rail', 'the parked company is passed over for the next one down');
+
+// An exact full-name record outranks another record's alternate key.
+const BOTH = buildStatusIndex([
+  { company: 'CPP - Consolidated Precision Products', status: 'Hold Off' },
+  { company: 'Consolidated Precision Products', status: 'Client' },
+]);
+eq(lookupCompanyStatus(BOTH, 'Consolidated Precision Products')?.status, 'Client',
+  'the record whose full name matches wins over an alternate');
+
+// When several records share one alternate key, a closed status wins —
+// the filter exists to stop parked companies being recommended.
+const CLASH = buildStatusIndex([
+  { company: 'Northwind Logistics (a Blackstone Co.)', status: 'Client' },
+  { company: 'Northwind Logistics (a Blue Owl Co.)', status: 'Hold Off' },
+]);
+eq(lookupCompanyStatus(CLASH, 'Northwind Logistics')?.status, 'Hold Off',
+  'a clash on an alternate key resolves to the closed one');
+
 // First writer wins, so a stale duplicate can't knock out a live record.
-eq(buildStatusByCompany([
+eq(lookupCompanyStatus(buildStatusIndex([
   { company: 'Acme Foods', status: 'Client' },
   { company: 'Acme Foods', status: 'Hold Off' },
-]).get(topPcCompanyKey('Acme Foods')), 'Client', 'the first record for a name wins');
+]), 'Acme Foods')?.status, 'Client', 'the first record for a name wins');
 
 // ---- unscored rows ----------------------------------------------------------
 
@@ -157,7 +217,7 @@ const counted = pickTopPortfolioCompany([
   pc('Contoso Metals', 64, 'Chicago', 'United States'),      // the pick
 ], statuses);
 eq({ ...counted, hqCity: undefined, hqCountry: undefined, hqLocation: undefined }, {
-  companyName: 'Contoso Metals', score: 64, status: 'Client',
+  companyName: 'Contoso Metals', score: 64, status: 'Client', statusCompany: '',
   hqCity: undefined, hqCountry: undefined, hqLocation: undefined,
   total: 5, eligible: 2, skippedRegion: 1, skippedStatus: 2, skippedNoScore: 1,
 }, 'the counts add up to the portfolio');
