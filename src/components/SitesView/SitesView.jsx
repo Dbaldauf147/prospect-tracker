@@ -126,6 +126,33 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 // case this stands for, and any other value is the division's own text.
 const NO_DIVISION = '__no-division__';
 
+// Which North American country a derived row belongs to, for the NAM sheet
+// and its map.
+//
+// A blank Country column reads as the US (or Canada) when the row's state
+// code is one. Everything upstream already treats a blank country that way:
+// the state code is only derived at all for the US / Puerto Rico / Canada,
+// so a row that HAS one has already been judged North American. Requiring
+// the column to be filled in here meant a portfolio that never mapped
+// Country — or mapped it and left cells blank — lost those sites off the
+// NAM tab while the rest of the page counted them, so the sheet's total came
+// up short of the site count with nothing on the sheet to explain the gap.
+//
+// A row with a genuine non-NA country is still out: the check only rescues
+// rows whose country is absent, never one that says Spain.
+function naScopeOf(row) {
+  const rawCountry = String(row?.__country__ || '').trim();
+  const country = normalizeCountryName(rawCountry) || rawCountry;
+  const stateCode = String(row?.__state__ || '').trim().toUpperCase();
+  let isUS = /^(united states|usa|us)$/i.test(country);
+  let isCA = /^(canada|ca)$/i.test(country);
+  if (!isUS && !isCA && !rawCountry && stateCode) {
+    if (US_STATE_CENTERS[stateCode]) isUS = true;
+    else if (CANADA_PROVINCE_CENTERS[stateCode]) isCA = true;
+  }
+  return { country, stateCode, isUS, isCA, isNA: isUS || isCA };
+}
+
 // Does a derived row fall inside the active division scope? '' scopes to
 // everything. Shared by the analysis set and the unestimated-site tally so
 // the count next to the site total can't disagree with the table.
@@ -6635,12 +6662,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // sheet, so dropping them here keeps this view focused.
       const buckets = new Map();
       for (const r of rows) {
-        const rawCountry = String(r.__country__ || '').trim();
-        const country = normalizeCountryName(rawCountry) || rawCountry;
-        const stateCode = String(r.__state__ || '').trim().toUpperCase();
-        const isUS = /^(united states|usa|us)$/i.test(country);
-        const isCA = /^(canada|ca)$/i.test(country);
-        if (!isUS && !isCA) continue;
+        const { stateCode, isUS, isCA, isNA } = naScopeOf(r);
+        if (!isNA) continue;
         let key, location, elecTier, gasTier, label;
         if (isUS && US_STATE_CENTERS[stateCode]) {
           key = `US/${stateCode}`;
@@ -6694,12 +6717,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Per-state aggregation for the breakdown table at the bottom.
       const stateAggs = new Map();
       for (const r of rows) {
-        const rawCountry = String(r.__country__ || '').trim();
-        const country = normalizeCountryName(rawCountry) || rawCountry;
-        const stateCode = String(r.__state__ || '').trim().toUpperCase();
-        const isUS = /^(united states|usa|us)$/i.test(country);
-        const isCA = /^(canada|ca)$/i.test(country);
-        if (!isUS && !isCA) continue;
+        const { country, stateCode, isUS, isCA, isNA } = naScopeOf(r);
+        if (!isNA) continue;
         const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
         const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
         electricTierAgg[eTier].sites++;
@@ -7061,7 +7080,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const SUMMARY_START = 43;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
-      sumHdr.value = 'NA Overview';
+      // Say what this tab covers when that isn't all of the portfolio. The
+      // total below counts US / Canada sites only, so a reader comparing it
+      // against the site count on the page has no way to tell a scope from a
+      // missing-data problem — which is exactly the question a short total
+      // raises.
+      const nonNaSites = Math.max(0, rows.length - naSites);
+      sumHdr.value = nonNaSites > 0
+        ? `NA Overview — ${naSites.toLocaleString()} of ${rows.length.toLocaleString()} sites are in the US / Canada. `
+          + `The other ${nonNaSites.toLocaleString()} sit outside North America and are counted on the Portfolio Overview sheet.`
+        : 'NA Overview';
       sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
