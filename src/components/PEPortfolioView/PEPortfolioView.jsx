@@ -6,7 +6,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
-import { PE_STAGES, STATUSES, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -375,9 +375,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -422,6 +422,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-top-pc')) {
           next.add('topPc');
           try { localStorage.setItem('pe-portfolio:cols-top-pc', '1'); } catch {}
+        }
+        // One-time migration: reveal the Top PC Status column for users
+        // whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-top-pc-status')) {
+          next.add('topPcStatus');
+          try { localStorage.setItem('pe-portfolio:cols-top-pc-status', '1'); } catch {}
         }
         return next;
       }
@@ -1037,6 +1043,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           cmp = rank(sa) - rank(sb);
           break;
         }
+        case 'topPcStatus': {
+          // STATUSES order — the order the status dropdown offers them —
+          // so this column groups the way the rest of the app lists
+          // statuses rather than alphabetically. A Top PC with no prospect
+          // record of its own has no status and ranks below every real
+          // one; a firm with no Top PC at all ranks below that again, so
+          // the two blank-looking cells don't interleave.
+          const rank = (st) => {
+            if (!st.topPc) return -2;
+            const i = STATUSES.indexOf(st.topPc.status);
+            return i < 0 ? -1 : i;
+          };
+          cmp = rank(sa) - rank(sb);
+          break;
+        }
         case 'clients':
           cmp = (sa.pcClientCount || 0) - (sb.pcClientCount || 0);
           break;
@@ -1247,7 +1268,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
-              topPc: 'Top PC',
+              topPc: 'Top PC', topPcStatus: 'Top PC Status',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               peStage: 'PE Stage',
             };
@@ -1310,6 +1331,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'topPc', label: 'Top PC', align: 'left', tip: `The firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
+            { key: 'topPcStatus', label: 'Top PC Status', align: 'center', tip: 'The Table View status of the Top PC on this row. Blank when that company has no prospect record of its own — the Top PC filter only excludes companies it can see are closed.' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
@@ -1589,6 +1611,44 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 background: '#E0E7FF', borderRadius: 4, padding: '0.05rem 0.3rem',
                               }}
                             >{top.score}</span>
+                          </div>
+                        );
+                      })()}
+
+                      {visibleCols.has('topPcStatus') && (() => {
+                        const top = stats.topPc;
+                        if (!top) {
+                          return (
+                            <div
+                              style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', color: '#CBD5E1' }}
+                              title="No Top PC on this row, so there's no status to show."
+                            >-</div>
+                          );
+                        }
+                        // A Top PC with no prospect record of its own is a
+                        // real state, not missing data: the Top PC filter
+                        // only excludes companies it can see are closed, so
+                        // an untracked one is eligible and lands here.
+                        const color = STATUS_COLORS[top.status];
+                        return (
+                          <div
+                            style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
+                            title={top.status
+                              ? `${top.companyName} is set to "${top.status}" in the Table View`
+                              : `${top.companyName} has no prospect record of its own, so it carries no status`}
+                          >
+                            <span
+                              style={{
+                                display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+                                textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                                padding: '1px 8px', borderRadius: 999,
+                                background: color ? `${color}1A` : '#F8FAFC',
+                                border: `1px solid ${color || '#E2E8F0'}`,
+                                color: color || '#64748B',
+                                fontStyle: top.status ? 'normal' : 'italic',
+                                fontWeight: top.status ? 700 : 500,
+                              }}
+                            >{top.status || 'Not tracked'}</span>
                           </div>
                         );
                       })()}
