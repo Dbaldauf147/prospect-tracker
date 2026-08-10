@@ -162,6 +162,19 @@ export function parseAllSheets(buffer) {
   return out;
 }
 
+// Every sheet name the workbook declares, in workbook order — including
+// sheets whose data couldn't be read. Names live in workbook.xml rather
+// than in the per-sheet entries, so a workbook rebuilt without a damaged
+// sheet still knows what that sheet was called. That's what lets a salvage
+// report name the tab it lost instead of "sheet 3".
+export function readSheetNames(buffer) {
+  try {
+    return XLSX.read(buffer, { type: 'array', bookSheets: true }).SheetNames || [];
+  } catch {
+    return [];
+  }
+}
+
 // Reads the hidden `__rt_state__` sheet that the Indicative Savings
 // export writes to round-trip page state (vendor decisions, etc.).
 // Returns the parsed JSON or null when the sheet / cell is missing or
