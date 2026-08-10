@@ -52,6 +52,10 @@ const DAY = 86400000;
 // How far past the last published deadline — or past today, whichever is
 // later — the recurring filings are projected.
 const PROJECT_YEARS = 5;
+// And how far back the timeline looks. Deadlines older than this are off the
+// chart entirely: they're settled one way or the other, and the room they take
+// belongs to the years still being planned.
+const LOOKBACK_YEARS = 1;
 const isoTime = (iso) => {
   const [y, m, d] = String(iso).split('-').map(Number);
   return Date.UTC(y, (m || 1) - 1, d || 1);
@@ -1152,16 +1156,33 @@ export function BuildingComplianceScreening({
 
   // One lane per mandate: every deadline it brings due, published dates and
   // the ordinance's recurring cycle carried forward.
+  //
+  // History is cut off a year back. A portfolio can carry a published deadline
+  // from years ago, and the axis then spends half its width on dates nobody can
+  // act on any more — squeezing the years that are actually being planned into
+  // the right-hand third. A year of hindsight is enough to see what has just
+  // passed; anything older is dropped rather than drawn, and said so under the
+  // chart title.
   const roadmapCharts = useMemo(() => {
     const todayISO = new Date(todayTime).toISOString().slice(0, 10);
-    const lanes = CATEGORIES.map(c => ({
-      key: c,
-      label: CATEGORY_LABEL[c],
-      color: CATEGORY_COLOR[c],
-      points: deadlinesWithRecurrence(results, c, { todayISO, horizonYears: PROJECT_YEARS }),
-      total: totalEligible(results, c),
-    }));
-    return { lanes };
+    // The same calendar day, LOOKBACK_YEARS back — a round date to print,
+    // where counting days lands on an arbitrary-looking one.
+    const t = new Date(todayTime);
+    const cutoffISO = new Date(Date.UTC(t.getUTCFullYear() - LOOKBACK_YEARS, t.getUTCMonth(), t.getUTCDate()))
+      .toISOString().slice(0, 10);
+    const dropped = new Set();
+    const lanes = CATEGORIES.map(c => {
+      const all = deadlinesWithRecurrence(results, c, { todayISO, horizonYears: PROJECT_YEARS });
+      for (const p of all) if (p.date < cutoffISO) dropped.add(p.date);
+      return {
+        key: c,
+        label: CATEGORY_LABEL[c],
+        color: CATEGORY_COLOR[c],
+        points: all.filter(p => p.date >= cutoffISO),
+        total: totalEligible(results, c),
+      };
+    });
+    return { lanes, cutoffISO, dropped: dropped.size };
   }, [results, todayTime]);
 
   // Every dated deadline across the portfolio, one row per date, counting the
@@ -1800,7 +1821,10 @@ export function BuildingComplianceScreening({
               <div className={styles.tlHead}>
                 <span className={styles.tlHeadTitle}>
                   Key compliance deadlines
-                  <span className={styles.tlHeadSub}>{': '}one lane per mandate · click a deadline for its sites</span>
+                  <span className={styles.tlHeadSub}>
+                    {': '}one lane per mandate · click a deadline for its sites
+                    {roadmapCharts.dropped > 0 && ` · ${roadmapCharts.dropped} deadline date${roadmapCharts.dropped === 1 ? '' : 's'} before ${mdY(roadmapCharts.cutoffISO)} not shown`}
+                  </span>
                 </span>
               </div>
               <div className={styles.tlChart}>
