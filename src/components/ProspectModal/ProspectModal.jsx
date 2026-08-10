@@ -7,7 +7,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
@@ -597,6 +597,7 @@ const TIER_COLORS = {
 const PORTFOLIO_FIELD_OPTIONS = [
   { key: '', label: '(Ignore this column)' },
   { key: 'companyName', label: 'Company Name (required)' },
+  { key: 'status', label: 'Status' },
   { key: 'opportunityScore', label: 'Opportunity Score (0-100)' },
   { key: 'sector', label: 'Sector' },
   { key: 'subsector', label: 'Subsector' },
@@ -616,6 +617,36 @@ const PORTFOLIO_FIELD_OPTIONS = [
   { key: 'clientManager', label: 'Client Manager' },
   { key: 'targetAccount', label: 'Target Account' },
 ];
+
+// Status column on the Portfolio Companies table. A portfolio company is a
+// prospect in its own right, so the column reuses the tracker's own STATUSES
+// vocabulary and colors rather than inventing a second one — a PC that gets
+// worked reads the same way here as it does on the main table.
+//
+// A row with no status of its own inherits the status of the tracker record
+// with the same company name (rendered dimmed, with the source in the
+// tooltip), so companies already mapped into the tracker show where they
+// stand without anyone re-typing it. Picking a status on the row overrides
+// the inherited one and is what the export writes.
+function portfolioStatusColor(status) {
+  return STATUS_COLORS[status] || '#475569';
+}
+
+// { status, from } for one portfolio company row: the row's own status when
+// set, otherwise the matching tracker record's. `byName` is the normalized
+// name → status map built once per render from the prospect list.
+function resolvePortfolioStatus(row, byName) {
+  const own = String(row?.status || '').trim();
+  if (own) return { status: own, from: '' };
+  const name = String(row?.companyName || '').trim();
+  if (!name || !byName || byName.size === 0) return { status: '', from: '' };
+  const exact = byName.get(name.toLowerCase());
+  if (exact) return { status: exact.status, from: exact.company };
+  for (const entry of byName.values()) {
+    if (entry.status && companiesMatch(entry.company, name)) return { status: entry.status, from: entry.company };
+  }
+  return { status: '', from: '' };
+}
 
 
 // City → State / Country lookup (curated list + Nominatim geocoder
@@ -3413,6 +3444,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // already in use), so the pop-up offers exactly what Table View does.
   const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
 
+  // Company name (lowercased) → the tracker record's status, so the
+  // Portfolio Companies Status column can show where a mapped company
+  // already stands without the user re-entering it. First record wins on
+  // a duplicate name; rows still fall back to a fuzzy companiesMatch scan
+  // (see resolvePortfolioStatus) when the exact key misses.
+  const prospectStatusByName = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) {
+      const company = String(p?.company || '').trim();
+      const status = String(p?.status || '').trim();
+      if (!company || !status) continue;
+      const key = company.toLowerCase();
+      if (!m.has(key)) m.set(key, { company, status });
+    }
+    return m;
+  }, [prospects]);
+
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   // (showHiddenContacts state is declared earlier — above
   // baseContacts — so its useMemo can reference it without a TDZ.)
@@ -3559,7 +3607,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+    num: 30, company: 180, status: 130, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   // Per-column visibility for the Portfolio Companies table. Independent
   // from the export — the export header list is hard-coded so toggling
@@ -3567,6 +3615,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const PORTFOLIO_COL_DEFS = useMemo(() => [
     { key: 'rank',             label: 'Opportunity Score' },
     { key: 'company',          label: 'Company' },
+    { key: 'status',           label: 'Status' },
     { key: 'hqCity',           label: 'HQ City' },
     { key: 'hqCountry',        label: 'HQ Country' },
     { key: 'energy',           label: 'Energy' },
@@ -3595,7 +3644,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Default visibility — every column on except HQ City, which the
     // user keeps hidden by default and reveals via the Columns ▾ menu
     // when they need it.
-    return Object.fromEntries(['rank','company','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+    return Object.fromEntries(['rank','company','status','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
   });
   useEffect(() => {
     try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
@@ -3881,6 +3930,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const headers = Object.keys(data[0]);
       const patterns = {
         companyName: ['companyname', 'company'],
+        // Before the score patterns so "Status" can't be caught by anything
+        // broader, and specific enough that "Subsector Score" stays put.
+        status: ['status', 'stage', 'engagementstatus'],
         // Opportunity score before the fit-score patterns so a header literally
         // named "Opportunity Score" doesn't get swallowed by sectorScore.
         opportunityScore: ['opportunityscore', 'oppscore'],
@@ -7393,7 +7445,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -7442,6 +7494,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const templateRows = [
                     {
                       'Company Name': 'Example Company',
+                      'Status': 'Inside Sales',
                       'HQ City': 'Austin, TX',
                       'HQ Country': 'USA',
                       'Est. Energy (GWh/yr)': 25,
@@ -7463,9 +7516,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'Status', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -7481,6 +7534,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     cmForRaClient,
                     tierForTarget,
                     repForTarget,
+                    statusForRow: (r) => resolvePortfolioStatus(r, prospectStatusByName).status,
                   });
                 }
                 async function handleUpload(e) {
@@ -7850,6 +7904,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           <colgroup>
                             <col style={{ width: portfolioColWidths.rank + 'px',             visibility: colVis('rank') }} />
                             <col style={{ width: portfolioColWidths.company + 'px',          visibility: colVis('company') }} />
+                            <col style={{ width: portfolioColWidths.status + 'px',           visibility: colVis('status') }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px',           visibility: colVis('hqCity') }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px',        visibility: colVis('hqCountry') }} />
                             <col style={{ width: portfolioColWidths.energy + 'px',           visibility: colVis('energy') }} />
@@ -7881,6 +7936,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 Opportunity Score{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
+                              <th style={thBase} title="Where this portfolio company stands. Blank rows inherit the status of the matching company in the tracker: pick one here to set the row's own.">Status<span style={resizeHandleStyle} onMouseDown={e => startResize('status', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={thBase} title="Est. Energy (GWh/yr)">Energy<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
@@ -7942,7 +7998,44 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     </td>
                                   );
                                 })()}
-                                {['companyName', 'hqCity', 'hqCountry'].map(field => (
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.companyName || ''}
+                                    onChange={e => updateRow(i, { companyName: e.target.value })}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                {(() => {
+                                  const { status, from } = resolvePortfolioStatus(r, prospectStatusByName);
+                                  const inherited = !!from;
+                                  const color = status ? portfolioStatusColor(status) : '#CBD5E1';
+                                  // Keep a status that isn't in the house list (e.g. one
+                                  // carried in by an uploaded sheet) selectable, so the
+                                  // dropdown can't silently drop the row's own value.
+                                  const options = !status || STATUSES.includes(status) ? STATUSES : [...STATUSES, status];
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.25rem' }}>
+                                      <select
+                                        value={r.status || ''}
+                                        onChange={e => updateRow(i, { status: e.target.value })}
+                                        title={inherited
+                                          ? `${status} — inherited from the tracker record for "${from}". Pick a status here to give this row its own.`
+                                          : (status
+                                            ? `Status for "${r.companyName || 'this company'}"`
+                                            : 'No status yet. Pick one here, or add this company to the tracker and its status shows up automatically.')}
+                                        style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: status ? `${color}1A` : 'transparent', color: status ? color : '#CBD5E1', fontWeight: status ? 700 : 400, fontStyle: inherited ? 'italic' : 'normal', cursor: 'pointer' }}
+                                        onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; }}
+                                        onBlur={e => { e.target.style.border = '1px solid transparent'; }}
+                                      >
+                                        <option value="">{inherited ? `${status} (inherited)` : '-'}</option>
+                                        {options.map(s => <option key={s} value={s}>{s}</option>)}
+                                      </select>
+                                    </td>
+                                  );
+                                })()}
+                                {['hqCity', 'hqCountry'].map(field => (
                                   <td key={field} style={{ padding: '0.15rem 0.25rem' }}>
                                     <input
                                       value={r[field] || ''}
@@ -8418,10 +8511,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                {/* Cell spans track the 23 columns above: Totals covers
+                                    Opportunity Score → HQ Country, then each total sits
+                                    under the column it sums. */}
+                                <td colSpan={5} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
+                                <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={12}></td>
+                                <td colSpan={14}></td>
                               </tr>
                             )}
                           </tbody>
@@ -9335,7 +9432,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             const parsed = fileRows
               .map(r => {
                 const out = {
-                  companyName: '', sector: '', subsector: '',
+                  companyName: '', status: '', sector: '', subsector: '',
                   sectorScore: '', subsectorScore: '', opportunityScore: '',
                   hqCity: '', hqCountry: '',
                   energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '',
