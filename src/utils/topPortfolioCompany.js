@@ -21,10 +21,17 @@
 //      portfolio and the filters applied afterwards, or a firm whose
 //      biggest company is European would show everyone else's score
 //      inflated here relative to the All PCs tab.
-//   2. Status lives on the tracker prospect record, not on the mapped PC
-//      row, so it's looked up by name. A PC with no prospect of its own
-//      has no status to fail, and stays eligible — the filter excludes
-//      companies we know are closed, not companies we know nothing about.
+//   2. Status can come from either of two places, and the more specific
+//      one wins. A mapped PC row carries its own Status (the column on the
+//      pop-up's Portfolio Companies table) — set by hand, on this firm's
+//      portfolio, so it's taken at face value. A row that hasn't been given
+//      one falls back to the status of the tracker prospect record with the
+//      same company name, looked up by name. That order matters: marking a
+//      company Hold Off on the firm's own list has to take it out of the
+//      running, whether or not it exists as a prospect of its own.
+//      A PC with neither has no status to fail, and stays eligible — the
+//      filter excludes companies we know are closed, not companies we know
+//      nothing about.
 
 import { classifyHqRegion, NORTH_AMERICA } from './hqRegion.js';
 import { computePortfolioFitScore } from './portfolioCompaniesWorkbook.js';
@@ -174,8 +181,11 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
     const hqLocation = hqLocationOf(row);
     if (classifyHqRegion(hqLocation) !== NORTH_AMERICA) { skippedRegion++; continue; }
 
-    const match = lookupCompanyStatus(statusIndex, companyName);
-    const status = match?.status || '';
+    // The row's own Status column first, the tracker record only as a
+    // fallback — see note 2 at the top of this file.
+    const rowStatus = String(row?.status || '').trim();
+    const match = rowStatus ? null : lookupCompanyStatus(statusIndex, companyName);
+    const status = rowStatus || match?.status || '';
     if (EXCLUDED.has(status.toLowerCase())) { skippedStatus++; continue; }
 
     eligible++;
@@ -189,8 +199,10 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
       || (score === best.score && companyName.localeCompare(best.companyName) < 0)) {
       best = {
         companyName, score, hqCity: row?.hqCity || '', hqCountry: row?.hqCountry || '', hqLocation, status,
-        // The record the status came from, when it isn't the PC row's own
-        // name — so "why does this say Client?" has an answer on screen.
+        // Where the status came from, so "why does this say Client?" has an
+        // answer on screen: set on this firm's own PC row, or inherited
+        // from a tracker record (named when it isn't this company's own).
+        statusFromRow: !!rowStatus,
         statusCompany: match?.company && match.company !== companyName ? match.company : '',
       };
     }
