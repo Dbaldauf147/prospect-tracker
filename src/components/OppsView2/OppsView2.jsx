@@ -610,21 +610,29 @@ function resolveScopeToSolution(token, options) {
 // in. `solutionOptions` is the live Solutions list so shorthand Scope
 // values resolve to the real service name. Order follows Scope; dupes
 // collapse.
-function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
-  const tokens = parseMulti(rowValueByHeader(opp, 'scope'));
+// The distinct services an opp's Scope names, in Scope order, each resolved
+// to its canonical Solutions name where the shorthand maps cleanly (and left
+// as typed where it doesn't). Dupes collapse. This is the "what's in this
+// deal" list — the close-out popup shows it as the services lost, and the
+// timeline-driven lookup below filters it.
+function scopeServices(opp, solutionOptions) {
   const out = [];
   const seen = new Set();
-  for (const token of tokens) {
+  for (const token of parseMulti(rowValueByHeader(opp, 'scope'))) {
     const name = resolveScopeToSolution(token, solutionOptions) || token;
     const key = String(name).trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    const meta = getEffectiveServiceMetadata(name, serviceOverrides);
-    if (meta && String(meta.timelineDriven || '').trim().toLowerCase() === 'yes') {
-      out.push(name);
-    }
+    out.push(name);
   }
   return out;
+}
+
+function timelineDrivenServices(opp, solutionOptions, serviceOverrides) {
+  return scopeServices(opp, solutionOptions).filter(name => {
+    const meta = getEffectiveServiceMetadata(name, serviceOverrides);
+    return meta && String(meta.timelineDriven || '').trim().toLowerCase() === 'yes';
+  });
 }
 
 // Merge an auto timeline row for each timeline-driven service into an
@@ -3423,11 +3431,33 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
 // values via updateOppField (skipping fields the user left
 // untouched). Skip leaves the row as-is — Stage is still set to Not
 // Sold and the stamped Close Date stays.
-function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onClose }) {
+function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
+
+  // Everything in the opp's Scope is what this close-out gives up, listed
+  // compactly so a multi-service deal reads at a glance instead of as one
+  // run-on Scope string.
+  const servicesLost = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
+
+  // Seed the Next Steps rows from the same source the standalone
+  // NextStepsEditor and the Update Status popup use, so closing an opp out
+  // edits the notes in the identical Next Step / Waiting On format. Kept as
+  // local state and flattened back on Save.
+  const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
+  const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+  const [rows, setRows] = useState(() => {
+    const seed = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '' }];
+  });
+  const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
+  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '' }]);
+  const deleteRow = (idx) => setRows(prev => {
+    const next = prev.filter((_, i) => i !== idx);
+    return next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+  });
 
   // Dependent options: only the Reason Not Sold values that have a
   // close-out rule for the chosen Competition (closeNotSoldRules).
@@ -3449,11 +3479,17 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
   }
 
   function handleSave() {
+    // Same flattening the Update Status popup does: drop wholly-empty rows,
+    // join the notes with newlines and keep the parallel Waiting On array
+    // index-aligned with them.
+    const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     onSave({
       closeDate,
       reason,
       finalMargin: finalMargin.trim(),
       competition: competition.trim(),
+      nextSteps: kept.map(r => encodeNoteLine(r.note)).join('\n'),
+      nextStepsWaiting: kept.map(r => (r.waitingOn || '').trim()),
     });
   }
 
@@ -3486,7 +3522,11 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
         style={{
-          width: 460, maxWidth: '92vw',
+          // Sized like the Update Status popup rather than the narrow
+          // four-field original: the Next Step / Waiting On rows editor below
+          // needs the width, and a long note list needs the body to scroll
+          // instead of pushing the Save button off-screen.
+          width: 'min(820px, 94vw)', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -3497,59 +3537,96 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, 
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
-            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {/* The raw Scope string only rides along in the header when the
+                services list below isn't carrying it — otherwise the same
+                services read twice, once run-on and once deduped. */}
+            {servicesLost.length === 0 && opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
             {' '}is now marked <strong>Not Sold</strong>. Fill in the close-out details below.
           </div>
         </div>
 
-        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
-          <div>
-            <label style={labelStyle}>Close Date</label>
-            <input
-              type="date"
-              autoFocus
-              value={closeDate}
-              onChange={(e) => setCloseDate(e.target.value)}
-              style={inputStyle}
-            />
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
+          {servicesLost.length > 0 ? (
+            <div>
+              <label style={labelStyle}>
+                Services lost ({servicesLost.length})
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                {servicesLost.map(s => (
+                  <span
+                    key={s}
+                    style={{
+                      padding: '0.15rem 0.45rem', borderRadius: 10,
+                      border: '1px solid #FECACA', background: '#FEF2F2', color: '#991B1B',
+                      fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap',
+                    }}
+                  >{s}</span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {/* The four close-out fields sit on one wrapping row, the way the
+              Update Status popup lays its short fields out, so they don't
+              stretch across the width the notes table below needs. */}
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <label style={labelStyle}>Close Date</label>
+              <input
+                type="date"
+                autoFocus
+                value={closeDate}
+                onChange={(e) => setCloseDate(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <label style={labelStyle}>Competition</label>
+              <select
+                value={competition}
+                onChange={(e) => handleCompetitionChange(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">(Select)</option>
+                {competitionOptions.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <label style={labelStyle}>Reason Not Sold</label>
+              <select
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">(Select a reason)</option>
+                {filteredReasonOptions.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <label style={labelStyle}>Final Margin</label>
+              <input
+                type="text"
+                value={finalMargin}
+                onChange={(e) => setFinalMargin(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+                }}
+                placeholder="e.g. 22% or $4,500"
+                style={inputStyle}
+              />
+            </div>
           </div>
           <div>
-            <label style={labelStyle}>Competition</label>
-            <select
-              value={competition}
-              onChange={(e) => handleCompetitionChange(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">(Select)</option>
-              {competitionOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Reason Not Sold</label>
-            <select
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">(Select a reason)</option>
-              {filteredReasonOptions.map(o => (
-                <option key={o} value={o}>{o}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Final Margin</label>
-            <input
-              type="text"
-              value={finalMargin}
-              onChange={(e) => setFinalMargin(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
-              }}
-              placeholder="e.g. 22% or $4,500"
-              style={inputStyle}
+            <label style={labelStyle}>Notes</label>
+            <NextStepsRowsEditor
+              rows={rows}
+              onUpdateRow={updateRow}
+              onAddRow={addRow}
+              onDeleteRow={deleteRow}
+              onCommit={() => {}}
             />
           </div>
         </div>
@@ -10105,7 +10182,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             opp={opp}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
-            onSave={({ closeDate, reason, finalMargin, competition }) => {
+            solutionOptions={listRegistry.get('solutions')?.options || []}
+            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -10119,6 +10197,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               }
               if (competition !== String(opp['Competition'] ?? '').trim()) {
                 updateOppField(opp._id, 'Competition', competition);
+              }
+              // Notes travel as the same pair the Update Status popup writes:
+              // the newline-joined 'Next Steps' text plus the index-aligned
+              // Waiting On array beside it.
+              if (nextSteps !== String(opp['Next Steps'] ?? '')) {
+                updateOppField(opp._id, 'Next Steps', nextSteps);
+              }
+              const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+              if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
+                updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
               }
               setNotSoldPromptId(null);
             }}
