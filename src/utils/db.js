@@ -33,6 +33,9 @@ const STORES = [
   // call history the instant it opens — before Firestore answers, and
   // whether or not it answers at all.
   { name: 'call-history',        keyPath: null },
+  // Emails dropped onto the Draft Emails page's Market Updates tab, with
+  // their attachments — see marketUpdatesStore.js for why these are local.
+  { name: 'market-updates',      keyPath: null },
 ];
 
 let dbPromise = null;

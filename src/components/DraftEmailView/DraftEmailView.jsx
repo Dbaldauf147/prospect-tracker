@@ -254,7 +254,7 @@ function NoteContactPicker({ contactNotes, selectedContacts, onAdd, onRemove, on
 // Score band + verdict line at the top, strengths / fixes lists below,
 // suggested rewrite at the bottom with a one-click "Use rewrite"
 // button that swaps the subject + body in the composer.
-function CritiquePanel({ critique, onClose, onUseRewrite }) {
+export function CritiquePanel({ critique, onClose, onUseRewrite }) {
   const { score, verdict, strengths, fixes, rewriteSubject, rewriteBody } = critique;
   const tier = score == null ? 'unknown' : score >= 80 ? 'good' : score >= 55 ? 'mid' : 'bad';
   const bandStyle = {
