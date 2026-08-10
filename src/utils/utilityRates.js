@@ -131,9 +131,27 @@ const ZIP_PREFIX_TO_STATE = (() => {
   return map;
 })();
 
-export function zipToState(zip) {
+// The ZIP3 prefix of a US ZIP, or null when the value isn't one.
+//
+// Slicing the first three characters and left-padding them was wrong twice
+// over: a Canadian "M5V" or a stray "7" padded into the 000–009 band, which
+// is Puerto Rico / the Virgin Islands / military mail, and a four-digit ZIP
+// that lost its leading zero in Excel ("2108") sliced to "210" — Maryland —
+// instead of the "021" that makes it Boston. Reconstruct the five-digit ZIP
+// first, then take its prefix. Mirrors normalizeZip in utilityRatesStore.js.
+export function zipPrefix3(zip) {
   if (!zip) return null;
-  const key = String(zip).trim().slice(0, 3).padStart(3, '0');
+  const head = String(zip).trim().split('-')[0];
+  if (/[A-Za-z]/.test(head)) return null;
+  const digits = head.replace(/\D/g, '');
+  if (digits.length >= 5) return digits.slice(0, 3);
+  if (digits.length >= 3) return digits.padStart(5, '0').slice(0, 3);
+  return null;
+}
+
+export function zipToState(zip) {
+  const key = zipPrefix3(zip);
+  if (!key) return null;
   return ZIP_PREFIX_TO_STATE.get(key) || null;
 }
 
