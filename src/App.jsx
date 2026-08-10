@@ -494,6 +494,7 @@ function App() {
         <ProspectModal
           prospect={modal.prospect}
           prospects={prospects}
+          onSelectProspect={handleSelect}
           isNew={modal.isNew}
           initialEditContact={modal.editContact}
           onSave={handleModalSave}
