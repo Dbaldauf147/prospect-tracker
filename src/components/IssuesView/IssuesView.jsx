@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { fmtDate } from '../../utils/dealsFormat';
-import { setIssueSnoozed } from '../../utils/issueSnoozeStore';
+import { snoozeIssue, unsnoozeIssue, formatSnoozeRemaining, formatSnoozeRemainingShort, SNOOZE_DURATIONS } from '../../utils/issueSnoozeStore';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { normClientName } from '../../utils/clientIssues';
 import { useIssues } from '../../hooks/useIssues';
@@ -207,6 +207,86 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
   );
 }
 
+// Duration picker for the Snooze button: how long the issue should stay
+// off the sidebar count. Anchored under the button it was opened from and
+// rendered in a portal, so the table's own scrolling can't clip it. An
+// already-snoozed issue gets the same list (to re-snooze for a different
+// stretch) plus an un-snooze action.
+function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const WIDTH = 200;
+  // Keep the menu on screen: clamp horizontally, and flip above the button
+  // when there isn't room for it below.
+  const left = Math.min(Math.max(8, anchor.left), Math.max(8, window.innerWidth - WIDTH - 8));
+  const flipUp = anchor.bottom + 300 > window.innerHeight && anchor.top > 300;
+  const itemStyle = {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '0.35rem 0.6rem', border: 'none', background: 'none',
+    fontFamily: 'inherit', fontSize: '0.72rem', color: '#1E293B', cursor: 'pointer',
+  };
+
+  return createPortal(
+    <>
+      <div
+        onMouseDown={onClose}
+        style={{ position: 'fixed', inset: 0, zIndex: 2000 }}
+      />
+      <div
+        role="menu"
+        style={{
+          position: 'fixed', left, width: WIDTH, zIndex: 2001,
+          ...(flipUp ? { bottom: window.innerHeight - anchor.top + 4 } : { top: anchor.bottom + 4 }),
+          background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6,
+          boxShadow: '0 6px 18px rgba(15, 23, 42, 0.14)', padding: '0.3rem 0',
+        }}
+      >
+        <div style={{ padding: '0.15rem 0.6rem 0.3rem', fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase', color: '#94A3B8' }}>
+          {snoozed ? 'Snooze again for' : 'Snooze for'}
+        </div>
+        {snoozed && (
+          <div style={{ padding: '0 0.6rem 0.35rem', fontSize: '0.68rem', color: '#64748B' }}>
+            Currently snoozed · {formatSnoozeRemaining(until)}
+          </div>
+        )}
+        {SNOOZE_DURATIONS.map(opt => (
+          <button
+            key={opt.key}
+            type="button"
+            role="menuitem"
+            onClick={() => onPick(opt.days)}
+            style={itemStyle}
+            onMouseEnter={e => { e.currentTarget.style.background = '#F1F5F9'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+          >
+            {opt.label}
+          </button>
+        ))}
+        {snoozed && (
+          <>
+            <div style={{ height: 1, background: '#E2E8F0', margin: '0.3rem 0' }} />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={onUnsnooze}
+              style={{ ...itemStyle, color: '#B91C1C', fontWeight: 700 }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+            >
+              🔔 Un-snooze now
+            </button>
+          </>
+        )}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
@@ -231,6 +311,10 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     for (const p of prospects) m.set(p.id, p);
     return m;
   }, [prospects]);
+
+  // The row whose Snooze button is open, plus where to anchor its duration
+  // menu: { id, snoozed, until, anchor }.
+  const [snoozeMenu, setSnoozeMenu] = useState(null);
 
   // ---- Inline Reason Not Sold editing ----
   // "Close Not Sold missing data" rows carry the opp id + its current
@@ -385,15 +469,25 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     {
       key: 'snooze', label: 'Snooze', defaultWidth: 110,
       getFilterValue: (row) => (row.snoozed ? 'Snoozed' : 'Active'),
-      getSortValue: (row) => (row.snoozed ? 1 : 0),
+      // Snoozed rows sort below active ones; among them, the soonest to
+      // come back sorts first.
+      getSortValue: (row) => (row.snoozed ? (row.snoozeUntil ?? Number.MAX_SAFE_INTEGER) : 0),
       render: (row) => (
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setIssueSnoozed(row.id, !row.snoozed);
+            const rect = e.currentTarget.getBoundingClientRect();
+            setSnoozeMenu({
+              id: row.id,
+              snoozed: row.snoozed,
+              until: row.snoozeUntil ?? null,
+              anchor: { left: rect.left, top: rect.top, bottom: rect.bottom },
+            });
           }}
-          title={row.snoozed ? 'Snoozed: not counted on the menu. Click to un-snooze.' : 'Snooze this issue so it stops counting on the menu'}
+          title={row.snoozed
+            ? `Snoozed, so it isn't counted on the menu — ${formatSnoozeRemaining(row.snoozeUntil)}. Click to change how long, or un-snooze.`
+            : 'Snooze this issue so it stops counting on the menu. Click to choose how long.'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '2px 10px', borderRadius: 999, cursor: 'pointer',
@@ -403,7 +497,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             color: row.snoozed ? '#475569' : '#B91C1C',
           }}
         >
-          {row.snoozed ? '🔕 Snoozed' : '🔔 Snooze'}
+          {row.snoozed ? `🔕 ${formatSnoozeRemainingShort(row.snoozeUntil)}` : '🔔 Snooze'}
         </button>
       ),
     },
@@ -443,6 +537,17 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           />
         )}
       </div>
+
+      {snoozeMenu && (
+        <SnoozeMenu
+          anchor={snoozeMenu.anchor}
+          snoozed={snoozeMenu.snoozed}
+          until={snoozeMenu.until}
+          onPick={(days) => { snoozeIssue(snoozeMenu.id, days); setSnoozeMenu(null); }}
+          onUnsnooze={() => { unsnoozeIssue(snoozeMenu.id); setSnoozeMenu(null); }}
+          onClose={() => setSnoozeMenu(null)}
+        />
+      )}
 
       {editingRow && (
         <CloseNotSoldReasonModal
