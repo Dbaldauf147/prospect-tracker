@@ -648,6 +648,26 @@ function resolvePortfolioStatus(row, byName) {
   return { status: '', from: '' };
 }
 
+// The tracker record a portfolio company row refers to, or null when the
+// company isn't on Table View. Same two-step match resolvePortfolioStatus
+// uses — exact name first, then the fuzzy company compare — so a row that
+// shows an inherited status is always one you can open, and vice versa.
+//
+// Unlike the status map this doesn't require the record to have a status:
+// "is this company in the tracker" and "does it have a status" are different
+// questions, and the answer to the first is what decides whether there's
+// anything to open.
+function findPortfolioProspect(row, byName) {
+  const name = String(row?.companyName || '').trim();
+  if (!name || !byName || byName.size === 0) return null;
+  const exact = byName.get(name.toLowerCase());
+  if (exact) return exact;
+  for (const p of byName.values()) {
+    if (companiesMatch(p.company, name)) return p;
+  }
+  return null;
+}
+
 
 // City → State / Country lookup (curated list + Nominatim geocoder
 // fallback) now lives in ../../data/cities so the All Contacts table
@@ -3119,7 +3139,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   );
 }
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null }) {
   const { isAdmin, user } = useAuth();
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
@@ -3457,6 +3477,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (!company || !status) continue;
       const key = company.toLowerCase();
       if (!m.has(key)) m.set(key, { company, status });
+    }
+    return m;
+  }, [prospects]);
+
+  // Company name → the tracker record itself, for the portfolio table's
+  // open-company link. Statusless records are in here (see
+  // findPortfolioProspect) and first writer wins, matching the status map
+  // above so both resolve a duplicated name to the same record.
+  const prospectByName = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) {
+      const company = String(p?.company || '').trim();
+      if (!company) continue;
+      const key = company.toLowerCase();
+      if (!m.has(key)) m.set(key, p);
     }
     return m;
   }, [prospects]);
@@ -5432,6 +5467,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     delete data.createdAt;
     delete data.updatedAt;
     onSave(data);
+  }
+
+  // Swap this popup for another company's. Edits here autosave on a debounce,
+  // and the timer is cleared when this modal unmounts — so an edit made in the
+  // last 600ms would be dropped by the navigation that replaces us. Write it
+  // out first, then hand over.
+  function openProspect(target) {
+    if (!target || !onSelectProspect) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      if (fields.company?.trim()) {
+        const data = { ...fields };
+        data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
+        data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
+        data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
+        delete data.id;
+        delete data.createdAt;
+        delete data.updatedAt;
+        onSave(data, { close: false });
+      }
+    }
+    onSelectProspect(target);
   }
 
   function handlePrint() {
@@ -7998,15 +8056,41 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     </td>
                                   );
                                 })()}
-                                <td style={{ padding: '0.15rem 0.25rem' }}>
-                                  <input
-                                    value={r.companyName || ''}
-                                    onChange={e => updateRow(i, { companyName: e.target.value })}
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
-                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                  />
-                                </td>
+                                {(() => {
+                                  // The name stays editable, so the link to the
+                                  // company's own popup is a button beside it
+                                  // rather than the text itself — it only shows
+                                  // when the row actually matches a Table View
+                                  // record, which is also the signal that there
+                                  // is something to open.
+                                  const linked = onSelectProspect ? findPortfolioProspect(r, prospectByName) : null;
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.25rem' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <input
+                                          value={r.companyName || ''}
+                                          onChange={e => updateRow(i, { companyName: e.target.value })}
+                                          style={{ flex: 1, minWidth: 0, padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                          onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                          onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                        />
+                                        {linked ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => openProspect(linked)}
+                                            title={`Open "${linked.company}" — this company is on Table View`}
+                                            aria-label={`Open ${linked.company}`}
+                                            style={{
+                                              flex: '0 0 auto', padding: '0 3px', border: 'none', background: 'transparent',
+                                              color: 'var(--color-accent)', fontSize: '0.72rem', fontWeight: 700,
+                                              fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.2,
+                                            }}
+                                          >↗</button>
+                                        ) : null}
+                                      </div>
+                                    </td>
+                                  );
+                                })()}
                                 {(() => {
                                   const { status, from } = resolvePortfolioStatus(r, prospectStatusByName);
                                   const inherited = !!from;
