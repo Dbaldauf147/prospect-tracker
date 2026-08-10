@@ -103,10 +103,11 @@ function App() {
   // having loaded so the badge doesn't flash before the stamp arrives.
   const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
-  // The Prospecting page's renewal step counts these rows. While the
-  // prospects are still loading the detectors see an empty roster and
-  // find nothing — passing null instead keeps that from reading as
-  // "all caught up" before the data has arrived.
+  // The Prospecting page's renewal step counts these rows, and its Top PC
+  // step reads the prospects directly. While the prospects are still
+  // loading the detectors see an empty roster and find nothing — passing
+  // null instead keeps that from reading as "all caught up" before the
+  // data has arrived.
   const prospectingIssues = dataLoading ? null : issues;
   // Same guard for the targeted-services step: an empty roster yields no
   // coverage rows, which would read as "every service is at 100%".
@@ -452,7 +453,13 @@ function App() {
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
           ) : view === 'prospecting' ? (
-            <ProspectingView onNavigate={setView} issues={prospectingIssues} serviceGaps={prospectingServiceGaps} />
+            <ProspectingView
+              onNavigate={setView}
+              issues={prospectingIssues}
+              serviceGaps={prospectingServiceGaps}
+              prospects={dataLoading ? null : prospects}
+              onSelectProspect={handleSelect}
+            />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (

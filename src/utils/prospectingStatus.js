@@ -2,11 +2,11 @@
 //
 // Two kinds of step live on that page. Some have a real number behind
 // them — the opps whose Call In has gone negative, the client renewals
-// the Issues tab already tracks — and those categorize themselves: zero
-// outstanding items means caught up, anything else is work owed. The
-// rest (market updates, targeted services, PE intros, cold outreach)
-// have no count anywhere in the app, so the user marks those caught up
-// by hand.
+// the Issues tab already tracks, the Top PCs not yet at Qualifying (see
+// topPcOutreach.js) — and those categorize themselves: zero outstanding
+// items means caught up, anything else is work owed. The rest (market
+// updates, targeted services, cold outreach) have no count anywhere in
+// the app, so the user marks those caught up by hand.
 //
 // A manual mark is stamped with the day it was made and only counts on
 // that day. Prospecting is daily work, and a tick that stayed on from
