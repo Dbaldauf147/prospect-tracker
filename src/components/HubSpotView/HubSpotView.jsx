@@ -6,6 +6,7 @@ import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -1427,11 +1428,10 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           // thing keeping the value visible. (Empty string → clear instead.)
           companyOverrideSetTo = hubspotProps.company || null;
           if (ca && ca.ok === false) {
-            const detail = ca.errorText ? ` · ${ca.errorText}` : '';
             const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
             setPushStatus({
               type: 'success',
-              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`,
+              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
             if (ca.mode === 'renamed') {
@@ -1531,10 +1531,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         const merged = { ...(next[contactId] || {}), _companyOverride: name };
         next[contactId] = merged;
         updateSettings({ contactLocalFields: next });
-        const detail = ca.errorText ? ` · ${ca.errorText}` : '';
         setPushStatus({
           type: 'success',
-          message: `Saved "${name}" locally. HubSpot reassign still failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}: Prospect Tracker will keep your value through future syncs.`,
+          message: `Saved "${name}" locally. HubSpot reassign still failed${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`,
         });
       } else {
         // Reassign worked — clear any prior local override.
