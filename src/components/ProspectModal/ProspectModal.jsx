@@ -581,6 +581,14 @@ function enrichOverviewFromPortfolio(overview, portfolioRows) {
 const MET_IN_PERSON_TAG = 'Met In Person';
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker', 'Primary Point of Contact', 'Test', 'EU', 'Hide', 'Left'];
 
+// Tags left out of the Tagged % on the contact popup. Hide and Left decide
+// whether a contact appears at all and Test is a scratch value — none of
+// them says anything about who the person is, so counting them would put a
+// ceiling on the score for reasons that have nothing to do with how well
+// the contact is understood. They stay answerable rows; they just don't
+// count towards the total.
+const TAG_SCORE_EXCLUDED = new Set(['hide', 'left', 'test']);
+
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
 const TIER_COLORS = {
@@ -1887,9 +1895,16 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               // yet known — rather than being indistinguishable from one
               // nobody has looked at.
               const verdictOf = (tag) => (checkedTags.has(tag) ? 'yes' : (tagVerdicts[tag] || ''));
-              const answered = visibleTagOptions.filter(t => verdictOf(t)).length;
-              const total = visibleTagOptions.length;
-              const done = answered === total;
+              // Hide, Left and Test are housekeeping, not classifications:
+              // the first two control whether a contact surfaces at all and
+              // the third is a scratch value. They're still answerable rows,
+              // they just don't belong in a score meant to say "have I worked
+              // out what this person is about".
+              const scored = visibleTagOptions.filter(t => !TAG_SCORE_EXCLUDED.has(t.toLowerCase()));
+              const answered = scored.filter(t => verdictOf(t)).length;
+              const total = scored.length;
+              const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
+              const done = total > 0 && answered === total;
               const CHOICES = [
                 { key: 'yes',    label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' } },
                 { key: 'no',     label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' } },
@@ -1904,7 +1919,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     fontSize: '0.68rem', fontWeight: 700,
                     color: done ? '#166534' : '#475569',
                   }}>
-                    <span>{done ? '✓ All tags reviewed' : `${answered} of ${total} tags reviewed`}</span>
+                    <span title={`${answered} of ${total} scored tags have an answer. Hide, Left and Test are excluded — they're housekeeping, not classifications. "Not sure" counts as answered.`}>
+                      Tagged {pct}%
+                      <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
+                        {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
+                      </span>
+                    </span>
                     <span style={{ fontWeight: 500, color: '#94A3B8' }}>Only “Yes” is sent to HubSpot</span>
                   </div>
                   <div style={{ maxHeight: 320, overflowY: 'auto' }}>
@@ -1927,6 +1947,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                                 <span style={{ fontWeight: v === 'yes' ? 600 : 400, color: v === 'yes' ? (bucket?.headerColor || '#1E293B') : (v ? '#475569' : '#94A3B8') }}>{tag}</span>
                                 {v === 'yes' && bucket && (
                                   <span style={{ marginLeft: 6, fontSize: '0.58rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: 999 }}>{bucket.label}</span>
+                                )}
+                                {/* Otherwise the header's total reads as
+                                    wrong: three of the rows on screen aren't
+                                    in it. */}
+                                {TAG_SCORE_EXCLUDED.has(tag.toLowerCase()) && (
+                                  <span
+                                    title="Housekeeping tag — answerable, but not counted in the Tagged %."
+                                    style={{ marginLeft: 6, fontSize: '0.56rem', fontWeight: 600, color: '#94A3B8', background: '#F1F5F9', padding: '1px 5px', borderRadius: 999 }}
+                                  >not scored</span>
                                 )}
                               </td>
                               {CHOICES.map(c => {
