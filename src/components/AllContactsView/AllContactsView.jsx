@@ -37,6 +37,18 @@ const FREE_MAIL = new Set([
   'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
 ]);
 
+// A contact's Dan's Tags as individual values. Stored as one ';'-joined
+// string (the separator the tag picker and the bulk tag editor write), so
+// the Tags column's own value filter can only match the whole combination —
+// "Decision Maker;Met In Person" is a single distinct value there. Splitting
+// is what lets the tag filter below match a contact by any one of its tags.
+function contactTagList(c) {
+  return String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '')
+    .split(';')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
 // Cheap fuzzy company-name compare — used to mirror the dedicated
 // Active page's open-opp gate (an opp Account often differs in
 // suffix / abbreviation from the contact's HubSpot Company text).
@@ -177,6 +189,9 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // all; otherwise narrow to 'Key' / 'Active' / 'Client'. Clicking the
   // active pill again clears it.
   const [categoryFilter, setCategoryFilter] = useState(null);
+  // Chosen Dan's Tag, or '' for no tag gate. Transient like categoryFilter
+  // (not persisted) — it's an exploration filter, not a page preference.
+  const [tagFilter, setTagFilter] = useState('');
   useEffect(() => {
     try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
   }, [showHidden]);
@@ -256,12 +271,15 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return isKeyProspectAtTierAccount(c);
   }, [showHidden, isKeyProspectAtTierAccount]);
 
-  // Combined selector — a contact passes when it would land on at
-  // least one of the dedicated rosters.
-  const combinedSelector = useCallback(
+  // Roster gate — a contact passes when it would land on at least one of
+  // the dedicated rosters. The tag filter composes on top of this below.
+  const rosterSelector = useCallback(
     (c) => isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c),
     [isKey, isActive, isClient, isKeyProspect]
   );
+
+  // (combinedSelector — the roster gate plus the tag gate — is defined with
+  // the tag list further down, since it needs the loaded HubSpot cache.)
 
   // Categorisation function for the Category column. Returns the
   // array of labels (Key / Active / Client / Key Prospect) the contact
@@ -408,6 +426,61 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return { key, active, client, keyProspect, total };
   }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount]);
 
+  // Every distinct tag worn by a contact on this page, with how many wear
+  // it, most-used first. Derived from the roster gate rather than the full
+  // HubSpot cache so the list only offers tags that actually return rows,
+  // and counted before the tag gate so the numbers don't collapse to the
+  // current selection.
+  //
+  // Tags that differ only in case are one entry, shown in whichever spelling
+  // the most contacts use (ties broken alphabetically, so the label doesn't
+  // hinge on cache order). Matching is case-insensitive either way — the
+  // spelling only decides what the dropdown reads.
+  const tagOptions = useMemo(() => {
+    const byKey = new Map();
+    for (const c of hubspotContacts) {
+      if (!rosterSelector(c)) continue;
+      const seenHere = new Set();
+      for (const tag of contactTagList(c)) {
+        const key = tag.toLowerCase();
+        // A tag repeated within one contact still only counts once.
+        if (seenHere.has(key)) continue;
+        seenHere.add(key);
+        let hit = byKey.get(key);
+        if (!hit) { hit = { count: 0, spellings: new Map() }; byKey.set(key, hit); }
+        hit.count += 1;
+        hit.spellings.set(tag, (hit.spellings.get(tag) || 0) + 1);
+      }
+    }
+    return [...byKey.values()]
+      .map(({ count, spellings }) => ({
+        count,
+        tag: [...spellings.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0],
+      }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }, [hubspotContacts, rosterSelector]);
+
+  // The tag actually in force. A tag that stops existing — retagged from the
+  // bulk editor, or the cache reloaded without it — falls back to no filter
+  // rather than stranding the page on an empty list with nothing in the
+  // dropdown to undo it. Derived, so the recovery needs no effect.
+  const activeTag = useMemo(() => (
+    tagFilter && tagOptions.some(o => o.tag.toLowerCase() === tagFilter.toLowerCase()) ? tagFilter : ''
+  ), [tagFilter, tagOptions]);
+
+  // Combined selector — the roster gate plus the chosen tag. Filtering here
+  // rather than at the row level means the whole page follows the tag: the
+  // flat table, the By Company rollup, Travel, and every column's filter
+  // dropdown all see the narrowed set.
+  const combinedSelector = useCallback((c) => {
+    if (!rosterSelector(c)) return false;
+    if (!activeTag) return true;
+    // Exact match per tag, not substring — "Key" must not sweep in every
+    // "Dan Key Target" contact.
+    return contactTagList(c).some(t => t.toLowerCase() === activeTag.toLowerCase());
+  }, [rosterSelector, activeTag]);
+
   const subtitle = (
     <>
       Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once.
@@ -442,6 +515,40 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
+      </div>
+      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <label htmlFor="all-contacts-tag-filter" style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Tag:</label>
+        <select
+          id="all-contacts-tag-filter"
+          value={activeTag}
+          onChange={e => setTagFilter(e.target.value)}
+          title="Show only contacts carrying this tag. Unlike the Tags column filter, this matches a contact by any one of its tags."
+          style={{
+            padding: '2px 6px', borderRadius: 4,
+            border: '1px solid ' + (activeTag ? '#6366F1' : '#CBD5E1'),
+            background: activeTag ? '#EEF2FF' : '#fff',
+            color: activeTag ? '#3730A3' : '#334155',
+            fontSize: '0.7rem', fontWeight: activeTag ? 700 : 400,
+            fontFamily: 'inherit', maxWidth: 260,
+          }}
+        >
+          <option value="">All tags</option>
+          {tagOptions.map(({ tag, count }) => (
+            <option key={tag} value={tag}>{tag} ({count})</option>
+          ))}
+        </select>
+        {activeTag ? (
+          <button
+            type="button"
+            onClick={() => setTagFilter('')}
+            title="Clear the tag filter"
+            style={{
+              padding: '1px 8px', borderRadius: 999,
+              border: '1px solid #C7D2FE', background: '#EEF2FF', color: '#3730A3',
+              fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >Clear</button>
+        ) : null}
       </div>
       <div style={{ marginTop: 4 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
