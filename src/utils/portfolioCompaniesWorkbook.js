@@ -10,6 +10,18 @@
 // reuses them elsewhere (Fit Tier rendering, ranking previews).
 
 import { sanitizeExcelWorkbook } from './exportSanitize.js';
+import { STATUS_COLORS } from '../data/enums.js';
+
+// Excel fill/font for a Status cell, derived from the same palette the app
+// uses on screen so the workbook can't drift from the UI: the status color
+// itself for the text, and that color blended toward white for the fill.
+function statusCellColors(status) {
+  const hex = STATUS_COLORS[status];
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const tint = (c) => Math.round(c + (255 - c) * 0.85).toString(16).padStart(2, '0').toUpperCase();
+  return { fill: `FF${tint(r)}${tint(g)}${tint(b)}`, font: `FF${hex.slice(1).toUpperCase()}` };
+}
 
 export const SECTOR_SCORES = {
   'Industrial / Manufacturing': 9.5,
@@ -127,6 +139,11 @@ export async function downloadPortfolioCompaniesWorkbook({
   cmForRaClient = () => "",
   tierForTarget = () => "",
   repForTarget = () => "",
+  // Resolves the Status cell for a row. The company pop-up passes a resolver
+  // that falls back to the matching tracker record's status, exactly as the
+  // on-screen column does; callers without that context get the row's own
+  // status only.
+  statusForRow = (row) => row.status || "",
 }) {
                   if (rows.length === 0) {
                     alert('No portfolio companies to download.');
@@ -136,8 +153,8 @@ export async function downloadPortfolioCompaniesWorkbook({
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'External Reporting'];
-                  const colWidths = [13, 32, 15, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'Status', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'External Reporting'];
+                  const colWidths = [13, 32, 18, 15, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -177,6 +194,7 @@ export async function downloadPortfolioCompaniesWorkbook({
                     return [
                       score == null ? 'N/A' : score,
                       r.companyName || '',
+                      statusForRow(r) || '',
                       r.hqCountry || '',
                       energy,
                       estElec,
@@ -320,15 +338,23 @@ export async function downloadPortfolioCompaniesWorkbook({
                           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
                         }
                         // Number formats. Column order here is:
-                        //   0 Opportunity Score · 1 Company Name · 2 HQ Country ·
-                        //   3 Energy · 4 Est. Electricity · 5 Est. Natural Gas ·
-                        //   6 Site Count · 7 Sector · 8 Subsector · 9 Strategy ·
-                        //   10 Acquisition Year · ...
-                        if (i === 0 || i === 10) cell.numFmt = '0';
-                        if (i === 3 || i === 4 || i === 5 || i === 6) cell.numFmt = '#,##0';
-                        // Acquisition Year (col 10): color-code by recency so older years
+                        //   0 Opportunity Score · 1 Company Name · 2 Status ·
+                        //   3 HQ Country · 4 Energy · 5 Est. Electricity ·
+                        //   6 Est. Natural Gas · 7 Site Count · 8 Sector ·
+                        //   9 Subsector · 10 Strategy · 11 Acquisition Year · ...
+                        if (i === 0 || i === 11) cell.numFmt = '0';
+                        if (i >= 4 && i <= 7) cell.numFmt = '#,##0';
+                        // Status (col 2): same color coding as the on-screen column.
+                        if (i === 2 && v) {
+                          const statusColors = statusCellColors(String(v));
+                          if (statusColors) {
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: statusColors.fill } };
+                            cell.font = { ...cell.font, bold: true, color: { argb: statusColors.font } };
+                          }
+                        }
+                        // Acquisition Year (col 11): color-code by recency so older years
                         // visibly show they're pulling the opportunity score down.
-                        if (i === 10 && v != null) {
+                        if (i === 11 && v != null) {
                           const yPct = yearRecencyPcts[idx];
                           if (yPct != null) {
                             if (yPct >= 0.7) {
@@ -349,7 +375,7 @@ export async function downloadPortfolioCompaniesWorkbook({
                         // Estimated site counts (originally tagged with "(E)" in the source):
                         // italic font + a custom number format that appends " est." while keeping
                         // the cell numeric and sortable.
-                        if (i === 6 && siteEstimateFlags[idx]) {
+                        if (i === 7 && siteEstimateFlags[idx]) {
                           cell.font = { ...cell.font, italic: true };
                           cell.numFmt = '#,##0" est."';
                         }
