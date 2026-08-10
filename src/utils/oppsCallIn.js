@@ -71,6 +71,32 @@ export function callInDateISO(row) {
   return toISODate(row?.['Follow Up']);
 }
 
+// Stages that mean the opp is finished, and stage values that are
+// spreadsheet errors rather than real stages. Mirrors the filter the
+// Activity and Contacts pages already apply to these same Opps 2 records.
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+
+// An opp still being worked: it has a real stage and hasn't closed.
+export function isActiveOpp(row) {
+  const stage = String(row?.Stage || '').trim();
+  return !!stage && !INVALID_STAGES.has(stage) && !CLOSED_STAGES.has(stage);
+}
+
+// How many active opps have gone negative on Call In — the Follow Up date
+// is already behind them. Closed and error-stage rows are skipped, since an
+// overdue follow-up on a dead opp isn't work anyone owes.
+export function countOverdueCallIns(records) {
+  if (!Array.isArray(records)) return 0;
+  let n = 0;
+  for (const row of records) {
+    if (!isActiveOpp(row)) continue;
+    const days = resolveCallIn(row);
+    if (typeof days === 'number' && Number.isFinite(days) && days < 0) n += 1;
+  }
+  return n;
+}
+
 // Order rows by Call In ascending so the most urgent (most overdue) land
 // first, matching the Opps 2 page's initial-load sort. Rows without a
 // resolvable Call In sink to the bottom; original index breaks ties so

@@ -6,6 +6,11 @@
 // is a starting point for the day rather than a wall of text. Editing the
 // playbook means editing PROSPECTING_STEPS — nothing else reads the order.
 
+import { useEffect, useMemo, useState } from 'react';
+import { loadOpps2Newest } from '../../utils/opps2Store';
+import { countOverdueCallIns } from '../../utils/oppsCallIn';
+import { useAuth } from '../../contexts/AuthContext';
+
 const PROSPECTING_STEPS = [
   {
     key: 'opps',
@@ -62,7 +67,36 @@ const RANK_COLORS = [
   { badge: '#94A3B8', ring: '#E2E8F0', tint: '#FCFCFD' },
 ];
 
+// Read the Opps 2 store the way the other consumer pages do — newest of the
+// local cache and Firestore. Kept local rather than imported from
+// KeyContactsView so this lazy chunk doesn't pull that whole page in for a
+// twelve-line hook.
+function useOppsRecords(userId) {
+  const [records, setRecords] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await loadOpps2Newest(userId);
+        const recs = Array.isArray(data?.records) ? data.records : null;
+        if (!cancelled && recs) setRecords(recs);
+      } catch { /* leave null so the step shows no count rather than a wrong one */ }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+  return records;
+}
+
 export function ProspectingView({ onNavigate }) {
+  const { user } = useAuth();
+  const oppsRecords = useOppsRecords(user?.uid);
+  // null until the store answers — a "0 overdue" badge shown while the read
+  // is still in flight would read as "you're all clear" when it isn't known.
+  const overdueCallIns = useMemo(
+    () => (oppsRecords ? countOverdueCallIns(oppsRecords) : null),
+    [oppsRecords],
+  );
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
       <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0 }}>
@@ -109,6 +143,24 @@ export function ProspectingView({ onNavigate }) {
                   {rank === 1 && (
                     <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase', background: '#DBEAFE', color: '#1E40AF' }}>
                       Start here
+                    </span>
+                  )}
+                  {/* How many opps have gone negative on Call In. Red when
+                      there's work owed, green when the list is clear —
+                      absent entirely until the opps store has answered. */}
+                  {step.key === 'opps' && overdueCallIns != null && (
+                    <span
+                      title={overdueCallIns > 0
+                        ? `${overdueCallIns} open ${overdueCallIns === 1 ? 'opp is' : 'opps are'} past their Call In date`
+                        : 'No open opp is past its Call In date'}
+                      style={{
+                        padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700,
+                        letterSpacing: '0.03em', textTransform: 'uppercase',
+                        background: overdueCallIns > 0 ? '#FEE2E2' : '#DCFCE7',
+                        color: overdueCallIns > 0 ? '#991B1B' : '#166534',
+                      }}
+                    >
+                      {overdueCallIns > 0 ? `${overdueCallIns} overdue` : 'None overdue'}
                     </span>
                   )}
                   {isLast && (
