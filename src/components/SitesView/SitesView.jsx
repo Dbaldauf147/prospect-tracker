@@ -1746,6 +1746,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // (zip, commodity) pair — matches the "first match wins" UX in
       // other imports.
       const zipMap = {};
+      // Zips whose rows named more than one country — reported after the
+      // import so a rates file mixing US and Mexican records says so rather
+      // than quietly deciding per zip.
+      const conflictingZips = new Set();
       let valid = 0;
       let unrecognizedCommodity = 0;
       for (const r of rows) {
@@ -1770,9 +1774,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const code = normalizeState(rawState);
           if (code) entry.state = code;
         }
-        if (mapping.country && !entry.country) {
+        // One entry per zip, but a five-digit key isn't unique across
+        // countries: US ZIPs and Mexican códigos postales overlap heavily
+        // (45050 is Monroe, Ohio and also Zapopan, Jalisco). Merging a US
+        // row and a Mexican row into one entry produced a record claiming
+        // both — an Ohio state and a country of Mexico — and every site on
+        // that zip inherited whichever country happened to be written
+        // first. Rows that disagree leave the entry with no country at all,
+        // so a site falls back to its own State / zip evidence instead of a
+        // coin flip.
+        if (mapping.country) {
           const country = String(r[mapping.country] ?? '').trim();
-          if (country) entry.country = country;
+          if (country && !entry.countryConflict) {
+            if (!entry.country) entry.country = country;
+            else if (entry.country.toLowerCase() !== country.toLowerCase()) {
+              entry.countryConflict = true;
+              delete entry.country;
+              conflictingZips.add(zip);
+            }
+          }
         }
         zipMap[zip] = entry;
         valid++;
@@ -1784,6 +1804,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         zipCount: uniqueZips,
         validRows: valid,
         unrecognizedCommodity,
+        // How many zips carried rows from more than one country. Kept on the
+        // import metadata so the panel can say the file mixes countries on
+        // some keys, rather than the ambiguity only showing up later as a
+        // site labelled with the wrong one.
+        conflictingCountryZips: conflictingZips.size,
         columns: mapping,
         importedAt: Date.now(),
       };
@@ -2106,6 +2131,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const state = stateInScope
         ? (match?.state || zipToState(zip) || normalizeState(stateColInput))
         : null;
+      // The country this site resolves to, for every consumer below.
+      //
+      // A resolved US state settles it: every source `state` can come from
+      // is US-only (the match's own state is normalized against the US
+      // table, as are the zip prefix and the State column), so a row that
+      // has one is in the US and the zip match's country can't be trusted
+      // to say otherwise. Five-digit keys aren't unique across countries —
+      // 45050 is Monroe, Ohio and also Zapopan, Jalisco — so a rates file
+      // carrying Mexican rows was relabelling Ohio sites as Mexican
+      // wherever the upload had no Country column of its own. The uploaded
+      // Country column still wins over both.
+      const resolvedCountry = inputCountry || (state ? 'United States' : (match?.country || ''));
       // Property type + customer segment resolve first: the segment
       // (commercial vs industrial) picks which state-rate column
       // applies. An explicit Segment column wins; otherwise infer it
@@ -2146,7 +2183,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // as $/kWh directly; gas converts from $/kWh-equiv to $/therm
       // via the 29.3001 kWh/therm energy-content factor so the cost
       // helpers downstream stay shape-compatible.
-      const resolvedCountryForRate = inputCountry || match?.country || null;
+      const resolvedCountryForRate = resolvedCountry || null;
       const countryElectricRateVal = stateElectricRate == null
         ? countryElectricRate(resolvedCountryForRate)
         : null;
@@ -2366,7 +2403,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __water__: lookupAllowed ? match?.water : undefined,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
         __city__: cityColInput || match?.city,
-        __country__: inputCountry || match?.country,
+        __country__: resolvedCountry || undefined,
         // Canonical US code when resolved (drives rates + deregulation
         // lookups); else the raw mapped value so non-US provinces still
         // display.
@@ -2386,7 +2423,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // a derived US code from a zip-prefix / name collision (e.g. a
         // German postal code resolving to "NY") must never override it.
         __stateProvinceDisplay__: (() => {
-          const resolvedCountry = inputCountry || match?.country || '';
           const isUS = /^(united states|usa|us)$/i.test(resolvedCountry);
           const isCA = /^(canada|ca)$/i.test(resolvedCountry);
           const countryLabel = normalizeCountryName(resolvedCountry) || resolvedCountry;
@@ -14030,6 +14066,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               ✓ Utility lookup loaded: {utilMeta.zipCount?.toLocaleString() || '?'} zip codes
               {utilMeta.fileName && <> · <span style={{ color: '#64748B', fontWeight: 500 }}>{utilMeta.fileName}</span></>}
             </span>
+            {/* A zip that appears under two countries can't say which one a
+                site on it is in, so those keys carry no country and the site
+                falls back to its own State / zip. Worth naming: it's the
+                difference between "the file is fine" and "these zips are
+                doing nothing for you". */}
+            {utilMeta.conflictingCountryZips > 0 && (
+              <span
+                style={{ color: '#B45309', fontWeight: 600, fontSize: '0.72rem' }}
+                title="These zips appear in the file under more than one country (US ZIPs and Mexican códigos postales are both five digits and overlap). Their country is left unset, so sites on them take the country from their own State / Country columns instead."
+              >
+                · {utilMeta.conflictingCountryZips.toLocaleString()} zip{utilMeta.conflictingCountryZips === 1 ? '' : 's'} listed under two countries
+              </span>
+            )}
             <button
               className={styles.utilityBarButton}
               onClick={() => utilityFileRef.current?.click()}
