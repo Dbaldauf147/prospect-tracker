@@ -15,6 +15,8 @@ import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsV
 import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
 import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
+import { isCancellingForSure } from '../../utils/serviceCoverage';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -102,6 +104,54 @@ function companiesMatch(a, b) {
 export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
+
+  // ---- Cancelling clients ------------------------------------------
+  // A client whose Clients-tab Status says "Cancelling for Sure" is on its
+  // way out, so its people don't belong on a roster of who to work. The
+  // status map is the Clients tab's own store, keyed by company name
+  // lowercased + trimmed, and it's re-read on the same events the Clients
+  // tab fires so a status change here takes effect without a reload.
+  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  useEffect(() => {
+    function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
+    function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+    };
+  }, []);
+
+  // The cancelling accounts, by name and by email domain. Domains come off
+  // the account record (its Email Domain and Website), so a contact whose
+  // HubSpot Company text is spelled differently from the account — the
+  // common case — is caught too. Names alone would miss most of them.
+  const cancellingClients = useMemo(() => {
+    const companies = new Set();
+    const domains = new Set();
+    for (const p of (prospects || [])) {
+      const key = String(p?.company || '').trim().toLowerCase();
+      if (!key || !isCancellingForSure(clientStatusMap[key])) continue;
+      companies.add(key);
+      collectClientDomains(p, domains);
+    }
+    return { companies, domains };
+  }, [prospects, clientStatusMap]);
+
+  // Is this contact one of a cancelling account's people? Free-mail domains
+  // are nobody's account domain, so they never match on domain — a personal
+  // gmail address at a cancelling client is caught by the company name or
+  // not at all, rather than by a domain every account could share.
+  const isAtCancellingClient = useCallback((c) => {
+    if (cancellingClients.companies.size === 0 && cancellingClients.domains.size === 0) return false;
+    const company = String(c?.company || '').trim().toLowerCase();
+    if (company && cancellingClients.companies.has(company)) return true;
+    const email = String(c?.email || '').toLowerCase().trim();
+    const at = email.lastIndexOf('@');
+    const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+    return !!domain && !FREE_MAIL.has(domain) && cancellingClients.domains.has(domain);
+  }, [cancellingClients]);
 
   // ---- Active gate (mirror of ActiveContactsView) -------------------
   // Build the same client-company exclusion set the Active page uses,
@@ -308,10 +358,13 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   }, [showHidden, isKeyProspectAtTierAccount]);
 
   // Roster gate — a contact passes when it would land on at least one of
-  // the dedicated rosters. The tag filter composes on top of this below.
+  // the dedicated rosters and isn't at an account that's cancelling. The
+  // exclusion sits here, above the individual gates, so it holds however
+  // the contact would otherwise have qualified. The tag filter composes on
+  // top of this below.
   const rosterSelector = useCallback(
-    (c) => isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c),
-    [isKey, isActive, isClient, isKeyProspect]
+    (c) => !isAtCancellingClient(c) && (isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c)),
+    [isAtCancellingClient, isKey, isActive, isClient, isKeyProspect]
   );
 
   // (combinedSelector — the roster gate plus the tag gate — is defined with
@@ -392,10 +445,13 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     };
     let n = 0;
     for (const c of hubspotContacts) {
+      // Same cancelling exclusion the roster gate applies, so the badge
+      // doesn't promise contacts that Show Hidden wouldn't surface.
+      if (isAtCancellingClient(c)) continue;
       if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c) || isKeyProspectHidden(c)) n += 1;
     }
     return n;
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount]);
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount, isAtCancellingClient]);
 
   // Per-category totals across the loaded HubSpot cache. Uses the
   // visible-mode selectors (showHidden = false) so the numbers reflect
@@ -442,7 +498,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!tags.includes('decision maker')) return false;
       return isKeyProspectAtTierAccount(c);
     };
-    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0;
+    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0, cancelling = 0;
     const localFields = settings?.contactLocalFields || {};
     for (const baseC of hubspotContacts) {
       const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
@@ -453,14 +509,21 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       const a = visIsActive(c);
       const cl = visIsClient(c);
       const kp = visIsKeyProspect(c);
+      // Counted, not tallied into the pills: how many the cancelling
+      // exclusion took out. A page that quietly shrinks is worse than one
+      // that says what it left behind.
+      if (isAtCancellingClient(c)) {
+        if (k || a || cl || kp) cancelling++;
+        continue;
+      }
       if (k) key++;
       if (a) active++;
       if (cl) client++;
       if (kp) keyProspect++;
       if (k || a || cl || kp) total++;
     }
-    return { key, active, client, keyProspect, total };
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount]);
+    return { key, active, client, keyProspect, total, cancelling };
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, isAtCancellingClient]);
 
   // Every distinct tag worn by a contact on this page, with how many wear
   // it, most-used first. Derived from the roster gate rather than the full
@@ -547,7 +610,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
 
   const subtitle = (
     <>
-      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once.
+      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once.
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
         {[
@@ -561,6 +624,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
           return (
             <button
               key={label}
+              data-category-pill={label}
               type="button"
               onClick={() => setCategoryFilter(cat)}
               title={tip}
@@ -579,6 +643,19 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
+        {categoryCounts.cancelling > 0 && (
+          <span
+            data-cancelling-note
+            title={'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.'}
+            style={{
+              padding: '1px 8px', borderRadius: 999,
+              background: '#F1F5F9', border: '1px dashed #CBD5E1', color: '#64748B',
+              fontSize: '0.68rem', fontWeight: 700,
+            }}
+          >
+            {categoryCounts.cancelling} at cancelling clients, left out
+          </span>
+        )}
       </div>
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <label htmlFor="all-contacts-tag-filter" style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Tag:</label>
