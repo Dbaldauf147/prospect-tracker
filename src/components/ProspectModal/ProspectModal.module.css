@@ -275,6 +275,53 @@
   max-width: 26rem;
 }
 
+/* The parent row above the root: the level-1 fan-out mirrored, so the bus
+   sits under the parents and each drops onto it before a single stem
+   carries down into the company. With the usual one parent the bus has no
+   width and the whole thing reads as one straight line. */
+.divParentRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.divParentCol {
+  position: relative;
+  padding: 0 0.5rem 18px;
+  min-width: 9.5rem;
+  flex: 0 0 auto;
+  max-width: 15rem;
+}
+.divParentCol::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--div-line);
+}
+.divParentCol:first-child::after { left: 50%; }
+.divParentCol:last-child::after { right: 50%; }
+.divParentCol:only-child::after { left: 50%; right: 50%; }
+/* Drop from the parent's box down onto the bus. */
+.divParentCol::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 18px;
+  background: var(--div-line);
+}
+
+/* Reads as a level up, not another division: lighter fill, same weight as
+   the root so the eye pairs the two. */
+.divParent {
+  font-weight: 700;
+  background: #F1F5F9;
+  color: #475569;
+}
+
 /* Drop line from the root down to the bus. */
 .divStem {
   width: 1px;

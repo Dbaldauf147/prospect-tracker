@@ -89,6 +89,109 @@ export function buildDivisionTree(settings, rootId, rootName, nameById) {
   return walk(rootId, rootName, new Set([rootId]), 0);
 }
 
+// ── Parent company ──────────────────────────────────────────────────
+// The box ABOVE the company in its own chart: who this company rolls up
+// into. There's no second mapping for it — a parent is just the same
+// edge read the other way round, so setting "Acme Holdings" as the parent
+// of Acme East writes divisionsMap['…holdings'] = [{ Acme East }]. That
+// keeps one source of truth: the parent's own popup and its My Accounts
+// Divisions cell show Acme East as a division from the same moment, which
+// is what a parent means.
+//
+// A parent that isn't a tracker company is typed, exactly like a typed
+// division, and carries a `txt:` id. Its display name has nowhere to live
+// on the edge itself (the owner side of divisionsMap is a bare key), so
+// typed names are kept in:
+//   settings.divisionNames[boxId] = 'Acme Holdings'
+// — consulted only when nothing better is available, since a linked
+// parent's live company name always wins.
+
+export function divisionNameFor(settings, boxId) {
+  return (settings?.divisionNames || {})[boxId] || '';
+}
+
+// Every company `childId` currently sits under. Normally one; the mapping
+// allows more (a keyword rule can fold the same company under two
+// parents), and the chart draws all of them rather than quietly picking
+// one — a hidden second parent is a mapping the user can't find to undo.
+export function divisionParentsFor(settings, childId, nameById) {
+  if (!childId) return [];
+  const map = settings?.divisionsMap || {};
+  const names = nameById || new Map();
+  const out = [];
+  for (const [ownerId, list] of Object.entries(map)) {
+    if (ownerId === childId) continue;
+    if (!(list || []).some(d => d?.id === childId)) continue;
+    const live = names.get(ownerId);
+    out.push({
+      id: ownerId,
+      company: live || divisionNameFor(settings, ownerId) || ownerId,
+      // Same rule as a division box: only a dead link to a prospect is
+      // "missing" — a typed parent IS its text.
+      missing: !isTextDivision(ownerId) && !live,
+    });
+  }
+  return out.sort((a, b) => a.company.localeCompare(b.company));
+}
+
+// Is `candidateId` somewhere under `rootId`? Guards the one edit that can
+// tie the mapping in a knot: making a company its own ancestor. The chart
+// walk already refuses to loop, so a cycle wouldn't hang the page — it
+// would just draw the same company above and below itself, which reads as
+// a bug in the data nobody can explain.
+export function isDivisionDescendant(settings, rootId, candidateId) {
+  const map = settings?.divisionsMap || {};
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const child of (map[id] || [])) {
+      if (!child?.id || seen.has(child.id)) continue;
+      if (child.id === candidateId) return true;
+      seen.add(child.id);
+      queue.push(child.id);
+    }
+  }
+  return false;
+}
+
+// Point `childId` at a parent named `name`, detaching it from `fromParentId`
+// first when one was given (that's what a rename of the parent box is: the
+// same company moving to a different parent).
+//
+// Returns null when the name is blank, names the company itself, names a
+// company already below it, or names the parent it's already under — in
+// each case the caller leaves the editor open rather than appearing to
+// accept an edit it dropped.
+export function setDivisionParentPatch(settings, childId, childCompany, name, companies, fromParentId) {
+  const typed = String(name || '').trim();
+  if (!childId || !typed) return null;
+  const key = nameKey(typed);
+  if (key === nameKey(childCompany)) return null;
+
+  const match = (companies || []).find(c =>
+    c && c.id !== childId && nameKey(c.company) === key);
+  const parentId = match ? match.id : textDivisionId(typed);
+  if (parentId === childId) return null;
+  if (isDivisionDescendant(settings, childId, parentId)) return null;
+  if (parentId === fromParentId) return null;
+  if (((settings?.divisionsMap || {})[parentId] || []).some(d => d.id === childId)) return null;
+
+  const detached = fromParentId
+    ? removeDivisionPatch(settings, fromParentId, childId)
+    : { divisionsMap: { ...(settings?.divisionsMap || {}) } };
+  const map = { ...detached.divisionsMap };
+  map[parentId] = [...(map[parentId] || []), { id: childId, company: childCompany }];
+
+  const patch = { divisionsMap: map };
+  // Only a typed parent needs its name remembered; a linked one reads its
+  // company's live name, which stays right through a rename over there.
+  if (!match) {
+    patch.divisionNames = { ...(settings?.divisionNames || {}), [parentId]: typed };
+  }
+  return patch;
+}
+
 // Companies whose name contains `keyword`, excluding the parent itself.
 // Shared so the rule chip's "(n matches)" count and the rows a rule
 // actually adds are always the same set.

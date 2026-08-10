@@ -36,6 +36,8 @@ import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, bui
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
   divisionsFor,
+  divisionParentsFor,
+  setDivisionParentPatch,
   buildDivisionTree,
   addNamedDivisionPatch,
   renameDivisionPatch,
@@ -2639,16 +2641,143 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
   );
 }
 
+// One box above the company: who it rolls up into. There's no separate
+// mapping behind it — a parent is the same edge as a division read the
+// other way round (see divisionParentsFor), so editing here shows up on
+// the parent's own popup and its My Accounts Divisions cell.
+//
+// No "+" control: a division added under the parent would be a SIBLING of
+// this company, and this chart doesn't draw siblings — a control whose
+// result you can't see is worse than no control.
+function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+  const btn = {
+    border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
+    fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
+  };
+  const others = parent.otherDivisions;
+  return (
+    <div className={styles.divBoxWrap}>
+      <div className={styles.divBoxHead}>
+        {editing ? (
+          <DivisionInlineInput
+            value={parent.company}
+            placeholder="Parent company…"
+            onCommit={(text) => actions.setParent(parent.id, text)}
+            onCancel={actions.cancel}
+          />
+        ) : (
+          <>
+            <div
+              className={`${styles.divBox} ${styles.divParent}${parent.missing ? ` ${styles.divBoxMissing}` : ''}`}
+              style={{ cursor: 'text' }}
+              onClick={() => actions.startEdit(parent.id)}
+              onDoubleClick={() => actions.startEdit(parent.id)}
+              title={[
+                `${parent.company} is the parent of ${rootCompany}: click to change it.`,
+                parent.missing ? 'No longer in the tracker.' : '',
+                others > 0
+                  ? `It has ${others} other division${others === 1 ? '' : 's'} — open its own popup to see them.`
+                  : '',
+              ].filter(Boolean).join(' ')}
+            >
+              {parent.company || '-'}
+            </div>
+            <button
+              type="button"
+              onClick={() => actions.startEdit(parent.id)}
+              aria-label={`Change the parent company of ${rootCompany}`}
+              title={`Change the parent company of ${rootCompany}`}
+              style={{ ...btn, position: 'absolute', bottom: 1, right: 2, fontSize: '0.68rem' }}
+            >&#9998;</button>
+            <button
+              type="button"
+              onClick={() => actions.removeParent(parent.id)}
+              aria-label={`Remove ${parent.company} as the parent of ${rootCompany}`}
+              title={`Remove ${parent.company} as the parent: ${rootCompany} stops being one of its divisions.`}
+              style={{ ...btn, position: 'absolute', top: 1, right: 2 }}
+            >&times;</button>
+            <button
+              type="button"
+              onClick={() => actions.startPick(parent.id)}
+              aria-label={`Add a contact to ${parent.company}`}
+              title={`Add a contact to ${parent.company}`}
+              style={{ ...btn, position: 'absolute', bottom: 1, left: 2, fontSize: '0.7rem' }}
+            >&#128100;</button>
+          </>
+        )}
+      </div>
+      <DivisionContacts
+        boxId={parent.id}
+        boxName={parent.company}
+        contacts={contacts}
+        assigned={contactsByBox(parent.id)}
+        picking={picking === parent.id}
+        actions={actions}
+      />
+    </div>
+  );
+}
+
+// The parent row, drawn above the root as the mirror of the level-1
+// fan-out: a bus with a drop per parent, then one stem into the company.
+// Normally there's a single parent and the bus collapses to that stem;
+// more than one only happens when the mapping has it, and drawing them
+// all beats hiding an edge the user can't otherwise find to undo.
+function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+  if (!parents.length && !addingParent) return null;
+  return (
+    <>
+      <div className={styles.divParentRow}>
+        {parents.map(parent => (
+          <div key={parent.id} className={styles.divParentCol}>
+            <DivisionParentBox
+              parent={parent}
+              rootCompany={rootCompany}
+              editing={editing === parent.id}
+              picking={picking}
+              contacts={contacts}
+              contactsByBox={contactsByBox}
+              actions={actions}
+            />
+          </div>
+        ))}
+        {addingParent && (
+          <div className={styles.divParentCol}>
+            <div className={styles.divBoxWrap}>
+              <DivisionInlineInput
+                placeholder="Parent company…"
+                onCommit={(text) => actions.setParent(null, text)}
+                onCancel={actions.cancel}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+      <div className={styles.divStem} />
+    </>
+  );
+}
+
 // The root box is the company the popup is showing, so it isn't renamable
 // or removable here — its own name field is a few rows up. Everything
-// below it is editable in place.
-function DivisionsChart({ tree, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
+// below it is editable in place, and the parent above it is set here.
+function DivisionsChart({ tree, parents, addingParent, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
   const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
   const rootLayout = layoutOf(tree.id, 'row');
   const rootHasBelow = tree.children.length > 0 || adding === tree.id;
   return (
     <div className={styles.divChart}>
       <div className={styles.divChartInner}>
+        <DivisionParents
+          parents={parents}
+          addingParent={addingParent}
+          rootCompany={tree.company}
+          editing={editing}
+          picking={picking}
+          contacts={contacts}
+          contactsByBox={contactsByBox}
+          actions={actions}
+        />
         <div className={styles.divRootRow}>
           <div className={styles.divBoxWrap}>
             <div className={styles.divBoxHead}>
@@ -2719,6 +2848,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(null);
   const [picking, setPicking] = useState(null);
+  // The parent box has no id until it's committed, so "typing a new one"
+  // needs its own flag rather than riding on `editing`.
+  const [addingParent, setAddingParent] = useState(false);
 
   const divisions = divisionsFor(settings, parentId);
 
@@ -2764,6 +2896,18 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     [settings, parentId, parentCompany, nameById],
   );
 
+  // Who this company rolls up into — the box above the root. `otherDivisions`
+  // is what else hangs off that parent, which this chart doesn't draw: worth
+  // saying in the tooltip so the single box doesn't read as "the parent has
+  // one division".
+  const parents = useMemo(
+    () => divisionParentsFor(settings, parentId, nameById).map(p => ({
+      ...p,
+      otherDivisions: Math.max(0, divisionsFor(settings, p.id).length - 1),
+    })),
+    [settings, parentId, nameById],
+  );
+
   // Same normalization the add helper uses, so the disabled Add button and
   // the note under it agree with what actually gets rejected.
   const normalize = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -2788,10 +2932,22 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   // company writes that company's own divisions, the same list its popup
   // and the My Accounts column edit; that's what the link means.
   const actions = useMemo(() => ({
-    startEdit: (id) => { setAdding(null); setPicking(null); setEditing(id); },
-    startAdd: (id) => { setEditing(null); setPicking(null); setAdding(id); },
-    startPick: (id) => { setEditing(null); setAdding(null); setPicking(id); },
-    cancel: () => { setEditing(null); setAdding(null); setPicking(null); },
+    startEdit: (id) => { setAdding(null); setPicking(null); setAddingParent(false); setEditing(id); },
+    startAdd: (id) => { setEditing(null); setPicking(null); setAddingParent(false); setAdding(id); },
+    startPick: (id) => { setEditing(null); setAdding(null); setAddingParent(false); setPicking(id); },
+    startAddParent: () => { setEditing(null); setAdding(null); setPicking(null); setAddingParent(true); },
+    cancel: () => { setEditing(null); setAdding(null); setPicking(null); setAddingParent(false); },
+    // Setting a parent writes the same edge a division does, pointed the
+    // other way: this company joins that company's divisions. `fromId` is
+    // the parent being replaced, so changing the box moves the company
+    // rather than leaving it under both.
+    setParent: (fromId, text) => {
+      const patch = setDivisionParentPatch(settings, parentId, parentCompany, text, companies, fromId);
+      if (patch) updateSettings(patch);
+      setEditing(null);
+      setAddingParent(false);
+    },
+    removeParent: (fromId) => updateSettings(removeDivisionPatch(settings, fromId, parentId)),
     rename: (ownerId, childId, text) => {
       const patch = renameDivisionPatch(settings, ownerId, childId, text);
       if (patch) {
@@ -2822,7 +2978,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       setAdding(null);
     },
     remove: (ownerId, childId) => updateSettings(removeDivisionPatch(settings, ownerId, childId)),
-  }), [settings, companies, updateSettings]);
+  }), [settings, companies, updateSettings, parentId, parentCompany]);
 
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
@@ -2848,12 +3004,31 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
             parent by name, so spell it the way it appears on the site list.
           </p>
 
+          {/* The company can sit under one too — offered here rather than
+              inside the chart because the chart isn't drawn until there's
+              something in it. */}
+          {parents.length === 0 && !addingParent && (
+            <button
+              type="button"
+              onClick={actions.startAddParent}
+              title={`Put a parent company above ${parentCompany || 'this company'}: it becomes one of that company's divisions.`}
+              style={{
+                display: 'block', margin: '0 0 0.5rem', padding: '0.2rem 0.5rem',
+                border: '1px dashed var(--color-border)', borderRadius: 6,
+                background: 'transparent', color: '#64748B', cursor: 'pointer',
+                fontSize: '0.68rem', fontFamily: 'inherit',
+              }}
+            >&#8593; Add a parent company</button>
+          )}
+
           {/* The map is the editor: click a box to rename it, + to add one
               under it, × to remove it. */}
-          {(divisions.length > 0 || adding) && (
+          {(divisions.length > 0 || adding || parents.length > 0 || addingParent) && (
             <>
               <DivisionsChart
                 tree={tree}
+                parents={parents}
+                addingParent={addingParent}
                 editing={editing}
                 adding={adding}
                 picking={picking}
@@ -2865,6 +3040,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
+                {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions'}
               </p>
             </>
           )}
