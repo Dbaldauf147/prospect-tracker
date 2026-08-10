@@ -12,8 +12,8 @@
 // The store helpers touch localStorage, which doesn't exist here; userLs
 // swallows that, so only the pure functions are exercised below.
 import {
-  categorizeStep, countRenewalWork, countServiceGaps, isMarkedCaughtUp, parseCaughtUpMap,
-  readCaughtUpSnapshot, todayISO, RENEWAL_ISSUE_TYPES,
+  categorizeStep, countRenewalWork, countServiceGaps, isMarkedCaughtUp, isRenewalWork,
+  parseCaughtUpMap, readCaughtUpSnapshot, todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
 
 let passed = 0, failed = 0;
@@ -42,20 +42,36 @@ eq(isMarkedCaughtUp({}, 'cold', '2026-08-10'), false, 'an unmarked step is not c
 eq(isMarkedCaughtUp(null, 'cold', '2026-08-10'), false, 'a missing map is not caught up');
 
 // ---- renewal work, from the Issues tab's rows -------------------------------
+// Step 3 counts the Clients tab's red rows: expiring inside the window with
+// a blank Status. An expired contract someone has already put a Status on is
+// still an Issues-tab row, but it is not renewal work.
+
+eq(isRenewalWork({ type: 'Renewal: no status' }), true,
+  'a renewal inside the window with no Status is work by definition');
+eq(isRenewalWork({ type: 'Contract expired', noStatus: true }), true,
+  'an expired contract with a blank Status is work');
+eq(isRenewalWork({ type: 'Contract expired', noStatus: false }), false,
+  'an expired contract someone has set a Status on is not work');
+eq(isRenewalWork({ type: 'Contract expired' }), false,
+  'an expired row with no flag at all is not assumed to be work');
+eq(isRenewalWork({ type: 'No expiration date', noStatus: true }), false,
+  'a blank Status on some other issue type is not renewal work');
+eq(isRenewalWork(null), false, 'a missing row is not work');
 
 const ISSUES = [
-  { type: 'Contract expired', snoozed: false },
+  { type: 'Contract expired', noStatus: true, snoozed: false },
+  { type: 'Contract expired', noStatus: false, snoozed: false }, // already being worked
   { type: 'Renewal: no status', snoozed: false },
   { type: 'Renewal: no status', snoozed: true },   // user said "not now"
   { type: 'No expiration date', snoozed: false },  // data hygiene, not outreach
   { type: 'HQ Region missing', snoozed: false },
 ];
-eq(countRenewalWork(ISSUES), 2, 'only open renewal issues count');
+eq(countRenewalWork(ISSUES), 2, 'only open, status-blank renewal issues count');
 eq(countRenewalWork([]), 0, 'no issues at all means the step is clear');
 eq(countRenewalWork(null), null, 'issues not loaded yet stay unknown');
 eq(countRenewalWork(undefined), null, 'a missing issues prop stays unknown');
-eq(RENEWAL_ISSUE_TYPES.every(t => countRenewalWork([{ type: t }]) === 1), true,
-  'every listed renewal type is counted');
+eq(RENEWAL_ISSUE_TYPES.every(t => countRenewalWork([{ type: t, noStatus: true }]) === 1), true,
+  'every listed renewal type counts when the Status is blank');
 
 // ---- targeted services, from the coverage rows ------------------------------
 // One count per service under 100%, matching the Pipeline table's rows —

@@ -20,13 +20,37 @@ import { userLsGet, userLsSet } from './userLs.js';
 export const PROSPECTING_CAUGHT_UP_KEY = 'prospecting-caught-up';
 export const PROSPECTING_CAUGHT_UP_EVENT = 'prospecting-caught-up-changed';
 
-// Issue types (utils/clientIssues.js) that mean a client renewal still
-// needs working: a contract that has already expired, or one renewing
-// inside the warning window with no Renewal Status set. Those are the
-// rows the Clients tab tints red — exactly the work step 3 sends the
-// user at, so the step is caught up when none of them is left.
+// Step 3 counts exactly the rows the Clients tab tints red: the client's
+// soonest contract expires inside the renewal window AND the Status column
+// is still blank. That's the work the step sends the user at, so the step
+// is caught up when none of them is left.
+//
+// Two issue types (utils/clientIssues.js) make up that set, and only one
+// of them is already status-gated:
+//
+//   'Renewal: no status'  expires in 0..270 days with a blank Status —
+//                         the whole definition of the row, so it always
+//                         counts.
+//   'Contract expired'    already past its End Date. Inside the window by
+//                         definition (a negative number is under 270), but
+//                         the detector raises it whatever the Status says,
+//                         because an expired contract is worth flagging
+//                         even when someone is on it. Only the ones still
+//                         blank are renewal work — hence the `noStatus`
+//                         flag that detector carries.
+//
+// Counting every expired contract here was the bug: a client whose renewal
+// had a Status set and was being actively worked still held the step open.
 export const RENEWAL_ISSUE_TYPES = ['Contract expired', 'Renewal: no status'];
-const RENEWAL_TYPES = new Set(RENEWAL_ISSUE_TYPES);
+
+// Does one issue row count as renewal work? Exported for the tests — the
+// rule is easier to get wrong than to state.
+export function isRenewalWork(row) {
+  if (!row) return false;
+  if (row.type === 'Renewal: no status') return true;
+  if (row.type === 'Contract expired') return row.noStatus === true;
+  return false;
+}
 
 // Local calendar date (YYYY-MM-DD). Deliberately local rather than UTC:
 // the day a mark belongs to is the user's day, not Greenwich's.
@@ -107,7 +131,7 @@ export function countRenewalWork(issues) {
   let n = 0;
   for (const r of issues) {
     if (r?.snoozed) continue;
-    if (RENEWAL_TYPES.has(r?.type)) n += 1;
+    if (isRenewalWork(r)) n += 1;
   }
   return n;
 }

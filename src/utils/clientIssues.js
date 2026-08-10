@@ -80,7 +80,7 @@ function isClientStatus(p) {
 // passed (negative Days Until) on the Clients tab. Untracked clients are
 // skipped — the user has explicitly opted them out of expiration tracking,
 // which is exactly why the Clients tab blanks their Days Until.
-function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }) {
+function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }) {
   const issues = [];
   for (const p of prospects) {
     if (!matchesCdm(p.cdm, cdmName)) continue;
@@ -98,6 +98,11 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
       prospectId: p.id,
       daysUntil: next.days,
       expirationDate: next.date,
+      // Whether the Clients tab still has this row tinted red. An expired
+      // contract is an issue either way — that's why it's listed here — but
+      // one with a Status set is already being handled, so it isn't renewal
+      // work the Prospecting ladder should still be counting.
+      noStatus: hasNoClientStatus(clientStatusMap, ck),
       detail: next.date
         ? `Soonest contract End Date (${fmtDate(next.date)}) passed ${ago} day${ago === 1 ? '' : 's'} ago`
         : `Soonest contract End Date passed ${ago} day${ago === 1 ? '' : 's'} ago`,
@@ -109,7 +114,9 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
 // A client whose soonest renewal falls inside this many days without a
 // Status set is surfaced as an issue — mirrors the "needs a status" red
 // row tint on the Clients tab (ClientsView's RENEWAL_WARNING_DAYS).
-const RENEWAL_WARNING_DAYS = 270;
+// Exported so the Prospecting ladder can name the same window in the text
+// it shows for the renewals step.
+export const RENEWAL_WARNING_DAYS = 270;
 
 // A Clients-tab Status cell counts as "unset" when it's blank or just a
 // dash placeholder. Matches the noStatus check in ClientsView.
@@ -647,7 +654,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   const issues = [];
-  issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap }));
+  issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
