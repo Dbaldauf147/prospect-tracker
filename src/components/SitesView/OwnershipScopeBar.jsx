@@ -1,4 +1,4 @@
-// Segmented Owned-only / All-sites control shared by the two
+// Segmented Exclude-leased / All-sites control shared by the two
 // building-compliance subtabs. Lives in its own file so the pure
 // scoping helpers in ./ownershipScope.js stay component-free.
 import { ownershipScopeStats } from './ownershipScope.js';
@@ -27,24 +27,32 @@ const segBase = {
 
 const segOn = { ...segBase, background: '#009530', borderColor: '#009530', color: '#FFFFFF' };
 
-// Segmented Owned-only / All-sites control plus a line saying exactly
-// what the current scope leaves out. Rendered at the top of both
-// compliance subtabs so the counts below it are never a mystery.
-export function OwnershipScopeBar({ sites = [], ownedOnly, onChange }) {
+// Segmented control plus a line saying exactly what the current scope
+// leaves out. Rendered at the top of both compliance subtabs so the counts
+// below it are never a mystery.
+//
+// The left segment is "Exclude leased", not "Owned only": it drops the
+// buildings known to be leased and screens everything else, unknown
+// ownership included. Labelling it by what it removes is the honest
+// framing — "Owned only" read as a promise that every screened site was
+// confirmed owned, which it never was.
+export function OwnershipScopeBar({ sites = [], excludeLeased, onChange }) {
   const stats = ownershipScopeStats(sites);
-  const unavailable = stats.known === 0;
-  const scoping = ownedOnly && !unavailable;
+  // Nothing leased means the scope has nothing to drop.
+  const unavailable = stats.leased === 0;
+  const scoping = excludeLeased && !unavailable;
   const hint = unavailable
-    ? 'No Ownership status on the loaded sites: all sites are screened. Map an Ownership column on the Utility Lookup tab to scope this to owned buildings.'
+    ? `No leased sites in the loaded list: all ${stats.total.toLocaleString()} are screened.${
+        stats.known === 0
+          ? ' Map an Ownership column on the Utility Lookup tab to leave leased buildings out.'
+          : ''
+      }`
     : scoping
-      ? `Screening ${stats.owned.toLocaleString()} owned site${stats.owned === 1 ? '' : 's'}${
-          stats.leased || stats.unspecified
-            ? ` · excluding ${[
-                stats.leased ? `${stats.leased.toLocaleString()} leased` : null,
-                stats.unspecified ? `${stats.unspecified.toLocaleString()} with no ownership status` : null,
-              ].filter(Boolean).join(' and ')}`
-            : ''
-        }`
+      ? `Screening ${stats.screened.toLocaleString()} site${stats.screened === 1 ? '' : 's'}`
+        + ` · excluding ${stats.leased.toLocaleString()} leased`
+        + (stats.unspecified
+          ? ` · ${stats.unspecified.toLocaleString()} with no ownership status ${stats.unspecified === 1 ? 'is' : 'are'} screened, not dropped`
+          : '')
       : `Screening all ${stats.total.toLocaleString()} site${stats.total === 1 ? '' : 's'} · ${stats.owned.toLocaleString()} owned, ${stats.leased.toLocaleString()} leased${stats.unspecified ? `, ${stats.unspecified.toLocaleString()} unspecified` : ''}.`;
   return (
     <div style={barStyle}>
@@ -58,9 +66,9 @@ export function OwnershipScopeBar({ sites = [], ownedOnly, onChange }) {
           disabled={unavailable}
           onClick={() => onChange(true)}
           title={unavailable
-            ? 'No site in the loaded list has an Ownership status to filter on.'
-            : 'Screen only the buildings the portfolio owns: compliance obligations here fall on the owner.'}
-        >Owned only{unavailable ? '' : ` (${stats.owned.toLocaleString()})`}</button>
+            ? 'No site in the loaded list is marked Leased, so there is nothing to exclude.'
+            : 'Leave out the buildings the portfolio leases: these obligations fall on the owner. Sites with no ownership status are still screened.'}
+        >Exclude leased{unavailable ? '' : ` (${stats.screened.toLocaleString()})`}</button>
         <button
           type="button"
           style={{ ...(scoping ? segBase : segOn), borderLeft: 'none', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}

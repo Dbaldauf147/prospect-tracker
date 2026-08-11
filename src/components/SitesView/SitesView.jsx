@@ -2665,8 +2665,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // propertyType above and the Master Site List: "Owned/Leased" or
       // "TBD" is a real answer about that site, and now that Ownership is
       // a column on the Site Detail table, dropping it would read as "not
-      // provided" when it wasn't. A raw value still isn't === 'Owned', so
-      // the Owned-only scope and its counts are unchanged.
+      // provided" when it wasn't. A raw value still isn't === 'Leased', so
+      // it screens like any other unknown status.
       ownership: r.__ownership__ || r.__ownershipRaw__ || null,
       // The utility mapping behind the whole-building-data cards: the zip the
       // lookup resolved from, and the three serving utilities it resolved to.
@@ -2677,15 +2677,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }));
   }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
 
-  // Building Compliance Screening + Compliance Roadmap default to the
-  // owned buildings and toggle back to the full list. Shared here rather
-  // than per-subtab so the two views of the same analysis always agree.
-  // Inert (and the toggle disabled) when no site carries an ownership
-  // status, so a portfolio that never mapped the column is unaffected.
-  const [complianceOwnedOnly, setComplianceOwnedOnly] = useState(true);
+  // Building Compliance Screening + Compliance Roadmap default to leaving
+  // the leased buildings out and toggle back to the full list — these
+  // obligations fall on the owner. Shared here rather than per-subtab so
+  // the two views of the same analysis always agree. Only a site known to
+  // be Leased is dropped: an unknown ownership status is a gap in the
+  // upload, not a reason to leave a building out of its own compliance
+  // report. Inert (and the toggle disabled) when nothing is leased.
+  const [complianceExcludeLeased, setComplianceExcludeLeased] = useState(true);
   const complianceScopedSites = useMemo(
-    () => scopeSitesByOwnership(complianceSites, complianceOwnedOnly),
-    [complianceSites, complianceOwnedOnly],
+    () => scopeSitesByOwnership(complianceSites, complianceExcludeLeased),
+    [complianceSites, complianceExcludeLeased],
   );
 
   const filtered = useMemo(() => {
@@ -13658,8 +13660,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ordinances={ordinances}
           sites={complianceScopedSites}
           allSites={complianceSites}
-          ownedOnly={complianceOwnedOnly}
-          onOwnedOnlyChange={setComplianceOwnedOnly}
+          excludeLeased={complianceExcludeLeased}
+          onExcludeLeasedChange={setComplianceExcludeLeased}
           settings={settings}
           scopeLabel={activeDivisionLabel()}
         />
@@ -13670,8 +13672,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           onSaveOverride={saveOrdinanceOverride}
           sites={complianceScopedSites}
           allSites={complianceSites}
-          ownedOnly={complianceOwnedOnly}
-          onOwnedOnlyChange={setComplianceOwnedOnly}
+          excludeLeased={complianceExcludeLeased}
+          onExcludeLeasedChange={setComplianceExcludeLeased}
           companyName={deriveExportCompanyName(null)}
           scopeLabel={activeDivisionLabel()}
         />
