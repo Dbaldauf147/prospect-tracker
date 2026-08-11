@@ -35,7 +35,7 @@ export function useProspectingTagDebt({ prospects, cdmName, settings, userId }) 
     };
   }, [userId]);
 
-  const coverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings });
+  const coverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings, userId });
 
   return useMemo(() => {
     // Shown whatever the rest of the ladder is doing. Tag mapping is the one
