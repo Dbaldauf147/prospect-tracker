@@ -13,7 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
-import { isLocalTagVerdict } from '../../utils/contactTagReview';
+import { isLocalTagVerdict, tagAnswerFrom } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 
 // A contact's Dan's Tags as individual values. Stored as one ';'-joined
@@ -28,39 +28,45 @@ function contactTagList(c) {
     .filter(Boolean);
 }
 
-// The four answers the contact popup records against a tag, in the order
-// the filter offers them.
+// The five answers the contact popup records against a tag, in the order the
+// filter offers them. Sold and Not sold sit together: they're the two ends of
+// one question — has this account bought what this person owns? — so reading
+// them side by side is the point.
 const TAG_STATUSES = [
-  { key: 'yes',     label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag' },
+  { key: 'yes',     label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag with no sold / not sold answer recorded yet' },
+  { key: 'sold',    label: 'Sold',     bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59', tip: 'Contacts who own this area at a company that has bought it. They keep the tag, so a plain pull of it returns them too' },
+  { key: 'notsold', label: 'Not sold', bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3', tip: 'Contacts who own this area but whose company hasn\'t bought it yet — held off in the contact popup, so they stay out of a plain pull of this tag. This is the list of accounts still to sell on it' },
   { key: 'unsure',  label: 'Not sure', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Contacts answered "Not sure" for this tag in the contact popup' },
   { key: 'no',      label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
-  { key: 'notsold', label: 'Not sold', bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3', tip: 'Contacts who own this area but whose company hasn\'t been sold on it yet — held off in the contact popup, so they stay out of a plain pull of this tag. This is the list of accounts still to sell on it' },
 ];
 
-// One contact's answer for one tag, read the same way the contact popup
-// reads it: the tag being present IS the Yes — HubSpot only ever holds tags
-// that apply — while No, Not sure and Not sold are answers HubSpot can't
-// express and live in settings.contactTagReview. No answer at all returns ''.
+// One contact's answer for one tag, resolved by the same helper the contact
+// popup's table runs on, so the pill here and the row there can't disagree.
+// The tag being present is the Yes — HubSpot only ever holds tags that apply
+// — while the rest live in settings.contactTagReview, keyed by contact then
+// by tag. No answer at all returns ''.
 //
-// That asymmetry is why this page could only ever show the Yes contacts
-// under a tag: every other answer takes the tag off, so the contact left the
-// tag filter along with the answer. Not sold leans on it deliberately — the
-// hold-off works precisely because the tag comes off, and the status pill is
-// how you get that contact back.
+// Sold is the one recorded answer that keeps the tag on, so it's the one that
+// still turns up in a plain pull of the tag; every other answer takes the tag
+// off, which is why those contacts can only be reached through their status
+// pill.
 function contactTagStatus(c, tag, reviewMap) {
   if (!tag) return '';
   const lower = tag.toLowerCase();
-  if (contactTagList(c).some(t => t.toLowerCase() === lower)) return 'yes';
+  const tagged = contactTagList(c).some(t => t.toLowerCase() === lower);
   const cid = c?.id ?? c?.vid;
   const answers = cid == null ? null : reviewMap?.[cid];
-  if (!answers || typeof answers !== 'object') return '';
-  // Keyed by the tag as the popup spelled it, so match case-insensitively
-  // for the same reason the tag filter itself does.
-  for (const [k, v] of Object.entries(answers)) {
-    if (k.toLowerCase() !== lower) continue;
-    return isLocalTagVerdict(v) ? v : '';
+  let verdict = '';
+  if (answers && typeof answers === 'object') {
+    // Keyed by the tag as the popup spelled it, so match case-insensitively
+    // for the same reason the tag filter itself does.
+    for (const [k, v] of Object.entries(answers)) {
+      if (k.toLowerCase() !== lower) continue;
+      if (isLocalTagVerdict(v)) verdict = v;
+      break;
+    }
   }
-  return '';
+  return tagAnswerFrom(tagged, verdict);
 }
 
 export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
@@ -120,7 +126,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // Chosen Dan's Tag, or '' for no tag gate. Transient like categoryFilter
   // (not persisted) — it's an exploration filter, not a page preference.
   const [tagFilter, setTagFilter] = useState('');
-  // Which of the four tag answers to show, as a Set of TAG_STATUSES keys.
+  // Which of the five tag answers to show, as a Set of TAG_STATUSES keys.
   // Empty means no status gate — the tag filter behaves as it always has,
   // showing the contacts that carry the tag. Transient, like the tag itself.
   const [tagStatusFilter, setTagStatusFilter] = useState(() => new Set());
@@ -298,7 +304,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // pills don't collapse as you toggle them — same reason the tag dropdown
   // counts before its own gate.
   const tagStatusCounts = useMemo(() => {
-    const out = { yes: 0, unsure: 0, no: 0, notsold: 0 };
+    const out = { yes: 0, sold: 0, notsold: 0, unsure: 0, no: 0 };
     if (!activeTag) return out;
     for (const c of hubspotContacts) {
       if (!rosterSelector(c)) continue;
@@ -354,7 +360,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
