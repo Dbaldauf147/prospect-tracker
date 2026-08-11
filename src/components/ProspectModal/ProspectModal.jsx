@@ -9778,7 +9778,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {!mappedFields.has('opportunityScore') && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', borderRadius: 6, fontSize: '0.75rem' }}>
                       No column is mapped to <strong>Opportunity Score</strong>. Rows without an uploaded score fall back to the composite methodology
-                      (0.30·Energy + 0.30·Sites + 0.25·Sector + 0.15·Year — site counts marked (E) count in full). Map the column below if you want to preserve the scores from the file verbatim.
+                      (0.40·Sites + 0.25·Energy + 0.20·Sector + 0.15·Year — site counts marked (E) count in full). Map the column below if you want to preserve the scores from the file verbatim.
                     </div>
                   )}
                 </div>

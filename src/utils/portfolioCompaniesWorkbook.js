@@ -141,11 +141,12 @@ export function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   } else if (year && yearRange && yearRange.max === yearRange.min) {
     yearPct = 1;
   }
-  // Site count carries as much weight as energy: a portfolio company's site
+  // Site count is the single largest driver: a portfolio company's site
   // footprint is the clearest signal of how much there is to work, and it is
   // known (or estimable) far more often than a GWh figure. Estimates count
-  // the same as confirmed counts — see siteCountNumber.
-  const raw = energyPct * 0.3 + sectorVal * 0.25 + sitesPct * 0.3 + yearPct * 0.15;
+  // the same as confirmed counts — see siteCountNumber. The components stay
+  // ordered sites > energy > sector > recency.
+  const raw = energyPct * 0.25 + sectorVal * 0.2 + sitesPct * 0.4 + yearPct * 0.15;
   return Math.round(raw * 100);
 }
 
@@ -625,14 +626,14 @@ export async function downloadPortfolioCompaniesWorkbook({
                     addBlank();
 
                     addSectionHeader('Component Weights');
-                    addKV('Est. Energy (GWh/yr)', '30%: linearly normalized against the maximum value in the exported table. Tied with Site Count as the largest driver of the score.');
-                    addKV('Sector Fit Score', '25%: uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
-                    addKV('Site Count', '30%: linearly normalized against the maximum value in the exported table. Tied with Est. Energy as the largest driver of the score. Estimated counts — cells marked (E) — are weighted exactly the same as confirmed counts.');
+                    addKV('Est. Energy (GWh/yr)', '25%: linearly normalized against the maximum value in the exported table. The second-largest driver, behind Site Count.');
+                    addKV('Sector Fit Score', '20%: uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
+                    addKV('Site Count', '40%: linearly normalized against the maximum value in the exported table. The largest single driver of the score. Estimated counts — cells marked (E) — are weighted exactly the same as confirmed counts.');
                     addKV('Acquisition Year', '15%: most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
                     addSectionHeader('Sector Fit Scores');
-                    addParagraph('The Industry column is fuzzy-matched to one of the sectors below. The sector score (1-10) is divided by 10 and contributes 25% to the composite. Unmatched industries contribute 0. Fit Tier in the data tab reflects the same mapping: High for 8.0+, Medium for 5.0-7.9, Low for under 5.0.');
+                    addParagraph('The Industry column is fuzzy-matched to one of the sectors below. The sector score (1-10) is divided by 10 and contributes 20% to the composite. Unmatched industries contribute 0. Fit Tier in the data tab reflects the same mapping: High for 8.0+, Medium for 5.0-7.9, Low for under 5.0.');
                     addKV('Industrial / Manufacturing', '9.5: industrial, manufacturing, factory, plant, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
                     addKV('Data Centers', '9.3: data center, colocation');
                     addKV('Cold Storage / Food Mfg', '9.0: cold storage, food mfg/processing, beverage mfg');
@@ -652,7 +653,7 @@ export async function downloadPortfolioCompaniesWorkbook({
                     addBlank();
 
                     addSectionHeader('Composite Formula');
-                    addParagraph('Opportunity Score = round( 100 × ( 0.30 × Energy% + 0.25 × Sector% + 0.30 × Sites% + 0.15 × Year% ) )');
+                    addParagraph('Opportunity Score = round( 100 × ( 0.40 × Sites% + 0.25 × Energy% + 0.20 × Sector% + 0.15 × Year% ) )');
                     addBlank();
 
                     addSectionHeader('Key Assumptions & Caveats');
