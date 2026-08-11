@@ -236,8 +236,8 @@ export function ComplianceRoadmap({
   // The unscoped list behind `sites` — drives the ownership toggle's
   // counts and tells an ownership-emptied view apart from no upload.
   allSites = null,
-  ownedOnly = false,
-  onOwnedOnlyChange = null,
+  excludeLeased = false,
+  onExcludeLeasedChange = null,
   settings,
   // The Utility Lookup's active Division scope, when one is set. `sites`
   // is already narrowed to it; this names the slice on the banner so a
@@ -262,7 +262,7 @@ export function ComplianceRoadmap({
   const screenedYes = useMemo(() => {
     const screening = settings?.corporateComplianceScreening || {};
     const keys = new Set();
-    // Full list, not the owned-only scope: corporate disclosure mandates
+    // Full list, not the ownership scope: corporate disclosure mandates
     // bind the company, so a company whose buildings are all leased still
     // counts here.
     for (const s of (loadedSites || [])) {
@@ -344,8 +344,8 @@ export function ComplianceRoadmap({
         </div>
       </div>
 
-      {onOwnedOnlyChange && loadedSites.length > 0 && (
-        <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+      {onExcludeLeasedChange && loadedSites.length > 0 && (
+        <OwnershipScopeBar sites={loadedSites} excludeLeased={excludeLeased} onChange={onExcludeLeasedChange} />
       )}
 
       {loadedSites.length === 0 ? (
@@ -355,11 +355,11 @@ export function ComplianceRoadmap({
         </div>
       ) : sites.length === 0 ? (
         <div className={styles.empty}>
-          <strong>No owned sites in the loaded list.</strong>
+          <strong>Every loaded site is leased.</strong>
           <div className={styles.emptySub}>
-            All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} leased or carry
-            no ownership status, so the owned-only scope leaves nothing to chart. Switch to <strong>All sites</strong> above,
-            or map the Ownership column on the <strong>Utility Lookup</strong> subtab.
+            All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} marked Leased,
+            so excluding leased buildings leaves nothing to chart — these obligations fall on the owner. Switch to
+            {' '}<strong>All sites</strong> above to chart them anyway.
           </div>
         </div>
       ) : !periods.length ? (

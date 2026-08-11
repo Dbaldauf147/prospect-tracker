@@ -1,13 +1,27 @@
-// Owned / Leased scoping shared by the two building-compliance subtabs
+// Ownership scoping shared by the two building-compliance subtabs
 // (Building Compliance Screening and Compliance Roadmap). Both analyses
 // are about obligations that fall on the building owner, so they default
-// to the sites the portfolio actually owns and offer a toggle back to
-// the full list. The Ownership value comes from the Utility Lookup
-// upload's mapped Ownership column.
+// to leaving out the buildings the portfolio leases. The Ownership value
+// comes from the Utility Lookup upload's mapped Ownership column.
 //
-// The scope is deliberately inert when nothing in the list carries an
-// ownership status: a portfolio that never mapped the column would
-// otherwise screen zero sites and look broken.
+// The rule is "drop what's known to be leased", NOT "keep only what's
+// known to be owned". Those differ on the sites whose ownership status is
+// missing or unrecognized, and they differ a lot: a portfolio that mapped
+// the column for half its list would have had the other half silently
+// screened out of its own compliance report. An unknown status is a gap in
+// the upload, not evidence the building is somebody else's — so it screens,
+// and the site is at worst reviewed unnecessarily rather than missed
+// entirely. Leased is the only status that removes a site.
+//
+// The scope is also inert when nothing in the list is leased: there's
+// nothing to exclude, so the control says so rather than pretending to
+// filter.
+
+// Sites whose ownership is known to be leased. Exact match on the
+// canonical 'Leased' the upload normalizes to — a value it couldn't place
+// ("Owned/Leased", "TBD", …) travels through as typed and counts as
+// unknown, which screens.
+const isLeased = (s) => s?.ownership === 'Leased';
 
 // Counts by ownership status across a compliance site list.
 export function ownershipScopeStats(sites = []) {
@@ -15,7 +29,7 @@ export function ownershipScopeStats(sites = []) {
   let leased = 0;
   for (const s of sites) {
     if (s?.ownership === 'Owned') owned++;
-    else if (s?.ownership === 'Leased') leased++;
+    else if (isLeased(s)) leased++;
   }
   const total = sites.length;
   return {
@@ -23,20 +37,24 @@ export function ownershipScopeStats(sites = []) {
     owned,
     leased,
     // Neither Owned nor Leased: blank, or a value the import couldn't
-    // place ("TBD", "Owned/Leased", …).
+    // place ("Owned/Leased", "TBD", …).
     unspecified: total - owned - leased,
     known: owned + leased,
+    // What the owner-obligation scope actually screens: everything that
+    // isn't known to be leased.
+    screened: total - leased,
   };
 }
 
-// Whether the owned-only preference can actually apply to this list.
-export function ownershipScopeActive(sites, ownedOnly) {
-  return !!ownedOnly && ownershipScopeStats(sites).known > 0;
+// Whether the scope can actually change anything for this list. Nothing
+// leased means nothing to drop, so the toggle is inert.
+export function ownershipScopeActive(sites, excludeLeased) {
+  return !!excludeLeased && ownershipScopeStats(sites).leased > 0;
 }
 
 // The site list the compliance analyses should run on.
-export function scopeSitesByOwnership(sites = [], ownedOnly) {
-  return ownershipScopeActive(sites, ownedOnly)
-    ? sites.filter(s => s?.ownership === 'Owned')
+export function scopeSitesByOwnership(sites = [], excludeLeased) {
+  return ownershipScopeActive(sites, excludeLeased)
+    ? sites.filter(s => !isLeased(s))
     : sites;
 }

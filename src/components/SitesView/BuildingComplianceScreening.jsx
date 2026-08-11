@@ -1108,8 +1108,8 @@ export function BuildingComplianceScreening({
   // The unscoped list behind `sites` — drives the ownership toggle's
   // counts and tells an ownership-emptied view apart from no upload.
   allSites = null,
-  ownedOnly = false,
-  onOwnedOnlyChange = null,
+  excludeLeased = false,
+  onExcludeLeasedChange = null,
   companyName = '',
   // The Utility Lookup's active Division scope, when one is set. The
   // sites handed in are already narrowed to it; this is so the report
@@ -1650,10 +1650,10 @@ export function BuildingComplianceScreening({
   // scope state — a standalone mount screens whatever it's handed. Wrapped
   // rather than styled in place: the bar is shared with the roadmap subtab and
   // carries its own inline styles, and only this page prints.
-  const scopeBar = onOwnedOnlyChange
+  const scopeBar = onExcludeLeasedChange
     ? (
       <div className={styles.screenOnly}>
-        <OwnershipScopeBar sites={loadedSites} ownedOnly={ownedOnly} onChange={onOwnedOnlyChange} />
+        <OwnershipScopeBar sites={loadedSites} excludeLeased={excludeLeased} onChange={onExcludeLeasedChange} />
       </div>
     )
     : null;
@@ -1714,11 +1714,11 @@ export function BuildingComplianceScreening({
           <>
             {scopeBar}
             <div className={styles.noMatch}>
-              <strong>No owned sites in the loaded list.</strong>
+              <strong>Every loaded site is leased.</strong>
               <div className={styles.noMatchSub}>
-                All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} leased or
-                carry no ownership status, so the owned-only scope leaves nothing to screen. Switch to
-                {' '}<strong>All sites</strong> above, or map the Ownership column on the <strong>Utility Lookup</strong> subtab.
+                All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} marked
+                Leased, so excluding leased buildings leaves nothing to screen — these obligations fall on the owner.
+                Switch to {' '}<strong>All sites</strong> above to screen them anyway.
               </div>
             </div>
           </>
@@ -2041,7 +2041,7 @@ export function BuildingComplianceScreening({
                     {/* Sits with Sq Ft — both describe the building rather
                         than where it is — and ahead of the mandates, since
                         these obligations fall on the owner, which is what
-                        the Owned-only scope above the table turns on. */}
+                        the ownership scope above the table turns on. */}
                     <th title="Owned or Leased, from the Ownership column mapped on the Utility Lookup upload">Ownership</th>
                     <th>Electric Utility</th><th>Natural Gas Utility</th>
                     {/* Whether the data needed to REPORT the mandates in the
