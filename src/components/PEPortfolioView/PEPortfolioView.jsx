@@ -375,9 +375,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -428,6 +428,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-top-pc-status')) {
           next.add('topPcStatus');
           try { localStorage.setItem('pe-portfolio:cols-top-pc-status', '1'); } catch {}
+        }
+        // One-time migration: reveal the Top PC Analysis column for users
+        // whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-top-pc-analysis')) {
+          next.add('topPcAnalysis');
+          try { localStorage.setItem('pe-portfolio:cols-top-pc-analysis', '1'); } catch {}
         }
         return next;
       }
@@ -1017,6 +1023,37 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return out;
   }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords, statusByCompany]);
 
+  // Has the Top PC had its Master Analysis saved? The question the Top PC
+  // column raises next — that company is the one to work, so whether the
+  // analysis behind the conversation exists is part of reading the row.
+  //
+  // Only each firm's Top PC is looked up, not every mapped portfolio
+  // company: useSavedAnalyses falls back to a per-company Firestore read
+  // for anything without a save marker, and one row's worth of those is
+  // the difference between a handful of reads and hundreds.
+  const topPcProspects = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const stats of stageStatsByFirm.values()) {
+      const name = stats?.topPc?.companyName;
+      if (!name) continue;
+      const match = prospectForPc(name);
+      if (!match?.id || seen.has(match.id)) continue;
+      seen.add(match.id);
+      out.push(match);
+    }
+    return out;
+  }, [stageStatsByFirm, prospectForPc]);
+  const topPcAnalyses = useSavedAnalyses(topPcProspects);
+  // A firm's Top PC analysis meta, or null when there's no Top PC, no
+  // prospect record behind it, or nothing saved against that record.
+  const analysisForTopPc = useCallback((stats) => {
+    const name = stats?.topPc?.companyName;
+    if (!name) return null;
+    const match = prospectForPc(name);
+    return match?.id ? (topPcAnalyses.get(match.id) || null) : null;
+  }, [prospectForPc, topPcAnalyses]);
+
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
     arr.sort((a, b) => {
@@ -1052,6 +1089,22 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           // pick — last descending, first ascending — rather than mixing
           // in among the genuinely low scores as a zero would.
           const rank = (st) => (st.topPc ? st.topPc.score : -1);
+          cmp = rank(sa) - rank(sb);
+          break;
+        }
+        case 'topPcAnalysis': {
+          // Newest save first descending, which is what "who's been
+          // analysed, and how recently" wants. Below every real save sit
+          // the Top PCs with nothing saved, and below those the firms
+          // with no Top PC at all — the two dash-looking cells don't
+          // interleave, same as the status column above.
+          const rank = (st) => {
+            if (!st.topPc) return -2;
+            const meta = analysisForTopPc(st);
+            if (!meta) return -1;
+            const t = meta.savedAt ? new Date(meta.savedAt).getTime() : 0;
+            return Number.isFinite(t) && t > 0 ? t : 0;
+          };
           cmp = rank(sa) - rank(sb);
           break;
         }
@@ -1097,7 +1150,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       return cmp;
     });
     return arr;
-  }, [peFirms, stageStatsByFirm, sortKey, sortDir]);
+  }, [peFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc]);
 
   const q = query.trim().toLowerCase();
   const filteredFirms = q
@@ -1280,7 +1333,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
-              topPc: 'Top PC', topPcStatus: 'Top PC Status',
+              topPc: 'Top PC', topPcAnalysis: 'Top PC Analysis', topPcStatus: 'Top PC Status',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               peStage: 'PE Stage',
             };
@@ -1343,6 +1396,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'topPc', label: 'Top PC', align: 'left', tip: `The firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
+            { key: 'topPcAnalysis', label: 'Top PC Analysis', align: 'center', tip: 'Whether a Master Analysis has been saved against the Top PC (the workbook the Utility Lookup page saves), and when. Sorts newest save first; Top PCs with nothing saved sort below those, and firms with no Top PC below them.' },
             { key: 'topPcStatus', label: 'Top PC Status', align: 'center', tip: "The Top PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither — the Top PC filter only excludes companies it can see are closed." },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
@@ -1625,6 +1679,53 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 background: '#E0E7FF', borderRadius: 4, padding: '0.05rem 0.3rem',
                               }}
                             >{top.score}</span>
+                          </div>
+                        );
+                      })()}
+
+                      {visibleCols.has('topPcAnalysis') && (() => {
+                        const top = stats.topPc;
+                        if (!top) {
+                          return (
+                            <div
+                              style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', color: '#CBD5E1' }}
+                              title="No Top PC on this row, so there's no analysis to look for."
+                            >-</div>
+                          );
+                        }
+                        // A Top PC that isn't tracked as its own prospect
+                        // has nowhere for an analysis to live, which is a
+                        // different answer from "tracked, none saved" —
+                        // saying "Not saved" there would read as work to
+                        // do when the company has to be added first.
+                        const match = prospectForPc(top.companyName);
+                        if (!match) {
+                          return (
+                            <div
+                              style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', color: '#CBD5E1' }}
+                              title={`${top.companyName} isn't tracked as its own prospect, so there's nothing to save a Master Analysis against. Add it in the Table View first.`}
+                            >-</div>
+                          );
+                        }
+                        const meta = topPcAnalyses.get(match.id) || null;
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', overflow: 'hidden' }}>
+                            {meta ? (
+                              <span
+                                title={[
+                                  `${top.companyName} has a Master Analysis saved${meta.savedAt ? ` on ${new Date(meta.savedAt).toLocaleString()}` : ''}.`,
+                                  meta.fileName || '',
+                                  meta.sizeBytes ? `${(meta.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
+                                  'Download it from this company\'s popup, or pull it back onto the Utility Lookup page with Import Analysis.',
+                                ].filter(Boolean).join('\n')}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700, color: '#166534' }}
+                              >✓ {formatAnalysisDate(meta.savedAt)}</span>
+                            ) : (
+                              <span
+                                title={`No Master Analysis saved against ${top.companyName} yet — run it on the Utility Lookup page and use "Save to ${top.companyName}".`}
+                                style={{ color: '#94A3B8', fontStyle: 'italic' }}
+                              >Not saved</span>
+                            )}
                           </div>
                         );
                       })()}
