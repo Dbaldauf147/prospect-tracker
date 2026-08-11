@@ -7,6 +7,8 @@
 // multipart/mixed shape, same X-Unsent flag that makes Outlook open the file
 // as an editable draft rather than a received message.
 
+import { htmlSectionLines } from './inlineImages.js';
+
 // Fold a header value that would otherwise run past the line-length limit,
 // and strip the CR/LFs that would end the header early — a subject pasted
 // out of an email often carries them.
@@ -31,15 +33,15 @@ export function buildEmlDraft({ subject = '', bodyHtml = '', to = '', cc = '', a
     'X-Unsent: 1',
   ].filter(l => l !== null);
 
+  // Images pasted into the body arrive as `data:` URIs, which mail clients
+  // won't load. htmlSectionLines turns them into a multipart/related carrying
+  // each image as its own part with a Content-ID, and leaves the body as a
+  // plain text/html part when there aren't any.
+  const { lines: htmlLines } = htmlSectionLines(html);
+
   const usable = (attachments || []).filter(a => a?.dataUrl && a?.name);
   if (usable.length === 0) {
-    return [
-      ...base,
-      'Content-Type: text/html; charset=UTF-8',
-      'Content-Transfer-Encoding: 8bit',
-      '',
-      html,
-    ].join('\r\n');
+    return [...base, ...htmlLines].join('\r\n');
   }
 
   // Boundary has to be a string that can't occur inside any part. A random
@@ -47,10 +49,7 @@ export function buildEmlDraft({ subject = '', bodyHtml = '', to = '', cc = '', a
   const boundary = `----=_MarketUpdate_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const parts = [
     `--${boundary}`,
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-    '',
-    html,
+    ...htmlLines,
   ];
   for (const att of usable) {
     const base64Data = String(att.dataUrl).split(',')[1] || '';

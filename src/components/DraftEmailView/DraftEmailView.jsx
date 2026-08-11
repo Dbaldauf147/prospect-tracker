@@ -13,6 +13,8 @@ import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from 
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { htmlSectionLines } from '../../utils/inlineImages.js';
+import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import styles from './DraftEmailView.module.css';
 
@@ -1045,13 +1047,72 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const subjectRef = useRef(null);
   const bodyRef = useRef(null);
 
-  // Auto-save compose state so it's never lost
+  // Auto-save compose state so it's never lost. Inline images make the body
+  // big enough to hit the localStorage quota, and userLsSet rethrows when it
+  // does — so the failure is caught and said out loud. Silently losing the
+  // autosave is the one outcome worth avoiding here: the user carries on
+  // typing believing the draft is safe.
+  const [autosaveFailed, setAutosaveFailed] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => {
-      userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
+      try {
+        userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
+        setAutosaveFailed(false);
+      } catch (err) {
+        console.warn('Draft autosave failed (likely storage quota):', err?.message || err);
+        setAutosaveFailed(true);
+      }
     }, 500);
     return () => clearTimeout(timer);
   }, [subject, body, selectedContacts, draftCc]);
+
+  // Shrink oversized pasted images. Quill hands a pasted screenshot straight
+  // into the body at its full capture size; redrawing it at email width keeps
+  // the draft (and the autosave above) to a sane size. Done here rather than
+  // in a paste handler because it covers every route an image can arrive by —
+  // clipboard, the toolbar's file picker, a drag-and-drop — and because the
+  // resize is async, which a Quill clipboard matcher can't be.
+  const downscalingRef = useRef(false);
+  useEffect(() => {
+    if (downscalingRef.current) return;
+    const uris = [...String(body).matchAll(/<img\b[^>]*?\bsrc\s*=\s*(["'])(data:image\/[^"']+)\1/gi)]
+      .map(m => m[2])
+      .filter(needsDownscale);
+    if (!uris.length) return;
+    let cancelled = false;
+    downscalingRef.current = true;
+    (async () => {
+      try {
+        const shrunk = new Map();
+        for (const uri of new Set(uris)) {
+          const next = await downscaleInlineImage(uri);
+          if (next && next !== uri) shrunk.set(uri, next);
+        }
+        if (cancelled || shrunk.size === 0) return;
+        setBody(prev => {
+          let out = prev;
+          for (const [from, to] of shrunk) out = out.split(from).join(to);
+          return out;
+        });
+      } finally {
+        downscalingRef.current = false;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [body]);
+
+  // Quill config for the body. Memoized because a fresh `modules` object on
+  // every render makes react-quill tear the editor down and rebuild it, which
+  // loses the caret mid-typing.
+  const bodyQuillModules = useMemo(() => ({
+    toolbar: [
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+      ['link', 'image'],
+      ['clean'],
+    ],
+    clipboard: { matchVisual: false },
+  }), []);
 
   // Load HubSpot contacts from cache. We keep BOTH the flattened list the
   // composer works with (allContacts) and the raw HubSpot records
@@ -1832,7 +1893,14 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     }
 
     // Build every recipient's .eml in memory.
+    //
+    // The body's section is whatever the content needs: a plain text/html
+    // part, or a multipart/related carrying the HTML plus every inline image
+    // as its own part with a Content-ID. This runs AFTER the tracking pass
+    // above on purpose — the open pixel is an <img> with an http src, which
+    // stays a real URL; only `data:` sources become cid: references.
     const built = prepared.map(({ c, pSubject, toHeader, ccHeader, htmlContent }) => {
+      const { lines: htmlLines } = htmlSectionLines(htmlContent);
       let eml;
       if (attachments.length > 0) {
         const boundary = '----=_Part_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -1845,10 +1913,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           `Content-Type: multipart/mixed; boundary="${boundary}"`,
           '',
           `--${boundary}`,
-          'Content-Type: text/html; charset=UTF-8',
-          'Content-Transfer-Encoding: 8bit',
-          '',
-          htmlContent,
+          ...htmlLines,
         ].filter(line => line !== null);
 
         const attachParts = attachments.map(att => {
@@ -1871,10 +1936,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           `To: ${toHeader}`,
           ccHeader ? ccHeader.trim() : null,
           'X-Unsent: 1',
-          'Content-Type: text/html; charset=UTF-8',
-          'Content-Transfer-Encoding: 8bit',
-          '',
-          htmlContent,
+          ...htmlLines,
         ].filter(line => line !== null).join('\r\n');
       }
 
@@ -2181,6 +2243,17 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 }}
               />
             )}
+            {autosaveFailed && (
+              <div style={{
+                margin: '0 0 0.4rem', padding: '0.4rem 0.6rem',
+                background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 6,
+                fontSize: '0.74rem', color: '#92400E', lineHeight: 1.4,
+              }}>
+                <strong>This draft is too big to auto-save.</strong> Usually a large pasted
+                image. The draft is still fine to send — but it won't be restored if you
+                close the tab, so download it before you navigate away (or remove the image).
+              </div>
+            )}
             <div className={styles.editorWrap} onClick={() => setLastFocused('body')}>
               <ReactQuill
                 ref={bodyRef}
@@ -2188,16 +2261,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 value={body}
                 onChange={setBody}
                 placeholder="Hi {firstName}, I hope this message finds you well..."
-                modules={{
-                  toolbar: [
-                    ['bold', 'italic', 'underline', 'strike'],
-                    [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                    ['link'],
-                    ['clean'],
-                  ],
-                  clipboard: { matchVisual: false },
-                }}
-                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link', 'divider']}
+                modules={bodyQuillModules}
+                formats={['bold', 'italic', 'underline', 'strike', 'list', 'link', 'divider', 'image']}
               />
             </div>
           </div>
