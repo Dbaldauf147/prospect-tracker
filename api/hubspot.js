@@ -1,5 +1,5 @@
 import { withAuth } from './_lib/http.js';
-import { describeHubSpotResponse } from './_lib/hubspotError.js';
+import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
 
 const BASE = 'https://api.hubapi.com';
 
@@ -438,13 +438,34 @@ function isDansTagsOptionError(status, text, tagsStr = '') {
     .some(t => lower.includes(`${t.toLowerCase()} was not one of the allowed options`));
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Re-run a contact write that failed on a missing dans_tags option, once
+// the option has been registered. HubSpot validates a write against a
+// cached copy of the property schema, so an option added milliseconds ago
+// can still be refused — a single immediate retry is a coin flip, and
+// losing it looks exactly like the self-heal never running. Backs off
+// briefly, and gives up the moment the failure is something else, so the
+// delay is only ever paid on a path that was going to fail anyway.
+async function retryAfterRegisteringTags(patchFn, tagsStr, attempts = 3, delayMs = 600) {
+  let res = await patchFn();
+  for (let i = 1; i < attempts && !res.ok; i += 1) {
+    let text = '';
+    try { text = await res.clone().text(); } catch { /* body unreadable */ }
+    if (!isDansTagsOptionError(res.status, text, tagsStr)) break;
+    await sleep(delayMs * i);
+    res = await patchFn();
+  }
+  return res;
+}
+
 // Register any `dans_tags` values that aren't already options on the
 // property, appending them so the subsequent contact write validates.
 // Values are matched case-insensitively against existing option values
 // to avoid creating near-duplicate options.
 async function ensureDansTagsOptions(token, tagsStr) {
   const wanted = String(tagsStr || '').split(';').map(s => s.trim()).filter(Boolean);
-  if (!wanted.length) return;
+  if (!wanted.length) return [];
   const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
   const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
   const existingLower = new Set(existing.map(o => String(o.value).toLowerCase()));
@@ -456,7 +477,7 @@ async function ensureDansTagsOptions(token, tagsStr) {
     seen.add(key);
     toAdd.push(tag);
   }
-  if (!toAdd.length) return;
+  if (!toAdd.length) return [];
   const newOptions = toAdd.map((t, i) => ({ label: t, value: t, displayOrder: existing.length + i, hidden: false }));
   const res = await fetch(`${BASE}/crm/v3/properties/contacts/dans_tags`, {
     method: 'PATCH',
@@ -464,9 +485,14 @@ async function ensureDansTagsOptions(token, tagsStr) {
     body: JSON.stringify({ options: [...existing, ...newOptions] }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to register tag option(s) [${toAdd.join(', ')}]: ${text.slice(0, 200)}`);
+    throw new Error(
+      `HubSpot wouldn't add ${toAdd.map(t => `“${t}”`).join(', ')} to the Dan's Tags allowed values: `
+      + `${await describeHubSpotResponse(res)}`,
+    );
   }
+  // What was actually registered, so a caller whose retry still fails can
+  // say whether the tag reached the property at all.
+  return toAdd;
 }
 
 async function getContactsByCompany(token, companyName) {
@@ -758,7 +784,7 @@ async function handler(req, res) {
         const peekText = await createRes.clone().text();
         if (isDansTagsOptionError(createRes.status, peekText, cleanProps.dans_tags)) {
           await ensureDansTagsOptions(token, cleanProps.dans_tags);
-          createRes = await postContact();
+          createRes = await retryAfterRegisteringTags(postContact, cleanProps.dans_tags);
         }
       }
       if (createRes.ok) {
@@ -804,7 +830,7 @@ async function handler(req, res) {
         throw new Error(`Contact already exists but could not be fetched: ${errText.slice(0, 300)}`);
       }
       const text = await createRes.text();
-      throw new Error(`Create failed ${createRes.status}: ${text.slice(0, 300)}`);
+      throw new Error(`Create failed ${createRes.status}: ${describeHubSpotError(createRes.status, text)}`);
     }
 
     if (action === 'update-contact' && req.method === 'POST') {
@@ -836,14 +862,23 @@ async function handler(req, res) {
         // retry the write once. Lets curated UI tags (e.g. "Met In
         // Person") save without a manual HubSpot property edit.
         if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text, cleanProps.dans_tags)) {
-          await ensureDansTagsOptions(token, cleanProps.dans_tags);
-          updateRes = await patchContact();
+          const registered = await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          updateRes = await retryAfterRegisteringTags(patchContact, cleanProps.dans_tags);
           if (!updateRes.ok) {
             const retryText = await updateRes.text();
-            throw new Error(`Update failed ${updateRes.status}: ${retryText.slice(0, 300)}`);
+            // Which stage failed is the whole diagnosis, and it used to be
+            // invisible: "the option was never registered" and "it was
+            // registered and HubSpot still refused" arrived as the same
+            // raw 400.
+            const stillRejected = rejectedOptionValues(retryText, 'dans_tags');
+            const detail = describeHubSpotError(updateRes.status, retryText);
+            throw new Error(registered.length
+              ? `Added ${registered.map(t => `“${t}”`).join(', ')} to the Dan's Tags allowed values, but HubSpot still rejected `
+                + `${stillRejected.length ? stillRejected.map(t => `“${t}”`).join(', ') : 'the write'}. ${detail}`
+              : `Update failed ${updateRes.status}: ${detail}`);
           }
         } else {
-          throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
+          throw new Error(`Update failed ${updateRes.status}: ${describeHubSpotError(updateRes.status, text)}`);
         }
       }
       const updated = await updateRes.json();

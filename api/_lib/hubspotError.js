@@ -66,6 +66,81 @@ function isMissingScopes(body) {
   return SCOPE_BOILERPLATE.test(String(body?.message || ''));
 }
 
+// A property-validation 400 buries its detail one level deeper than the
+// scope errors above: the top-level `message` is the sentence "Property
+// values were not valid: " followed by a JSON array of per-property
+// entries, each with its own `message`, the property's internal `name`,
+// and an `error` code. Read as raw text, the useful part — which value
+// was rejected, on which property — sits behind an allowed-options list
+// long enough to blow any truncation budget.
+//
+//   {"status":"error","message":"Property values were not valid:
+//    [{\"isValid\":false,\"message\":\"NAM Only was not one of the allowed
+//    options: [Procurement, Hide, …]\",\"error\":\"INVALID_OPTION\",
+//    \"name\":\"dans_tags\"}]", …}
+//
+// Returns [{ property, value, message }] — `value` is the rejected value
+// when the entry is an allowed-options failure, '' otherwise.
+export function invalidPropertyValues(bodyText) {
+  const raw = String(bodyText || '');
+  let message = raw;
+  try {
+    const body = JSON.parse(raw);
+    if (body && typeof body.message === 'string') message = body.message;
+  } catch { /* not the JSON envelope — scan the raw text below */ }
+
+  const out = [];
+  const push = (property, entryMessage) => {
+    const m = /^\s*(.+?)\s+was not one of the allowed options/i.exec(entryMessage || '');
+    out.push({
+      property: String(property || '').trim(),
+      value: m ? m[1].trim() : '',
+      message: String(entryMessage || '').trim(),
+    });
+  };
+
+  // Preferred path: the array inside the sentence is real JSON.
+  const start = message.indexOf('[');
+  if (start >= 0) {
+    try {
+      const entries = JSON.parse(message.slice(start));
+      if (Array.isArray(entries)) {
+        for (const e of entries) {
+          if (e && typeof e === 'object' && 'message' in e) push(e.name, e.message);
+        }
+        if (out.length) return out;
+      }
+    } catch { /* nested array isn't parseable on its own — fall through */ }
+  }
+
+  // Fallback: pull the pairs out of the escaped text. Covers a body that
+  // was truncated upstream, or a shape we haven't seen.
+  const re = /\\?"message\\?":\\?"(.*?)\\?"\s*,\s*\\?"error\\?":\\?"[^"\\]*\\?"\s*,\s*\\?"name\\?":\\?"([^"\\]*)\\?"/g;
+  let hit;
+  while ((hit = re.exec(raw)) !== null) push(hit[2], hit[1]);
+  if (out.length) return out;
+
+  // Last resort: an allowed-options complaint with no property name
+  // attached at all. The value is still worth naming.
+  const lone = /([^"\\:[]+?)\s+was not one of the allowed options/i.exec(raw);
+  if (lone) out.push({ property: '', value: lone[1].trim(), message: lone[0].trim() });
+  return out;
+}
+
+// The values a specific property rejected as not-an-allowed-option.
+// Entries with no property name count, since some error shapes omit it
+// and the caller knows which property it wrote.
+export function rejectedOptionValues(bodyText, property) {
+  const want = String(property || '').toLowerCase();
+  const out = [];
+  for (const e of invalidPropertyValues(bodyText)) {
+    if (!e.value) continue;
+    if (want && e.property && e.property.toLowerCase() !== want) continue;
+    if (!out.includes(e.value)) out.push(e.value);
+  }
+  return out;
+}
+
 // `status` is the HTTP status, `bodyText` the raw response body. Returns a
 // short sentence suitable for showing to the user; falls back to a trimmed
 // slice of the body when it isn't the JSON envelope we know.
@@ -86,6 +161,20 @@ export function describeHubSpotError(status, bodyText) {
       `The HubSpot private app ${needs}. Add it in HubSpot under Settings → Integrations → Private Apps → Auth, then save the app.`,
       420,
     );
+  }
+
+  // Property-validation failures: say which value on which property was
+  // refused, rather than replaying the envelope and the whole allowed-
+  // options list.
+  const invalid = invalidPropertyValues(raw).filter(e => e.value || e.message);
+  if (invalid.length) {
+    const sentences = invalid.map((e) => {
+      const on = e.property ? ` on ${e.property}` : '';
+      return e.value
+        ? `HubSpot doesn't allow the value “${e.value}”${on}.`
+        : `HubSpot rejected${on ? ` ${e.property}` : ' a value'}: ${e.message}`;
+    });
+    return truncate([...new Set(sentences)].join(' '), 420);
   }
 
   const parts = [];
