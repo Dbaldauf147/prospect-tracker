@@ -232,7 +232,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, prospectingTagDebt = null, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -300,6 +300,17 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#127919;</span>
           Prospecting
+          {/* Contact rosters whose tags still aren't fully mapped, one
+              apiece — the same count the Prospecting page shows beside its
+              Tagged row, and held back the same way until step 1 is clear,
+              so the badge never sends the user past the work the ladder puts
+              first. Null (not 0) when there's nothing to show. */}
+          {prospectingTagDebt > 0 && (
+            <span
+              className={styles.navBadge}
+              title={`${prospectingTagDebt} contact ${prospectingTagDebt === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags. Open Prospecting to see which — Active isn't counted.`}
+            >{prospectingTagDebt > 99 ? '99+' : prospectingTagDebt}</span>
+          )}
         </button>
         <button
           className={view === 'lists' ? styles.navItemActive : styles.navItem}

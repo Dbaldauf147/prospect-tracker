@@ -12,6 +12,7 @@ import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
+import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
 import { AGENTS_SETTINGS_KEY, AGENTS_SNOOZE_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
@@ -111,6 +112,10 @@ function App() {
   // item. Reads the Opps 2 store directly since those records never reach
   // App state; null until the first read lands.
   const oppsDueCount = useOppsCallInDue(user?.uid);
+  // Contact rosters whose tags still aren't fully mapped — the same count the
+  // Prospecting page prints beside its Tagged row, and gated the same way, so
+  // the badge and the page agree. Null when there is nothing to show.
+  const prospectingTagDebt = useProspectingTagDebt({ prospects, cdmName, settings, userId: user?.uid });
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still
@@ -350,6 +355,7 @@ function App() {
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
         oppsDueCount={oppsDueCount}
+        prospectingTagDebt={prospectingTagDebt}
         agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}

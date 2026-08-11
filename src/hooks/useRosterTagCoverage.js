@@ -1,0 +1,73 @@
+import { useEffect, useMemo, useState } from 'react';
+import { getHubspotCache } from '../utils/hubspotContactsCache';
+import {
+  loadClientStatusMap, CLIENT_STATUS_EVENT,
+  loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT,
+} from '../utils/clientManagerStore';
+import { makeRosterGates, rosterTagCoverage } from '../utils/contactRosters';
+
+// Tag-review coverage per contact roster — how far through the tag
+// vocabulary each of Key / Active / Client / Key Prospect has been worked.
+//
+// Everything it needs is already cached locally — the HubSpot contacts, the
+// Clients tab's maps, the opps records and the Table View prospects — so a
+// readout paints with its page rather than after a round trip.
+//
+// Lives in hooks/ rather than inside the Prospecting page because two
+// callers need the same number: that page's Tagged row, and the sidebar
+// badge, which has to work from whichever view the user is on. Returns null
+// until the contact cache answers, so a caller renders nothing rather than a
+// 0% that only means "not loaded yet".
+export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
+  const [contacts, setContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setContacts([]); });
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  // Same stores and the same events the contacts pages listen to, so a
+  // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
+  // out of these numbers without a reload — and drops out here exactly as it
+  // does on All Contacts, which is the point of sharing the gates.
+  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
+  useEffect(() => {
+    function onStorage(e) {
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
+    }
+    function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
+    };
+  }, []);
+
+  // Visible mode, matching the Totals pills on All Contacts: the figure
+  // should describe the rosters as they're worked, not the hidden-review view.
+  const gates = useMemo(
+    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+  );
+  return useMemo(() => {
+    if (contacts == null) return null;
+    return rosterTagCoverage({
+      contacts,
+      gates,
+      tagReviewMap: settings?.contactTagReview || {},
+      localFields: settings?.contactLocalFields || null,
+    });
+  }, [contacts, gates, settings?.contactTagReview, settings?.contactLocalFields]);
+}
