@@ -26,6 +26,7 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 // Per-user UI preferences (column widths + hidden columns).
 const WIDTHS_LS_KEY = 'master-site-list:col-widths';
 const HIDDEN_LS_KEY = 'master-site-list:hidden-cols';
+const SHOW_FILTERS_LS_KEY = 'master-site-list:show-filters';
 
 const ALL = '__all__';
 
@@ -352,8 +353,14 @@ export function MasterSiteListView({ prospects = [] }) {
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
   // Per-column substring filters (keyed by column key) + a toggle for the
   // in-header filter input row.
+  //
+  // The row is on by default: a filter box you have to go find behind a
+  // toolbar button isn't one you'll use, and every other table in the app
+  // puts its per-column filters right under the headers. The toggle stays,
+  // for when the extra header height is in the way, and it's remembered per
+  // user like the widths and hidden columns.
   const [colFilters, setColFilters] = useState({});
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(() => readJsonLs(SHOW_FILTERS_LS_KEY, true) !== false);
   // When on, show only sites whose company isn't found among the Table View
   // (prospects) companies — i.e. unmapped to the tracker.
   const [unmappedOnly, setUnmappedOnly] = useState(false);
@@ -378,6 +385,7 @@ export function MasterSiteListView({ prospects = [] }) {
   // Persist column widths / hidden columns per user.
   useEffect(() => { userLsSet(WIDTHS_LS_KEY, JSON.stringify(colWidths)); }, [colWidths]);
   useEffect(() => { userLsSet(HIDDEN_LS_KEY, JSON.stringify([...hiddenCols])); }, [hiddenCols]);
+  useEffect(() => { userLsSet(SHOW_FILTERS_LS_KEY, JSON.stringify(showFilters)); }, [showFilters]);
 
   // Close the Columns popover on outside click / Escape.
   useEffect(() => {
@@ -975,11 +983,21 @@ export function MasterSiteListView({ prospects = [] }) {
                     </span>
                     {showFilters && (
                       <input
-                        className={styles.filterInput}
+                        type="search"
+                        className={colFilters[c.key] ? styles.filterInputActive : styles.filterInput}
                         value={colFilters[c.key] || ''}
                         placeholder="Filter…"
+                        aria-label={`Filter by ${c.label}`}
+                        title={`Show only rows whose ${c.label} contains what you type`}
                         onChange={(e) => setColFilter(c.key, e.target.value)}
                         onClick={(e) => e.stopPropagation()}
+                        // Escape clears this column rather than bubbling up to
+                        // whatever the page would otherwise close.
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Escape') return;
+                          e.stopPropagation();
+                          setColFilter(c.key, '');
+                        }}
                       />
                     )}
                     <span

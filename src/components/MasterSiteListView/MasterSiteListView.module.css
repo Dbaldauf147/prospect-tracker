@@ -259,6 +259,19 @@
   border-color: var(--color-accent);
 }
 
+/* A column that's actually filtering. Eleven identical boxes make it easy to
+   lose track of which one is narrowing the list, so the one doing the work
+   says so. */
+.filterInputActive {
+  composes: filterInput;
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  font-weight: 600;
+}
+.filterInputActive:focus {
+  outline: none;
+}
+
 /* Grab strip on the right edge of each header cell. */
 .resizer {
   position: absolute;
