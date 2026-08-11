@@ -466,7 +466,7 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   // Tag-review coverage per roster, printed under the market-updates step.
-  const tagCoverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings });
+  const tagCoverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings, userId: user?.uid });
   // The hand-marked steps, straight off localStorage: another tab's mark,
   // the user id landing after login, and the date rolling over all reach
   // the page this way rather than through mirrored state.

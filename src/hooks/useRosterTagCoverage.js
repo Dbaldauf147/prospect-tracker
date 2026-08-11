@@ -18,8 +18,15 @@ import { makeRosterGates, rosterTagCoverage } from '../utils/contactRosters';
 // badge, which has to work from whichever view the user is on. Returns null
 // until the contact cache answers, so a caller renders nothing rather than a
 // 0% that only means "not loaded yet".
-export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
+export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings, userId }) {
   const [contacts, setContacts] = useState(null);
+  // Keyed on the user's uid, for the same reason App.jsx keys its own
+  // contact read on it: IndexedDB scopes every key by uid and returns
+  // nothing until AuthContext has called setDbUserId. On a fresh load this
+  // effect first runs before auth resolves, reads an empty cache, and would
+  // otherwise sit on that empty list until a HubSpot sync happened to fire
+  // the update event — which for a page-level caller meant no rosters, no
+  // percentages, and a badge that never appeared.
   useEffect(() => {
     let cancelled = false;
     function refresh() {
@@ -30,7 +37,7 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
+  }, [userId]);
 
   // Same stores and the same events the contacts pages listen to, so a
   // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
