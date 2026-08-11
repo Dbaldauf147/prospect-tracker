@@ -1314,8 +1314,15 @@ function KeyContactsViewInner({
     setMassProcessing(true);
     setMassStatus(null);
     const { updated, unchanged, errors, errorMessage } = await applyTagEdit([...massSelected], massTagMode, tags);
-    const hint = errors > 0 && /allowed options/i.test(errorMessage)
-      ? ': add the tag to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+    // The API registers a tag that isn't in the Dan's Tags allowed values
+    // and retries, so "go add it by hand" is only the right advice when
+    // that didn't happen — and the API's own message says so when it did.
+    // Keep the manual instruction only for an allowed-options failure that
+    // came back without one.
+    const hint = errors > 0
+      && /allowed options|doesn't allow the value/i.test(errorMessage)
+      && !/Dan's Tags/i.test(errorMessage)
+      ? ' Add it to the Dan\'s Tags allowed values in HubSpot Settings → Properties, then try again.'
       : '';
     const verb = massTagMode === 'add' ? 'Tagged' : massTagMode === 'remove' ? 'Untagged' : 'Retagged';
     setMassStatus({
