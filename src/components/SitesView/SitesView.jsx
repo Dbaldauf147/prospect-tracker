@@ -225,10 +225,20 @@ function detectColumn(headers, patterns) {
   return '';
 }
 
+// The file's zip column, or '' when it hasn't got one. A sites file with
+// no zip is a normal case — the mapping modal marks Zip optional, and an
+// all-international portfolio has nothing to put there — so there is no
+// fallback guess. There used to be one (`|| headers[0]`), and on a file
+// with no zip header it declared the FIRST column the zip: that column is
+// almost always Site Name, so the Site column rendered the zip cell's
+// "no estimate available" instead of the site, and a numeric site name
+// (store numbers) was read as a zip and looked up as one.
 function pickZipColumn(headers) {
   if (!headers.length) return '';
-  return detectColumn(headers, [/^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i])
-    || headers[0];
+  return detectColumn(headers, [
+    /^zip\s*code$/i, /^postal\s*code$/i, /^post\s*code$/i, /^zip$/i,
+    /zip/i, /postal/i, /\bpost\s*code\b/i,
+  ]);
 }
 
 // Auto-detect every Utility-Lookup target field on a fresh sites
@@ -2743,7 +2753,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ...(i === 0 ? { sticky: true } : {}),
         render: (row) => {
           const v = row[k];
-          if (k === zipColumn && row.__zipNorm__) {
+          // Only the mapped zip column gets the zip treatment. Guarding on
+          // zipColumn itself keeps an unmapped file (zipColumn === '') from
+          // matching a blank header and turning that column into the zip.
+          const isZipCol = !!zipColumn && k === zipColumn;
+          if (isZipCol && row.__zipNorm__) {
             if (row.__zipEstimated__) {
               const n = row.__zipEstimateCount__;
               const where = `${row.__city__ || 'this city'}${row.__state__ ? `, ${row.__state__}` : ''}`;
@@ -2759,7 +2773,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             }
             return row.__zipNorm__;
           }
-          if (k === zipColumn) {
+          if (isZipCol) {
             // No uploaded zip, and the site's city + state didn't resolve
             // to a known zip in the utility lookup, so there was nothing
             // to estimate from.
@@ -2774,7 +2788,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           return isDate ? fmtShortDate(v) : String(v);
         },
         exportValue: (row) => {
-          if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          if (zipColumn && k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
           const v = row[k];
           if (isDate) return fmtShortDate(v);
           return v ?? '';
