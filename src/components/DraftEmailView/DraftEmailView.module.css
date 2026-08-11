@@ -28,6 +28,45 @@
 }
 .cardTitle { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); margin: 0 0 1rem; }
 
+/* Coverage warning — raised when ANY variable used in the draft is short
+   of 100 % across the recipients. The red dashes in the table already say
+   which cells are blank, but they're easy to scroll past on a 50-row
+   campaign; this states the damage up front, before the send. Deliberately
+   loud (heavy border, filled background, full-size type against the 0.74rem
+   table) since the whole point is that it can't be missed. */
+.coverageAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0 0 0.85rem;
+  padding: 0.85rem 1rem;
+  background: #FEE2E2;
+  border: 2px solid #DC2626;
+  border-radius: 8px;
+  color: #7F1D1D;
+}
+.coverageAlertIcon { font-size: 1.6rem; line-height: 1; flex-shrink: 0; }
+.coverageAlertBody { min-width: 0; }
+.coverageAlertTitle {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #991B1B;
+  margin: 0 0 0.2rem;
+  line-height: 1.25;
+}
+.coverageAlertText { font-size: 0.78rem; margin: 0 0 0.5rem; line-height: 1.4; }
+.coverageAlertList { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.coverageAlertChip {
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #FCA5A5;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #991B1B;
+  white-space: nowrap;
+}
+
 .field { margin-bottom: 1rem; }
 .label { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.72rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
 .labelHint { font-size: 0.65rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--color-text-muted); }
