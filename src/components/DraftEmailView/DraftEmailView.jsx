@@ -426,6 +426,26 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
     return out;
   }, [usedTokens, contacts, resolve]);
 
+  // Anything short of 100 % coverage gets called out above the table.
+  // `gaps` are the variables that will render blank for someone;
+  // `affected` counts the recipients who'd get at least one blank, which
+  // is the number that actually matters — one variable missing on 12
+  // people and three missing on the same person are very different sends.
+  const { gaps, affected } = useMemo(() => {
+    const short = usedTokens
+      .map(v => ({ ...v, ...(coverage[v.token] || { filled: 0, total: contacts.length }) }))
+      .filter(g => g.filled < g.total)
+      // Worst gap first — the variable that will land blank most often is
+      // the one worth fixing before the send.
+      .sort((a, b) => (b.total - b.filled) - (a.total - a.filled));
+    if (short.length === 0) return { gaps: short, affected: 0 };
+    let n = 0;
+    for (const c of contacts) {
+      if (short.some(g => !String(resolve(c, g.token) || '').trim())) n += 1;
+    }
+    return { gaps: short, affected: n };
+  }, [usedTokens, coverage, contacts, resolve]);
+
   if (contacts.length === 0) {
     return (
       <>
@@ -455,6 +475,28 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
         Each row is a recipient; each column is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
+      {gaps.length > 0 && (
+        <div className={styles.coverageAlert} role="alert">
+          <span className={styles.coverageAlertIcon} aria-hidden="true">&#9888;</span>
+          <div className={styles.coverageAlertBody}>
+            <p className={styles.coverageAlertTitle}>
+              {gaps.length === 1 ? '1 variable is' : `${gaps.length} variables are`} not fully covered
+            </p>
+            <p className={styles.coverageAlertText}>
+              {affected} of {contacts.length} recipient{contacts.length === 1 ? '' : 's'} will get at least one
+              blank where a variable should be. Fill the gaps in below — most red <strong>-</strong> cells are
+              editable in place — or drop those recipients before sending.
+            </p>
+            <div className={styles.coverageAlertList}>
+              {gaps.map(g => (
+                <span key={g.token} className={styles.coverageAlertChip}>
+                  {g.label}: {g.total - g.filled} missing ({g.filled}/{g.total})
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{
         // Grow with the viewport — leaves enough room for the page
         // chrome / header / Saved Drafts above, but uses the rest of
