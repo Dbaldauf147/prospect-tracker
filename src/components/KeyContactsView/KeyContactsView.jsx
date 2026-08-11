@@ -350,6 +350,24 @@ function ExpectedEmailCell({ info, name }) {
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
+// Mass Edit tag modes that record one of the contact popup's local answers
+// rather than only switching the HubSpot tag. Add / Remove / Replace can
+// only say the tag is on or off, and "off" is the ambiguous one — doesn't
+// apply, haven't looked, or theirs but not bought yet all look identical.
+// Those are the answers the Tagged % counts, and they were only settable
+// one contact at a time.
+//
+// `tagMode` is what the HubSpot half of the write does, and it follows the
+// same rule the popup does: Sold keeps the tag on (a general pull should
+// still return them), the other three take it off.
+const MASS_TAG_VERDICTS = [
+  { mode: 'no', label: 'Mark No', verb: 'Marked No', tagMode: 'remove' },
+  { mode: 'unsure', label: 'Mark Not sure', verb: 'Marked Not sure', tagMode: 'remove' },
+  { mode: 'sold', label: 'Mark Sold', verb: 'Marked Sold', tagMode: 'add' },
+  { mode: 'notsold', label: 'Mark Not sold', verb: 'Marked Not sold', tagMode: 'remove' },
+];
+const massTagVerdict = (mode) => MASS_TAG_VERDICTS.find(v => v.mode === mode) || null;
+
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
   const nb = (b || '').toLowerCase().trim();
@@ -565,8 +583,10 @@ function KeyContactsViewInner({
   // Bulk tag editing (massField === 'dans_tags'). Tags are a
   // multi-value HubSpot property, so a single "new value" box doesn't
   // fit: instead the user picks one or more tags and an operation —
-  // add them, remove them, or replace the whole list.
-  const [massTagMode, setMassTagMode] = useState('add'); // 'add' | 'remove' | 'replace'
+  // add them, remove them, replace the whole list, or record one of the
+  // popup's local answers (No / Not sure / Sold / Not sold) across the
+  // selection. See MASS_TAG_VERDICTS.
+  const [massTagMode, setMassTagMode] = useState('add');
   const [massTags, setMassTags] = useState(() => new Set());
   const [massTagOpen, setMassTagOpen] = useState(false);
   const [massTagQuery, setMassTagQuery] = useState('');
@@ -1296,13 +1316,46 @@ function KeyContactsViewInner({
     URL.revokeObjectURL(url);
   }
 
+  // Record a local tag answer (No / Not sure / Sold / Not sold) against
+  // every selected contact, in ONE settings write. The popup saves a
+  // contact at a time, which is right for one contact and wrong for 26:
+  // each write builds its patch from the settings it captured, so a
+  // burst of them ends with the last writer's copy — most of the answers
+  // silently lost. Returns how many contacts actually changed.
+  function saveMassTagVerdicts(ids, tags, verdict) {
+    if (!updateSettings) return 0;
+    const next = { ...(settings?.contactTagReview || {}) };
+    let touched = 0;
+    for (const id of ids) {
+      const key = String(id);
+      if (!key) continue;
+      const map = { ...(next[key] || {}) };
+      let changed = false;
+      for (const tag of tags) {
+        if (map[tag] === verdict) continue;
+        map[tag] = verdict;
+        changed = true;
+      }
+      if (changed) { next[key] = map; touched += 1; }
+    }
+    if (touched > 0) updateSettings({ contactTagReview: next });
+    return touched;
+  }
+
   // Bulk tag apply — the Tags field of the Mass Edit toolbar. Replace
   // is destructive (it drops tags the user never picked, including
   // Hide), so it asks first; add / remove are additive and don't.
+  //
+  // The verdict modes are two writes in one: the answer goes to settings
+  // for every selected contact, and the HubSpot tag follows it on or off
+  // (see MASS_TAG_VERDICTS). The counts differ on purpose — marking 26
+  // contacts "Not sold" for a tag only 4 of them carry is 26 answers and
+  // 4 tag removals, and the status line says both.
   async function handleMassTagApply() {
     if (massSelected.size === 0) return;
     const tags = [...massTags];
     if (massTagMode !== 'replace' && tags.length === 0) return;
+    const verdict = massTagVerdict(massTagMode);
     const n = massSelected.size;
     const plural = n === 1 ? '' : 's';
     if (massTagMode === 'replace') {
@@ -1313,7 +1366,13 @@ function KeyContactsViewInner({
     }
     setMassProcessing(true);
     setMassStatus(null);
-    const { updated, unchanged, errors, errorMessage } = await applyTagEdit([...massSelected], massTagMode, tags);
+    const ids = [...massSelected];
+    // The answers are the user's own and don't depend on HubSpot taking
+    // the tag change, so they're recorded whatever the writes below do.
+    // A contact who already had the tag off still gets the answer — that
+    // case IS the point of the mode.
+    const marked = verdict ? saveMassTagVerdicts(ids, tags, verdict.mode) : 0;
+    const { updated, unchanged, errors, errorMessage } = await applyTagEdit(ids, verdict ? verdict.tagMode : massTagMode, tags);
     // The API registers a tag that isn't in the Dan's Tags allowed values
     // and retries, so "go add it by hand" is only the right advice when
     // that didn't happen — and the API's own message says so when it did.
@@ -1324,12 +1383,20 @@ function KeyContactsViewInner({
       && !/Dan's Tags/i.test(errorMessage)
       ? ' Add it to the Dan\'s Tags allowed values in HubSpot Settings → Properties, then try again.'
       : '';
-    const verb = massTagMode === 'add' ? 'Tagged' : massTagMode === 'remove' ? 'Untagged' : 'Retagged';
+    const verb = verdict
+      ? verdict.verb
+      : (massTagMode === 'add' ? 'Tagged' : massTagMode === 'remove' ? 'Untagged' : 'Retagged');
+    // A verdict counts the answers written, then reports the tag half
+    // separately — "already up to date" against the answer count would
+    // read as "nothing to do" on the run that did the most work.
+    const head = verdict
+      ? `${verb} on ${marked || n} contact${(marked || n) === 1 ? '' : 's'} for ${tags.join(', ')}`
+        + ` · tag ${verdict.tagMode === 'add' ? 'added to' : 'removed from'} ${updated}`
+      : `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
+        + (unchanged > 0 ? ` · ${unchanged} already up to date` : '');
     setMassStatus({
       type: errors === 0 ? 'success' : 'partial',
-      message: `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
-        + (unchanged > 0 ? ` · ${unchanged} already up to date` : '')
-        + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
+      message: head + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
     });
     setMassProcessing(false);
     // Clear the chosen tags, keep the chosen contacts. Tagging a group is
@@ -3023,12 +3090,22 @@ function KeyContactsViewInner({
                   <select
                     value={massTagMode}
                     onChange={e => setMassTagMode(e.target.value)}
-                    title="Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list"
+                    title={'Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list'
+                      + '\n\nThe Mark options record the same answers as the contact popup, across every selected contact:'
+                      + '\nNo — doesn\'t apply to them · Not sure — haven\'t worked it out · Not sold — theirs, but their company hasn\'t bought it'
+                      + '\nAll three take the tag off; Sold records it and keeps the tag on, so they still come back in a general pull.'}
                     style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
                   >
-                    <option value="add">Add</option>
-                    <option value="remove">Remove</option>
-                    <option value="replace">Replace all</option>
+                    <optgroup label="Tag in HubSpot">
+                      <option value="add">Add</option>
+                      <option value="remove">Remove</option>
+                      <option value="replace">Replace all</option>
+                    </optgroup>
+                    <optgroup label="Record an answer">
+                      {MASS_TAG_VERDICTS.map(v => (
+                        <option key={v.mode} value={v.mode}>{v.label}</option>
+                      ))}
+                    </optgroup>
                   </select>
                   <button
                     type="button"
