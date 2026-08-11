@@ -1416,6 +1416,7 @@ export function BuildingComplianceScreening({
         Site: r.siteName, City: r.city, State: r.state,
         Jurisdiction: r.government || '', 'Government ID': r.govId || '',
         'Sq Ft': r.sqft ?? '', 'Property Type': r.propertyType || '',
+        Ownership: r.ownership || '',
         // Carried alongside the screening so the workbook holds every column
         // the site table shows, the utility feeds included.
         'Electric Utility': r.electricUtility || '', 'Natural Gas Utility': r.gasUtility || '',
@@ -2037,6 +2038,11 @@ export function BuildingComplianceScreening({
                 <thead>
                   <tr>
                     <th>Site</th><th>City</th><th>State</th><th>Jurisdiction</th><th>Gov ID</th><th>Sq Ft</th>
+                    {/* Sits with Sq Ft — both describe the building rather
+                        than where it is — and ahead of the mandates, since
+                        these obligations fall on the owner, which is what
+                        the Owned-only scope above the table turns on. */}
+                    <th title="Owned or Leased, from the Ownership column mapped on the Utility Lookup upload">Ownership</th>
                     <th>Electric Utility</th><th>Natural Gas Utility</th>
                     {/* Whether the data needed to REPORT the mandates in the
                         columns to the right can actually be obtained. */}
@@ -2066,6 +2072,7 @@ export function BuildingComplianceScreening({
                       <td>{r.matched ? r.government : <span className={styles.dash}>no match</span>}</td>
                       <td>{r.govId ? <span className={styles.govIdCell}>{r.govId}</span> : <span className={styles.dash}>-</span>}</td>
                       <td>{r.sqft != null ? r.sqft.toLocaleString() : <span className={styles.dash}>-</span>}</td>
+                      <td>{r.ownership || <span className={styles.dash}>-</span>}</td>
                       {/* The utilities the portfolio was uploaded with, as
                           they were uploaded. The WBUDC cards above re-source
                           the same two columns from the Whole Building Data

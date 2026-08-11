@@ -2658,9 +2658,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       country: String(r.__country__ || '').trim(),
       sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? r.__propertySizeFt2__ : null,
       propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
-      // 'Owned' | 'Leased' | null — scopes the two building-compliance
-      // subtabs, whose obligations fall on the owner.
-      ownership: r.__ownership__ || null,
+      // Canonical 'Owned' / 'Leased' where the upload's value could be
+      // placed — that's what scopes the two building-compliance subtabs,
+      // whose obligations fall on the owner. Where it couldn't, the raw
+      // string travels as-is rather than the cell going blank, same as
+      // propertyType above and the Master Site List: "Owned/Leased" or
+      // "TBD" is a real answer about that site, and now that Ownership is
+      // a column on the Site Detail table, dropping it would read as "not
+      // provided" when it wasn't. A raw value still isn't === 'Owned', so
+      // the Owned-only scope and its counts are unchanged.
+      ownership: r.__ownership__ || r.__ownershipRaw__ || null,
       // The utility mapping behind the whole-building-data cards: the zip the
       // lookup resolved from, and the three serving utilities it resolved to.
       zip: String(r.__zipNorm__ || '').trim(),
