@@ -261,20 +261,20 @@ const composite = [
   { companyName: 'Domestic Small', sector: 'Industrial / Manufacturing', energyGwh: 10, siteCount: 2, acquisitionYear: 2022, hqCity: 'Chicago', hqCountry: 'United States' },
 ];
 // Full basis: the two domestic rows are both tiny against the Euro Giant's
-// 1000 GWh / 200 sites, so recency separates them — Small (39) edges Mid
-// (37). Scoring only the eligible rows would rebase the maxima onto Mid
+// 1000 GWh / 200 sites, so recency separates them — Small (35) edges Mid
+// (33). Scoring only the eligible rows would rebase the maxima onto Mid
 // and hand it 84, flipping the winner. So this is not a cosmetic
 // difference in the number: getting the basis wrong names a different
 // company than the All PCs tab does.
 const top = pickTopPortfolioCompany(composite, new Map());
 eq([computePortfolioFitScore(composite[1], 1000, 200, { min: 2020, max: 2022 }),
   computePortfolioFitScore(composite[2], 1000, 200, { min: 2020, max: 2022 })],
-[37, 39], 'the full-portfolio basis scores Mid 37, Small 39');
+[33, 35], 'the full-portfolio basis scores Mid 33, Small 35');
 eq([computePortfolioFitScore(composite[1], 100, 20, { min: 2021, max: 2022 }),
   computePortfolioFitScore(composite[2], 100, 20, { min: 2021, max: 2022 })],
-[84, 45], '…an eligible-only basis would score them 84 and 45 — a different winner');
+[84, 41], '…an eligible-only basis would score them 84 and 41 — a different winner');
 eq(top.companyName, 'Domestic Small', 'the pick follows the full-portfolio basis');
-eq(top.score, 39, 'and reports the score All PCs shows for it');
+eq(top.score, 35, 'and reports the score All PCs shows for it');
 eq(top.skippedRegion, 1, 'the ineligible row still counted toward the maxima');
 
 // ---- the counts behind the tooltip ------------------------------------------
@@ -327,13 +327,20 @@ eq(pickTopPortfolioCompany(estimated, new Map()).companyName, 'Wide Co',
 
 // ---- component weights ------------------------------------------------------
 
-// Sites now carry the same 30% as energy. A row that is all sites and no
-// energy scores the same as its mirror image; before the reweighting the
-// energy-only row won by 20 points.
+// Sites are the largest single component at 40%, ahead of energy's 25%.
+// A row that is all sites and no energy therefore outscores its mirror
+// image; before the reweighting the energy-only row won by 20 points.
 const allSites = { companyName: 'Sites Only', sector: '', energyGwh: 0, siteCount: 100 };
 const allEnergy = { companyName: 'Energy Only', sector: '', energyGwh: 100, siteCount: 0 };
-eq(computePortfolioFitScore(allSites, 100, 100, null), 30, 'a maxed site count is worth 30 points');
-eq(computePortfolioFitScore(allEnergy, 100, 100, null), 30, 'exactly what a maxed energy figure is worth');
+eq(computePortfolioFitScore(allSites, 100, 100, null), 40, 'a maxed site count is worth 40 points');
+eq(computePortfolioFitScore(allEnergy, 100, 100, null), 25, 'against 25 for a maxed energy figure');
+
+// The full weight ladder, so a future edit to one component can't quietly
+// knock sites off the top: sites > energy > sector > recency, summing to 100.
+const maxed = { companyName: 'Everything', sector: 'Industrial / Manufacturing', energyGwh: 10, siteCount: 10, acquisitionYear: 2024 };
+eq(computePortfolioFitScore({ ...maxed, sector: '' }, 10, 10, null), 65, 'sites + energy alone are 65 of the 100 points');
+eq(computePortfolioFitScore(maxed, 10, 10, { min: 2020, max: 2024 }), 99,
+  'and a row that maxes every component scores ~100 (sector tops out at 9.5/10)');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
