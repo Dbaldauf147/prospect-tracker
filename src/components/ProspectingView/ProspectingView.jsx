@@ -33,6 +33,9 @@ import {
   subscribeCaughtUp,
 } from '../../utils/prospectingStatus';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
+import { makeRosterGates, rosterTagCoverage, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useAuth } from '../../contexts/AuthContext';
 
 const PROSPECTING_STEPS = [
@@ -140,6 +143,115 @@ function useOppsRecords(userId) {
     return () => { cancelled = true; };
   }, [userId]);
   return records;
+}
+
+// Tag-review coverage per contact roster, for the market-updates step.
+// Everything it needs is already cached locally — the HubSpot contacts, the
+// Clients tab's status map, the opps records and the Table View prospects —
+// so the readout paints with the page rather than after a round trip.
+// Returns null until the contact cache answers, so the row shows nothing
+// instead of a 0% that only means "not loaded yet".
+function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
+  const [contacts, setContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setContacts([]); });
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  // Same store and the same events the contacts pages listen to, so a
+  // company switched to "Cancelling for Sure" drops out of these numbers
+  // without a reload.
+  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  useEffect(() => {
+    function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
+    function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+    };
+  }, []);
+
+  // Visible mode, matching the Totals pills on All Contacts: the figure
+  // should describe the rosters as they're worked, not the hidden-review view.
+  const gates = useMemo(
+    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, showHidden: false }),
+    [prospects, cdmName, oppsRecords, clientStatusMap],
+  );
+  return useMemo(() => {
+    if (contacts == null) return null;
+    return rosterTagCoverage({
+      contacts,
+      gates,
+      tagReviewMap: settings?.contactTagReview || {},
+      localFields: settings?.contactLocalFields || null,
+    });
+  }, [contacts, gates, settings?.contactTagReview, settings?.contactLocalFields]);
+}
+
+// The tag-review coverage, roster by roster, under the market-updates step.
+// A market update is only worth sending to someone you've placed, so how
+// far the tagging has actually been worked through is the readiness check
+// for this step — and it's the one number that says which slice of the book
+// is ready and which isn't.
+//
+// The figures come from the same function the All Contacts page's own
+// Tagged row runs on (rosterTagCoverage), so the two pages read one number
+// rather than two: of every tag question askable about a group's contacts,
+// the share that has an answer.
+function TagCoverageBar({ coverage, onNavigate }) {
+  if (!coverage) return null;
+  const cells = [
+    { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
+    ...ROSTER_CATEGORIES,
+  ];
+  // Nothing on any roster — the cache is loaded but empty. A row of "—"
+  // would just be noise.
+  if (!coverage.all.contacts) return null;
+  return (
+    <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
+        Tagged:
+      </span>
+      {cells.map(({ key, label, bg, border, color }) => {
+        const { pct, contacts } = coverage[key];
+        const empty = pct == null;
+        const title = empty
+          ? `No contacts on the ${label} roster yet`
+          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer — the same figure the All Contacts page's Tagged row shows for this group${onNavigate ? '. Click to open Contacts.' : ''}`;
+        const body = (
+          <>
+            <span style={{ fontWeight: 700 }}>{label}</span>
+            <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+              {empty ? '—' : `${pct}%`}
+            </span>
+          </>
+        );
+        const style = {
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '1px 8px', borderRadius: 999,
+          background: empty ? '#F8FAFC' : bg,
+          border: `1px solid ${empty ? '#E2E8F0' : border}`,
+          color: empty ? '#94A3B8' : color,
+          fontSize: '0.68rem', fontFamily: 'inherit',
+        };
+        if (!onNavigate) return <span key={key} style={style} title={title}>{body}</span>;
+        return (
+          <button key={key} type="button" onClick={onNavigate} title={title} style={{ ...style, cursor: 'pointer' }}>
+            {body}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // One cell of the Status column. Untracked steps render a button (the
@@ -324,9 +436,11 @@ function TopPcIntroList({ rows, expanded, onExpand, onSelectProspect, byId }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect }) {
+export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, cdmName = '', settings = null }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
+  // Tag-review coverage per roster, printed under the market-updates step.
+  const tagCoverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings });
   // The hand-marked steps, straight off localStorage: another tab's mark,
   // the user id landing after login, and the date rolling over all reach
   // the page this way rather than through mirrored state.
@@ -410,7 +524,8 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
           // only counting it — those rows are tall, so their right-hand
           // cells sit at the top rather than floating in the middle.
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
-            || (step.key === 'pe-intros' && topPcIntros?.length);
+            || (step.key === 'pe-intros' && topPcIntros?.length)
+            || (step.key === 'market-updates' && tagCoverage?.all?.contacts);
           return (
             <div
               key={step.key}
@@ -453,6 +568,12 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                 <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: 3 }}>
                   {step.detail}
                 </div>
+                {step.key === 'market-updates' && (
+                  <TagCoverageBar
+                    coverage={tagCoverage}
+                    onNavigate={onNavigate ? () => onNavigate('contacts') : null}
+                  />
+                )}
                 {step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
                 {step.key === 'pe-intros' && (
                   <TopPcIntroList
