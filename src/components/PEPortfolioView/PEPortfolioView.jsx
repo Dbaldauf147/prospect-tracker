@@ -10,7 +10,7 @@ import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '.
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { computePortfolioFitScore, siteCountNumber, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { pickTopPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
@@ -2014,7 +2014,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
       // same maxima/year-range basis as the firm's "Download Current Data"
       // export — so a PC's score here matches what it shows in that export.
       const maxE = pcs.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
-      const maxS = pcs.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
+      const maxS = pcs.reduce((m, r) => Math.max(m, siteCountNumber(r.siteCount)), 0);
       const years = pcs.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
       const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
       for (const pc of pcs) {

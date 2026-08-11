@@ -80,6 +80,28 @@ export function industryTier(industry) {
   return sectorTier(industrySector(industry));
 }
 
+// Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" →
+// { value: 12, isEstimate: true }. Uploads write the marker into the cell
+// (see the Portfolio Companies import mapping), so a bare Number() on these
+// values comes back NaN: an estimated site count would score as zero AND
+// drop out of the normalization maximum, which is the opposite of how the
+// user wants estimates treated. An estimate is a site count.
+export function parseSiteCount(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { value: null, isEstimate: false };
+  const isEstimate = /\(\s*e\s*\)|\best\.?\b/i.test(s);
+  const cleaned = s.replace(/\(\s*[pe]\s*\)/gi, '').replace(/,/g, '').trim();
+  const n = Number(cleaned);
+  return { value: Number.isFinite(n) && cleaned !== '' ? n : (cleaned || null), isEstimate };
+}
+
+// The numeric site count for scoring/normalization: estimates count exactly
+// as much as confirmed counts. Anything unparseable contributes 0.
+export function siteCountNumber(raw) {
+  const { value } = parseSiteCount(raw);
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 export function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   // If the uploaded file carries an Opportunity Score column, use that
   // value verbatim — never fall back to the composite methodology.
@@ -110,7 +132,7 @@ export function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   else sectorScoreRaw = sectorScoreFor(industrySector(row.sector || row.industry));
   const sectorVal = Math.min(1, sectorScoreRaw / 10);
   const energyPct = maxEnergy > 0 ? Math.min(1, (Number(row.energyGwh) || 0) / maxEnergy) : 0;
-  const sitesPct = maxSites > 0 ? Math.min(1, (Number(row.siteCount) || 0) / maxSites) : 0;
+  const sitesPct = maxSites > 0 ? Math.min(1, siteCountNumber(row.siteCount) / maxSites) : 0;
   // Recency of acquisition: most recent year in the table -> 1.0, oldest -> 0.0
   let yearPct = 0;
   const year = Number(row.acquisitionYear);
@@ -119,7 +141,11 @@ export function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   } else if (year && yearRange && yearRange.max === yearRange.min) {
     yearPct = 1;
   }
-  const raw = energyPct * 0.4 + sectorVal * 0.25 + sitesPct * 0.2 + yearPct * 0.15;
+  // Site count carries as much weight as energy: a portfolio company's site
+  // footprint is the clearest signal of how much there is to work, and it is
+  // known (or estimable) far more often than a GWh figure. Estimates count
+  // the same as confirmed counts — see siteCountNumber.
+  const raw = energyPct * 0.3 + sectorVal * 0.25 + sitesPct * 0.3 + yearPct * 0.15;
   return Math.round(raw * 100);
 }
 
@@ -150,21 +176,14 @@ export async function downloadPortfolioCompaniesWorkbook({
                     return;
                   }
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
-                  const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
+                  // Estimated site counts ("12 (E)") count toward the maximum
+                  // exactly as confirmed ones do, so the normalization basis
+                  // matches what the scorer reads out of each row.
+                  const maxS = rows.reduce((m, r) => Math.max(m, siteCountNumber(r.siteCount)), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
                   const headers = ['Opportunity Score', 'Company Name', 'Status', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'External Reporting'];
                   const colWidths = [13, 32, 18, 15, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
-                  // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
-                  // The number is what we write; the marker drives italic formatting in the export.
-                  function parseSiteCount(raw) {
-                    const s = String(raw ?? '').trim();
-                    if (!s) return { value: null, isEstimate: false };
-                    const isEstimate = /\(\s*e\s*\)/i.test(s);
-                    const cleaned = s.replace(/\(\s*[pe]\s*\)/gi, '').trim();
-                    const n = Number(cleaned);
-                    return { value: Number.isFinite(n) && cleaned !== '' ? n : (cleaned || null), isEstimate };
-                  }
                   // Export ordered by Opportunity Score (highest first); ties keep original order.
                   // Rows whose score came back null (explicit N/A) sink to the bottom.
                   const orderedRows = rows
@@ -606,9 +625,9 @@ export async function downloadPortfolioCompaniesWorkbook({
                     addBlank();
 
                     addSectionHeader('Component Weights');
-                    addKV('Est. Energy (GWh/yr)', '40%: linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
+                    addKV('Est. Energy (GWh/yr)', '30%: linearly normalized against the maximum value in the exported table. Tied with Site Count as the largest driver of the score.');
                     addKV('Sector Fit Score', '25%: uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
-                    addKV('Site Count', '20%: linearly normalized against the maximum value in the exported table.');
+                    addKV('Site Count', '30%: linearly normalized against the maximum value in the exported table. Tied with Est. Energy as the largest driver of the score. Estimated counts — cells marked (E) — are weighted exactly the same as confirmed counts.');
                     addKV('Acquisition Year', '15%: most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
@@ -627,18 +646,18 @@ export async function downloadPortfolioCompaniesWorkbook({
 
                     addSectionHeader('Normalization Formulas');
                     addKV('Energy %', 'min(1, row.Energy ÷ max(Energy in table))');
-                    addKV('Sites %', 'min(1, row.Sites ÷ max(Sites in table))');
+                    addKV('Sites %', 'min(1, row.Sites ÷ max(Sites in table)). A (P)/(E) marker on the cell is ignored for scoring: an estimated site count counts in full.');
                     addKV('Year %', '(row.Year − min(Year)) ÷ (max(Year) − min(Year)). Missing year contributes 0.');
                     addKV('Sector %', 'SectorScore ÷ 10. Unmatched industries contribute 0.');
                     addBlank();
 
                     addSectionHeader('Composite Formula');
-                    addParagraph('Opportunity Score = round( 100 × ( 0.40 × Energy% + 0.25 × Sector% + 0.20 × Sites% + 0.15 × Year% ) )');
+                    addParagraph('Opportunity Score = round( 100 × ( 0.30 × Energy% + 0.25 × Sector% + 0.30 × Sites% + 0.15 × Year% ) )');
                     addBlank();
 
                     addSectionHeader('Key Assumptions & Caveats');
                     addKV('Relative scoring', 'Scores are relative to the current table. Adding or removing rows changes the normalization max/min and can shift every row\'s score.');
-                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates: Claude research output or manual input. They are not audited figures.');
+                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates: Claude research output or manual input. They are not audited figures. Site counts marked (E) are still scored at full weight — an estimated footprint is treated as a real one.');
                     addKV('Industry keywords', 'Matching is substring-based and may mis-classify broad terms. Review the Fit Tier column and correct the Industry text if needed.');
                     addKV('Missing values', 'Blank energy / sites / year cells contribute 0 to their component, never negative.');
 

@@ -24,7 +24,7 @@ import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
-import { computePortfolioFitScore, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { siteListFacts as computeSiteListFacts, formatSqft } from '../../utils/siteListFacts';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
@@ -7739,9 +7739,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (file) await openPortfolioMappingForFile(file);
                 }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
-                const totalSites = rows.reduce((sum, r) => sum + (Number(r.siteCount) || 0), 0);
+                // Estimated counts ("12 (E)") are real site counts: they add
+                // to the total on screen and set the ranking maximum just
+                // like a confirmed number does.
+                const totalSites = rows.reduce((sum, r) => sum + siteCountNumber(r.siteCount), 0);
                 const maxEnergyForRank = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
-                const maxSitesForRank = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
+                const maxSitesForRank = rows.reduce((m, r) => Math.max(m, siteCountNumber(r.siteCount)), 0);
                 const yearRangeForRank = (() => {
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   if (years.length === 0) return null;
@@ -9775,7 +9778,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {!mappedFields.has('opportunityScore') && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', borderRadius: 6, fontSize: '0.75rem' }}>
                       No column is mapped to <strong>Opportunity Score</strong>. Rows without an uploaded score fall back to the composite methodology
-                      (0.40·Energy + 0.25·Sector + 0.20·Sites + 0.15·Year). Map the column below if you want to preserve the scores from the file verbatim.
+                      (0.30·Energy + 0.30·Sites + 0.25·Sector + 0.15·Year — site counts marked (E) count in full). Map the column below if you want to preserve the scores from the file verbatim.
                     </div>
                   )}
                 </div>
