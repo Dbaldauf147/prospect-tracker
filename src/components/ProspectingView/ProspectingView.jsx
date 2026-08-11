@@ -45,8 +45,12 @@ const PROSPECTING_STEPS = [
     // Steps carrying a `workLabel` are counted for the user; the rest are
     // marked caught up by hand.
     workLabel: n => `${n} overdue`,
-    workTitle: n => `${n} open ${n === 1 ? 'opp is' : 'opps are'} past their Call In date`,
-    clearTitle: 'No open opp is past its Call In date',
+    // Opps marked "No Further Action Today" are settled for the day, so
+    // they're left out of the count — same rule the sidebar's Opps badge
+    // uses. The tooltips say so, since a number that skips rows the user
+    // can see on the Opps tab is otherwise just wrong-looking.
+    workTitle: n => `${n} open ${n === 1 ? 'opp is' : 'opps are'} past their Call In date, not counting any marked "No Further Action Today"`,
+    clearTitle: 'No open opp is past its Call In date, other than ones marked "No Further Action Today"',
   },
   {
     key: 'market-updates',

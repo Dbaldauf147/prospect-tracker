@@ -14,7 +14,11 @@
 //
 // Follow Up dates are built off the local calendar (same clock resolveCallIn
 // reads) so the tests don't drift with the runner's timezone.
-import { countCallInDue, nfatUnmarked, resolveCallIn } from '../src/utils/oppsCallIn.js';
+// The Prospecting tab's "Follow up on current opps" count shares this module
+// and the same "No Further Action Today" rule, with two differences of its
+// own: it only counts opps already *past* their date, and it skips closed /
+// error-stage rows. Both are covered at the bottom.
+import { countCallInDue, countOverdueCallIns, nfatUnmarked, resolveCallIn } from '../src/utils/oppsCallIn.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -72,6 +76,36 @@ check('mixed set totals correctly', countCallInDue([
 ]), 3);
 check('non-array input is 0', countCallInDue(null), 0);
 check('empty set is 0', countCallInDue([]), 0);
+
+// --- the Prospecting step's overdue count ---------------------------------
+
+// Same rows, plus a Stage (that count only looks at opps still in flight).
+const active = (followUp, nfat) => ({ Stage: 'Qualifying', ...opp(followUp, nfat) });
+
+check('counts an overdue active opp', countOverdueCallIns([active(isoOffset(-3))]), 1);
+check('due today is not yet overdue', countOverdueCallIns([active(isoOffset(0))]), 0);
+check('future is skipped', countOverdueCallIns([active(isoOffset(4))]), 0);
+
+// The change: an overdue opp the user already settled today drops out, so
+// the step can reach "clear" instead of counting work that's been handled.
+check('overdue but marked is excluded', countOverdueCallIns([active(isoOffset(-3), 'Yes')]), 0);
+check('an x-ed mark is excluded too', countOverdueCallIns([active(isoOffset(-3), 'No')]), 0);
+check('a blank mark still counts', countOverdueCallIns([active(isoOffset(-3), '')]), 1);
+check('whitespace-only still counts', countOverdueCallIns([active(isoOffset(-3), '  ')]), 1);
+
+// Closed and error-stage rows stay out, mark or no mark.
+check('a closed opp is skipped', countOverdueCallIns([{ ...active(isoOffset(-3)), Stage: 'Sold' }]), 0);
+check('an error stage is skipped', countOverdueCallIns([{ ...active(isoOffset(-3)), Stage: '#N/A' }]), 0);
+
+check('mixed set totals correctly', countOverdueCallIns([
+  active(isoOffset(-10)),                          // overdue           → counts
+  active(isoOffset(-1), 'Yes'),                    // overdue, handled  → no
+  active(isoOffset(0)),                            // due today         → no
+  { ...active(isoOffset(-6)), Stage: 'Not Sold' }, // closed            → no
+  active(isoOffset(-2)),                           // overdue           → counts
+]), 2);
+check('non-array input is 0', countOverdueCallIns(null), 0);
+check('empty set is 0', countOverdueCallIns([]), 0);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

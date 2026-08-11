@@ -83,25 +83,33 @@ export function isActiveOpp(row) {
   return !!stage && !INVALID_STAGES.has(stage) && !CLOSED_STAGES.has(stage);
 }
 
-// How many active opps have gone negative on Call In — the Follow Up date
-// is already behind them. Closed and error-stage rows are skipped, since an
-// overdue follow-up on a dead opp isn't work anyone owes.
-export function countOverdueCallIns(records) {
-  if (!Array.isArray(records)) return 0;
-  let n = 0;
-  for (const row of records) {
-    if (!isActiveOpp(row)) continue;
-    const days = resolveCallIn(row);
-    if (typeof days === 'number' && Number.isFinite(days) && days < 0) n += 1;
-  }
-  return n;
-}
-
 // True when the row's "No Further Action Today" cell is empty. That column
 // is a tristate (✓ / ✗ / blank), and any mark on it means the user has
 // already dealt with the row today — so only a blank counts as outstanding.
 export function nfatUnmarked(row) {
   return String(row?.['No Further Action Today'] ?? '').trim() === '';
+}
+
+// How many active opps have gone negative on Call In — the Follow Up date
+// is already behind them. Closed and error-stage rows are skipped, since an
+// overdue follow-up on a dead opp isn't work anyone owes.
+//
+// Rows marked "No Further Action Today" are skipped too, for the same
+// reason the sidebar's Opps badge skips them: the mark means the user has
+// already been through the row today and settled it, so counting it as
+// work still to do sends them back to an opp they just closed out. The
+// column clears on its own schedule (Settings → No Further Action Today),
+// so a row that stays overdue is back in the count on the next clear.
+export function countOverdueCallIns(records) {
+  if (!Array.isArray(records)) return 0;
+  let n = 0;
+  for (const row of records) {
+    if (!isActiveOpp(row)) continue;
+    if (!nfatUnmarked(row)) continue;
+    const days = resolveCallIn(row);
+    if (typeof days === 'number' && Number.isFinite(days) && days < 0) n += 1;
+  }
+  return n;
 }
 
 // How many opps are due to be called: the Call In number has reached zero
