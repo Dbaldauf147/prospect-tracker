@@ -115,6 +115,24 @@ const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any
 // cells use so regions stay consistent across views.
 const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
 
+// Scheduled opps. The New Opp modal can defer the create instead of
+// committing the row straight away: the whole payload is parked on user
+// settings (`settings.scheduledOpps`) with an Eastern due date + time,
+// and a minute tick on this tab materializes it once that time passes —
+// including catching up a time that went by while the app was closed.
+// Settings are Firestore-backed, so an opp scheduled on the laptop still
+// lands when the desktop is the tab that's open.
+//
+// Nothing is ever spliced out of the array. The cross-device settings
+// merge unions id-keyed arrays (see utils/settingsMerge.js), so an entry
+// removed here but still sitting in another device's copy would be
+// appended right back — and fire a second time. Firing and cancelling
+// stamp `firedAt` / `canceledAt` instead; a stamped entry is dropped only
+// once it's older than the retention window, by which point every device
+// has long since seen the stamp.
+const SCHEDULED_OPP_RETENTION_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
+const SCHEDULED_OPP_DEFAULT_TIME = '08:00';
+
 // Free-text SME box for one row of the Services tab. Local while typing so
 // a name isn't a settings write per keystroke; commits on blur or Enter,
 // reverts on Escape. Clicks are stopped from reaching the row so typing in
@@ -725,6 +743,15 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
+function tomorrowISO() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // Normalize a user-entered Quoted Amount to "$25,000" — USD currency
 // with thousands separators and no decimals. Anything that doesn't
 // parse to a number (empty, or legacy free-text like "TBD") is returned
@@ -1062,6 +1089,77 @@ function mostRecentNfatScheduleMs(days, time, nowMs = Date.now()) {
     if (occ <= nowMs) return occ;
   }
   return null;
+}
+
+// ---- Scheduled opps ---------------------------------------------
+
+// A stored scheduled-opp list coerced into a complete, well-typed shape.
+// Anything without an id or a usable YYYY-MM-DD due date is dropped —
+// it can't be scheduled or shown, so keeping it would just be a row the
+// manager modal can't render.
+function normalizeScheduledOpps(stored) {
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .filter(e => e && typeof e === 'object' && e.id && /^\d{4}-\d{2}-\d{2}$/.test(String(e.dueDate || '')))
+    .map(e => ({
+      id: String(e.id),
+      company: String(e.company || ''),
+      source: String(e.source || ''),
+      peOwner: String(e.peOwner || ''),
+      type: String(e.type || ''),
+      frameworks: Array.isArray(e.frameworks) ? e.frameworks : [],
+      frameworksEdited: !!e.frameworksEdited,
+      addToTableView: !!e.addToTableView,
+      hqRegion: String(e.hqRegion || ''),
+      dueDate: String(e.dueDate),
+      dueTime: /^\d{1,2}:\d{2}$/.test(String(e.dueTime || '')) ? String(e.dueTime) : SCHEDULED_OPP_DEFAULT_TIME,
+      createdAt: Number(e.createdAt) || null,
+      firedAt: Number(e.firedAt) || null,
+      canceledAt: Number(e.canceledAt) || null,
+    }));
+}
+
+// When a scheduled opp is due, as a UTC ms instant. The stored date +
+// time are Eastern wall time — same convention as the No-Further-Action
+// clear schedules — so an opp set for "Sep 1, 8:00" arrives at the same
+// moment no matter which machine's tab happens to be open.
+function scheduledOppDueMs(entry) {
+  const [y, m, d] = String(entry?.dueDate || '').split('-').map(n => parseInt(n, 10));
+  const [hh, mm] = String(entry?.dueTime || SCHEDULED_OPP_DEFAULT_TIME).split(':').map(n => parseInt(n, 10));
+  if (![y, m, d, hh, mm].every(Number.isFinite)) return null;
+  return easternWallToUtcMs(y, m, d, hh, mm);
+}
+
+// Still waiting to be created: neither fired nor cancelled.
+function scheduledOppPending(entry) {
+  return !!entry && !entry.firedAt && !entry.canceledAt;
+}
+
+// "Mon, Sep 1, 8:00 AM ET" — always rendered in Eastern, because that's
+// the timezone the stored wall time means.
+function formatScheduledOppWhen(entry) {
+  const ms = scheduledOppDueMs(entry);
+  if (ms == null) return '';
+  const s = new Date(ms).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+  return `${s} ET`;
+}
+
+// Drop fired / cancelled entries once they're past the retention window,
+// so the settings list doesn't grow without bound. Pending entries are
+// always kept, however far out they're scheduled.
+function pruneScheduledOpps(list, nowMs = Date.now()) {
+  return list.filter(e => {
+    const done = e.firedAt || e.canceledAt;
+    return !done || (nowMs - done) < SCHEDULED_OPP_RETENTION_MS;
+  });
+}
+
+function newScheduledOppId() {
+  return `so-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -3043,6 +3141,13 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const [typeInput, setTypeInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
   const [addToTableView, setAddToTableView] = useState(true);
+  // Deferred create. Off by default — the modal still commits the row
+  // straight away unless the user asks for a date. The date defaults to
+  // tomorrow so switching it on is immediately meaningful; the time is
+  // Eastern, matching how the schedule is evaluated.
+  const [scheduleOn, setScheduleOn] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState(() => tomorrowISO());
+  const [scheduleTime, setScheduleTime] = useState(SCHEDULED_OPP_DEFAULT_TIME);
   // HQ Region is required when this flow creates a brand-new Table View
   // company, so the record doesn't land missing a region (see the
   // MyAccounts "HQ Region missing" flag). Same two-option set the
@@ -3134,10 +3239,16 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   // framework flags are selectable even for brand-new companies.
   const showCompanyInfo = !!trimmedCompany;
 
+  // A scheduled create needs a date; clearing the field leaves nothing
+  // to schedule against, so block the submit the same way a missing HQ
+  // Region does.
+  const needsScheduleDate = scheduleOn && !scheduleDate;
+  const blocked = needsHqRegion || needsScheduleDate;
+
   function submit() {
     // A new Table View company must have an HQ Region — block the submit
     // and let the field's required styling flag the gap.
-    if (needsHqRegion) return;
+    if (blocked) return;
     // Fold in a typed-but-uncommitted draft so an owner the user didn't
     // chip (no Enter / suggestion pick) still lands on the opp.
     const owners = [...peOwners];
@@ -3153,6 +3264,12 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       frameworksEdited,
       addToTableView: willAddCompany,
       hqRegion: willAddCompany ? hqRegion : '',
+      // null → create the row now. Otherwise the whole payload is parked
+      // and replayed at the due time, so the Table View company (and any
+      // Type / framework correction) also happens then rather than now.
+      schedule: scheduleOn
+        ? { dueDate: scheduleDate, dueTime: scheduleTime || SCHEDULED_OPP_DEFAULT_TIME }
+        : null,
     });
   }
 
@@ -3192,7 +3309,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
             New Opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Set the Company, Source, Type, and PE Owner for the new row. All are optional and editable later.
+            Set the Company, Source, Type, and PE Owner for the new row. All are optional and editable later. Schedule it below to have the row created on a future date instead of now.
           </div>
         </div>
 
@@ -3382,6 +3499,52 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
               {peOwnerSuggestions.map(p => <option key={p} value={p} />)}
             </datalist>
           </div>
+
+          <div style={{
+            borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={scheduleOn}
+                onChange={(e) => setScheduleOn(e.target.checked)}
+              />
+              Schedule this opp for later
+            </label>
+            {scheduleOn && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>Date <span style={{ color: '#dc2626' }}>*</span></label>
+                    <input
+                      type="date"
+                      value={scheduleDate}
+                      min={todayISO()}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      style={{
+                        ...fieldStyle,
+                        ...(needsScheduleDate ? { border: '1px solid #dc2626' } : null),
+                      }}
+                    />
+                  </div>
+                  <div style={{ width: 130 }}>
+                    <label style={labelStyle}>Time (ET)</label>
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      style={fieldStyle}
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+                  {needsScheduleDate
+                    ? 'Pick a date for the opp to be created on.'
+                    : <>Nothing is created now. The opp{willAddCompany ? ' (and the new Table View company)' : ''} lands on <strong style={{ color: 'var(--color-text)' }}>{formatScheduledOppWhen({ dueDate: scheduleDate, dueTime: scheduleTime }) || '—'}</strong>, the first time the Opps tab is open at or after that. Manage it from <strong style={{ color: 'var(--color-text)' }}>Scheduled Opps</strong> in the toolbar.</>}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{
@@ -3402,16 +3565,200 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
           <button
             type="button"
             onClick={submit}
-            disabled={needsHqRegion}
-            title={needsHqRegion ? 'Select an HQ Region to add this company to Table View' : undefined}
+            disabled={blocked}
+            title={needsHqRegion
+              ? 'Select an HQ Region to add this company to Table View'
+              : needsScheduleDate ? 'Pick a date to schedule the opp for' : undefined}
             style={{
               padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
               border: '1px solid var(--color-accent)', borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: needsHqRegion ? 'not-allowed' : 'pointer',
-              opacity: needsHqRegion ? 0.55 : 1,
+              color: '#fff', cursor: blocked ? 'not-allowed' : 'pointer',
+              opacity: blocked ? 0.55 : 1,
             }}
-          >Create opp</button>
+          >{scheduleOn ? 'Schedule opp' : 'Create opp'}</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Manager for the opps queued by the New Opp modal's "Schedule this opp
+// for later". Lists what's still waiting with its due date / time — both
+// editable in place — plus a "Create now" shortcut to pull one forward
+// and a Cancel that drops it without ever creating a row. Entries the
+// tick has already turned into opps (and ones cancelled here) stay
+// listed under a history section for the retention window, so a
+// scheduled opp that fired while the tab was closed is still traceable
+// back to when it was set up.
+function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancelEntry, onClose }) {
+  const pending = useMemo(
+    () => entries.filter(scheduledOppPending)
+      .sort((a, b) => (scheduledOppDueMs(a) || 0) - (scheduledOppDueMs(b) || 0)),
+    [entries],
+  );
+  const history = useMemo(
+    () => entries.filter(e => !scheduledOppPending(e))
+      .sort((a, b) => (b.firedAt || b.canceledAt || 0) - (a.firedAt || a.canceledAt || 0)),
+    [entries],
+  );
+
+  const cellLabel = { fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', display: 'block', marginBottom: 2 };
+  const inputStyle = {
+    padding: '0.25rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', color: 'var(--color-text)',
+  };
+  const actionBtn = (accent) => ({
+    padding: '0.25rem 0.6rem', background: 'transparent',
+    border: `1px solid ${accent}`, borderRadius: 4,
+    fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+    color: accent, cursor: 'pointer', whiteSpace: 'nowrap',
+  });
+
+  // The extra context a queued opp carries beyond its company name —
+  // shown as one muted line so the row stays scannable.
+  const detailLine = (e) => [
+    e.source && `Source: ${e.source}`,
+    e.peOwner && `PE Owner: ${e.peOwner}`,
+    e.type && `Type: ${e.type}`,
+    e.addToTableView && `Adds to Table View${e.hqRegion ? ` · ${e.hqRegion}` : ''}`,
+  ].filter(Boolean).join(' · ');
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        style={{
+          width: 620, maxWidth: '94vw', maxHeight: '86vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Scheduled Opps
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            Opps queued to be created later. Each one is added the first time this tab is open at or after its date and time (Eastern) — nothing exists on the Opps table until then.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          {pending.length === 0 && (
+            <div style={{
+              padding: '0.9rem', textAlign: 'center', fontSize: '0.8rem',
+              color: 'var(--color-text-muted)', background: 'var(--color-bg)',
+              border: '1px dashed var(--color-border)', borderRadius: 6,
+            }}>
+              Nothing scheduled. Use <strong>+ New Opp</strong> and tick “Schedule this opp for later” to queue one.
+            </div>
+          )}
+
+          {pending.map(e => (
+            <div key={e.id} style={{
+              border: '1px solid var(--color-border-light)', borderRadius: 6,
+              padding: '0.6rem 0.7rem', display: 'flex', flexDirection: 'column', gap: '0.5rem',
+              background: 'var(--color-bg)',
+            }}>
+              <div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                  {e.company || <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>(no company)</span>}
+                </div>
+                {detailLine(e) && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                    {detailLine(e)}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={cellLabel}>Date</label>
+                  <input
+                    type="date"
+                    value={e.dueDate}
+                    onChange={(ev) => ev.target.value && onChangeEntry(e.id, { dueDate: ev.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={cellLabel}>Time (ET)</label>
+                  <input
+                    type="time"
+                    value={e.dueTime}
+                    onChange={(ev) => ev.target.value && onChangeEntry(e.id, { dueTime: ev.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 120, fontSize: '0.72rem', color: 'var(--color-text-muted)', paddingBottom: 4 }}>
+                  {formatScheduledOppWhen(e)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onCreateNow(e.id)}
+                  style={actionBtn('#2563EB')}
+                  title="Create this opp right now instead of waiting for its scheduled time"
+                >Create now</button>
+                <button
+                  type="button"
+                  onClick={() => onCancelEntry(e.id)}
+                  style={actionBtn('#dc2626')}
+                  title="Drop this scheduled opp: no row is ever created"
+                >Cancel</button>
+              </div>
+            </div>
+          ))}
+
+          {history.length > 0 && (
+            <div style={{ marginTop: '0.4rem' }}>
+              <div style={{
+                fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-muted)',
+                textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4,
+              }}>Recent</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {history.map(e => (
+                  <div key={e.id} style={{
+                    fontSize: '0.74rem', color: 'var(--color-text-muted)',
+                    display: 'flex', gap: 6, alignItems: 'baseline',
+                  }}>
+                    <span style={{ color: e.firedAt ? '#059669' : '#dc2626', fontWeight: 700 }}>
+                      {e.firedAt ? '✓' : '✗'}
+                    </span>
+                    <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>{e.company || '(no company)'}</span>
+                    <span>
+                      {e.firedAt
+                        ? `created ${new Date(e.firedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                        : `cancelled ${new Date(e.canceledAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', gap: '0.4rem',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Done</button>
         </div>
       </div>
     </div>,
@@ -7089,6 +7436,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // is open. Account flows through so the modal can show "Adding
   // <company>" when the company is already known.
   const [pendingNewOpp, setPendingNewOpp] = useState(null);
+  // Whether the Scheduled Opps manager (the queue of deferred creates) is open.
+  const [scheduledOppsOpen, setScheduledOppsOpen] = useState(false);
   // _id of the opp that just had its Stage flipped to "Not Sold". When
   // set, the NotSoldFollowUpModal asks the user to fill in Close Date
   // (auto-stamped to the status-change date in updateOppField, shown
@@ -7891,6 +8240,135 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source, peOwner), ...records] };
     });
   }, []);
+
+  // Everything the New Opp modal's payload does once it's time to
+  // actually commit it: the Table View side-effects first (so the opp's
+  // Account resolves to a real prospect immediately), then the row. Split
+  // out of the modal's onCreate so a scheduled opp replays the identical
+  // flow when its due time arrives — the deferred path isn't a
+  // second, thinner version of the create.
+  const applyNewOpp = useCallback(({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
+    // Create the company on Table View first (when requested and
+    // it isn't there yet) so the new opp's Account immediately
+    // resolves to a real prospect record. addProspect is
+    // idempotent by company name, so a race that re-adds an
+    // existing company is harmless.
+    if (addToTableView && company && addProspect) {
+      try {
+        // New companies created from this flow default to the
+        // Qualifying status so they land in the active pipeline
+        // rather than statusless.
+        Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', status: 'Qualifying', frameworks: frameworksEdited ? frameworks : [] }))
+          .catch(err => console.error('opps2: add company to Table View failed', err));
+      } catch (err) {
+        console.error('opps2: add company to Table View failed', err);
+      }
+    } else if (company && updateProspect) {
+      // Existing Table View company: the modal prefilled Type and
+      // Frameworks from its record, so a different value here is a
+      // reviewed correction — persist it back to the prospect.
+      const matched = findProspectForAccount(company, prospects);
+      if (matched) {
+        const updates = {};
+        if (type !== String(matched.type || '').trim()) updates.type = type;
+        if (frameworksEdited) updates.frameworks = frameworks;
+        if (Object.keys(updates).length) {
+          Promise.resolve(updateProspect(matched.id, updates))
+            .catch(err => console.error('opps2: update company failed', err));
+        }
+      }
+    }
+    addNewOpp(company, source, peOwner);
+  }, [addProspect, updateProspect, prospects, addNewOpp]);
+
+  // ---- Scheduled opps ---------------------------------------------
+  // The queue of New Opp payloads waiting on a date, kept on settings so
+  // it follows the user across devices.
+  const scheduledOpps = useMemo(
+    () => normalizeScheduledOpps(settings?.scheduledOpps),
+    [settings?.scheduledOpps],
+  );
+  const pendingScheduledOpps = useMemo(
+    () => scheduledOpps.filter(scheduledOppPending)
+      .sort((a, b) => (scheduledOppDueMs(a) || 0) - (scheduledOppDueMs(b) || 0)),
+    [scheduledOpps],
+  );
+  // Soonest still-waiting opp, surfaced on the toolbar button's tooltip.
+  const nextScheduledOpp = pendingScheduledOpps[0] || null;
+  const saveScheduledOpps = useCallback((next) => {
+    updateSettings?.({ scheduledOpps: pruneScheduledOpps(next) });
+  }, [updateSettings]);
+
+  // Park a New Opp payload instead of committing it. Nothing touches the
+  // opps table (or Table View) until the tick below fires it.
+  const scheduleNewOpp = useCallback((payload) => {
+    const entry = {
+      id: newScheduledOppId(),
+      company: payload.company,
+      source: payload.source,
+      peOwner: payload.peOwner,
+      type: payload.type,
+      frameworks: payload.frameworks,
+      frameworksEdited: payload.frameworksEdited,
+      addToTableView: payload.addToTableView,
+      hqRegion: payload.hqRegion,
+      dueDate: payload.schedule.dueDate,
+      dueTime: payload.schedule.dueTime,
+      createdAt: Date.now(),
+      firedAt: null,
+      canceledAt: null,
+    };
+    saveScheduledOpps([...scheduledOpps, entry]);
+  }, [scheduledOpps, saveScheduledOpps]);
+
+  const updateScheduledOpp = useCallback((id, patch) => {
+    saveScheduledOpps(scheduledOpps.map(e => (e.id === id ? { ...e, ...patch } : e)));
+  }, [scheduledOpps, saveScheduledOpps]);
+
+  const cancelScheduledOpp = useCallback((id) => {
+    updateScheduledOpp(id, { canceledAt: Date.now() });
+  }, [updateScheduledOpp]);
+
+  // Shared by the minute tick and the manager's "Create now" button:
+  // materialize the entries and stamp them fired in a single settings
+  // write, so a batch that comes due together doesn't cost one write each.
+  const firedScheduledOppsRef = useRef(new Set());
+  const fireScheduledOpps = useCallback((ids) => {
+    const wanted = new Set(ids);
+    const due = scheduledOpps.filter(e => wanted.has(e.id) && scheduledOppPending(e)
+      && !firedScheduledOppsRef.current.has(e.id));
+    if (!due.length) return;
+    const now = Date.now();
+    for (const e of due) {
+      // The firedAt stamp is a settings round trip; remember in-session
+      // which entries are already handled so the next minute tick can't
+      // create the same opp twice while that write is in flight.
+      firedScheduledOppsRef.current.add(e.id);
+      applyNewOpp(e);
+    }
+    const fired = new Set(due.map(e => e.id));
+    saveScheduledOpps(scheduledOpps.map(e => (fired.has(e.id) ? { ...e, firedAt: now } : e)));
+  }, [scheduledOpps, applyNewOpp, saveScheduledOpps]);
+
+  // Create any scheduled opp whose Eastern due time has passed. Checked on
+  // mount (after hydration) and every minute the tab is open, so both a
+  // date that went by while the app was closed and one that arrives with
+  // the tab sitting open get picked up. Gating on `hydrated` keeps a new
+  // row from being appended to the cache paint and then lost when the
+  // reconciled dataset lands.
+  useEffect(() => {
+    if (!hydrated) return undefined;
+    const tick = () => {
+      const now = Date.now();
+      const due = scheduledOpps
+        .filter(e => scheduledOppPending(e) && (scheduledOppDueMs(e) ?? Infinity) <= now)
+        .map(e => e.id);
+      if (due.length) fireScheduledOpps(due);
+    };
+    tick();
+    const t = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(t);
+  }, [hydrated, scheduledOpps, fireScheduledOpps]);
 
   // ---- Undo stack -------------------------------------------------
   // In-memory history of the last UNDO_LIMIT cell mutations. Each
@@ -10071,6 +10549,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               ? `Undo last change (${undoStack.length} in history): Ctrl/Cmd+Z`
               : 'No recent changes to undo'}
           >↶ Undo</button>
+          <button
+            type="button"
+            onClick={() => setScheduledOppsOpen(true)}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: `1px solid ${pendingScheduledOpps.length ? '#2563EB' : 'var(--color-border)'}`,
+              borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: pendingScheduledOpps.length ? '#2563EB' : 'var(--color-text)', cursor: 'pointer',
+            }}
+            title={pendingScheduledOpps.length
+              ? `${pendingScheduledOpps.length} opp${pendingScheduledOpps.length === 1 ? '' : 's'} queued to be created later — next on ${formatScheduledOppWhen(nextScheduledOpp)}. Click to review, reschedule, or cancel.`
+              : 'No opps are queued for later. Tick “Schedule this opp for later” in + New Opp to queue one.'}
+          >Scheduled Opps{pendingScheduledOpps.length ? ` (${pendingScheduledOpps.length})` : ''}</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
         </div>
         {/* History / hidden toggles — sit on the right, under + New Opp. */}
@@ -10138,6 +10630,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         />
       )}
 
+      {scheduledOppsOpen && (
+        <ScheduledOppsModal
+          entries={scheduledOpps}
+          onChangeEntry={updateScheduledOpp}
+          onCreateNow={(id) => fireScheduledOpps([id])}
+          onCancelEntry={cancelScheduledOpp}
+          onClose={() => setScheduledOppsOpen(false)}
+        />
+      )}
+
       {pendingNewOpp && (
         <NewOppModal
           account={pendingNewOpp.account}
@@ -10145,38 +10647,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
-          onCreate={({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
-            // Create the company on Table View first (when requested and
-            // it isn't there yet) so the new opp's Account immediately
-            // resolves to a real prospect record. addProspect is
-            // idempotent by company name, so a race that re-adds an
-            // existing company is harmless.
-            if (addToTableView && company && addProspect) {
-              try {
-                // New companies created from this flow default to the
-                // Qualifying status so they land in the active pipeline
-                // rather than statusless.
-                Promise.resolve(addProspect({ company, peOwner: peOwner || '', type: type || '', hqRegion: hqRegion || '', status: 'Qualifying', frameworks: frameworksEdited ? frameworks : [] }))
-                  .catch(err => console.error('opps2: add company to Table View failed', err));
-              } catch (err) {
-                console.error('opps2: add company to Table View failed', err);
-              }
-            } else if (company && updateProspect) {
-              // Existing Table View company: the modal prefilled Type and
-              // Frameworks from its record, so a different value here is a
-              // reviewed correction — persist it back to the prospect.
-              const matched = findProspectForAccount(company, prospects);
-              if (matched) {
-                const updates = {};
-                if (type !== String(matched.type || '').trim()) updates.type = type;
-                if (frameworksEdited) updates.frameworks = frameworks;
-                if (Object.keys(updates).length) {
-                  Promise.resolve(updateProspect(matched.id, updates))
-                    .catch(err => console.error('opps2: update company failed', err));
-                }
-              }
-            }
-            addNewOpp(company, source, peOwner);
+          onCreate={(payload) => {
+            // A scheduled payload is parked whole and replayed at its due
+            // time — the Table View company and any Type / framework
+            // correction happen then too, not now.
+            if (payload.schedule) scheduleNewOpp(payload);
+            else applyNewOpp(payload);
             setPendingNewOpp(null);
           }}
           onCancel={() => setPendingNewOpp(null)}
