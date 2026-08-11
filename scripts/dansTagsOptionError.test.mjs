@@ -12,7 +12,7 @@
 //
 // The body below is the real one from that failure, trimmed only where the
 // allowed-options list runs long.
-import { isDansTagsOptionError, normalizeDansTagsForHubSpot } from '../api/hubspot.js';
+import { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags } from '../api/hubspot.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -79,6 +79,48 @@ eq(normalizeDansTagsForHubSpot('NAM Only'), 'NAM Only', 'a tag with no alias goe
 eq(normalizeDansTagsForHubSpot('EU;Met In Person;NAM Only'), 'EU;NAM Only',
   'Met In Person is local-only and never written');
 eq(normalizeDansTagsForHubSpot('EU; eu ;EU'), 'EU', 'repeats collapse case-insensitively');
+
+// ---- reconciling against the property's real options -------------------------
+//
+// Recognising the failure only helps if the retry can then succeed, and for a
+// while it couldn't. HubSpot validates an enumeration against the exact option
+// value, but the self-heal skipped any tag whose lowercase form was already
+// registered — so a tag stored as "Nam only" (a stray created by hand-typing
+// it into the bulk picker) could never be written as "NAM Only". Nothing got
+// registered, the retry re-sent the spelling HubSpot had just refused, and the
+// save failed identically every time. Deferring to the spelling already on the
+// property is what breaks that loop.
+const j = (r) => `${r.canonical}|${r.toAdd.join(',')}`;
+
+eq(j(reconcileDansTags(['Procurement', 'Nam only'], 'NAM Only')), 'Nam only|',
+  'a differently-cased tag adopts the spelling HubSpot has, and registers nothing');
+eq(j(reconcileDansTags(['Procurement', 'Nam only'], 'Procurement;NAM Only')), 'Procurement;Nam only|',
+  'and does so alongside tags that already matched');
+eq(j(reconcileDansTags(['Procurement'], 'NAM Only')), 'NAM Only|NAM Only',
+  'a genuinely new tag is registered as typed');
+eq(j(reconcileDansTags(['Procurement'], 'Procurement;NAM Only')), 'Procurement;NAM Only|NAM Only',
+  'only the new one is registered');
+eq(j(reconcileDansTags([], 'NAM Only')), 'NAM Only|NAM Only', 'an empty property registers everything');
+eq(j(reconcileDansTags(['NAM Only'], 'NAM Only')), 'NAM Only|', 'an exact match changes nothing');
+
+// Spacing counts the same as case: "Efficiency / Renewables" and
+// "Efficiency/Renewables" are one option, and the registered one wins.
+eq(j(reconcileDansTags(['Efficiency/Renewables'], 'Efficiency / Renewables')), 'Efficiency/Renewables|',
+  'spacing differences adopt the registered spelling too');
+
+// Two spellings of one tag in a single write collapse to one entry, and the
+// first spelling seen decides only when neither is registered.
+eq(j(reconcileDansTags(['Nam only'], 'NAM Only;nam only')), 'Nam only|',
+  'duplicates within the write collapse to the registered spelling');
+eq(j(reconcileDansTags([], 'NAM Only;nam only')), 'NAM Only|NAM Only',
+  'with nothing registered, the first spelling wins and is added once');
+
+// Junk in, nothing out.
+eq(j(reconcileDansTags(['Procurement'], '')), '|', 'an empty write asks for nothing');
+eq(j(reconcileDansTags(['Procurement'], ';; ;')), '|', 'separators alone ask for nothing');
+eq(j(reconcileDansTags(null, 'NAM Only')), 'NAM Only|NAM Only', 'a missing option list is treated as empty');
+eq(j(reconcileDansTags(['Procurement'], ' NAM Only ;  EU ')), 'NAM Only;EU|NAM Only,EU',
+  'surrounding whitespace is trimmed, inner spacing kept');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
