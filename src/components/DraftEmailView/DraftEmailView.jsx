@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -327,6 +327,24 @@ export function CritiquePanel({ critique, onClose, onUseRewrite }) {
   );
 }
 
+// The variables the composer can insert. Module scope, not per-render:
+// the coverage memo below keys off this array, and rebuilding it every
+// render would make that memo re-run on every keystroke.
+const INSERT_VARIABLES = [
+  { token: '{firstName}', label: 'First Name', example: 'John' },
+  { token: '{goesBy}', label: 'Goes By', example: 'Bob' },
+  { token: '{lastName}', label: 'Last Name', example: 'Smith' },
+  { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
+  { token: '{email}', label: 'Email', example: 'john@company.com' },
+  { token: '{company}', label: 'Company', example: 'Acme Corp' },
+  { token: '{companyType}', label: 'Company Type', example: 'Private Equity' },
+  { token: '{title}', label: 'Job Title', example: 'VP of Sales' },
+  { token: '{phone}', label: 'Phone', example: '555-0100' },
+  { token: '{city}', label: 'City', example: 'Denver' },
+  { token: '{state}', label: 'State', example: 'CO' },
+  { token: '{custom}', label: 'Custom', example: 'great meeting you at the conference' },
+];
+
 // Variable-coverage cells the user can edit inline. Maps each variable
 // token to its underlying field: `hubspot` writes through to HubSpot via
 // the update-contact endpoint (with the matching property name and the
@@ -391,63 +409,97 @@ function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }
   );
 }
 
+// Which variables the draft actually uses, how well each is covered
+// across the recipients, and which gaps are worth warning about.
+//
+// Pure, and run in exactly one place: the page computes it once and hands
+// the result to both the warning banner at the top and the table below,
+// so the two can't disagree about how many recipients are short.
+//
+//   usedTokens — the intersection of "tokens INSERT_VARIABLES knows
+//                about" and "tokens that appear in the draft", so unused
+//                variables don't pollute the table
+//   coverage   — filled/total per token, behind the column headers
+//   gaps       — the variables that will render blank for someone, worst
+//                first: the one landing blank most often is the one worth
+//                fixing before the send
+//   affected   — recipients who'd get at least one blank. This is the
+//                number that actually matters — one variable missing on
+//                12 people and three missing on the same person are very
+//                different sends, and the per-column counts can't tell
+//                them apart.
+function computeVariableCoverage({ subject, body, contacts, insertVariables, resolve }) {
+  const list = Array.isArray(contacts) ? contacts : [];
+  const haystack = `${subject || ''}\n${body || ''}`;
+  const usedTokens = [];
+  for (const v of (insertVariables || [])) {
+    // Same tolerance as personalizeForContact's case-insensitive replace.
+    const pat = new RegExp(v.token.replace(/[{}]/g, m => '\\' + m), 'i');
+    if (pat.test(haystack)) usedTokens.push(v);
+  }
+
+  const coverage = {};
+  for (const v of usedTokens) {
+    let filled = 0;
+    for (const c of list) {
+      if (String(resolve(c, v.token) || '').trim()) filled += 1;
+    }
+    coverage[v.token] = { filled, total: list.length };
+  }
+
+  const gaps = usedTokens
+    .map(v => ({ ...v, ...coverage[v.token] }))
+    .filter(g => g.filled < g.total)
+    .sort((a, b) => (b.total - b.filled) - (a.total - a.filled));
+
+  let affected = 0;
+  if (gaps.length) {
+    for (const c of list) {
+      if (gaps.some(g => !String(resolve(c, g.token) || '').trim())) affected += 1;
+    }
+  }
+  return { usedTokens, coverage, gaps, affected, total: list.length };
+}
+
+// The "your personalization will land blank" banner. Sits at the top of
+// the page rather than on the coverage card: the card is the last thing
+// in the right-hand column, well below the Send controls, and a warning
+// you have to scroll to find is one you send past. The red dashes in the
+// table say which cells; this says whether to send at all.
+function CoverageWarning({ gaps, affected, total }) {
+  if (!gaps || gaps.length === 0) return null;
+  return (
+    <div className={styles.coverageAlert} role="alert">
+      <span className={styles.coverageAlertIcon} aria-hidden="true">&#9888;</span>
+      <div className={styles.coverageAlertBody}>
+        <p className={styles.coverageAlertTitle}>
+          {gaps.length === 1 ? '1 variable is' : `${gaps.length} variables are`} not fully covered
+        </p>
+        <p className={styles.coverageAlertText}>
+          {affected} of {total} recipient{total === 1 ? '' : 's'} will get at least one blank where a
+          variable should be. Fill the gaps in under Variable Coverage below — most red <strong>-</strong> cells
+          are editable in place — or drop those recipients before sending.
+        </p>
+        <div className={styles.coverageAlertList}>
+          {gaps.map(g => (
+            <span key={g.token} className={styles.coverageAlertChip}>
+              {g.label}: {g.total - g.filled} missing ({g.filled}/{g.total})
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Variable coverage table — one row per selected contact, one column
 // per variable token that's actually used in the current subject /
 // body. Helps spot gaps in the data BEFORE sending: missing values
 // render as a red dash so the user can either fill them in upstream or
-// remove the contact from the campaign. The set of columns is the
-// intersection of "tokens INSERT_VARIABLES knows about" and "tokens
-// that appear in the draft", so unused variables don't pollute the
-// table.
-function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve, isEditable, onEditField }) {
-  const usedTokens = useMemo(() => {
-    const haystack = `${subject || ''}\n${body || ''}`;
-    const out = [];
-    for (const v of insertVariables) {
-      // Same tolerance as personalizeForContact's case-insensitive replace.
-      const pat = new RegExp(v.token.replace(/[{}]/g, m => '\\' + m), 'i');
-      if (pat.test(haystack)) out.push(v);
-    }
-    return out;
-  }, [subject, body, insertVariables]);
-
-  // Per-token coverage stats: how many contacts have a non-empty
-  // value for that variable. Surfaces "12/18 have a Title" at a
-  // glance — drives the red column-header callout when coverage is
-  // less than 100 %.
-  const coverage = useMemo(() => {
-    const out = {};
-    for (const v of usedTokens) {
-      let filled = 0;
-      for (const c of contacts) {
-        const val = String(resolve(c, v.token) || '').trim();
-        if (val) filled++;
-      }
-      out[v.token] = { filled, total: contacts.length };
-    }
-    return out;
-  }, [usedTokens, contacts, resolve]);
-
-  // Anything short of 100 % coverage gets called out above the table.
-  // `gaps` are the variables that will render blank for someone;
-  // `affected` counts the recipients who'd get at least one blank, which
-  // is the number that actually matters — one variable missing on 12
-  // people and three missing on the same person are very different sends.
-  const { gaps, affected } = useMemo(() => {
-    const short = usedTokens
-      .map(v => ({ ...v, ...(coverage[v.token] || { filled: 0, total: contacts.length }) }))
-      .filter(g => g.filled < g.total)
-      // Worst gap first — the variable that will land blank most often is
-      // the one worth fixing before the send.
-      .sort((a, b) => (b.total - b.filled) - (a.total - a.filled));
-    if (short.length === 0) return { gaps: short, affected: 0 };
-    let n = 0;
-    for (const c of contacts) {
-      if (short.some(g => !String(resolve(c, g.token) || '').trim())) n += 1;
-    }
-    return { gaps: short, affected: n };
-  }, [usedTokens, coverage, contacts, resolve]);
-
+// remove the contact from the campaign. The columns and their
+// filled/total counts come from computeVariableCoverage, run once on the
+// page and passed in.
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField }) {
   if (contacts.length === 0) {
     return (
       <>
@@ -477,28 +529,6 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
         Each row is a recipient; each column is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
-      {gaps.length > 0 && (
-        <div className={styles.coverageAlert} role="alert">
-          <span className={styles.coverageAlertIcon} aria-hidden="true">&#9888;</span>
-          <div className={styles.coverageAlertBody}>
-            <p className={styles.coverageAlertTitle}>
-              {gaps.length === 1 ? '1 variable is' : `${gaps.length} variables are`} not fully covered
-            </p>
-            <p className={styles.coverageAlertText}>
-              {affected} of {contacts.length} recipient{contacts.length === 1 ? '' : 's'} will get at least one
-              blank where a variable should be. Fill the gaps in below — most red <strong>-</strong> cells are
-              editable in place — or drop those recipients before sending.
-            </p>
-            <div className={styles.coverageAlertList}>
-              {gaps.map(g => (
-                <span key={g.token} className={styles.coverageAlertChip}>
-                  {g.label}: {g.total - g.filled} missing ({g.filled}/{g.total})
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
       <div style={{
         // Grow with the viewport — leaves enough room for the page
         // chrome / header / Saved Drafts above, but uses the rest of
@@ -1298,20 +1328,6 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     ? allContacts.filter(c => !draftCc.includes(c.email) && (c.email.toLowerCase().includes(draftCcInput.toLowerCase()) || c.name.toLowerCase().includes(draftCcInput.toLowerCase()))).slice(0, 6)
     : [];
 
-  const INSERT_VARIABLES = [
-    { token: '{firstName}', label: 'First Name', example: 'John' },
-    { token: '{goesBy}', label: 'Goes By', example: 'Bob' },
-    { token: '{lastName}', label: 'Last Name', example: 'Smith' },
-    { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
-    { token: '{email}', label: 'Email', example: 'john@company.com' },
-    { token: '{company}', label: 'Company', example: 'Acme Corp' },
-    { token: '{companyType}', label: 'Company Type', example: 'Private Equity' },
-    { token: '{title}', label: 'Job Title', example: 'VP of Sales' },
-    { token: '{phone}', label: 'Phone', example: '555-0100' },
-    { token: '{city}', label: 'City', example: 'Denver' },
-    { token: '{state}', label: 'State', example: 'CO' },
-    { token: '{custom}', label: 'Custom', example: 'great meeting you at the conference' },
-  ];
 
   // Lookup map: lower-cased company name → matched prospect's `type`
   // (e.g. "Private Equity"). Built from the Table View prospects list
@@ -1343,6 +1359,33 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     const norm = companyTypeIndex.strip(company);
     return norm ? (companyTypeIndex.map.get(norm) || '') : '';
   }
+
+  // What personalizeForContact would substitute for `token` on this
+  // contact, unwrapped per-token so empties can be counted and coloured.
+  // Hoisted out of the coverage table's props (where it used to be an
+  // inline arrow) so the warning banner at the top of the page and the
+  // table below both run the same resolution, and so the memo below
+  // doesn't re-run on every render.
+  const resolveVariable = useCallback((c, token) => {
+    switch (token) {
+      case '{firstName}': return c.firstName || (c.name || '').split(' ')[0] || '';
+      case '{goesBy}':    return (settings?.contactNicknames || {})[c.id] || c.firstName || (c.name || '').split(' ')[0] || '';
+      case '{lastName}':  return c.lastName || '';
+      case '{fullName}':  return c.name || '';
+      case '{email}':     return c.email || '';
+      case '{company}':   return c.company || '';
+      case '{companyType}': return companyTypeFor(c.company);
+      case '{title}':     return c.title || '';
+      case '{phone}':     return c.phone || '';
+      case '{city}':      return c.city || '';
+      case '{state}':     return c.state || '';
+      case '{custom}':    return (settings?.customField || {})[c.id] || '';
+      default:            return '';
+    }
+    // companyTypeFor is redeclared each render but only reads
+    // companyTypeIndex, so that memo is the real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.contactNicknames, settings?.customField, companyTypeIndex]);
 
   function insertVariable(token) {
     if (lastFocused === 'subject') {
@@ -1999,12 +2042,32 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   })();
   const isSectionDuplicate = (addr) => (sectionEmailCounts.get((addr || '').trim().toLowerCase()) || 0) >= 2;
 
+  // Computed once for the whole page: the warning banner at the top and
+  // the Variable Coverage table below both read it, so the headline count
+  // and the per-column counts are the same numbers by construction.
+  const varCoverage = useMemo(
+    () => computeVariableCoverage({
+      subject, body, contacts: selectedContacts,
+      insertVariables: INSERT_VARIABLES, resolve: resolveVariable,
+    }),
+    [subject, body, selectedContacts, resolveVariable],
+  );
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h2 className={styles.title}>Draft Emails</h2>
         <p className={styles.desc}>Compose an email, tag contacts, and download drafts for Outlook.</p>
       </div>
+
+      {/* Above everything, because it's the one thing that should stop a
+          send. On the coverage card it sat below the fold in the right
+          column, which is a warning you scroll past. */}
+      <CoverageWarning
+        gaps={varCoverage.gaps}
+        affected={varCoverage.affected}
+        total={varCoverage.total}
+      />
 
       <div className={styles.layout}>
         {/* Compose area */}
@@ -2514,32 +2577,12 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               else on the page moves. */}
           <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <VariableCoverageTable
-              subject={subject}
-              body={body}
               contacts={selectedContacts}
-              insertVariables={INSERT_VARIABLES}
+              usedTokens={varCoverage.usedTokens}
+              coverage={varCoverage.coverage}
+              resolve={resolveVariable}
               isEditable={token => !!COVERAGE_EDITABLE[token]}
               onEditField={handleCoverageEdit}
-              resolve={(c, token) => {
-                // Return what personalizeForContact would substitute
-                // for `token` on this contact, but unwrapped per-token
-                // so we can colour empties.
-                switch (token) {
-                  case '{firstName}': return c.firstName || (c.name || '').split(' ')[0] || '';
-                  case '{goesBy}':    return (settings?.contactNicknames || {})[c.id] || c.firstName || (c.name || '').split(' ')[0] || '';
-                  case '{lastName}':  return c.lastName || '';
-                  case '{fullName}':  return c.name || '';
-                  case '{email}':     return c.email || '';
-                  case '{company}':   return c.company || '';
-                  case '{companyType}': return companyTypeFor(c.company);
-                  case '{title}':     return c.title || '';
-                  case '{phone}':     return c.phone || '';
-                  case '{city}':      return c.city || '';
-                  case '{state}':     return c.state || '';
-                  case '{custom}':    return (settings?.customField || {})[c.id] || '';
-                  default:            return '';
-                }
-              }}
             />
           </div>
 
