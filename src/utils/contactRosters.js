@@ -175,6 +175,33 @@ export const ROSTER_CATEGORIES = [
   { key: 'keyProspect', label: 'Key Prospect', bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
 ];
 
+// The rosters a "tags still to map" count is taken over.
+//
+// Active is deliberately out: it's a rolling window of whoever has been in
+// touch lately rather than a book you work through, so its contacts arrive
+// and leave on their own and it would never read as done. `all` is out too —
+// it's the union of the others, so counting it would count the same debt
+// twice.
+export const TAG_DEBT_ROSTERS = ROSTER_CATEGORIES.filter(r => r.key !== 'active');
+
+// Which of those rosters still has tagging to finish, given a
+// rosterTagCoverage result. One entry per roster, however many contacts are
+// behind it — the count answers "how many groups am I not done with", not
+// "how many people".
+//
+// A roster with no contacts has no tagging to be missing: rosterTagCoverage
+// reports `pct: null` there rather than 0, and null is not a debt.
+//
+// Shared between the Prospecting page, which prints it next to the Tagged
+// row, and the sidebar badge — one definition, or the two numbers drift.
+export function missingTagRosters(coverage) {
+  if (!coverage) return [];
+  return TAG_DEBT_ROSTERS.filter(r => {
+    const pct = coverage[r.key]?.pct;
+    return pct != null && pct < 100;
+  });
+}
+
 // A contact with the user's manual Company override applied, when there is
 // one. The override is what the contacts table shows and what its own
 // filtering runs on, so a roster gate that skipped it would disagree with

@@ -157,3 +157,26 @@ export function categorizeStep({ count, marked = false } = {}) {
   if (typeof count === 'number' && Number.isFinite(count)) return count > 0 ? 'work' : 'caught-up';
   return marked ? 'caught-up' : 'open';
 }
+
+// The ladder's first step. Named because two places gate on it: the tag-debt
+// count under the market-updates step, and the sidebar badge that mirrors it.
+export const OPPS_STEP_KEY = 'opps';
+
+// Is step 1 clear right now?
+//
+// Anything the ladder puts below step 1 waits for it, so anything that
+// surfaces work from further down has to ask this — and has to get the same
+// answer the step's own row shows, which is why the rule lives here rather
+// than being written out at each call site.
+//
+// `overdue` is the overdue Call In count (null while the Opps store is still
+// answering, which reads as not-clear: an unknown count is not a clear one).
+// `steps` is the user's ladder when the caller has it; a ladder they've
+// deleted the opps step from has nothing to wait for, so it reads clear.
+export function isOppsStepClear({ steps = null, overdue = null, caughtUpMap = {}, today = todayISO() } = {}) {
+  if (Array.isArray(steps) && !steps.some(s => s?.key === OPPS_STEP_KEY)) return true;
+  return categorizeStep({
+    count: overdue,
+    marked: isMarkedCaughtUp(caughtUpMap, OPPS_STEP_KEY, today),
+  }) === 'caught-up';
+}

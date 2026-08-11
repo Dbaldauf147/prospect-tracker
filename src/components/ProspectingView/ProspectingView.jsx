@@ -29,6 +29,7 @@ import {
   countRenewalWork,
   countServiceGaps,
   isMarkedCaughtUp,
+  isOppsStepClear,
   readCaughtUpSnapshot,
   setStepCaughtUp,
   subscribeCaughtUp,
@@ -45,9 +46,8 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
-import { makeRosterGates, rosterTagCoverage, ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { ROSTER_CATEGORIES, missingTagRosters } from '../../utils/contactRosters';
+import { useRosterTagCoverage } from '../../hooks/useRosterTagCoverage';
 import { useAuth } from '../../contexts/AuthContext';
 
 // Rank 1 carries the strongest accent and it cools down the list, so the
@@ -92,66 +92,6 @@ function useOppsRecords(userId) {
   return records;
 }
 
-// Tag-review coverage per contact roster, for the market-updates step.
-// Everything it needs is already cached locally — the HubSpot contacts, the
-// Clients tab's status map, the opps records and the Table View prospects —
-// so the readout paints with the page rather than after a round trip.
-// Returns null until the contact cache answers, so the row shows nothing
-// instead of a 0% that only means "not loaded yet".
-function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
-  const [contacts, setContacts] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    function refresh() {
-      getHubspotCache()
-        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
-        .catch(() => { if (!cancelled) setContacts([]); });
-    }
-    refresh();
-    window.addEventListener('hubspot-cache-updated', refresh);
-    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
-
-  // Same stores and the same events the contacts pages listen to, so a
-  // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
-  // out of these numbers without a reload — and drops out here exactly as it
-  // does on All Contacts, which is the point of sharing the gates.
-  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
-  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
-  useEffect(() => {
-    function onStorage(e) {
-      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
-      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
-    }
-    function onStatus() { setClientStatusMap(loadClientStatusMap()); }
-    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
-    window.addEventListener('storage', onStorage);
-    window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
-    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    return () => {
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
-      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    };
-  }, []);
-
-  // Visible mode, matching the Totals pills on All Contacts: the figure
-  // should describe the rosters as they're worked, not the hidden-review view.
-  const gates = useMemo(
-    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
-  );
-  return useMemo(() => {
-    if (contacts == null) return null;
-    return rosterTagCoverage({
-      contacts,
-      gates,
-      tagReviewMap: settings?.contactTagReview || {},
-      localFields: settings?.contactLocalFields || null,
-    });
-  }, [contacts, gates, settings?.contactTagReview, settings?.contactLocalFields]);
-}
-
 // The tag-review coverage, roster by roster, under the market-updates step.
 // A market update is only worth sending to someone you've placed, so how
 // far the tagging has actually been worked through is the readiness check
@@ -162,26 +102,6 @@ function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
 // Tagged row runs on (rosterTagCoverage), so the two pages read one number
 // rather than two: of every tag question askable about a group's contacts,
 // the share that has an answer.
-// The rosters whose tagging still isn't finished, one entry each.
-//
-// Active is deliberately out: it's a rolling window of whoever has been in
-// touch lately rather than a book you work through, so its contacts arrive
-// and leave on their own and it would never read as done. All is out too —
-// it's the union of the others, so counting it would count the same debt
-// twice.
-//
-// A roster with no contacts has no tagging to be missing (pct is null, not
-// 0), so it doesn't count either.
-const TAG_DEBT_ROSTERS = ROSTER_CATEGORIES.filter(r => r.key !== 'active');
-
-function missingTagRosters(coverage) {
-  if (!coverage) return [];
-  return TAG_DEBT_ROSTERS.filter(r => {
-    const pct = coverage[r.key]?.pct;
-    return pct != null && pct < 100;
-  });
-}
-
 function TagCoverageBar({ coverage, onNavigate, missing = [], showMissing = false }) {
   if (!coverage) return null;
   const cells = [
@@ -598,18 +518,12 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
 
   // Is step 1 clear? The tag-debt count under the market-updates step waits
   // for it, the way the ladder says everything below step 1 waits for it.
-  // Derived from the same count and mark the row itself renders from, so the
-  // two can't say different things about the same step.
-  //
-  // A ladder the user has deleted the opps step from has nothing to wait for,
-  // so the debt shows rather than hiding behind a step that isn't there.
-  const oppsCaughtUp = useMemo(() => {
-    if (!steps.some(s => s.key === 'opps')) return true;
-    return categorizeStep({
-      count: counts.opps,
-      marked: isMarkedCaughtUp(caughtUpMap, 'opps', today),
-    }) === 'caught-up';
-  }, [steps, counts.opps, caughtUpMap, today]);
+  // Shared with the sidebar badge that mirrors this count, so the two can't
+  // say different things about the same step.
+  const oppsCaughtUp = useMemo(
+    () => isOppsStepClear({ steps, overdue: counts.opps, caughtUpMap, today }),
+    [steps, counts.opps, caughtUpMap, today],
+  );
   const canEdit = typeof updateSettings === 'function';
   const [editing, setEditing] = useState(false);
   // Text as it's being typed, keyed by step. Held here rather than written
