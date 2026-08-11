@@ -97,6 +97,31 @@ export function countOverdueCallIns(records) {
   return n;
 }
 
+// True when the row's "No Further Action Today" cell is empty. That column
+// is a tristate (✓ / ✗ / blank), and any mark on it means the user has
+// already dealt with the row today — so only a blank counts as outstanding.
+export function nfatUnmarked(row) {
+  return String(row?.['No Further Action Today'] ?? '').trim() === '';
+}
+
+// How many opps are due to be called: the Call In number has reached zero
+// or gone negative (the Follow Up date is today or already past) and the
+// row hasn't been marked "No Further Action Today". This is the number the
+// sidebar's Opps badge shows — the calls still owed right now.
+//
+// Rows with no resolvable Call In (no Follow Up date, or the value was
+// manually cleared) aren't on a callback schedule, so they never count.
+export function countCallInDue(records) {
+  if (!Array.isArray(records)) return 0;
+  let n = 0;
+  for (const row of records) {
+    if (!nfatUnmarked(row)) continue;
+    const days = resolveCallIn(row);
+    if (typeof days === 'number' && Number.isFinite(days) && days <= 0) n += 1;
+  }
+  return n;
+}
+
 // Order rows by Call In ascending so the most urgent (most overdue) land
 // first, matching the Opps 2 page's initial-load sort. Rows without a
 // resolvable Call In sink to the bottom; original index breaks ties so
