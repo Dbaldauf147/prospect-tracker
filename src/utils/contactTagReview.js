@@ -30,24 +30,52 @@ export const TAG_SCORE_EXCLUDED = new Set(['hide', 'left', 'test']);
 export const MET_IN_PERSON_TAG = 'Met In Person';
 
 // The answers that live locally, because HubSpot can only say "tagged" or
-// "not tagged". A tag on the contact IS the Yes; these are the three reasons
-// a tag can be off:
+// "not tagged".
+//
+// Three of them are reasons the tag is OFF:
 //
 //   no       doesn't apply to this person
 //   unsure   haven't worked it out yet
-//   notsold  applies to them, but their company hasn't been sold on it yet
+//   notsold  applies to them, but their company hasn't bought it yet
 //
-// Not sold is the hold-off: the person really does own that area, so a No
-// would be wrong, but until the account is sold on it they shouldn't turn up
-// in a general pull of everyone who owns it. Keeping it off the HubSpot tag
-// is what makes the hold-off actually hold — the tag filters everywhere read
-// the tag itself — while the answer recorded here keeps the fact that they
-// own it, and makes "who do we still need to sell on this?" a list you can
-// pull up from the tag status filter.
-export const LOCAL_TAG_VERDICTS = new Set(['no', 'unsure', 'notsold']);
+// and one is a fact recorded ON TOP of the tag:
+//
+//   sold     applies to them, and their company has bought it
+//
+// Sold and Not sold are one question — has this account bought what this
+// person owns? — asked of anyone the tag is true of. Not sold is the
+// hold-off: a No would be wrong, because the person really does own that
+// area, but until the account buys it they shouldn't turn up in a general
+// pull of everyone who owns it, and keeping the HubSpot tag off is what
+// makes that hold. Sold is the other end, and keeps the tag on, because
+// someone at a sold account is exactly who a general pull should return.
+// Either way the answer recorded here remembers that the area is theirs.
+export const TAG_OFF_VERDICTS = new Set(['no', 'unsure', 'notsold']);
+export const TAG_ON_VERDICTS = new Set(['sold']);
+export const LOCAL_TAG_VERDICTS = new Set([...TAG_OFF_VERDICTS, ...TAG_ON_VERDICTS]);
 
 export function isLocalTagVerdict(v) {
   return LOCAL_TAG_VERDICTS.has(v);
+}
+
+// Does this answer leave the HubSpot tag on the contact? Only Sold does —
+// every other recorded answer means the tag comes off.
+export function verdictKeepsTag(v) {
+  return TAG_ON_VERDICTS.has(v);
+}
+
+// The answer to show for a tag, given whether the contact carries it and
+// what's recorded locally. Shared by the popup's table and the All Contacts
+// status filter so the two can't disagree about what a contact "is" for a
+// tag.
+//
+// The tag itself is the source of truth for whether it applies, so a
+// recorded Sold is only honoured while the tag is actually on — a tag pulled
+// off in HubSpot or by a bulk edit can't leave a stale Sold behind — and the
+// tag-off answers are only honoured while it's actually off.
+export function tagAnswerFrom(tagged, verdict) {
+  if (tagged) return verdict === 'sold' ? 'sold' : 'yes';
+  return TAG_OFF_VERDICTS.has(verdict) ? verdict : '';
 }
 
 export function contactTagList(contact) {

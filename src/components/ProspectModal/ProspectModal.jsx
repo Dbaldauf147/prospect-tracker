@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, isLocalTagVerdict } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, isLocalTagVerdict, verdictKeepsTag, tagAnswerFrom } from '../../utils/contactTagReview';
 import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
@@ -1024,18 +1024,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // that apply. No, Not sure and Not sold are answers HubSpot has no way to
   // express (an absent tag means "doesn't apply", "haven't looked", "don't
   // know" and "holding off" all at once), so they're kept locally against the
-  // contact, and only the Yes set is ever pushed. Clicking the current answer
-  // again clears it back to unreviewed.
+  // contact, and only the tagged set is ever pushed. Clicking the current
+  // answer again clears it back to unreviewed.
   //
-  // Not sold takes the tag off like the other two, and that's the point: the
-  // person owns the area but their company hasn't bought it yet, so a pull of
-  // everyone who owns it shouldn't hand them over as workable. The answer
-  // here remembers that they do own it.
+  // Sold and Not sold are the two ends of one question — has this account
+  // bought what this person owns? Both say the area IS theirs, so Sold keeps
+  // the tag on (a general pull should return them) while Not sold takes it
+  // off (until the account buys, they aren't workable on it). That's the
+  // whole point of the hold-off; the answer here remembers they own it.
   function setTagVerdict(tag, verdict) {
-    const current = tagVerdicts[tag] || (checkedTags.has(tag) ? 'yes' : '');
+    const current = tagAnswerFrom(checkedTags.has(tag), tagVerdicts[tag]);
     const next = current === verdict ? '' : verdict;
-    // Yes owns the HubSpot tag; every other answer means the tag comes off.
-    const shouldBeTagged = next === 'yes';
+    const shouldBeTagged = next === 'yes' || verdictKeepsTag(next);
     if (shouldBeTagged !== checkedTags.has(tag)) {
       setCheckedTags(prev => {
         const set = new Set(prev);
@@ -1887,13 +1887,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
             </button>
             {tagsOpen && (() => {
-              // One row per tag, answered Yes / No / Not sure / Not sold. Yes
-              // is the tag and goes to HubSpot; the other three are recorded
-              // here only, so a tag left off can say WHY it's off — decided
-              // against, not yet known, or true of the person but not yet
-              // sold to their company — rather than being indistinguishable
-              // from one nobody has looked at.
-              const verdictOf = (tag) => (checkedTags.has(tag) ? 'yes' : (tagVerdicts[tag] || ''));
+              // One row per tag, answered Yes / No / Not sure / Sold / Not
+              // sold. Yes and Sold both mean the tag is on the contact and go
+              // to HubSpot as the tag; the rest are recorded here only, so a
+              // tag left off can say WHY it's off — decided against, not yet
+              // known, or true of the person but not yet bought by their
+              // company — rather than being indistinguishable from one nobody
+              // has looked at.
+              const verdictOf = (tag) => tagAnswerFrom(checkedTags.has(tag), tagVerdicts[tag]);
               // Hide, Left and Test are housekeeping, not classifications:
               // the first two control whether a contact surfaces at all and
               // the third is a scratch value. They're still answerable rows,
@@ -1911,8 +1912,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                   tip: (tag) => `Record ${tag} as “No” — doesn't apply to this person. Kept here, not sent to HubSpot` },
                 { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
                   tip: (tag) => `Record ${tag} as “Not sure” — haven't worked it out yet. Kept here, not sent to HubSpot` },
+                { key: 'sold',    label: 'Sold',     on: { bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59' },
+                  tip: (tag) => `Record ${tag} as sold — they own it and their company has bought it. Keeps the tag on, so they still come back in a general ${tag} pull` },
                 { key: 'notsold', label: 'Not sold', on: { bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3' },
-                  tip: (tag) => `Hold off on ${tag} — they own it, but their company hasn't been sold on it yet. Keeps the tag off, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
+                  tip: (tag) => `Hold off on ${tag} — they own it, but their company hasn't bought it yet. Takes the tag off, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
               ];
               return (
                 <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
@@ -1923,21 +1926,30 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     fontSize: '0.68rem', fontWeight: 700,
                     color: done ? '#166534' : '#475569',
                   }}>
-                    <span title={`${answered} of ${total} scored tags have an answer. Hide, Left and Test are excluded — they're housekeeping, not classifications. "Not sure" and "Not sold" both count as answered.`}>
+                    <span title={`${answered} of ${total} scored tags have an answer. Hide, Left and Test are excluded — they're housekeeping, not classifications. Every answer counts, including "Not sure", "Sold" and "Not sold".`}>
                       Tagged {pct}%
                       <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
                         {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
                       </span>
                     </span>
-                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>Only “Yes” is sent to HubSpot</span>
+                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” are the tag in HubSpot</span>
                   </div>
-                  <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                  {/* Tall enough for the whole vocabulary at once — the point
+                      of the table is reading a contact's answers in one look,
+                      and a cap that cut it off mid-list made you scroll a
+                      dropdown to find out what you'd already answered. Still
+                      capped, generously, so an expanded vocabulary can't push
+                      the modal's own buttons off screen. */}
+                  <div style={{ maxHeight: '60vh', overflowY: 'auto', overflowX: 'auto' }}>
+                    {/* Fixed layout so the five answer columns keep the widths
+                        set below and a long tag name wraps instead of shoving
+                        the last column off the edge of the picker. */}
+                    <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                       <thead>
                         <tr style={{ background: '#F1F5F9', color: '#475569' }}>
-                          <th style={{ textAlign: 'left', padding: '0.3rem 0.7rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
+                          <th style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
                           {CHOICES.map(c => (
-                            <th key={c.key} style={{ width: 66, textAlign: 'center', padding: '0.3rem 0.2rem', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>{c.label}</th>
+                            <th key={c.key} style={{ width: 54, textAlign: 'center', padding: '0.3rem 0.1rem', fontWeight: 700, fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: 0, whiteSpace: 'nowrap' }}>{c.label}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1945,11 +1957,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                         {visibleTagOptions.map(tag => {
                           const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
                           const v = verdictOf(tag);
+                          // Yes and Sold both mean the tag is on the contact,
+                          // so both get the tag's own styling in the row.
+                          const tagged = v === 'yes' || v === 'sold';
                           return (
                             <tr key={tag} style={{ borderBottom: '1px solid #F1F5F9', background: v ? '#fff' : '#FCFCFD' }}>
-                              <td style={{ padding: '0.3rem 0.7rem' }}>
-                                <span style={{ fontWeight: v === 'yes' ? 600 : 400, color: v === 'yes' ? (bucket?.headerColor || '#1E293B') : (v ? '#475569' : '#94A3B8') }}>{tag}</span>
-                                {v === 'yes' && bucket && (
+                              <td style={{ padding: '0.3rem 0.5rem' }}>
+                                <span style={{ fontWeight: tagged ? 600 : 400, color: tagged ? (bucket?.headerColor || '#1E293B') : (v ? '#475569' : '#94A3B8') }}>{tag}</span>
+                                {tagged && bucket && (
                                   <span style={{ marginLeft: 6, fontSize: '0.58rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: 999 }}>{bucket.label}</span>
                                 )}
                                 {/* Otherwise the header's total reads as
@@ -1965,7 +1980,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                               {CHOICES.map(c => {
                                 const active = v === c.key;
                                 return (
-                                  <td key={c.key} style={{ textAlign: 'center', padding: '0.25rem 0.2rem' }}>
+                                  <td key={c.key} style={{ textAlign: 'center', padding: '0.25rem 0.1rem' }}>
                                     <button
                                       type="button"
                                       onClick={() => setTagVerdict(tag, c.key)}
@@ -1973,8 +1988,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                                         ? `${tag}: ${c.label} — click again to clear`
                                         : c.tip(tag)}
                                       style={{
-                                        width: 54, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
-                                        fontFamily: 'inherit', fontSize: '0.68rem',
+                                        width: '100%', maxWidth: 50, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
+                                        fontFamily: 'inherit', fontSize: '0.64rem',
                                         fontWeight: active ? 700 : 500,
                                         border: `1px solid ${active ? c.on.border : '#E2E8F0'}`,
                                         background: active ? c.on.bg : '#fff',
