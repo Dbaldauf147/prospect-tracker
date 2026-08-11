@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore } from '../../utils/contactTagReview';
+import { tagReviewScore, TAG_OPTIONS } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -1651,23 +1651,38 @@ function KeyContactsViewInner({
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  // Every distinct Dan's Tags value in the cache — the option list for
-  // the bulk tag editor. Derived the same way HubSpotView builds its
-  // tag picker options, so the two offer the same vocabulary. HubSpot
-  // rejects values outside the property's allowed options, so offering
-  // only tags already in use keeps bulk edits from bouncing.
+  // The option list for the bulk tag editor: every distinct Dan's Tags
+  // value in the cache, plus the app's own tag vocabulary.
+  //
+  // It used to be the cache alone, on the reasoning that HubSpot rejects
+  // values outside the property's allowed options — but that left a tag
+  // nobody carries YET unpickable, which is exactly the state a newly
+  // added tag (NAM Only) starts in. The only way to reach one was to type
+  // it into the search box, where a slip of the shift key writes "Nam
+  // only" as its own option. The contact popup has always offered the
+  // full vocabulary; this brings the bulk editor in line. A tag HubSpot
+  // hasn't registered is self-healed on write — api/hubspot.js adds the
+  // option to the property and retries (ensureDansTagsOptions).
+  //
+  // Keyed on the tag with case and spacing collapsed, so "NAM Only" and a
+  // stray "Nam only" — or "Efficiency / Renewables" and the no-space form
+  // HubSpot stores — are one entry, not two. The cache goes in first, so
+  // a tag already in HubSpot keeps the spelling HubSpot has and only a
+  // genuinely new tag shows the app's.
   const dansTagOptions = useMemo(() => {
-    const seen = new Map(); // lowercase → first-seen spelling
+    const seen = new Map(); // collapsed key → spelling to show
+    const add = (raw) => {
+      const t = String(raw || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase().replace(/\s+/g, '');
+      if (!seen.has(k)) seen.set(k, t);
+    };
     for (const c of (hubspotCache?.contacts || [])) {
       const v = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
       if (!v) continue;
-      for (const part of String(v).split(';')) {
-        const t = part.trim();
-        if (!t) continue;
-        const k = t.toLowerCase();
-        if (!seen.has(k)) seen.set(k, t);
-      }
+      for (const part of String(v).split(';')) add(part);
     }
+    for (const t of TAG_OPTIONS) add(t);
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }, [hubspotCache]);
 
@@ -3063,7 +3078,7 @@ function KeyContactsViewInner({
                         <button
                           type="button"
                           onMouseDown={e => { e.preventDefault(); toggleMassTag(massTagQuery.trim()); setMassTagQuery(''); }}
-                          title="HubSpot only accepts tags in the Dan's Tags allowed values — a brand-new tag has to be added there first."
+                          title="Tag with a value that isn't in the list. It's registered on HubSpot's Dan's Tags property on the first write, so it doesn't have to be added there by hand — but it's added exactly as typed, so check the spelling."
                           style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.72rem', border: 'none', borderTop: '1px solid #F1F5F9', background: '#F8FAFC', color: '#1D4ED8', cursor: 'pointer', fontFamily: 'inherit' }}
                         >Use "{massTagQuery.trim()}"</button>
                       )}
