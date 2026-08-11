@@ -1196,6 +1196,91 @@
   flex-direction: column;
 }
 
+/* The filler-word analysis, under the split. Ruled off rather than boxed:
+   it is a second reading of the same call, not a separate panel. */
+.fillerBlock {
+  margin-top: 1.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Amber, so no filler number can be mistaken for a share of the call —
+   purple is "you" and teal is "them" everywhere else on this page. */
+.tile[data-filler='true'] {
+  border-left-color: #b45309;
+}
+
+.tile[data-filler='true'] .tileLabel::before {
+  background: #b45309;
+}
+
+/* Word, bar, count, share — the same shape as a speaker row, minus the
+   turn detail, so the two lists read as one page. */
+.fillerRow {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) 3.2rem 3.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--color-border-light, #edf2f7);
+  font-size: var(--font-size-sm);
+}
+
+.fillerWord {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Hesitations are the unambiguous half of the list; a crutch word is a
+   real word being used as padding, and the judgement in that is worth
+   showing rather than hiding behind one total. */
+.fillerWord[data-kind='crutch'] {
+  font-weight: 500;
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
+.fillerFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #b45309;
+}
+
+/* The evidence for the count: what was actually said, and when. */
+.fillerMoment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--color-border-light, #edf2f7);
+}
+
+.fillerMomentHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: var(--font-size-xs);
+}
+
+.fillerStamp {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.fillerCount {
+  color: var(--color-text-muted);
+}
+
+.fillerQuote {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
 /* A caveat about the measurement, not a finding about the call: it has to
    be readable without competing with the numbers above it. */
 .breakdownCaveat {
@@ -1275,6 +1360,10 @@
 
   .speakerTurns {
     display: none;
+  }
+
+  .fillerRow {
+    grid-template-columns: minmax(80px, 1fr) minmax(50px, 1.5fr) 3.2rem 3.5rem;
   }
 }
 

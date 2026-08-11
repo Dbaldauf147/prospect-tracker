@@ -57,6 +57,9 @@ import { describeReadFailure, describeWriteFailure, describeDeleteFailure } from
 import {
   callBreakdownRows, filterBreakdownRows, breakdownAverages,
 } from '../../utils/callBreakdown';
+import {
+  fillerTotals, formatRate, describeAgainstAverage, MIN_RATE_WORDS,
+} from '../../utils/fillerWords';
 import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { runGranolaSync } from '../../utils/runGranolaSync';
@@ -266,6 +269,124 @@ function speakerName(label) {
   return /^[A-Za-z0-9]$/.test(s) ? `Speaker ${s}` : s;
 }
 
+// How often the user reached for a filler word on the picked call.
+//
+// The rate leads and the raw count follows it, because the count on its
+// own mostly measures how long the rep talked — a 40-minute call will
+// always beat a 10-minute one. Both are shown, and the rate is the one
+// compared against the user's own other calls: notetakers differ in how
+// much of the "um" they keep, so a rate from this page is only honestly
+// compared with other calls captured the same way.
+function FillerWords({ use, totals }) {
+  // Nothing said, or nothing attributed: the talk-time notice above
+  // already explains why, and a second empty panel would read as a
+  // second problem.
+  if (!use) return null;
+
+  // Empty until there are at least two measured calls: with one, the
+  // "average" is this call's own number staring back.
+  const comparison = describeAgainstAverage(use.per100Words, totals?.per100Words, totals?.measured || 0);
+
+  return (
+    <div className={styles.fillerBlock}>
+      <div className={styles.breakdownLabel}>Filler words — in your turns only</div>
+
+      {use.words === 0 ? (
+        <div className={styles.breakdownCaveat}>
+          Your turns on this call carry timings but no text, so there are no words to count fillers in.
+        </div>
+      ) : (
+        <>
+          <div className={styles.tiles}>
+            <div className={styles.tile} data-filler="true">
+              <span className={styles.tileLabel}>Per 100 words</span>
+              <span className={styles.tileValue}>{formatRate(use.per100Words)}</span>
+              <span className={styles.tileSub}>
+                {comparison
+                  ? <>{comparison} of {formatRate(totals.per100Words)}</>
+                  : `across the ${use.words.toLocaleString()} words you spoke`}
+              </span>
+            </div>
+            <div className={styles.tile} data-filler="true">
+              <span className={styles.tileLabel}>Filler words</span>
+              <span className={styles.tileValue}>{use.fillers.toLocaleString()}</span>
+              <span className={styles.tileSub}>
+                {use.fillers === 0
+                  ? `none in your ${use.turns} turn${use.turns === 1 ? '' : 's'}`
+                  : `${use.hesitations} hesitation${use.hesitations === 1 ? '' : 's'}`
+                    + ` · ${use.crutches} crutch word${use.crutches === 1 ? '' : 's'}`}
+              </span>
+            </div>
+            {/* Only when every one of the user's turns was timed — a
+                per-minute rate off a partly-timed transcript would be
+                divided by less time than the rep actually spent. */}
+            {use.perMinute != null && (
+              <div className={styles.tile} data-filler="true">
+                <span className={styles.tileLabel}>Per minute</span>
+                <span className={styles.tileValue}>{formatRate(use.perMinute)}</span>
+                <span className={styles.tileSub}>
+                  of the {formatTalkValue(use.talkMs, 'time')} you were talking
+                </span>
+              </div>
+            )}
+          </div>
+
+          {use.byFiller.length > 0 && (
+            <div className={styles.speakerList}>
+              {use.byFiller.map(f => (
+                <div key={f.id} className={styles.fillerRow}>
+                  <span className={styles.fillerWord} data-kind={f.kind}>{f.label}</span>
+                  <span
+                    className={styles.speakerTrack}
+                    title={`${f.label}: ${f.count} of your ${use.fillers} fillers`}
+                  >
+                    <span
+                      className={styles.fillerFill}
+                      style={{ width: `${Math.max(f.share * 100, 0.6)}%` }}
+                    />
+                  </span>
+                  <span className={styles.speakerPct}>{f.count}</span>
+                  <span className={styles.speakerValue}>{formatShare(f.share)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {use.moments.length > 0 && (
+            <>
+              <div className={styles.breakdownLabel}>
+                Where they cluster — your {use.moments.length === 1 ? 'turn' : `${use.moments.length} turns`} with the most
+              </div>
+              {use.moments.map((m, i) => (
+                <div key={`${m.start ?? 'x'}-${i}`} className={styles.fillerMoment}>
+                  <span className={styles.fillerMomentHead}>
+                    {m.start != null && (
+                      <span className={styles.fillerStamp}>{fmtClock(m.start / 1000)}</span>
+                    )}
+                    <span className={styles.fillerCount}>
+                      {m.count} filler{m.count === 1 ? '' : 's'} · {m.labels.join(', ')}
+                    </span>
+                  </span>
+                  <span className={styles.fillerQuote}>“{m.text}”</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          {use.fillers > 0 && (
+            <div className={styles.breakdownCaveat}>
+              Counted from the transcript as it was stored, so it is only as complete as the notetaker that
+              wrote it — some clean up hesitations before you ever see them. Compare this with your own other
+              calls rather than a published benchmark. “So” and “well” count only when they open a sentence,
+              and “right” only as a tag question, so ordinary uses of those words aren’t held against you.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // One call's talk-time breakdown, for the Breakdown subtab.
 //
 // The headline is deliberately two numbers and not a chart: "was that
@@ -273,7 +394,7 @@ function speakerName(label) {
 // the reader do the summing that the question is about. The speaker list
 // under it is the detail behind those two numbers, in the same order the
 // bar draws them.
-function BreakdownDetail({ row }) {
+function BreakdownDetail({ row, fillerStats }) {
   // Null whenever the transcript can't say which turns were the user's —
   // then the notice explains why instead of a bar implying it can.
   const sides = talkTimeSides(row.split);
@@ -396,6 +517,10 @@ function BreakdownDetail({ row }) {
           )}
         </div>
       )}
+
+      {/* Under the split on purpose: how much you talked is the first
+          question, what it was padded with is the one after it. */}
+      <FillerWords use={row.fillers} totals={fillerStats} />
     </>
   );
 }
@@ -1043,6 +1168,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // is what the picked call is being compared against, and a mean that
   // moved with the search box would compare it against a moving target.
   const breakdownStats = useMemo(() => breakdownAverages(breakdownRows), [breakdownRows]);
+  // Filler-word usage across everything transcribed, for the same reason:
+  // the picked call's rate only means something beside the user's own.
+  const fillerStats = useMemo(() => fillerTotals(breakdownRows), [breakdownRows]);
   // Falls back to the newest match so the panel is never blank while
   // there is something to show — including right after a filter drops
   // whatever was picked.
@@ -2314,6 +2442,31 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 </>
               )}
             </div>
+            {/* The filler-word habit across every measured call. It sits
+                beside the talk-time average because it is the same kind
+                of fact — a property of how the user talks, not of the
+                call they happen to have picked — and because the rate is
+                only readable next to the calls it came from. */}
+            {!recordsReadError && fillerStats.measured > 0 && (
+              <div className={styles.breakdownSummary}>
+                <strong>{formatRate(fillerStats.per100Words)}</strong> filler words per 100 you spoke —{' '}
+                {fillerStats.fillers.toLocaleString()} in all, across {fillerStats.measured} call
+                {fillerStats.measured === 1 ? '' : 's'}
+                {fillerStats.byFiller[0] && <> · most often “{fillerStats.byFiller[0].label}”</>}
+                {/* Named rather than silently ranked: a 40-word call with
+                    one "so" in it rates worse than any real call, so the
+                    best/worst pair leaves short calls out and says so. */}
+                {fillerStats.worst && (
+                  <span className={styles.transcriptStatus}>
+                    {' '}· cleanest {formatRate(fillerStats.cleanest.per100Words)}, heaviest{' '}
+                    {formatRate(fillerStats.worst.per100Words)}
+                    {fillerStats.shortCalls > 0
+                      && ` (${fillerStats.shortCalls} call${fillerStats.shortCalls === 1 ? '' : 's'} under `
+                        + `${MIN_RATE_WORDS} words left out of that range)`}
+                  </span>
+                )}
+              </div>
+            )}
             {/* A failed read comes back empty, which would otherwise draw
                 as "you have no transcribed calls". The History tab can
                 fall back to this browser's saved copy; a breakdown can't,
@@ -2350,9 +2503,18 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   type="button"
                   className={pickedBreakdown?.id === r.id ? styles.pickOn : styles.pick}
                   onClick={() => setBreakdownPick(r.id)}
-                  title={r.measurable
-                    ? `You spoke ${formatShare(r.youShare)} of this call`
-                    : r.blockedReason}
+                  title={[
+                    r.measurable
+                      ? `You spoke ${formatShare(r.youShare)} of this call`
+                      : r.blockedReason,
+                    // Only in the tooltip: the rate is a second measure of
+                    // the same call, and a second number in the row would
+                    // compete with the share the list is sorted to show.
+                    r.fillers && r.fillers.words > 0
+                      ? `${r.fillers.fillers} filler word${r.fillers.fillers === 1 ? '' : 's'}`
+                        + ` (${formatRate(r.fillers.per100Words)} per 100)`
+                      : '',
+                  ].filter(Boolean).join(' · ')}
                 >
                   <span className={styles.pickTop}>
                     <span className={styles.pickName}>{r.name}</span>
@@ -2369,7 +2531,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           </div>
           <div className={styles.breakdownDetail}>
             {pickedBreakdown ? (
-              <BreakdownDetail row={pickedBreakdown} />
+              <BreakdownDetail row={pickedBreakdown} fillerStats={fillerStats} />
             ) : breakdownRows.length > 0 ? (
               /* There ARE calls to break down — the search just hid them,
                  and blaming a missing transcript would send the user off
