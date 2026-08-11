@@ -32,6 +32,9 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { isCaliforniaSite } from '../../utils/siteRegion';
+import {
+  siteEditableColumns, coerceSiteValue, applySiteColumnEdit, describeSiteEdit,
+} from '../../utils/siteMassEdit';
 import { mergeIntoSiteList } from '../../utils/siteListMerge';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
 import { salvageWorkbook, looksLikeZipDamage, describeLostEntries } from '../../utils/salvageWorkbook';
@@ -1230,6 +1233,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   };
   // Which supplier cell is currently in edit mode. `${rowId}_${commodity}` or null.
   const [editingSupplier, setEditingSupplier] = useState(null);
+  // ---- Mass edit (one column, many sites) ------------------------------
+  // Off by default: the checkbox column and the toolbar are only earned
+  // once the user says they're editing, and this page is dense enough
+  // that a permanent extra column would cost every reader who isn't.
+  const [massEditOn, setMassEditOn] = useState(false);
+  // Selected rows, held as the row ids the table renders (the index into
+  // cleanSitesData). Survives the mode toggle — ticking twenty sites and
+  // then leaving the mode by accident shouldn't cost the selection — and
+  // survives an apply, so a second column can be set on the same sites.
+  const [selectedSiteIds, setSelectedSiteIds] = useState(() => new Set());
+  const [massHeader, setMassHeader] = useState('');
+  const [massValue, setMassValue] = useState('');
+  const [massBusy, setMassBusy] = useState(false);
+  // { type: 'success' | 'error', message } — the outcome of the last
+  // apply, kept on screen because the edit itself is invisible on a
+  // table scrolled away from the rows that changed.
+  const [massStatus, setMassStatus] = useState(null);
   // Column-mapping confirmation popup for the Sites File upload —
   // null when no upload is mid-flight; otherwise carries the parsed
   // rows + headers + auto-detected mapping the user can adjust before
@@ -1562,6 +1582,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         setSupplierOverrides({});
         try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
       }
+      // The mass-edit selection is row positions, so it means nothing
+      // once a different file occupies those positions — and a stale one
+      // would aim the next column edit at whichever sites happen to sit
+      // where the old ones did. Dropped on an update too: even a
+      // re-mapped file can arrive with different rows.
+      setSelectedSiteIds(new Set());
+      setMassStatus(null);
       setSiteNameOverride(mapping.siteName || null);
       setCompanyNameOverride(mapping.companyName || null);
       setZipColOverride(mapping.zip || null);
@@ -2700,6 +2727,138 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     );
   }, [search, rows]);
 
+  // ---- Mass edit: which columns, and writing them ----------------------
+  // The page's live column mapping, as one object. Every one of these is
+  // the header a field is currently read from, so an edit aimed at
+  // "Property Type" lands in the column the property-type derivation
+  // reads on the very next render — no second mapping to keep in step.
+  const siteFieldMapping = useMemo(() => ({
+    siteName: siteNameColumn,
+    companyName: companyNameOverride,
+    division: divisionOverride,
+    address: addressOverride,
+    city: cityOverride,
+    state: stateColumnOverride,
+    zip: zipColumn,
+    country: countryOverride,
+    propertyType: propertyTypeOverride,
+    segment: segmentOverride,
+    ownership: ownershipOverride,
+    siteDescription: siteDescriptionOverride,
+    propertySize: propertySizeOverride,
+    electric: electricColOverride,
+    electricUom: electricUomOverride,
+    gas: gasColOverride,
+    gasUom: gasUomOverride,
+    electricCost: electricCostOverride,
+    gasCost: gasCostOverride,
+    electricSupplier: electricSupplierOverride,
+    gasSupplier: gasSupplierOverride,
+    electricStart: electricStartOverride,
+    electricEnd: electricEndOverride,
+    electricContractPrice: electricContractPriceOverride,
+    electricContractName: electricContractNameOverride,
+    electricProductType: electricProductTypeOverride,
+    gasStart: gasStartOverride,
+    gasEnd: gasEndOverride,
+    gasContractPrice: gasContractPriceOverride,
+    gasContractName: gasContractNameOverride,
+    gasProductType: gasProductTypeOverride,
+  }), [
+    siteNameColumn, companyNameOverride, divisionOverride, addressOverride, cityOverride,
+    stateColumnOverride, zipColumn, countryOverride, propertyTypeOverride, segmentOverride,
+    ownershipOverride, siteDescriptionOverride, propertySizeOverride, electricColOverride,
+    electricUomOverride, gasColOverride, gasUomOverride, electricCostOverride, gasCostOverride,
+    electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride,
+    electricContractPriceOverride, electricContractNameOverride, electricProductTypeOverride,
+    gasStartOverride, gasEndOverride, gasContractPriceOverride, gasContractNameOverride,
+    gasProductTypeOverride,
+  ]);
+
+  const editableSiteColumns = useMemo(
+    () => siteEditableColumns(
+      sitesData.length ? Object.keys(sitesData[0]) : [],
+      siteFieldMapping,
+      [siteNameColumn],
+    ),
+    [sitesData, siteFieldMapping, siteNameColumn],
+  );
+  const massColumn = useMemo(
+    () => editableSiteColumns.find(c => c.header === massHeader) || null,
+    [editableSiteColumns, massHeader],
+  );
+  // A field left selected after a re-upload that dropped its column would
+  // otherwise sit there looking applicable and write nowhere.
+  useEffect(() => {
+    if (massHeader && !massColumn) { setMassHeader(''); setMassValue(''); }
+  }, [massHeader, massColumn]);
+
+  // The rows the "select all" box covers: what the search has left on
+  // screen, not the whole upload. Selecting sites the user can't see is
+  // how a bulk edit lands somewhere they didn't look.
+  const selectableSiteIds = useMemo(() => filtered.map(r => r.id), [filtered]);
+  const selectedVisibleCount = useMemo(
+    () => selectableSiteIds.filter(id => selectedSiteIds.has(id)).length,
+    [selectableSiteIds, selectedSiteIds],
+  );
+  const allVisibleSelected = selectableSiteIds.length > 0
+    && selectedVisibleCount === selectableSiteIds.length;
+
+  function toggleSelectAllVisible() {
+    setSelectedSiteIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) for (const id of selectableSiteIds) next.delete(id);
+      else for (const id of selectableSiteIds) next.add(id);
+      return next;
+    });
+  }
+
+  // Write the chosen value into the chosen column on every selected site,
+  // then persist. The uploaded rows ARE the page's data — utility match,
+  // rates, costs, compliance screening are all derived from them — so a
+  // saved edit is the same as if the spreadsheet had arrived that way.
+  async function applySiteMassEdit() {
+    if (massBusy || !massColumn) return;
+    // Selection is by row id, but the write is by object identity: ids
+    // are positions in the cleaned list, and positions are exactly what
+    // a re-upload or a renamed site can shift underneath a stale set.
+    const targets = new Set(
+      [...selectedSiteIds].map(id => cleanSitesData[id]).filter(Boolean),
+    );
+    if (targets.size === 0) return;
+
+    const coerced = coerceSiteValue(massColumn, massValue);
+    if (!coerced.ok) { setMassStatus({ type: 'error', message: coerced.error }); return; }
+    if (!window.confirm(describeSiteEdit(massColumn, coerced.value, targets.size))) return;
+
+    setMassBusy(true);
+    setMassStatus(null);
+    try {
+      const { rows: next, changed, skipped } = applySiteColumnEdit(
+        sitesData, targets, massColumn.header, coerced.value,
+      );
+      // Saved before the state swap: a write that fails must not leave
+      // the page showing an edit the next reload won't have.
+      await saveListToIDB(SITES_STORAGE_KEY, next);
+      setSitesData(next);
+      // The value deliberately stays in the box. Clearing it would leave
+      // a loaded Apply button one click from writing a blank over the
+      // column that was just set — and keeping it is what the next step
+      // usually wants anyway: same value, a different set of sites.
+      setMassStatus({
+        type: 'success',
+        message: changed === 0
+          ? `Every one of those ${targets.size} site${targets.size === 1 ? '' : 's'} already had that value — nothing changed.`
+          : `${massColumn.label} set on ${changed} site${changed === 1 ? '' : 's'}`
+            + `${skipped > 0 ? ` (${skipped} already had it)` : ''}.`,
+      });
+    } catch (err) {
+      setMassStatus({ type: 'error', message: `Couldn’t save the edit: ${err?.message || err}` });
+    } finally {
+      setMassBusy(false);
+    }
+  }
+
   // Data-quality flag for the header — counts uploaded sites missing
   // any of the three inputs that the rest of the page relies on:
   // zip code (drives utility / supplier matching), electric kWh
@@ -3486,6 +3645,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
     return [
+      // Not hideable while Mass Edit is on: the Columns menu would
+      // otherwise offer to remove the only way to pick a row, from a
+      // mode whose entire job is picking rows.
+      '__select__',
       columns[0].key,
       'propertyType',
       'segment',
@@ -3499,10 +3662,50 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ];
   }, [columns]);
 
+  // Keyed off the data columns alone. The selection column is a mode,
+  // not a shape: folding it in here would hand Mass Edit its own table
+  // id, and the widths / visibility / renames the user arranged would
+  // vanish the moment they turned the mode on.
   const tableId = useMemo(
     () => `sites-list:${columns.map(c => c.key).sort().join('|')}`,
     [columns]
   );
+
+  // The columns as rendered: the data columns, plus a checkbox column
+  // while Mass Edit is on. Appended rather than prepended — DataTable
+  // pins a `__select__` column to the far left itself, and leaving
+  // `columns[0]` as the site name keeps it the sticky one. Sticky here
+  // too, so the frozen block is the checkbox AND the name: pinning only
+  // the name would let it scroll over the boxes it belongs to.
+  const tableColumns = useMemo(() => {
+    if (!massEditOn || !columns.length) return columns;
+    return [...columns, {
+      key: '__select__',
+      label: '',
+      defaultWidth: 34,
+      sticky: true,
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selectedSiteIds.has(row.id)}
+          onChange={(e) => {
+            e.stopPropagation();
+            setSelectedSiteIds(prev => {
+              const next = new Set(prev);
+              if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+              return next;
+            });
+          }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+          aria-label="Select this site for the column edit"
+        />
+      ),
+      // Never a column of the export: it's this session's selection, not
+      // anything about the site.
+      exportValue: () => '',
+    }];
+  }, [columns, massEditOn, selectedSiteIds]);
 
   // Actual vs estimated split across the portfolio for the on-page
   // summary panel. Actual = value came from a column in the source
@@ -13276,7 +13479,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Schneider Electric branded export — title band, green headers,
   // Nunito Sans everywhere, frozen header row, auto-filter, tab
   // colour. One sheet per overview plus the raw-data sheet.
-  async function handleExport({ columns: visibleColumns, rows: sortedRows, colNames, extraSheets }) {
+  async function handleExport({ columns: exportColumns, rows: sortedRows, colNames, extraSheets }) {
+    // The Mass Edit checkbox column is on screen, so the table offers it
+    // here like any other. It carries no site data — an empty column in
+    // the Raw Data sheet is all it could ever be.
+    const visibleColumns = (exportColumns || []).filter(c => c.key !== '__select__');
     const { Workbook } = await import('exceljs');
     const SE_GREEN = 'FF3DCD58';
     const SE_GREEN_DARK = 'FF009530';
@@ -14280,7 +14487,106 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           onChange={e => setSearch(e.target.value)}
         />
         {search && <span className={styles.resultCount}>{filtered.length} results</span>}
+        {sitesData.length > 0 && (
+          <button
+            type="button"
+            className={massEditOn ? styles.massToggleOn : styles.massToggle}
+            onClick={() => setMassEditOn(v => !v)}
+            title="Set one column to the same value across the sites you pick"
+          >
+            {massEditOn ? 'Done editing' : 'Mass edit'}
+            {/* The count follows the button out of the mode: the
+                selection survives the toggle, so hiding it would leave
+                sites picked with nothing on screen saying so. */}
+            {!massEditOn && selectedSiteIds.size > 0 && ` (${selectedSiteIds.size} selected)`}
+          </button>
+        )}
       </div>
+
+      {massEditOn && sitesData.length > 0 && (
+        <div className={styles.massBar}>
+          <label className={styles.massSelectAll} title="Select every site the current search leaves on screen">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={el => { if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected; }}
+              disabled={selectableSiteIds.length === 0}
+              onChange={toggleSelectAllVisible}
+              style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+            />
+            Select all ({selectableSiteIds.length})
+          </label>
+          <span className={styles.massCount} data-on={selectedSiteIds.size > 0 ? 'true' : 'false'}>
+            {selectedSiteIds.size} selected
+          </span>
+          <select
+            className={styles.massInput}
+            value={massHeader}
+            onChange={e => { setMassHeader(e.target.value); setMassValue(''); setMassStatus(null); }}
+          >
+            <option value="">Column to set…</option>
+            {editableSiteColumns.map(c => (
+              <option key={c.header} value={c.header}>
+                {c.label}{c.sub ? ` — ${c.sub}` : ''}
+              </option>
+            ))}
+          </select>
+          {/* A closed list gets a picker: the page only understands the
+              spellings its normalizers know, and a typed "Owned (mostly)"
+              reads downstream as no answer at all. */}
+          {massColumn && (massColumn.options ? (
+            <select
+              className={styles.massInput}
+              value={massValue}
+              onChange={e => setMassValue(e.target.value)}
+            >
+              <option value="">(blank)</option>
+              {massColumn.options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            /* Text even for the number columns, so a figure pasted the
+               way a spreadsheet writes it ("1,250,000", "$18,400") isn't
+               rejected by the browser before it can be parsed. */
+            <input
+              className={styles.massInput}
+              type="text"
+              inputMode={massColumn.type === 'number' ? 'decimal' : 'text'}
+              value={massValue}
+              onChange={e => setMassValue(e.target.value)}
+              placeholder={massColumn.type === 'number' ? `New ${massColumn.label} (number)…` : `New ${massColumn.label}…`}
+            />
+          ))}
+          <button
+            type="button"
+            className={styles.massApply}
+            onClick={applySiteMassEdit}
+            disabled={massBusy || !massColumn || selectedSiteIds.size === 0}
+            title={massColumn
+              ? `Write this value into the “${massColumn.sub || massColumn.label}” column on every selected site`
+              : 'Pick a column to set'}
+          >
+            {massBusy ? 'Applying…' : `Apply to ${selectedSiteIds.size}`}
+          </button>
+          {selectedSiteIds.size > 0 && (
+            <button
+              type="button"
+              className={styles.massClear}
+              onClick={() => { setSelectedSiteIds(new Set()); setMassStatus(null); }}
+            >Clear selection</button>
+          )}
+          {massStatus && (
+            <span className={massStatus.type === 'error' ? styles.massError : styles.massOk}>
+              {massStatus.message}
+            </span>
+          )}
+          {/* Said once, here: the edit rewrites the uploaded rows, and
+              every derived number on this page is computed from them. */}
+          <span className={styles.massNote}>
+            Writes into the uploaded site rows and saves — the utility, rate, cost and compliance
+            figures re-derive from the new value.
+          </span>
+        </div>
+      )}
 
       {!sitesLoaded ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
@@ -14297,7 +14603,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         <DataTable
           key={tableId}
           tableId={tableId}
-          columns={columns}
+          columns={tableColumns}
           rows={filtered}
           alwaysVisible={alwaysVisible}
           emptyMessage="No matching sites"

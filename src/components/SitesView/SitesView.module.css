@@ -152,6 +152,145 @@
   white-space: nowrap;
 }
 
+/* ---- Mass edit: one column, many sites -------------------------------- */
+
+/* Sits beside the search box, quiet until it's on. A page this dense
+   can't afford a permanent editing chrome, so the mode announces itself
+   by inverting rather than by taking up more room. */
+.massToggle {
+  margin-left: auto;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-secondary, #475569);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.massToggle:hover {
+  border-color: var(--color-accent);
+}
+
+.massToggleOn {
+  composes: massToggle;
+  background: #1E293B;
+  border-color: #1E293B;
+  color: #fff;
+}
+
+/* The editing bar itself. Wraps rather than scrolls: every control on it
+   is part of one sentence — these sites, this column, this value — and a
+   sentence with a piece scrolled out of view is how the wrong column
+   gets written. */
+.massBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 1.25rem 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, #f8fafc);
+}
+
+.massSelectAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary, #475569);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.massCount {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.massCount[data-on='true'] {
+  color: var(--color-accent);
+}
+
+.massInput {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  min-width: 150px;
+  max-width: 260px;
+}
+
+.massInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.massApply {
+  padding: 0.3rem 0.8rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.massApply:disabled {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.massClear {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-secondary, #475569);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.massOk {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: #166534;
+}
+
+.massError {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: #B91C1C;
+}
+
+/* What the edit actually does, on its own line once the bar wraps: this
+   writes the uploaded data, not a display override. */
+.massNote {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
 .modalBackdrop {
   position: fixed;
   inset: 0;
