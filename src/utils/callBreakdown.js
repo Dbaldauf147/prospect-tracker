@@ -22,6 +22,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { talkTimeSplit } from './talkTime.js';
+import { fillerUsage } from './fillerWords.js';
 import { sourceLabel, externalAttendees } from './callHistory.js';
 
 function textOf(value) {
@@ -91,6 +92,10 @@ export function breakdownRowFromRecord(record) {
     meetingType: textOf(record.meetingType),
     granolaUrl: textOf(record.granolaUrl),
     split,
+    // Derived from the same stored turns as the split, and null under the
+    // same conditions: a call whose turns aren't attributed can't say how
+    // many of the fillers in them were the user's.
+    fillers: fillerUsage(utterances),
     basis: split?.basis || '',
     youShare: split?.youShare ?? null,
     speakerCount: split?.speakers.length || 0,
