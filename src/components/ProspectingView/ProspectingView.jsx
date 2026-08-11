@@ -162,7 +162,27 @@ function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
 // Tagged row runs on (rosterTagCoverage), so the two pages read one number
 // rather than two: of every tag question askable about a group's contacts,
 // the share that has an answer.
-function TagCoverageBar({ coverage, onNavigate }) {
+// The rosters whose tagging still isn't finished, one entry each.
+//
+// Active is deliberately out: it's a rolling window of whoever has been in
+// touch lately rather than a book you work through, so its contacts arrive
+// and leave on their own and it would never read as done. All is out too —
+// it's the union of the others, so counting it would count the same debt
+// twice.
+//
+// A roster with no contacts has no tagging to be missing (pct is null, not
+// 0), so it doesn't count either.
+const TAG_DEBT_ROSTERS = ROSTER_CATEGORIES.filter(r => r.key !== 'active');
+
+function missingTagRosters(coverage) {
+  if (!coverage) return [];
+  return TAG_DEBT_ROSTERS.filter(r => {
+    const pct = coverage[r.key]?.pct;
+    return pct != null && pct < 100;
+  });
+}
+
+function TagCoverageBar({ coverage, onNavigate, missing = [], showMissing = false }) {
   if (!coverage) return null;
   const cells = [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
@@ -205,6 +225,26 @@ function TagCoverageBar({ coverage, onNavigate }) {
           </button>
         );
       })}
+      {/* The debt, once the step above is clear: how many rosters still have
+          tagging to finish, one apiece. It waits for step 1 because the
+          ladder does — an opp past its Call In outranks a tag that isn't
+          filled in, and a red number next to work you're meant to leave
+          alone just competes with it. */}
+      {showMissing && missing.length > 0 && (
+        <span
+          data-tag-debt
+          title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out — it's a rolling window rather than a book to work through — and All is the union of the rest.`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '1px 8px', borderRadius: 999,
+            background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
+            fontSize: '0.68rem', fontWeight: 700,
+          }}
+        >
+          <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
+          {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
+        </span>
+      )}
     </div>
   );
 }
@@ -547,10 +587,29 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
     [overdueCallIns, renewalWork, serviceWork, topPcIntros],
   );
 
+  // Which rosters still have tags to finish. Computed here rather than in the
+  // bar so the number exists whether or not the bar is on screen.
+  const tagDebt = useMemo(() => missingTagRosters(tagCoverage), [tagCoverage]);
+
   // The ladder itself: the defaults until the user edits it, their stored
   // order and text after that. Editing is only offered when the page was
   // handed an updateSettings — without one there's nowhere to save to.
   const steps = useMemo(() => readSteps(settings), [settings]);
+
+  // Is step 1 clear? The tag-debt count under the market-updates step waits
+  // for it, the way the ladder says everything below step 1 waits for it.
+  // Derived from the same count and mark the row itself renders from, so the
+  // two can't say different things about the same step.
+  //
+  // A ladder the user has deleted the opps step from has nothing to wait for,
+  // so the debt shows rather than hiding behind a step that isn't there.
+  const oppsCaughtUp = useMemo(() => {
+    if (!steps.some(s => s.key === 'opps')) return true;
+    return categorizeStep({
+      count: counts.opps,
+      marked: isMarkedCaughtUp(caughtUpMap, 'opps', today),
+    }) === 'caught-up';
+  }, [steps, counts.opps, caughtUpMap, today]);
   const canEdit = typeof updateSettings === 'function';
   const [editing, setEditing] = useState(false);
   // Text as it's being typed, keyed by step. Held here rather than written
@@ -758,6 +817,8 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                   <TagCoverageBar
                     coverage={tagCoverage}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
+                    missing={tagDebt}
+                    showMissing={oppsCaughtUp}
                   />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
