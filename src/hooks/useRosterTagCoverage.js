@@ -43,15 +43,26 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
   // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
   // out of these numbers without a reload — and drops out here exactly as it
   // does on All Contacts, which is the point of sharing the gates.
+  //
+  // Re-read when the uid lands, for the same reason the contact cache above
+  // is: these live in localStorage under a `u:<uid>:` prefix, so a read
+  // before auth resolves returns an empty map. An empty one doesn't fail
+  // loudly — it just stops excluding anybody, so every cancelling and Don't
+  // Track client's contacts stay on the rosters and drag the percentages
+  // down. That is exactly how this surfaced: a page that mounts after auth
+  // (All Contacts) and this hook, mounted at app start, reporting different
+  // percentages for the same rosters.
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
   const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
   useEffect(() => {
-    function onStorage(e) {
-      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
-      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
-    }
     function onStatus() { setClientStatusMap(loadClientStatusMap()); }
     function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
+    function onStorage(e) {
+      if (e.key === 'clients-status-map') onStatus();
+      if (e.key === 'clients-untracked-map') onUntracked();
+    }
+    onStatus();
+    onUntracked();
     window.addEventListener('storage', onStorage);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
@@ -60,7 +71,7 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     };
-  }, []);
+  }, [userId]);
 
   // Visible mode, matching the Totals pills on All Contacts: the figure
   // should describe the rosters as they're worked, not the hidden-review view.
