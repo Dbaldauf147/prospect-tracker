@@ -3,15 +3,20 @@ import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
 import { missingTagRosters } from '../utils/contactRosters';
 import { useRosterTagCoverage } from './useRosterTagCoverage';
 
-// The number behind the sidebar's Prospecting badge: contact rosters whose
-// tags still aren't fully mapped, one apiece.
+// Tag-mapping debt, for the sidebar's Prospecting badge and for the
+// Prospecting page's own Tagged row.
 //
-// It is the same figure the Prospecting page prints beside its Tagged row,
-// under the same rule — `missingTagRosters` decides what counts, with Active
-// and All excluded (see contactRosters.js).
+// Returns { coverage, missing, count } — the whole coverage object, the
+// rosters still short of fully mapped tags (`missingTagRosters`, with Active
+// and All excluded — see contactRosters.js), and the badge number, which is
+// null rather than 0 so a caller renders nothing at all when there's no debt.
 //
-// Returns null when there's nothing to show, so the caller renders no badge
-// rather than a 0.
+// One hook, called once in App, feeding both readouts. They used to compute
+// it separately from the same rule, which is not the same thing as computing
+// it once: the roster gates take the opps records, and whichever of the two
+// had them a beat later put a different set of contacts on the Key Prospect
+// roster and reported a different number. The only way two figures can't
+// disagree is for there to be one figure.
 export function useProspectingTagDebt({ prospects, cdmName, settings, userId }) {
   // The opps records: the roster gates need them to know which companies
   // have open opps, which decides who is on the Active roster and who counts
@@ -40,10 +45,10 @@ export function useProspectingTagDebt({ prospects, cdmName, settings, userId }) 
   return useMemo(() => {
     // Shown whatever the rest of the ladder is doing. Tag mapping is the one
     // piece of prospecting debt nothing else surfaces — marking every step
-    // caught up turns the page green without touching it — so a badge that
+    // caught up turns the page green without touching it — so a count that
     // waited for the steps above would go quiet exactly when the page stops
-    // saying anything else. null, not 0, so a cleared roster leaves no badge.
-    const n = missingTagRosters(coverage).length;
-    return n > 0 ? n : null;
+    // saying anything else.
+    const missing = missingTagRosters(coverage);
+    return { coverage, missing, count: missing.length > 0 ? missing.length : null };
   }, [coverage]);
 }
