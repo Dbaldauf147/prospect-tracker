@@ -2953,8 +2953,19 @@ function KeyContactsViewInner({
             <button
               type="button"
               onClick={() => {
+                // The selection deliberately survives the toggle. Rows are
+                // checkable outside Mass Edit too (the normal-mode bar
+                // below queues them for a campaign), so ticking twenty
+                // contacts and then opening Mass Edit is the obvious way
+                // in — and clearing them there threw away the work that
+                // was the whole reason for the click. "Edit Tags" on that
+                // bar has always carried its selection into mass mode;
+                // this button now agrees with it. "Clear" is one click
+                // away for the times a fresh selection is wanted.
                 setMassMode(p => !p);
-                setMassSelected(new Set());
+                // The pending value doesn't survive: it belongs to the
+                // edit that was being composed, and a stale one left in
+                // the box is a value that can be applied by accident.
                 setMassValue('');
                 setMassStatus(null);
               }}
@@ -3486,12 +3497,13 @@ function KeyContactsViewInner({
             ].filter(Boolean);
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
-            // Single 32px checkbox column at the front. When Mass Edit
-            // is off it carries the Custom Email Campaign queue toggle;
-            // when Mass Edit is on the same column flips to mass-select
-            // checkboxes so the user only ever sees one column of
-            // checkboxes — picking rows for the bulk update doesn't
-            // also queue them for a campaign.
+            // Single 32px checkbox column at the front, meaning the same
+            // thing whether or not Mass Edit is on: these are the rows
+            // picked. What can be done with them is what changes — the
+            // normal-mode bar queues them for a campaign or opens the tag
+            // editor, and Mass Edit adds the field-by-field update. The
+            // selection itself carries across, so a set of ticks made
+            // before the mode was switched is still there after it.
             const CONTACT_GRID = '32px '
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
               + ' 60px';
