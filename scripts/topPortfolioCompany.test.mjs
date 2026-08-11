@@ -19,7 +19,7 @@ import {
   topPcCompanyKeys,
   TOP_PC_EXCLUDED_STATUSES,
 } from '../src/utils/topPortfolioCompany.js';
-import { computePortfolioFitScore } from '../src/utils/portfolioCompaniesWorkbook.js';
+import { computePortfolioFitScore, siteCountNumber } from '../src/utils/portfolioCompaniesWorkbook.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -297,6 +297,43 @@ eq(pickTopPortfolioCompany([
   pc('Bravo Inc', 80, 'Dallas', 'United States'),
   pc('Alpha Inc', 80, 'Boston', 'United States'),
 ], new Map()).companyName, 'Alpha Inc', 'a tie breaks on name, not portfolio order');
+
+// ---- site count, estimated or not -------------------------------------------
+
+// Uploads write the (P)/(E) marker into the cell itself ("20 (E)"), so a
+// bare Number() on it is NaN. That used to mean an estimated site count
+// scored as zero AND vanished from the normalization maximum — the site
+// component silently ignored exactly the rows it was most needed for.
+eq(siteCountNumber('20 (E)'), 20, 'an estimated site count is a site count');
+eq(siteCountNumber('20 (P)'), 20, 'so is a partial one');
+eq(siteCountNumber('5,200'), 5200, 'thousands separators parse');
+eq([siteCountNumber(''), siteCountNumber(null), siteCountNumber('unknown')], [0, 0, 0],
+  'and anything unreadable contributes 0, never NaN');
+
+// Same row, marked and unmarked, scores identically.
+const sitesRow = { companyName: 'Estimated Co', sector: 'Retail / Consumer', energyGwh: 0, siteCount: '400 (E)' };
+eq(computePortfolioFitScore(sitesRow, 100, 400, null),
+  computePortfolioFitScore({ ...sitesRow, siteCount: 400 }, 100, 400, null),
+  'the (E) marker changes nothing about the score');
+
+// …and an estimate-only portfolio ranks by site count rather than
+// collapsing to a single sector-driven tie.
+const estimated = [
+  { companyName: 'Wide Co', sector: 'Retail / Consumer', siteCount: '400 (E)', hqCity: 'Dallas', hqCountry: 'United States' },
+  { companyName: 'Narrow Co', sector: 'Retail / Consumer', siteCount: '10 (E)', hqCity: 'Boston', hqCountry: 'United States' },
+];
+eq(pickTopPortfolioCompany(estimated, new Map()).companyName, 'Wide Co',
+  'the wider estimated footprint wins');
+
+// ---- component weights ------------------------------------------------------
+
+// Sites now carry the same 30% as energy. A row that is all sites and no
+// energy scores the same as its mirror image; before the reweighting the
+// energy-only row won by 20 points.
+const allSites = { companyName: 'Sites Only', sector: '', energyGwh: 0, siteCount: 100 };
+const allEnergy = { companyName: 'Energy Only', sector: '', energyGwh: 100, siteCount: 0 };
+eq(computePortfolioFitScore(allSites, 100, 100, null), 30, 'a maxed site count is worth 30 points');
+eq(computePortfolioFitScore(allEnergy, 100, 100, null), 30, 'exactly what a maxed energy figure is worth');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

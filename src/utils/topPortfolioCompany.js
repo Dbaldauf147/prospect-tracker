@@ -34,7 +34,7 @@
 //      nothing about.
 
 import { classifyHqRegion, NORTH_AMERICA } from './hqRegion.js';
-import { computePortfolioFitScore } from './portfolioCompaniesWorkbook.js';
+import { computePortfolioFitScore, siteCountNumber } from './portfolioCompaniesWorkbook.js';
 
 // The statuses that take a company out of the running. "Not Sold" is
 // written 'Lost - Not Sold' on the prospect record (see data/enums.js).
@@ -167,7 +167,7 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
   // Same normalization basis as the All PCs tab and the workbook export,
   // over the whole portfolio — see note 1 at the top of this file.
   const maxE = rows.reduce((m, r) => Math.max(m, Number(r?.energyGwh) || 0), 0);
-  const maxS = rows.reduce((m, r) => Math.max(m, Number(r?.siteCount) || 0), 0);
+  const maxS = rows.reduce((m, r) => Math.max(m, siteCountNumber(r?.siteCount)), 0);
   const years = rows.map(r => Number(r?.acquisitionYear)).filter(y => y > 0);
   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
 
