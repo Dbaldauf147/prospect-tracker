@@ -3,8 +3,10 @@
 // so the warmest paths in get worked before the coldest ones.
 //
 // Each step links to the tab where that work actually happens, so the page
-// is a starting point for the day rather than a wall of text. Editing the
-// playbook means editing PROSPECTING_STEPS — nothing else reads the order.
+// is a starting point for the day rather than a wall of text. The ladder
+// itself is the user's: Edit steps opens the list for reordering, retitling
+// and adding steps of their own, stored in settings (see
+// utils/prospectingPlaybook.js for the defaults and the merge).
 //
 // The Status column answers the question the ladder implies but didn't
 // answer: is this step clear? Steps with a real number behind them
@@ -21,7 +23,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { countOverdueCallIns } from '../../utils/oppsCallIn';
-import { RENEWAL_WARNING_DAYS } from '../../utils/clientIssues';
 import {
   categorizeStep,
   caughtUpSnapshot,
@@ -32,76 +33,22 @@ import {
   setStepCaughtUp,
   subscribeCaughtUp,
 } from '../../utils/prospectingStatus';
+import {
+  isCustomStep,
+  moveStep,
+  newStepKey,
+  PROSPECTING_STEPS_SETTING,
+  readSteps,
+  serializeSteps,
+  isCustomized,
+  STEP_VIEW_OPTIONS,
+  viewLabelFor,
+} from '../../utils/prospectingPlaybook';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
 import { makeRosterGates, rosterTagCoverage, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useAuth } from '../../contexts/AuthContext';
-
-const PROSPECTING_STEPS = [
-  {
-    key: 'opps',
-    title: 'Follow up on current opps',
-    detail: 'Opportunities already in flight. Nothing new gets worked until these are moving.',
-    view: 'opps2',
-    viewLabel: 'Opps',
-    // Steps carrying a `workLabel` are counted for the user; the rest are
-    // marked caught up by hand.
-    workLabel: n => `${n} overdue`,
-    // Opps marked "No Further Action Today" are settled for the day, so
-    // they're left out of the count — same rule the sidebar's Opps badge
-    // uses. The tooltips say so, since a number that skips rows the user
-    // can see on the Opps tab is otherwise just wrong-looking.
-    workTitle: n => `${n} open ${n === 1 ? 'opp is' : 'opps are'} past their Call In date, not counting any marked "No Further Action Today"`,
-    clearTitle: 'No open opp is past its Call In date, other than ones marked "No Further Action Today"',
-  },
-  {
-    key: 'market-updates',
-    title: 'Reach out to contacts with market updates',
-    detail: 'Give the contacts you already know a reason to reply: what the market is doing right now.',
-    view: 'contacts',
-    viewLabel: 'Contacts',
-  },
-  {
-    key: 'renewals',
-    title: 'Follow up with current client renewals',
-    detail: 'Contracts coming up on clients you already hold — the shortest path to the next conversation.',
-    view: 'clients',
-    viewLabel: 'Clients',
-    workLabel: n => `${n} to work`,
-    // Named the same way the Clients tab names its red rows, because they
-    // are the same rows.
-    workTitle: n => `${n} client${n === 1 ? '' : 's'} whose soonest contract expires within ${RENEWAL_WARNING_DAYS} days (or already has) with the Status column still blank`,
-    clearTitle: `No client with a contract expiring within ${RENEWAL_WARNING_DAYS} days is missing a Status`,
-  },
-  {
-    key: 'targeted-services',
-    title: 'Reach out to existing clients for targeted services',
-    detail: 'Services an existing client has not explored yet. The relationship is already there.',
-    view: 'clients',
-    viewLabel: 'Clients',
-    workLabel: n => `${n} service${n === 1 ? '' : 's'}`,
-    workTitle: n => `${n} tracked ${n === 1 ? 'service is' : 'services are'} below 100% coverage across your active clients`,
-    clearTitle: 'Every tracked service has been explored by all of your active clients',
-  },
-  {
-    key: 'pe-intros',
-    title: 'Reach out to PE partners about intros for top PCs',
-    detail: 'Warm intros through the PE relationship into their highest-scoring portfolio companies.',
-    view: 'pe',
-    viewLabel: 'PE Portfolio',
-    workLabel: n => `${n} to ask`,
-    workTitle: n => `${n} Top ${n === 1 ? 'PC is' : 'PCs are'} not at Qualifying yet — an intro still to ask the PE partner for`,
-    clearTitle: 'Every PE firm\'s Top PC is already at Qualifying',
-  },
-  {
-    key: 'cold',
-    title: 'Cold prospect outreach',
-    detail: 'Names with no relationship yet. Last, because everything above has a warmer way in.',
-    view: 'accounts',
-    viewLabel: 'My Accounts',
-  },
-];
 
 // Rank 1 carries the strongest accent and it cools down the list, so the
 // order reads at a glance without anyone having to count the numbers.
@@ -444,7 +391,119 @@ function TopPcIntroList({ rows, expanded, onExpand, onSelectProspect, byId }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, cdmName = '', settings = null }) {
+// --- Edit mode ------------------------------------------------------------
+//
+// Reordering, retitling and adding steps all live behind one "Edit steps"
+// toggle rather than being always-on. The page is read at the start of the
+// day and edited once in a while, so the reading version stays clean and
+// the editing controls only appear when they're wanted.
+
+const EDIT_INPUT = {
+  width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.45rem',
+  border: '1px solid #CBD5E1', borderRadius: 5, background: '#fff',
+  fontFamily: 'inherit', color: '#1E293B', outline: 'none',
+};
+const EDIT_BTN = {
+  padding: '0.25rem 0.5rem', borderRadius: 5, cursor: 'pointer',
+  border: '1px solid #CBD5E1', background: '#fff', color: '#475569',
+  fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, whiteSpace: 'nowrap',
+};
+
+// The tab a step's action button opens. "No tab" is a real choice — a step
+// that's a reminder rather than a hand-off has nowhere to send anyone, and
+// the button is left off that row entirely.
+function ViewPicker({ value, onChange, id }) {
+  return (
+    <select
+      id={id}
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      style={{ ...EDIT_INPUT, width: 'auto', fontSize: '0.7rem', cursor: 'pointer' }}
+      title="The tab this step's button opens"
+    >
+      <option value="">No tab</option>
+      {STEP_VIEW_OPTIONS.map(o => <option key={o.view} value={o.view}>{o.label}</option>)}
+    </select>
+  );
+}
+
+// Move / remove for one row. The arrows are the whole reordering story:
+// they work by keyboard and on touch, which a drag handle doesn't, and the
+// ladder is six-ish rows long — far enough from a drag-worthy list.
+function StepEditControls({ index, total, onMove, onRemove }) {
+  const arrow = { ...EDIT_BTN, padding: '0 0.4rem', lineHeight: '1.15rem', fontSize: '0.72rem' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, alignSelf: 'flex-start' }}>
+      <div style={{ display: 'flex', gap: 3 }}>
+        <button
+          type="button" onClick={() => onMove(-1)} disabled={index === 0}
+          title="Move up" aria-label="Move step up"
+          style={{ ...arrow, opacity: index === 0 ? 0.35 : 1, cursor: index === 0 ? 'default' : 'pointer' }}
+        >&#9650;</button>
+        <button
+          type="button" onClick={() => onMove(1)} disabled={index === total - 1}
+          title="Move down" aria-label="Move step down"
+          style={{ ...arrow, opacity: index === total - 1 ? 0.35 : 1, cursor: index === total - 1 ? 'default' : 'pointer' }}
+        >&#9660;</button>
+      </div>
+      <button
+        type="button" onClick={onRemove} title="Remove this step"
+        style={{ ...arrow, color: '#B91C1C', border: '1px solid #FECACA' }}
+      >Remove</button>
+    </div>
+  );
+}
+
+// The "add a step" form at the bottom of the edit list. A title is the only
+// thing required — a step with no detail and no tab is still a line on the
+// ladder, and the rest can be filled in afterwards like any other row.
+function AddStepForm({ onAdd }) {
+  const [title, setTitle] = useState('');
+  const [detail, setDetail] = useState('');
+  const [view, setView] = useState('');
+  const submit = () => {
+    const t = title.trim();
+    if (!t) return;
+    onAdd({ title: t, detail: detail.trim(), view });
+    setTitle(''); setDetail(''); setView('');
+  };
+  return (
+    <div style={{ border: '1px dashed #CBD5E1', borderRadius: 8, padding: '0.7rem 0.85rem', background: '#fff' }}>
+      <div style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#94A3B8', marginBottom: 6 }}>
+        Add a step
+      </div>
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+        placeholder="What the step is — e.g. “Work the conference follow-up list”"
+        style={{ ...EDIT_INPUT, fontSize: '0.84rem', fontWeight: 700 }}
+      />
+      <input
+        value={detail}
+        onChange={e => setDetail(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+        placeholder="Why it sits where it does (optional)"
+        style={{ ...EDIT_INPUT, fontSize: '0.74rem', marginTop: 5 }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 6 }}>
+        <ViewPicker value={view} onChange={setView} />
+        <button
+          type="button" onClick={submit} disabled={!title.trim()}
+          style={{
+            ...EDIT_BTN, border: '1px solid #0A66C2', background: title.trim() ? '#0A66C2' : '#E2E8F0',
+            color: title.trim() ? '#fff' : '#94A3B8', cursor: title.trim() ? 'pointer' : 'default',
+          }}
+        >Add step</button>
+        <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+          Added at the bottom — move it up with the arrows.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, cdmName = '', settings = null, updateSettings = null }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   // Tag-review coverage per roster, printed under the market-updates step.
@@ -488,14 +547,92 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
     [overdueCallIns, renewalWork, serviceWork, topPcIntros],
   );
 
+  // The ladder itself: the defaults until the user edits it, their stored
+  // order and text after that. Editing is only offered when the page was
+  // handed an updateSettings — without one there's nowhere to save to.
+  const steps = useMemo(() => readSteps(settings), [settings]);
+  const canEdit = typeof updateSettings === 'function';
+  const [editing, setEditing] = useState(false);
+  // Text as it's being typed, keyed by step. Held here rather than written
+  // through on every keystroke: a settings write per character round-trips
+  // to Firestore and fights the cursor. Committed on blur.
+  const [drafts, setDrafts] = useState({});
+
+  const commitSteps = (next) => {
+    setDrafts({});
+    updateSettings?.({ [PROSPECTING_STEPS_SETTING]: serializeSteps(next) });
+  };
+  const draftFor = (step) => drafts[step.key] || { title: step.title, detail: step.detail || '' };
+  const setDraft = (step, patch) => setDrafts(d => ({ ...d, [step.key]: { ...draftFor(step), ...patch } }));
+  // A blank title would leave an unreadable row, so an emptied one snaps
+  // back rather than saving. Anything else commits only when it changed.
+  const commitDraft = (step) => {
+    const d = drafts[step.key];
+    if (!d) return;
+    const title = d.title.trim();
+    const detail = (d.detail || '').trim();
+    if (!title) {
+      setDrafts((d2) => { const rest = { ...d2 }; delete rest[step.key]; return rest; });
+      return;
+    }
+    if (title === step.title && detail === (step.detail || '')) return;
+    commitSteps(steps.map(s => (s.key === step.key ? { ...s, title, detail } : s)));
+  };
+  const setStepView = (step, view) => commitSteps(
+    steps.map(s => (s.key === step.key ? { ...s, view, viewLabel: viewLabelFor(view, '') } : s)),
+  );
+  const removeStep = (step) => {
+    // Removing a built-in step also removes whatever counts it: worth
+    // saying out loud, since the count is the reason those rows earn their
+    // place and it isn't obvious that the two travel together.
+    const warning = isCustomStep(step.key)
+      ? `Remove “${step.title}”?`
+      : `Remove “${step.title}”?\n\nThis is one of the built-in steps. Anything it counts or lists for you goes with it — “Reset to defaults” brings it back.`;
+    if (!window.confirm(warning)) return;
+    commitSteps(steps.filter(s => s.key !== step.key));
+  };
+  const addStep = ({ title, detail, view }) => commitSteps([
+    ...steps,
+    { key: newStepKey(), title, detail, view, viewLabel: viewLabelFor(view, '') },
+  ]);
+  const resetSteps = () => {
+    if (!window.confirm('Restore the original steps, in their original order? Any step you added will be removed.')) return;
+    setDrafts({});
+    // null rather than the default array: absent means "never touched", so
+    // the page keeps tracking the shipped copy from here on.
+    updateSettings?.({ [PROSPECTING_STEPS_SETTING]: null });
+  };
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-      <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0 }}>
-        <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Prospecting</h2>
+      <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0, maxWidth: 860 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Prospecting</h2>
+          {canEdit && (
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              {editing && isCustomized(settings) && (
+                <button type="button" onClick={resetSteps} style={{ ...EDIT_BTN, color: '#B91C1C', border: '1px solid #FECACA' }}>
+                  Reset to defaults
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setDrafts({}); setEditing(v => !v); }}
+                style={editing
+                  ? { ...EDIT_BTN, background: '#0A66C2', border: '1px solid #0A66C2', color: '#fff' }
+                  : EDIT_BTN}
+              >
+                {editing ? 'Done' : 'Edit steps'}
+              </button>
+            </div>
+          )}
+        </div>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-          The order prospecting work gets done, ranked. Start at the top and work down —
-          each step is warmer than the one below it. The Status column says whether a step
-          is clear: counted steps answer for themselves, the rest you mark caught up for the day.
+          {editing
+            ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
+            : `The order prospecting work gets done, ranked. Start at the top and work down —
+               each step is warmer than the one below it. The Status column says whether a step
+               is clear: counted steps answer for themselves, the rest you mark caught up for the day.`}
         </div>
       </div>
 
@@ -509,14 +646,20 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }} />
-          <div style={{ width: STATUS_COL, flexShrink: 0, textAlign: 'center' }}>Status</div>
-          {onNavigate && <div style={{ width: ACTION_COL, flexShrink: 0 }} />}
+          {!editing && <div style={{ width: STATUS_COL, flexShrink: 0, textAlign: 'center' }}>Status</div>}
+          {!editing && onNavigate && <div style={{ width: ACTION_COL, flexShrink: 0 }} />}
         </div>
 
-        {PROSPECTING_STEPS.map((step, i) => {
+        {steps.length === 0 && (
+          <div style={{ padding: '1rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.75rem', color: '#64748B' }}>
+            No steps yet. {editing ? 'Add one below, or reset to the originals.' : 'Use “Edit steps” to add one, or reset to the originals.'}
+          </div>
+        )}
+
+        {steps.map((step, i) => {
           const rank = i + 1;
           const colors = RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
-          const isLast = rank === PROSPECTING_STEPS.length;
+          const isLast = rank === steps.length;
           const tracked = typeof step.workLabel === 'function';
           const count = tracked ? counts[step.key] : undefined;
           const marked = isMarkedCaughtUp(caughtUpMap, step.key, today);
@@ -558,6 +701,38 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                 {rank}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
+                {editing ? (
+                  <>
+                    <input
+                      value={draftFor(step).title}
+                      onChange={e => setDraft(step, { title: e.target.value })}
+                      onBlur={() => commitDraft(step)}
+                      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                      aria-label="Step title"
+                      style={{ ...EDIT_INPUT, fontSize: '0.88rem', fontWeight: 700 }}
+                    />
+                    <input
+                      value={draftFor(step).detail}
+                      onChange={e => setDraft(step, { detail: e.target.value })}
+                      onBlur={() => commitDraft(step)}
+                      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                      placeholder="Why it sits where it does (optional)"
+                      aria-label="Step description"
+                      style={{ ...EDIT_INPUT, fontSize: '0.74rem', color: '#64748B', marginTop: 5 }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#94A3B8', fontWeight: 700 }}>Opens:</span>
+                      <ViewPicker value={step.view} onChange={v => setStepView(step, v)} />
+                      {/* Which rows answer for themselves and which the user
+                          ticks isn't visible once the status pills are off
+                          screen, and it's the one thing about a step that
+                          can't be edited — so say it here. */}
+                      <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+                        {tracked ? 'Counted automatically' : 'Marked caught up by hand'}
+                      </span>
+                    </div>
+                  </>
+                ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B' }}>
                     {step.title}
@@ -573,17 +748,20 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: 3 }}>
-                  {step.detail}
-                </div>
-                {step.key === 'market-updates' && (
+                )}
+                {!editing && step.detail && (
+                  <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: 3 }}>
+                    {step.detail}
+                  </div>
+                )}
+                {!editing && step.key === 'market-updates' && (
                   <TagCoverageBar
                     coverage={tagCoverage}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                   />
                 )}
-                {step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
-                {step.key === 'pe-intros' && (
+                {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
+                {!editing && step.key === 'pe-intros' && (
                   <TopPcIntroList
                     rows={topPcIntros}
                     expanded={showAllTopPcs}
@@ -593,34 +771,51 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                   />
                 )}
               </div>
-              <StatusCell
-                state={state}
-                label={label}
-                title={title}
-                align={hasList ? 'flex-start' : 'center'}
-                onToggle={tracked ? null : () => setStepCaughtUp(step.key, !marked, today)}
-              />
-              {onNavigate && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate(step.view)}
-                  title={`Open the ${step.viewLabel} tab`}
-                  style={{
-                    width: ACTION_COL, flexShrink: 0, alignSelf: hasList ? 'flex-start' : 'center',
-                    padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',
-                    border: `1px solid ${colors.ring}`, background: '#fff',
-                    color: colors.badge, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = colors.tint; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
-                >
-                  {step.viewLabel} →
-                </button>
+              {editing ? (
+                <StepEditControls
+                  index={i}
+                  total={steps.length}
+                  onMove={delta => commitSteps(moveStep(steps, i, delta))}
+                  onRemove={() => removeStep(step)}
+                />
+              ) : (
+                <>
+                  <StatusCell
+                    state={state}
+                    label={label}
+                    title={title}
+                    align={hasList ? 'flex-start' : 'center'}
+                    onToggle={tracked ? null : () => setStepCaughtUp(step.key, !marked, today)}
+                  />
+                  {onNavigate && (step.view ? (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate(step.view)}
+                      title={`Open the ${step.viewLabel} tab`}
+                      style={{
+                        width: ACTION_COL, flexShrink: 0, alignSelf: hasList ? 'flex-start' : 'center',
+                        padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',
+                        border: `1px solid ${colors.ring}`, background: '#fff',
+                        color: colors.badge, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = colors.tint; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                    >
+                      {step.viewLabel} →
+                    </button>
+                  ) : (
+                    // A step pointed at no tab still holds the column, so
+                    // the buttons on the rows above and below stay lined up.
+                    <div style={{ width: ACTION_COL, flexShrink: 0 }} />
+                  ))}
+                </>
               )}
             </div>
           );
         })}
+
+        {editing && <AddStepForm onAdd={addStep} />}
       </div>
     </div>
   );
