@@ -574,9 +574,9 @@ function buildSiteDetailSheet(wb, results, meta) {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });
-  const NC = 15;
+  const NC = 16;
   ws.columns = [
-    { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 },
+    { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 }, { width: 11 },
     { width: 11 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 13 }, { width: 14 },
@@ -604,7 +604,11 @@ function buildSiteDetailSheet(wb, results, meta) {
   ws.getRow(2).height = 18;
   ws.getRow(3).height = 6;
 
-  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft',
+  // Ownership sits with Sq Ft — both are attributes of the building rather
+  // than of where it is — and ahead of the mandates, since who owns the
+  // building is the first question asked of an obligation that falls on
+  // the owner.
+  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Ownership',
     'BBS', 'BBS Deadline', 'BBS Penalty/yr',
     'Energy Audits', 'Audits Deadline', 'Audits Penalty/yr',
     'BPS', 'BPS Deadline', 'BPS Penalty/yr'];
@@ -630,18 +634,23 @@ function buildSiteDetailSheet(wb, results, meta) {
     const zebra = idx % 2 === 1;
     const row = ws.getRow(rr);
     const sqft = (r.sqft != null && Number.isFinite(Number(r.sqft))) ? Number(r.sqft) : null;
-    const base = [r.siteName || '', r.city || '', r.state || '', r.matched ? (r.government || '') : 'no match', r.govId || '', sqft];
+    const base = [r.siteName || '', r.city || '', r.state || '', r.matched ? (r.government || '') : 'no match', r.govId || '', sqft,
+      r.ownership || ''];
     base.forEach((v, i) => {
       const c = row.getCell(i + 1);
       c.value = (v === '' || v == null) ? null : v;
       if (i === 5 && typeof v === 'number') c.numFmt = '#,##0';
       c.font = { name: FONT, size: 9.5, bold: i === 0, color: { argb: i === 0 ? INK : SLATE } };
-      c.alignment = { vertical: 'middle', horizontal: i === 5 ? 'right' : 'left', indent: 1 };
+      c.alignment = {
+        vertical: 'middle',
+        horizontal: i === 5 ? 'right' : i === 6 ? 'center' : 'left',
+        indent: i === 6 ? 0 : 1,
+      };
     });
     CATEGORIES.forEach((cat, ci) => {
       const e = r[cat];
       const applicable = !!(e && e.active && e.eligible === true);
-      const c0 = 7 + ci * 3;
+      const c0 = 8 + ci * 3;
       const appCell = row.getCell(c0);
       appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '');
       appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
