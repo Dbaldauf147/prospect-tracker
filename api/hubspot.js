@@ -415,9 +415,27 @@ function normalizeContactPropertiesForHubSpot(props) {
 // "Met In Person" tag the UI offers but that was never added to the
 // property). Detect that specific failure so the caller can register
 // the missing option and retry instead of surfacing a dead-end error.
-function isDansTagsOptionError(status, text) {
+//
+// The validation body doesn't reliably name the property it's complaining
+// about — it quotes the rejected VALUE ("Nam only was not one of the
+// allowed options: [...]") and may say nothing about `dans_tags` at all.
+// Requiring the property name meant those writes skipped the self-heal
+// and died on a 400 telling the user to go add the option by hand, which
+// is the whole thing this is meant to spare them. So match the rejected
+// value against the tags being written instead, and keep the property-name
+// test as the fast path. `tagsStr` is the write's own dans_tags value:
+// an option error naming something we didn't write belongs to some other
+// property and stays a hard error.
+function isDansTagsOptionError(status, text, tagsStr = '') {
   if (status !== 400 || !text) return false;
-  return /was not one of the allowed options/i.test(text) && /dans_tags/i.test(text);
+  if (!/was not one of the allowed options/i.test(text)) return false;
+  if (/dans_tags/i.test(text)) return true;
+  const lower = text.toLowerCase();
+  return String(tagsStr)
+    .split(';')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .some(t => lower.includes(`${t.toLowerCase()} was not one of the allowed options`));
 }
 
 // Register any `dans_tags` values that aren't already options on the
@@ -738,7 +756,7 @@ async function handler(req, res) {
       // same way update-contact does: register it, then retry once.
       if (!createRes.ok && typeof cleanProps.dans_tags === 'string') {
         const peekText = await createRes.clone().text();
-        if (isDansTagsOptionError(createRes.status, peekText)) {
+        if (isDansTagsOptionError(createRes.status, peekText, cleanProps.dans_tags)) {
           await ensureDansTagsOptions(token, cleanProps.dans_tags);
           createRes = await postContact();
         }
@@ -817,7 +835,7 @@ async function handler(req, res) {
         // register the missing dans_tags option(s) on the property, then
         // retry the write once. Lets curated UI tags (e.g. "Met In
         // Person") save without a manual HubSpot property edit.
-        if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text)) {
+        if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text, cleanProps.dans_tags)) {
           await ensureDansTagsOptions(token, cleanProps.dans_tags);
           updateRes = await patchContact();
           if (!updateRes.ok) {
@@ -1052,3 +1070,7 @@ async function handler(req, res) {
 }
 
 export default withAuth(handler);
+
+// Exported for scripts/dansTagsOptionError.test.mjs. Vercel only routes the
+// default export, so the extra names don't change the endpoint.
+export { isDansTagsOptionError, normalizeDansTagsForHubSpot };
