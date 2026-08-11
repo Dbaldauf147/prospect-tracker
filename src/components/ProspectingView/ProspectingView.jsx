@@ -45,8 +45,7 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
-import { ROSTER_CATEGORIES, missingTagRosters } from '../../utils/contactRosters';
-import { useRosterTagCoverage } from '../../hooks/useRosterTagCoverage';
+import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useAuth } from '../../contexts/AuthContext';
 
 // Rank 1 carries the strongest accent and it cools down the list, so the
@@ -462,11 +461,13 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, cdmName = '', settings = null, updateSettings = null }) {
+export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, updateSettings = null, tagCoverage = null, tagDebt = null }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
-  // Tag-review coverage per roster, printed under the market-updates step.
-  const tagCoverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings, userId: user?.uid });
+  // Tag-review coverage per roster, printed under the market-updates step —
+  // handed down from App rather than worked out here, so this row and the
+  // sidebar badge are literally the same numbers rather than two runs of the
+  // same rule over inputs that can land at different moments.
   // The hand-marked steps, straight off localStorage: another tab's mark,
   // the user id landing after login, and the date rolling over all reach
   // the page this way rather than through mirrored state.
@@ -506,9 +507,6 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
     [overdueCallIns, renewalWork, serviceWork, topPcIntros],
   );
 
-  // Which rosters still have tags to finish. Computed here rather than in the
-  // bar so the number exists whether or not the bar is on screen.
-  const tagDebt = useMemo(() => missingTagRosters(tagCoverage), [tagCoverage]);
 
   // The ladder itself: the defaults until the user edits it, their stored
   // order and text after that. Editing is only offered when the page was
@@ -722,7 +720,7 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                   <TagCoverageBar
                     coverage={tagCoverage}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
-                    missing={tagDebt}
+                    missing={tagDebt || []}
                   />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}

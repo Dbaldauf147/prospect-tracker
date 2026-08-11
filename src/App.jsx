@@ -112,10 +112,10 @@ function App() {
   // item. Reads the Opps 2 store directly since those records never reach
   // App state; null until the first read lands.
   const oppsDueCount = useOppsCallInDue(user?.uid);
-  // Contact rosters whose tags still aren't fully mapped — the same count the
-  // Prospecting page prints beside its Tagged row, and gated the same way, so
-  // the badge and the page agree. Null when there is nothing to show.
-  const prospectingTagDebt = useProspectingTagDebt({ prospects, cdmName, settings, userId: user?.uid });
+  // Contact rosters whose tags still aren't fully mapped. Computed once here
+  // and handed to both readouts — the sidebar badge and the Prospecting
+  // page's Tagged row — so the two can't report different numbers.
+  const tagDebt = useProspectingTagDebt({ prospects, cdmName, settings, userId: user?.uid });
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still
@@ -355,7 +355,7 @@ function App() {
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
         oppsDueCount={oppsDueCount}
-        prospectingTagDebt={prospectingTagDebt}
+        prospectingTagDebt={tagDebt.count}
         agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}
@@ -475,9 +475,10 @@ function App() {
               serviceGaps={prospectingServiceGaps}
               prospects={dataLoading ? null : prospects}
               onSelectProspect={handleSelect}
-              cdmName={cdmName}
               settings={settings}
               updateSettings={updateSettings}
+              tagCoverage={tagDebt.coverage}
+              tagDebt={tagDebt.missing}
             />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
