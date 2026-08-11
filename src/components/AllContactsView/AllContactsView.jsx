@@ -15,7 +15,7 @@ import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsV
 import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
 import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
+import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
 import { isCancellingForSure } from '../../utils/serviceCoverage';
 import { tagReviewScore, isLocalTagVerdict } from '../../utils/contactTagReview';
 
@@ -109,53 +109,80 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
 
-  // ---- Cancelling clients ------------------------------------------
-  // A client whose Clients-tab Status says "Cancelling for Sure" is on its
-  // way out, so its people don't belong on a roster of who to work. The
-  // status map is the Clients tab's own store, keyed by company name
-  // lowercased + trimmed, and it's re-read on the same events the Clients
-  // tab fires so a status change here takes effect without a reload.
+  // ---- Accounts this page leaves out --------------------------------
+  // Two Clients-tab flags take an account's people off every roster here:
+  //
+  //   Cancelling for Sure (Status)  the account is on its way out
+  //   Don't Track                   the account isn't being worked at all
+  //
+  // Both mean "not somebody to work today", so surfacing their contacts on a
+  // page whose whole job is who to work is noise. Both maps are the Clients
+  // tab's own stores, keyed by company name lowercased + trimmed, and both
+  // are re-read on the events that tab fires so a change there takes effect
+  // without a reload.
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
   useEffect(() => {
-    function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
+    function onStorage(e) {
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
+    }
     function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     };
   }, []);
 
-  // The cancelling accounts, by name and by email domain. Domains come off
-  // the account record (its Email Domain and Website), so a contact whose
-  // HubSpot Company text is spelled differently from the account — the
-  // common case — is caught too. Names alone would miss most of them.
-  const cancellingClients = useMemo(() => {
-    const companies = new Set();
-    const domains = new Set();
+  // The excluded accounts, by name and by email domain, kept apart by reason
+  // so the page can say which flag took a contact out. Domains come off the
+  // account record (its Email Domain and Website), so a contact whose HubSpot
+  // Company text is spelled differently from the account — the common case —
+  // is caught too. Names alone would miss most of them.
+  const excludedClients = useMemo(() => {
+    const make = () => ({ companies: new Set(), domains: new Set() });
+    const cancelling = make();
+    const untracked = make();
     for (const p of (prospects || [])) {
       const key = String(p?.company || '').trim().toLowerCase();
-      if (!key || !isCancellingForSure(clientStatusMap[key])) continue;
-      companies.add(key);
-      collectClientDomains(p, domains);
+      if (!key) continue;
+      const bucket = isCancellingForSure(clientStatusMap[key]) ? cancelling
+        : clientUntrackedMap[key] ? untracked
+        : null;
+      if (!bucket) continue;
+      bucket.companies.add(key);
+      collectClientDomains(p, bucket.domains);
     }
-    return { companies, domains };
-  }, [prospects, clientStatusMap]);
+    return { cancelling, untracked };
+  }, [prospects, clientStatusMap, clientUntrackedMap]);
 
-  // Is this contact one of a cancelling account's people? Free-mail domains
+  // Is this contact one of an excluded account's people? Free-mail domains
   // are nobody's account domain, so they never match on domain — a personal
-  // gmail address at a cancelling client is caught by the company name or
-  // not at all, rather than by a domain every account could share.
-  const isAtCancellingClient = useCallback((c) => {
-    if (cancellingClients.companies.size === 0 && cancellingClients.domains.size === 0) return false;
+  // gmail address at an excluded client is caught by the company name or not
+  // at all, rather than by a domain every account could share.
+  const matchesClientSet = useCallback((c, set) => {
+    if (set.companies.size === 0 && set.domains.size === 0) return false;
     const company = String(c?.company || '').trim().toLowerCase();
-    if (company && cancellingClients.companies.has(company)) return true;
+    if (company && set.companies.has(company)) return true;
     const email = String(c?.email || '').toLowerCase().trim();
     const at = email.lastIndexOf('@');
     const domain = at >= 0 ? email.slice(at + 1).trim() : '';
-    return !!domain && !FREE_MAIL.has(domain) && cancellingClients.domains.has(domain);
-  }, [cancellingClients]);
+    return !!domain && !FREE_MAIL.has(domain) && set.domains.has(domain);
+  }, []);
+
+  // Which flag takes this contact out, or '' when nothing does. One string
+  // rather than two predicates so a caller can both gate and attribute in a
+  // single pass — the counts under the pills need to know why.
+  const clientExclusionOf = useCallback((c) => {
+    if (matchesClientSet(c, excludedClients.cancelling)) return 'cancelling';
+    if (matchesClientSet(c, excludedClients.untracked)) return 'untracked';
+    return '';
+  }, [matchesClientSet, excludedClients]);
 
   // ---- Active gate (mirror of ActiveContactsView) -------------------
   // Build the same client-company exclusion set the Active page uses,
@@ -372,13 +399,13 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   }, [showHidden, isKeyProspectAtTierAccount]);
 
   // Roster gate — a contact passes when it would land on at least one of
-  // the dedicated rosters and isn't at an account that's cancelling. The
-  // exclusion sits here, above the individual gates, so it holds however
-  // the contact would otherwise have qualified. The tag filter composes on
-  // top of this below.
+  // the dedicated rosters and isn't at an account the Clients tab flags as
+  // cancelling or Don't Track. The exclusion sits here, above the individual
+  // gates, so it holds however the contact would otherwise have qualified.
+  // The tag filter composes on top of this below.
   const rosterSelector = useCallback(
-    (c) => !isAtCancellingClient(c) && (isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c)),
-    [isAtCancellingClient, isKey, isActive, isClient, isKeyProspect]
+    (c) => !clientExclusionOf(c) && (isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c)),
+    [clientExclusionOf, isKey, isActive, isClient, isKeyProspect]
   );
 
   // (combinedSelector — the roster gate plus the tag gate — is defined with
@@ -459,13 +486,13 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     };
     let n = 0;
     for (const c of hubspotContacts) {
-      // Same cancelling exclusion the roster gate applies, so the badge
+      // Same account exclusions the roster gate applies, so the badge
       // doesn't promise contacts that Show Hidden wouldn't surface.
-      if (isAtCancellingClient(c)) continue;
+      if (clientExclusionOf(c)) continue;
       if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c) || isKeyProspectHidden(c)) n += 1;
     }
     return n;
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount, isAtCancellingClient]);
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount, clientExclusionOf]);
 
   // The tag review answers — the No / Not sure the contact popup records,
   // which HubSpot can't hold. Memoized: the `|| {}` fallback would otherwise
@@ -526,7 +553,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!tags.includes('decision maker')) return false;
       return isKeyProspectAtTierAccount(c);
     };
-    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0, cancelling = 0;
+    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0, cancelling = 0, untracked = 0;
     const localFields = settings?.contactLocalFields || {};
     const emptyTags = () => ({ answered: 0, slots: 0, done: 0 });
     const tags = { key: emptyTags(), active: emptyTags(), client: emptyTags(), keyProspect: emptyTags(), total: emptyTags() };
@@ -544,11 +571,14 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       const a = visIsActive(c);
       const cl = visIsClient(c);
       const kp = visIsKeyProspect(c);
-      // Counted, not tallied into the pills: how many the cancelling
-      // exclusion took out. A page that quietly shrinks is worse than one
-      // that says what it left behind.
-      if (isAtCancellingClient(c)) {
-        if (k || a || cl || kp) cancelling++;
+      // Counted, not tallied into the pills: how many each account exclusion
+      // took out. A page that quietly shrinks is worse than one that says
+      // what it left behind.
+      const excluded = clientExclusionOf(c);
+      if (excluded) {
+        if (k || a || cl || kp) {
+          if (excluded === 'cancelling') cancelling++; else untracked++;
+        }
         continue;
       }
       if (k) key++;
@@ -569,8 +599,8 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         addTags(tags.total, score);
       }
     }
-    return { key, active, client, keyProspect, total, cancelling, tags };
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, isAtCancellingClient, tagReviewMap]);
+    return { key, active, client, keyProspect, total, cancelling, untracked, tags };
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, clientExclusionOf, tagReviewMap]);
 
   // Every distinct tag worn by a contact on this page, with how many wear
   // it, most-used first. Derived from the roster gate rather than the full
@@ -708,7 +738,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -737,19 +767,28 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
-        {categoryCounts.cancelling > 0 && (
+        {/* Said out loud rather than silently dropped: both flags live on the
+            Clients tab, so the note names the one to change to get these
+            people back. */}
+        {[
+          { attr: 'cancelling', count: categoryCounts.cancelling, label: 'at cancelling clients, left out',
+            tip: 'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.' },
+          { attr: 'untracked', count: categoryCounts.untracked, label: "at Don't Track clients, left out",
+            tip: 'Contacts at accounts ticked "Don\'t Track" on the Clients tab. They\'d otherwise qualify for one of the rosters; untick Don\'t Track there to bring them back.' },
+        ].filter(n => n.count > 0).map(({ attr, count, label, tip }) => (
           <span
-            data-cancelling-note
-            title={'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.'}
+            key={attr}
+            {...{ [`data-${attr}-note`]: true }}
+            title={tip}
             style={{
               padding: '1px 8px', borderRadius: 999,
               background: '#F1F5F9', border: '1px dashed #CBD5E1', color: '#64748B',
               fontSize: '0.68rem', fontWeight: 700,
             }}
           >
-            {categoryCounts.cancelling} at cancelling clients, left out
+            {count} {label}
           </span>
-        )}
+        ))}
       </div>
       {/* How far through the tags each roster is. Same groups, same colours
           as the row above, read as a share of the answers rather than a head
