@@ -29,7 +29,6 @@ import {
   countRenewalWork,
   countServiceGaps,
   isMarkedCaughtUp,
-  isOppsStepClear,
   readCaughtUpSnapshot,
   setStepCaughtUp,
   subscribeCaughtUp,
@@ -102,7 +101,7 @@ function useOppsRecords(userId) {
 // Tagged row runs on (rosterTagCoverage), so the two pages read one number
 // rather than two: of every tag question askable about a group's contacts,
 // the share that has an answer.
-function TagCoverageBar({ coverage, onNavigate, missing = [], showMissing = false }) {
+function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
   if (!coverage) return null;
   const cells = [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
@@ -145,12 +144,12 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], showMissing = fals
           </button>
         );
       })}
-      {/* The debt, once the step above is clear: how many rosters still have
-          tagging to finish, one apiece. It waits for step 1 because the
-          ladder does — an opp past its Call In outranks a tag that isn't
-          filled in, and a red number next to work you're meant to leave
-          alone just competes with it. */}
-      {showMissing && missing.length > 0 && (
+      {/* How many rosters still have tagging to finish, one apiece. Shown
+          whatever the rest of the ladder is doing: marking every step caught
+          up turns this page green without touching a single tag, so the one
+          number nothing else surfaces is exactly the one that shouldn't go
+          quiet when the page stops saying anything else. */}
+      {missing.length > 0 && (
         <span
           data-tag-debt
           title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out — it's a rolling window rather than a book to work through — and All is the union of the rest.`}
@@ -516,14 +515,6 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
   // handed an updateSettings — without one there's nowhere to save to.
   const steps = useMemo(() => readSteps(settings), [settings]);
 
-  // Is step 1 clear? The tag-debt count under the market-updates step waits
-  // for it, the way the ladder says everything below step 1 waits for it.
-  // Shared with the sidebar badge that mirrors this count, so the two can't
-  // say different things about the same step.
-  const oppsCaughtUp = useMemo(
-    () => isOppsStepClear({ steps, overdue: counts.opps, caughtUpMap, today }),
-    [steps, counts.opps, caughtUpMap, today],
-  );
   const canEdit = typeof updateSettings === 'function';
   const [editing, setEditing] = useState(false);
   // Text as it's being typed, keyed by step. Held here rather than written
@@ -732,7 +723,6 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                     coverage={tagCoverage}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                     missing={tagDebt}
-                    showMissing={oppsCaughtUp}
                   />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
