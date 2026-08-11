@@ -63,7 +63,7 @@ export const STATUS_NOTE = {
 // lanes read in the same order as the screening questions.
 export const DEADLINE_JURISDICTIONS = [
   { key: 'california', label: 'California', short: 'SB 253 / SB 261' },
-  { key: 'eu', label: 'EU', short: 'CSRD' },
+  { key: 'eu', label: 'EU', short: 'CSRD / CBAM' },
   { key: 'uk', label: 'UK', short: 'FCA / CFD / SRS' },
   { key: 'australia', label: 'Australia', short: 'ASRS' },
   { key: 'mexico', label: 'Mexico', short: 'CNBV' },
@@ -185,6 +185,41 @@ export const CORPORATE_MANDATE_DEADLINES = [
     requirement: 'Group-level sustainability report for large non-EU parents, published by the EU subsidiary or branch.',
     note: 'The non-EU wave was not moved by Omnibus I.',
     source: 'https://www.simmons-simmons.com/en/publications/cm9libsoy006kulzkyxok9r04/eu-stop-the-clock-directive-enters-into-force-under-omnibus-i',
+  },
+  {
+    // CBAM's cash milestone rather than its paperwork one: certificates for
+    // 2026 imports can't be bought until Feb 2027, so the first year's cost
+    // lands as a lump in 2027 rather than accruing through 2026.
+    key: 'eu-cbam-certs-fy26',
+    jurisdictionKey: 'eu',
+    regulation: 'CBAM',
+    mandate: 'CBAM certificate sales open (2026 imports)',
+    chip: 'CBAM cert',
+    shortDue: 'Feb 2027',
+    reportingOn: '2026 imports',
+    due: '2027-02-01',
+    dueLabel: 'Certificate sales for 2026 imports open 1 Feb 2027',
+    precision: 'exact',
+    status: 'fixed',
+    requirement: 'Buy CBAM certificates through the EU central platform to cover the emissions embedded in 2026 imports.',
+    note: 'Regulation (EU) 2025/2083 (in force 20 Oct 2025) pushed the surrender obligation into 2027, so no certificates are bought during the 2026 import year itself. Authorised CBAM declarant status is separate and is needed from 1 Jan 2026, before the 50-tonne threshold is crossed.',
+    source: 'https://www.dehst.de/EN/Topics/CBAM/CBAM-definitive-regime-2026/cbam-definitive-regime-2026_node.html',
+  },
+  {
+    key: 'eu-cbam-decl-fy26',
+    jurisdictionKey: 'eu',
+    regulation: 'CBAM',
+    mandate: 'CBAM declaration (2026 imports)',
+    chip: 'CBAM',
+    shortDue: 'Sep 2027',
+    reportingOn: '2026 imports',
+    due: '2027-09-30',
+    dueLabel: 'First annual CBAM declaration, for 2026 imports: 30 Sep 2027',
+    precision: 'exact',
+    status: 'fixed',
+    requirement: 'Annual CBAM declaration of the goods imported and their embedded emissions, with the matching certificates surrendered.',
+    note: 'Annual from here. The Omnibus regulation moved this off the original 31 May date; unlike the CSRD rows it is a fixed calendar date, not one that rides the annual report.',
+    source: 'https://taxation-customs.ec.europa.eu/carbon-border-adjustment-mechanism/cbam-definitive-regime_en',
   },
 
   // ---- UK -----------------------------------------------------------------

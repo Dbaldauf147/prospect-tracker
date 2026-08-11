@@ -124,6 +124,20 @@ export const REGULATIONS_BY_JURISDICTION = {
         { value: '200', metric: 'EU subsidiary net turnover (Million EUR)' },
       ],
     },
+    {
+      // The odd one out on this page, and worth knowing why: every other row
+      // here is a disclosure mandate that turns on how big the company is.
+      // CBAM turns on what it imports — a small importer of steel is caught
+      // and a giant services group is not — so no revenue or headcount figure
+      // on this card can settle it, and its Applies? cell stays a judgement
+      // rather than a derivation.
+      regulation: 'CBAM',
+      timeline: '2026 imports (definitive regime from 1 Jan 2026; first declaration 30 Sep 2027)',
+      description: 'Importers bringing covered carbon-intensive goods into the EU — cement, iron and steel, aluminium, fertilisers, hydrogen and electricity. From 1 Jan 2026 an importer must hold authorised CBAM declarant status and surrender certificates against the emissions embedded in what it imports. The Omnibus regulation exempts importers of 50 tonnes or less of covered goods a year outright, which drops most occasional importers while keeping the bulk of embedded emissions in scope; the threshold does not apply to hydrogen or electricity.',
+      thresholds: [
+        { value: '50', metric: 'Covered goods imported (tonnes/year: at or below this, exempt)' },
+      ],
+    },
   ],
   uk: [
     {
@@ -304,6 +318,27 @@ export const EU_CRITERIA_GROUPS = [
         key: 'employees',
         label: 'Employee Count',
         kind: 'number', source: 'research', fromResearch: 'employees', fromEmployeeCount: true,
+      },
+    ],
+  },
+  // CBAM screens on what the company imports, which no figure the research
+  // run collects can answer — so both rows are manual by nature, not by
+  // omission. Kept as its own group, after the CSRD one: csrdValues() reads
+  // EU_CRITERIA_GROUPS[0].rows, so the CSRD group has to stay first.
+  {
+    key: 'cbam-inputs',
+    label: 'CBAM screening',
+    note: 'What the company imports into the EU — the only thing that decides CBAM, and nothing else on this card establishes it',
+    rows: [
+      {
+        key: 'cbam-goods',
+        label: 'Imports cement, iron / steel, aluminium, fertilisers, hydrogen or electricity into the EU?',
+        source: 'manual',
+      },
+      {
+        key: 'cbam-over-de-minimis',
+        label: 'More than 50 tonnes of covered goods a year? (hydrogen and electricity count however small)',
+        source: 'manual',
       },
     ],
   },
