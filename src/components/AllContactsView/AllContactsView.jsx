@@ -17,6 +17,7 @@ import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
 import { isCancellingForSure } from '../../utils/serviceCoverage';
+import { tagReviewScore } from '../../utils/contactTagReview';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -267,6 +268,16 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     try { return localStorage.getItem('all-contacts:show-hidden') === '1'; } catch { return false; }
   });
 
+  // The "what this page is" blurb. Collapsed by default — it's reference
+  // material you read once, and left open it pushes the pills and the table
+  // down every visit. Persisted so opening it sticks until it's closed again.
+  const [showAbout, setShowAbout] = useState(() => {
+    try { return localStorage.getItem('all-contacts:show-about') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('all-contacts:show-about', showAbout ? '1' : '0'); } catch {}
+  }, [showAbout]);
+
   // Clickable category filter driven by the Totals pills. null = show
   // all; otherwise narrow to 'Key' / 'Active' / 'Client'. Clicking the
   // active pill again clears it.
@@ -453,11 +464,25 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return n;
   }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount, isAtCancellingClient]);
 
+  // The tag review answers — the No / Not sure the contact popup records,
+  // which HubSpot can't hold. Memoized: the `|| {}` fallback would otherwise
+  // hand a fresh object to every memo and selector below on each render,
+  // re-filtering and re-counting the whole page.
+  const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+
   // Per-category totals across the loaded HubSpot cache. Uses the
   // visible-mode selectors (showHidden = false) so the numbers reflect
   // what each dedicated tab would surface today, not the inverted
   // "review hidden" view. Each category counted independently and the
   // total is the de-duped union across all three.
+  //
+  // Each category also carries how far through the tag vocabulary its
+  // contacts are: `answered` / `slots` summed over the group, where a slot is
+  // one contact × one scored tag and an answer is a Yes (the tag is on the
+  // contact) or a No / Not sure recorded in the popup. Summing the raw counts
+  // rather than averaging per-contact percentages keeps a group of 400 from
+  // being swung by one contact, and `done` tracks how many are fully worked
+  // through — the figure that says "this roster is finished".
   const categoryCounts = useMemo(() => {
     const visibleActiveBase = makeActiveSelector(90, 'visible', activeClientFilter);
     const visIsActive = (c) => {
@@ -500,6 +525,13 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     };
     let key = 0, active = 0, client = 0, keyProspect = 0, total = 0, cancelling = 0;
     const localFields = settings?.contactLocalFields || {};
+    const emptyTags = () => ({ answered: 0, slots: 0, done: 0 });
+    const tags = { key: emptyTags(), active: emptyTags(), client: emptyTags(), keyProspect: emptyTags(), total: emptyTags() };
+    const addTags = (bucket, score) => {
+      bucket.answered += score.answered;
+      bucket.slots += score.total;
+      if (score.done) bucket.done += 1;
+    };
     for (const baseC of hubspotContacts) {
       const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
       const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
@@ -521,9 +553,21 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (cl) client++;
       if (kp) keyProspect++;
       if (k || a || cl || kp) total++;
+      // Score once per contact, then credit it to each roster the contact is
+      // on — a contact who is both Key and Client counts toward both figures,
+      // exactly as the counts above do.
+      if (k || a || cl || kp) {
+        const cid = c?.id ?? c?.vid;
+        const score = tagReviewScore(c, cid == null ? null : tagReviewMap[String(cid)]);
+        if (k) addTags(tags.key, score);
+        if (a) addTags(tags.active, score);
+        if (cl) addTags(tags.client, score);
+        if (kp) addTags(tags.keyProspect, score);
+        addTags(tags.total, score);
+      }
     }
-    return { key, active, client, keyProspect, total, cancelling };
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, isAtCancellingClient]);
+    return { key, active, client, keyProspect, total, cancelling, tags };
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, isAtCancellingClient, tagReviewMap]);
 
   // Every distinct tag worn by a contact on this page, with how many wear
   // it, most-used first. Derived from the roster gate rather than the full
@@ -568,12 +612,9 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     tagFilter && tagOptions.some(o => o.tag.toLowerCase() === tagFilter.toLowerCase()) ? tagFilter : ''
   ), [tagFilter, tagOptions]);
 
-  // The tag review answers, and the status gate actually in force. Statuses
-  // only mean anything against one tag — an answer is per contact per tag —
-  // so with no tag chosen the toggles are inert (and disabled in the UI).
-  // Memoized: the `|| {}` fallback would otherwise hand a fresh object to
-  // the memo and the selector on every render, re-filtering the whole page.
-  const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+  // The status gate actually in force. Statuses only mean anything against
+  // one tag — an answer is per contact per tag — so with no tag chosen the
+  // toggles are inert (and disabled in the UI).
   const activeStatuses = activeTag ? tagStatusFilter : null;
   const statusGateOn = !!activeStatuses && activeStatuses.size > 0;
 
@@ -608,18 +649,42 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return contactTagList(c).some(t => t.toLowerCase() === activeTag.toLowerCase());
   }, [rosterSelector, activeTag, statusGateOn, activeStatuses, tagReviewMap]);
 
+  // The Totals pills. Defined once and used by both the count row and the
+  // Tagged row below it, so the two can't drift apart in order, colour or
+  // wording — they're the same five groups read two ways.
+  const categoryPills = [
+    { cat: null,     bucket: 'total',       label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show all contacts (clear the category filter)' },
+    { cat: 'Key',    bucket: 'key',         label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Click to show only contacts tagged Dan Key Target' },
+    { cat: 'Active', bucket: 'active',      label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Click to show only contacts in the active window with an open opp (mirrors the Active Contacts page)' },
+    { cat: 'Client', bucket: 'client',      label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Click to show only contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)' },
+    { cat: 'Key Prospect', bucket: 'keyProspect', label: 'Key Prospect', count: categoryCounts.keyProspect, bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6', tip: 'Click to show only Decision Maker contacts at Tier 1 / Tier 2 accounts on your CDM whose company has no opps yet (mirrors the Key Prospects page)' },
+  ];
+
   const subtitle = (
     <>
-      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once.
+      <button
+        type="button"
+        onClick={() => setShowAbout(v => !v)}
+        aria-expanded={showAbout}
+        title={showAbout ? 'Hide the page description' : 'What this page shows and how to use it'}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: 0, border: 'none', background: 'none',
+          color: '#64748B', fontSize: '0.7rem', fontWeight: 700,
+          fontFamily: 'inherit', cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontSize: '0.6rem' }}>{showAbout ? '▾' : '▸'}</span>
+        About this page
+      </button>
+      {showAbout && (
+        <div style={{ marginTop: 4 }}>
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No or Not sure recorded against every scored tag counts as answered.
+        </div>
+      )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
-        {[
-          { cat: null,     label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show all contacts (clear the category filter)' },
-          { cat: 'Key',    label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Click to show only contacts tagged Dan Key Target' },
-          { cat: 'Active', label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Click to show only contacts in the active window with an open opp (mirrors the Active Contacts page)' },
-          { cat: 'Client', label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Click to show only contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)' },
-          { cat: 'Key Prospect', label: 'Key Prospect', count: categoryCounts.keyProspect, bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6', tip: 'Click to show only Decision Maker contacts at Tier 1 / Tier 2 accounts on your CDM whose company has no opps yet (mirrors the Key Prospects page)' },
-        ].map(({ cat, label, count, bg, border, color, tip }) => {
+        {categoryPills.map(({ cat, label, count, bg, border, color, tip }) => {
           const selected = categoryFilter === cat;
           return (
             <button
@@ -656,6 +721,34 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             {categoryCounts.cancelling} at cancelling clients, left out
           </span>
         )}
+      </div>
+      {/* How far through the tags each roster is. Same groups, same colours
+          as the row above, read as a share of the answers rather than a head
+          count — it's the "how much of this list have I actually worked?"
+          figure, so it sits directly under the totals it divides. */}
+      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Tagged:</span>
+        {categoryPills.map(({ bucket, label, count, bg, border, color }) => {
+          const t = categoryCounts.tags?.[bucket] || { answered: 0, slots: 0, done: 0 };
+          const pct = t.slots > 0 ? Math.round((t.answered / t.slots) * 100) : 0;
+          return (
+            <span
+              key={label}
+              data-tagged-pill={label}
+              title={count > 0
+                ? `${t.answered} of ${t.slots} tag answers recorded across ${count} ${label === 'All' ? '' : label + ' '}contact${count === 1 ? '' : 's'} — ${t.done} fully tagged. A tag counts as answered when it's on the contact (Yes) or marked No / Not sure in the contact popup. Hide, Left, Test and Met In Person don't count.`
+                : `No ${label === 'All' ? '' : label + ' '}contacts to score`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '1px 8px', borderRadius: 999,
+                background: bg, border: `1px dashed ${border}`, color,
+                fontSize: '0.68rem', fontWeight: 700,
+              }}
+            >
+              {label} <span style={{ fontWeight: 800 }}>{count > 0 ? `${pct}%` : '—'}</span>
+            </span>
+          );
+        })}
       </div>
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <label htmlFor="all-contacts-tag-filter" style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Tag:</label>
