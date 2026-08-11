@@ -459,25 +459,62 @@ async function retryAfterRegisteringTags(patchFn, tagsStr, attempts = 3, delayMs
   return res;
 }
 
-// Register any `dans_tags` values that aren't already options on the
-// property, appending them so the subsequent contact write validates.
-// Values are matched case-insensitively against existing option values
-// to avoid creating near-duplicate options.
-async function ensureDansTagsOptions(token, tagsStr) {
+// Case- and spacing-insensitive identity for a tag. HubSpot validates an
+// enumeration against the exact option value, but "NAM Only", "Nam only"
+// and "NAMOnly" are one tag to anyone using the app — and the bulk
+// picker already collapses them this way.
+const dansTagKey = (t) => String(t || '').toLowerCase().replace(/\s+/g, '');
+
+// Work out what to do with the tags a write is carrying, given the
+// options the property actually has. Returns:
+//   canonical — the tag string to write, with every tag that already
+//               exists under a different spelling rewritten to HubSpot's
+//               own; the rest left as typed
+//   toAdd     — the tags genuinely new to the property
+//
+// The rewrite is the point. Skipping a tag whose lowercase form already
+// existed (which is all this used to do) left the write to be retried
+// with the exact spelling HubSpot had just refused — so a tag stored as
+// "Nam only" could never be written as "NAM Only", no matter how many
+// times the self-heal ran. Nothing was registered, nothing changed, and
+// the retry failed identically. Deferring to the spelling already on the
+// property also keeps near-duplicate options from accumulating, which is
+// what the case-insensitive check was protecting in the first place.
+//
+// Pure and exported so the reconciliation can be tested without a HubSpot
+// round trip.
+function reconcileDansTags(existingValues, tagsStr) {
   const wanted = String(tagsStr || '').split(';').map(s => s.trim()).filter(Boolean);
-  if (!wanted.length) return [];
-  const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
-  const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
-  const existingLower = new Set(existing.map(o => String(o.value).toLowerCase()));
+  const byKey = new Map();
+  for (const v of (existingValues || [])) {
+    const k = dansTagKey(v);
+    if (k && !byKey.has(k)) byKey.set(k, String(v));
+  }
+  const canonical = [];
   const toAdd = [];
   const seen = new Set();
   for (const tag of wanted) {
-    const key = tag.toLowerCase();
-    if (existingLower.has(key) || seen.has(key)) continue;
-    seen.add(key);
+    const k = dansTagKey(tag);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    const already = byKey.get(k);
+    if (already !== undefined) { canonical.push(already); continue; }
     toAdd.push(tag);
+    canonical.push(tag);
   }
-  if (!toAdd.length) return [];
+  return { canonical: canonical.join(';'), toAdd };
+}
+
+// Register any `dans_tags` values that aren't already options on the
+// property, appending them so the subsequent contact write validates,
+// and report the spelling that write should actually use (see
+// reconcileDansTags). Returns { added, canonical }.
+async function ensureDansTagsOptions(token, tagsStr) {
+  if (!String(tagsStr || '').trim()) return { added: [], canonical: '' };
+  const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
+  const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
+  const { canonical, toAdd } = reconcileDansTags(existing.map(o => o.value), tagsStr);
+  if (!toAdd.length) return { added: [], canonical };
   const newOptions = toAdd.map((t, i) => ({ label: t, value: t, displayOrder: existing.length + i, hidden: false }));
   const res = await fetch(`${BASE}/crm/v3/properties/contacts/dans_tags`, {
     method: 'PATCH',
@@ -492,7 +529,7 @@ async function ensureDansTagsOptions(token, tagsStr) {
   }
   // What was actually registered, so a caller whose retry still fails can
   // say whether the tag reached the property at all.
-  return toAdd;
+  return { added: toAdd, canonical };
 }
 
 async function getContactsByCompany(token, companyName) {
@@ -783,7 +820,8 @@ async function handler(req, res) {
       if (!createRes.ok && typeof cleanProps.dans_tags === 'string') {
         const peekText = await createRes.clone().text();
         if (isDansTagsOptionError(createRes.status, peekText, cleanProps.dans_tags)) {
-          await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          const { canonical } = await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          if (canonical && canonical !== cleanProps.dans_tags) cleanProps.dans_tags = canonical;
           createRes = await retryAfterRegisteringTags(postContact, cleanProps.dans_tags);
         }
       }
@@ -858,22 +896,30 @@ async function handler(req, res) {
       if (!updateRes.ok) {
         const text = await updateRes.text();
         // Self-heal the "tag was not one of the allowed options" case:
-        // register the missing dans_tags option(s) on the property, then
-        // retry the write once. Lets curated UI tags (e.g. "Met In
-        // Person") save without a manual HubSpot property edit.
+        // reconcile the tags against the property's actual options —
+        // registering what's new, and adopting HubSpot's spelling for
+        // what already exists under a different one — then retry.
         if (typeof cleanProps.dans_tags === 'string' && isDansTagsOptionError(updateRes.status, text, cleanProps.dans_tags)) {
-          const registered = await ensureDansTagsOptions(token, cleanProps.dans_tags);
+          const sent = cleanProps.dans_tags;
+          const { added, canonical } = await ensureDansTagsOptions(token, sent);
+          // patchContact reads cleanProps at call time, so the retry goes
+          // out with the corrected spelling.
+          if (canonical && canonical !== sent) cleanProps.dans_tags = canonical;
           updateRes = await retryAfterRegisteringTags(patchContact, cleanProps.dans_tags);
           if (!updateRes.ok) {
             const retryText = await updateRes.text();
             // Which stage failed is the whole diagnosis, and it used to be
-            // invisible: "the option was never registered" and "it was
-            // registered and HubSpot still refused" arrived as the same
-            // raw 400.
+            // invisible: "the option was never registered", "it was
+            // registered and HubSpot still refused", and "the spelling was
+            // corrected and it still refused" all arrived as the same raw
+            // 400.
             const stillRejected = rejectedOptionValues(retryText, 'dans_tags');
             const detail = describeHubSpotError(updateRes.status, retryText);
-            throw new Error(registered.length
-              ? `Added ${registered.map(t => `“${t}”`).join(', ')} to the Dan's Tags allowed values, but HubSpot still rejected `
+            const did = [];
+            if (added.length) did.push(`added ${added.map(t => `“${t}”`).join(', ')} to the Dan's Tags allowed values`);
+            if (canonical !== sent) did.push(`rewrote the tags to the spelling HubSpot already has (“${canonical}”)`);
+            throw new Error(did.length
+              ? `${did.join(' and ')}, but HubSpot still rejected `
                 + `${stillRejected.length ? stillRejected.map(t => `“${t}”`).join(', ') : 'the write'}. ${detail}`
               : `Update failed ${updateRes.status}: ${detail}`);
           }
@@ -1108,4 +1154,4 @@ export default withAuth(handler);
 
 // Exported for scripts/dansTagsOptionError.test.mjs. Vercel only routes the
 // default export, so the extra names don't change the endpoint.
-export { isDansTagsOptionError, normalizeDansTagsForHubSpot };
+export { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags };
