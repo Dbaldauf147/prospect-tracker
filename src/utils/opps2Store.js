@@ -394,6 +394,43 @@ export async function setOppField(userId, oppId, field, value) {
   return next;
 }
 
+/**
+ * Several fields on ONE opp in a single load/save cycle.
+ *
+ * setOppField reloads and resaves the whole dataset per call, so a pair
+ * of them is two full rewrites — and, worse, two chances to stop
+ * half-done. Fields that only make sense together must not be able to
+ * land separately: 'Next Steps' and its parallel '_nextStepsWaiting'
+ * array are index-aligned, and an opp left holding one without the other
+ * shows every step below the break against somebody else's Waiting On.
+ *
+ * Each field is stamped individually, same as setOppField, so the
+ * field-level cross-device merge still resolves them one by one.
+ */
+export async function setOppFields(userId, oppId, patch) {
+  const entries = Object.entries(patch || {});
+  if (entries.length === 0) return null;
+  const data = await loadOpps2Newest(userId);
+  if (!data || !Array.isArray(data.records)) {
+    throw new Error('Opps data has not loaded yet.');
+  }
+  let found = false;
+  const records = data.records.map((r) => {
+    if (String(r?._id) !== String(oppId)) return r;
+    found = true;
+    const now = Date.now();
+    const prevStamps = (r._fieldUpdatedAt && typeof r._fieldUpdatedAt === 'object') ? r._fieldUpdatedAt : null;
+    const stamps = { ...(prevStamps || {}) };
+    for (const [field] of entries) stamps[field] = now;
+    return { ...r, ...Object.fromEntries(entries), _rowUpdatedAt: now, _fieldUpdatedAt: stamps };
+  });
+  if (!found) throw new Error(`Opp #${oppId} not found on Opps.`);
+  const next = { ...data, records };
+  await saveOpps2Cache(next);
+  await trySaveOpps2ToFirestore(userId, next);
+  return next;
+}
+
 export async function setOppBfoLink(userId, oppId, bfoLink) {
   return setOppField(userId, oppId, 'BFO Link', bfoLink);
 }

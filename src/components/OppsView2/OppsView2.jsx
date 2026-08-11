@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { DataTable } from '../common/DataTable';
+import { textToBulletItems, encodeNoteLine } from '../../utils/nextSteps';
 import { DateCell } from '../common/DateCell';
 import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 import {
@@ -960,28 +961,13 @@ function AddCompanyCombobox({ suggestions, onCommit, placeholder = 'Add company�
 // components/common/DateCell so the Deals tab renders dates the same way.
 // Re-exported through the import below; all call sites here are unchanged.
 
-// Break a free-text Next Steps cell into bullet items. Splits on
-// newlines, strips any leading marker the user typed (- * • 1. etc.),
-// and drops empty lines so the popup / hover render cleanly even when
-// the source was loose prose.
-function textToBulletItems(text) {
-  return String(text ?? '')
-    .split(/\r?\n+/)
-    .map(line => line.replace(/^\s*(?:[-*•·▪►]|\d+[.)])\s*/, '').replace(NOTE_LINEBREAK_RE, '\n').trim())
-    .filter(Boolean);
-}
-
-// Hard line breaks the user types *inside* a single Next Step box are
-// stored as U+2028 (LINE SEPARATOR) rather than a plain "\n" so they
-// survive the round-trip. textToBulletItems splits steps on "\n", so a
-// "\n" inside one box would otherwise explode it into several boxes (and
-// desync the parallel _nextStepsWaiting array). U+2028 still renders as a
-// line break in the pre-formatted table cell, so the box looks the same.
-const NOTE_LINEBREAK = String.fromCharCode(0x2028);
-const NOTE_LINEBREAK_RE = new RegExp(NOTE_LINEBREAK, "g");
-// Collapse a single box's internal newlines to U+2028 before steps are
-// joined with "\n", so the box stays one step on reload.
-const encodeNoteLine = (note) => String(note ?? '').trim().replace(/\r?\n/g, NOTE_LINEBREAK);
+// The Next Steps storage format — how a cell splits into bullet items,
+// and how a step's own line breaks survive the round trip — now lives in
+// utils/nextSteps.js. It moved there when a call recording's follow-ups
+// needed to append to the same field: two copies of a storage format is
+// a drift waiting to happen, and the parallel _nextStepsWaiting array
+// only stays aligned while everything writing the field agrees on what a
+// line is. Imported at the top of this file; call sites here unchanged.
 
 // Calendar days from today to the given ISO date. Positive = future,
 // negative = past. Returns null for blank / unparseable dates.
