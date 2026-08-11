@@ -1325,10 +1325,12 @@ function KeyContactsViewInner({
         + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
     });
     setMassProcessing(false);
-    if (errors === 0) {
-      setMassTags(new Set());
-      setMassSelected(new Set());
-    }
+    // Clear the chosen tags, keep the chosen contacts. Tagging a group is
+    // rarely one tag — add EU, then Decision Maker, then Dan Key Target —
+    // and dropping the selection on every apply meant re-ticking the whole
+    // list between them. The tags themselves do clear, so the next apply
+    // can't repeat the last one by accident.
+    if (errors === 0) setMassTags(new Set());
   }
 
   async function handleMassApply() {
@@ -1361,8 +1363,11 @@ function KeyContactsViewInner({
       message: `Updated ${updated} contact${updated === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`,
     });
     setMassProcessing(false);
+    // Same as the tag path: the typed value clears, the selection stays, so
+    // a second field can be set on the same contacts without picking them
+    // again. Hide is the one that still clears — those rows leave the list,
+    // so holding their ids selected would only strand the count.
     setMassValue('');
-    setMassSelected(new Set());
   }
 
   // The contact currently being edited in the in-place modal. We open
