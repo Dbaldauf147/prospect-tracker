@@ -19,10 +19,15 @@ import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 import {
   AGENTS_SETTINGS_KEY,
+  AGENTS_SNOOZE_SETTINGS_KEY,
   AGENTS_RUN_INTERVAL_BUSINESS_DAYS,
+  AGENTS_SNOOZE_DURATIONS,
   agentsDaysSinceRun,
   agentsDaysUntilDue,
   agentsLastRunMs,
+  agentsSnoozeEndAt,
+  agentsSnoozeRemainingLabel,
+  agentsSnoozedUntilMs,
 } from '../../utils/agentsRunReminder';
 import { useAgentsRunDue } from '../../hooks/useAgentsRunDue';
 
@@ -1369,16 +1374,47 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // banner here and the Sidebar's red badge always agree — and marking a run
   // on one device clears it on the others.
   const agentsLastRunAt = settings?.[AGENTS_SETTINGS_KEY] || '';
-  const agentsRunDue = useAgentsRunDue(agentsLastRunAt, !!settings);
+  // "Not now" without claiming a run: while the snooze is live the banner
+  // and the Sidebar dot stay down, then the reminder returns on its own.
+  const agentsSnoozeUntil = settings?.[AGENTS_SNOOZE_SETTINGS_KEY] || '';
+  const agentsRunDue = useAgentsRunDue(agentsLastRunAt, !!settings, agentsSnoozeUntil);
+  const agentsSnoozeUntilMs = agentsSnoozedUntilMs(agentsSnoozeUntil);
+  const agentsSnoozeLeft = agentsSnoozeRemainingLabel(agentsSnoozeUntilMs);
   const agentsDaysSince = agentsDaysSinceRun(agentsLastRunAt);
   const agentsDaysLeft = agentsDaysUntilDue(agentsLastRunAt);
   const agentsLastRunLabel = (() => {
     const ms = agentsLastRunMs(agentsLastRunAt);
     return ms == null ? '' : new Date(ms).toLocaleString();
   })();
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
+  const snoozeMenuRef = useRef(null);
+  useEffect(() => {
+    if (!snoozeMenuOpen) return undefined;
+    const onDown = (e) => {
+      if (!snoozeMenuRef.current?.contains(e.target)) setSnoozeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [snoozeMenuOpen]);
   function markAgentsRan() {
     if (!updateSettings) return;
-    updateSettings({ [AGENTS_SETTINGS_KEY]: new Date().toISOString() });
+    // Clear any snooze alongside the stamp: the run it was deferring has
+    // happened, so leaving it set would swallow the *next* reminder too.
+    updateSettings({
+      [AGENTS_SETTINGS_KEY]: new Date().toISOString(),
+      [AGENTS_SNOOZE_SETTINGS_KEY]: '',
+    });
+  }
+  function snoozeAgentsRun(duration) {
+    setSnoozeMenuOpen(false);
+    if (!updateSettings) return;
+    const end = agentsSnoozeEndAt(duration);
+    if (end == null) return;
+    updateSettings({ [AGENTS_SNOOZE_SETTINGS_KEY]: new Date(end).toISOString() });
+  }
+  function unsnoozeAgentsRun() {
+    if (!updateSettings) return;
+    updateSettings({ [AGENTS_SNOOZE_SETTINGS_KEY]: '' });
   }
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
@@ -2938,13 +2974,62 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               : `Last run ${agentsLastRunLabel} (${agentsDaysSince} day${agentsDaysSince === 1 ? '' : 's'} ago).`}
             {' '}Work through the prompts below, then mark the run to clear this
             alert: it comes back every {AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.
+            {' '}Not now? Snooze it instead &mdash; the run stays owed and the alert
+            comes back when the snooze is up.
           </div>
+          <div className={styles.runAlertActions} ref={snoozeMenuRef}>
+            <button
+              type="button"
+              className={styles.runAlertBtnGhost}
+              onClick={() => setSnoozeMenuOpen(o => !o)}
+              disabled={!updateSettings}
+              aria-haspopup="menu"
+              aria-expanded={snoozeMenuOpen}
+              title="Hide this alert (and the red dot on the Agents tab) for a while, without recording a run."
+            >Snooze &#9662;</button>
+            {snoozeMenuOpen && (
+              <div className={styles.snoozeMenu} role="menu">
+                <div className={styles.snoozeMenuLabel}>Snooze for</div>
+                {AGENTS_SNOOZE_DURATIONS.map(opt => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    role="menuitem"
+                    className={styles.snoozeMenuItem}
+                    onClick={() => snoozeAgentsRun(opt)}
+                    title={`Quiet until ${new Date(agentsSnoozeEndAt(opt)).toLocaleString()}`}
+                  >{opt.label}</button>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              className={styles.runAlertBtn}
+              onClick={markAgentsRan}
+              disabled={!updateSettings}
+              title={`Record that you've run the agent prompts. Clears this alert and the red dot on the Agents tab for ${AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.`}
+            >Agents Ran</button>
+          </div>
+        </div>
+      ) : agentsSnoozeUntilMs != null ? (
+        <div className={styles.runStatus}>
+          <span className={styles.runSnoozeIcon} aria-hidden="true">&#128164;</span>
+          Agent prompts snoozed until {new Date(agentsSnoozeUntilMs).toLocaleString()}
+          {agentsSnoozeLeft && ` (${agentsSnoozeLeft} left)`}
+          {agentsLastRunLabel && ` · last run ${agentsLastRunLabel}`}
           <button
             type="button"
-            className={styles.runAlertBtn}
+            className={styles.runStatusBtn}
+            onClick={unsnoozeAgentsRun}
+            disabled={!updateSettings}
+            title="End the snooze now and bring the reminder back."
+          >Un-snooze</button>
+          <button
+            type="button"
+            className={styles.runStatusBtn}
             onClick={markAgentsRan}
             disabled={!updateSettings}
-            title={`Record that you've run the agent prompts. Clears this alert and the red dot on the Agents tab for ${AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.`}
+            title="Record a run now, ending the snooze and restarting the reminder clock."
           >Agents Ran</button>
         </div>
       ) : (

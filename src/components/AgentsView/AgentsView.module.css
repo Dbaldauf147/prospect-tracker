@@ -626,6 +626,70 @@
 .runAlertBtn:hover:not(:disabled) { background: #B91C1C; }
 .runAlertBtn:disabled { opacity: 0.6; cursor: default; }
 
+/* Snooze + "Agents Ran" sit together on the right of the banner; the
+   wrapper is the positioning context for the Snooze dropdown. */
+.runAlertActions {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.runAlertBtnGhost {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #DC2626;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: #B91C1C;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.runAlertBtnGhost:hover:not(:disabled) { background: #FEF2F2; }
+.runAlertBtnGhost:disabled { opacity: 0.6; cursor: default; }
+
+.snoozeMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 9rem;
+  padding: 0.3rem 0;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+}
+
+.snoozeMenuLabel {
+  padding: 0.15rem 0.6rem 0.3rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #94A3B8;
+}
+
+.snoozeMenuItem {
+  display: block;
+  width: 100%;
+  padding: 0.32rem 0.6rem;
+  border: none;
+  background: none;
+  color: #334155;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.snoozeMenuItem:hover { background: #F1F5F9; }
+
+.runSnoozeIcon { font-size: 0.75rem; }
+
 .runStatus {
   display: flex;
   align-items: center;

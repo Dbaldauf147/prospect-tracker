@@ -9,8 +9,10 @@ const TICK_MS = 15 * 60 * 1000;
 // Sidebar badge and the Agents page so the two can't disagree. `enabled` gates
 // on settings having loaded — an unloaded (empty) settings object has no
 // stamp, which would otherwise read as "due" and flash the badge on every
-// page load.
-export function useAgentsRunDue(lastRunAt, enabled = true) {
+// page load. `snoozedUntil` holds the alert down until it passes; the same
+// tick brings the reminder back when a snooze lapses, so nothing has to
+// schedule its own timer for the expiry.
+export function useAgentsRunDue(lastRunAt, enabled = true, snoozedUntil = '') {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!enabled) return undefined;
@@ -18,5 +20,5 @@ export function useAgentsRunDue(lastRunAt, enabled = true) {
     return () => clearInterval(id);
   }, [enabled]);
   if (!enabled) return false;
-  return isAgentsRunDue(lastRunAt, now);
+  return isAgentsRunDue(lastRunAt, now, snoozedUntil);
 }
