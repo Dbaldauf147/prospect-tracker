@@ -13,7 +13,7 @@ import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
-import { AGENTS_SETTINGS_KEY } from './utils/agentsRunReminder';
+import { AGENTS_SETTINGS_KEY, AGENTS_SNOOZE_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
@@ -101,8 +101,11 @@ function App() {
   // Open (non-snoozed) issue count for the sidebar badge. Shares the same
   // hook the Issues tab uses so the badge and the tab never disagree.
   // Is the Agents tab's "run the prompts" reminder up? Gated on settings
-  // having loaded so the badge doesn't flash before the stamp arrives.
-  const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
+  // having loaded so the badge doesn't flash before the stamp arrives, and
+  // held down while the alert is snoozed so the dot and the banner agree.
+  const agentsRunDue = useAgentsRunDue(
+    settings[AGENTS_SETTINGS_KEY], settingsLoaded, settings[AGENTS_SNOOZE_SETTINGS_KEY],
+  );
   // Opps whose Call In is at (or past) zero and that aren't marked "No
   // Further Action Today" — the calls still owed, badged on the Opps nav
   // item. Reads the Opps 2 store directly since those records never reach

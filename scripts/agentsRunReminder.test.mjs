@@ -14,12 +14,17 @@
 // reads off the viewer's own calendar, so a UTC-anchored test would drift.
 import {
   AGENTS_RUN_INTERVAL_BUSINESS_DAYS,
+  AGENTS_SNOOZE_DURATIONS,
   addBusinessDays,
   agentsLastRunMs,
   agentsRunDueAt,
   isAgentsRunDue,
   agentsDaysSinceRun,
   agentsDaysUntilDue,
+  agentsSnoozeEndAt,
+  agentsSnoozeRemainingLabel,
+  agentsSnoozedUntilMs,
+  isAgentsRunSnoozed,
 } from '../src/utils/agentsRunReminder.js';
 
 let passed = 0, failed = 0;
@@ -98,6 +103,47 @@ eq(agentsDaysUntilDue(iso(fri), at(2026, 8, 7, 18, 34).getTime()), 4,
   'marking a run Friday means four calendar days of quiet');
 eq(agentsDaysUntilDue(iso(thu), at(2026, 8, 11, 12, 0).getTime()), 0, 'past due clamps to zero');
 eq(agentsDaysUntilDue('', Date.now()), null, 'no stamp, no countdown');
+
+// ---- snoozing the alert -----------------------------------------------------
+
+// A snooze suppresses a due reminder until it lapses, then the reminder is
+// back — the run was deferred, not recorded.
+const mondayEvening = at(2026, 8, 10, 19, 0).getTime();
+const snoozeTwoHours = iso(new Date(mondayEvening + 2 * 3600000));
+eq(isAgentsRunDue(iso(thu), mondayEvening, snoozeTwoHours), false, 'a live snooze holds the alert down');
+eq(isAgentsRunDue(iso(thu), mondayEvening + 3600000, snoozeTwoHours), false, 'still quiet an hour in');
+eq(isAgentsRunDue(iso(thu), mondayEvening + 3 * 3600000, snoozeTwoHours), true,
+  'the alert returns once the snooze lapses');
+eq(isAgentsRunDue('', mondayEvening, snoozeTwoHours), false,
+  'a snooze also quiets the never-marked case');
+eq(isAgentsRunDue(iso(thu), mondayEvening, ''), true, 'no snooze stamp changes nothing');
+eq(isAgentsRunDue(iso(thu), mondayEvening, 'not a date'), true, 'an unparseable snooze is ignored');
+
+// Expiry is read-time, so a stale stamp needs no cleanup to stop counting.
+eq(agentsSnoozedUntilMs(snoozeTwoHours, mondayEvening), mondayEvening + 2 * 3600000,
+  'a live snooze reports its end');
+eq(agentsSnoozedUntilMs(snoozeTwoHours, mondayEvening + 3 * 3600000), null, 'a lapsed snooze reads as none');
+eq(isAgentsRunSnoozed(snoozeTwoHours, mondayEvening), true, 'snoozed while it runs');
+eq(isAgentsRunSnoozed('', mondayEvening), false, 'no stamp, not snoozed');
+
+// Day-length snoozes count business days for the same reason the interval
+// does: a Friday "1 day" lands Monday, not Saturday. Hour options are plain
+// clock time.
+const byKey = (key) => AGENTS_SNOOZE_DURATIONS.find(d => d.key === key);
+eq(agentsSnoozeEndAt(byKey('4h'), fri.getTime()), fri.getTime() + 4 * 3600000, 'four hours is four hours');
+eq(label(new Date(agentsSnoozeEndAt(byKey('1d'), fri.getTime()))), label(at(2026, 8, 10)),
+  'a Friday one-day snooze ends Monday');
+eq(label(new Date(agentsSnoozeEndAt(byKey('1w'), thu.getTime()))), label(at(2026, 8, 13)),
+  'a week is five business days — the same weekday next week');
+eq(agentsSnoozeEndAt(null, fri.getTime()), null, 'no duration, no end');
+eq(agentsSnoozeEndAt({ key: 'bogus' }, fri.getTime()), null, 'an unrecognised duration has no end');
+
+// Remaining-time copy rounds up, so it never reads as "0 left".
+eq(agentsSnoozeRemainingLabel(mondayEvening + 30 * 60000, mondayEvening), 'under an hour', 'sub-hour copy');
+eq(agentsSnoozeRemainingLabel(mondayEvening + 3.2 * 3600000, mondayEvening), '4 hours', 'hours round up');
+eq(agentsSnoozeRemainingLabel(mondayEvening + 26 * 3600000, mondayEvening), '2 days', 'days round up');
+eq(agentsSnoozeRemainingLabel(null, mondayEvening), '', 'no snooze, no copy');
+eq(agentsSnoozeRemainingLabel(mondayEvening - 1000, mondayEvening), '', 'a lapsed snooze has no copy');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
