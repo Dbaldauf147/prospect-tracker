@@ -11,6 +11,7 @@ import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
+import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
 import { AGENTS_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
@@ -102,6 +103,11 @@ function App() {
   // Is the Agents tab's "run the prompts" reminder up? Gated on settings
   // having loaded so the badge doesn't flash before the stamp arrives.
   const agentsRunDue = useAgentsRunDue(settings[AGENTS_SETTINGS_KEY], settingsLoaded);
+  // Opps whose Call In is at (or past) zero and that aren't marked "No
+  // Further Action Today" — the calls still owed, badged on the Opps nav
+  // item. Reads the Opps 2 store directly since those records never reach
+  // App state; null until the first read lands.
+  const oppsDueCount = useOppsCallInDue(user?.uid);
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still
@@ -340,6 +346,7 @@ function App() {
         onToggleDailyLog={() => updateSettings({ dailyLogEnabled: !dailyLogEnabled })}
         onToggleWhatToDoToday={() => updateSettings({ whatToDoTodayEnabled: !whatToDoTodayEnabled })}
         issuesCount={openIssuesCount}
+        oppsDueCount={oppsDueCount}
         agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}

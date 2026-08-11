@@ -232,7 +232,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -330,6 +330,17 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#36;</span>
           Opps
+          {/* Calls owed right now: Call In at or below zero, nothing in the
+              "No Further Action Today" column. Same red badge the Issues
+              item uses. Hidden at 0 (and while the count is still null,
+              i.e. the Opps store hasn't answered yet) so a clear day reads
+              as clear. */}
+          {oppsDueCount > 0 && (
+            <span
+              className={styles.navBadge}
+              title={`${oppsDueCount} opp${oppsDueCount === 1 ? '' : 's'} due to be called (Call In 0 or less, no "No Further Action Today" mark)`}
+            >{oppsDueCount > 99 ? '99+' : oppsDueCount}</span>
+          )}
         </button>
         <button
           className={view === 'dropdowns' ? styles.navItemActive : styles.navItem}
