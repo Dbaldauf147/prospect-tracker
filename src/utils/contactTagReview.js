@@ -29,6 +29,27 @@ export const TAG_SCORE_EXCLUDED = new Set(['hide', 'left', 'test']);
 // it as a dans_tags value, so it never appears in the table or the score.
 export const MET_IN_PERSON_TAG = 'Met In Person';
 
+// The answers that live locally, because HubSpot can only say "tagged" or
+// "not tagged". A tag on the contact IS the Yes; these are the three reasons
+// a tag can be off:
+//
+//   no       doesn't apply to this person
+//   unsure   haven't worked it out yet
+//   notsold  applies to them, but their company hasn't been sold on it yet
+//
+// Not sold is the hold-off: the person really does own that area, so a No
+// would be wrong, but until the account is sold on it they shouldn't turn up
+// in a general pull of everyone who owns it. Keeping it off the HubSpot tag
+// is what makes the hold-off actually hold — the tag filters everywhere read
+// the tag itself — while the answer recorded here keeps the fact that they
+// own it, and makes "who do we still need to sell on this?" a list you can
+// pull up from the tag status filter.
+export const LOCAL_TAG_VERDICTS = new Set(['no', 'unsure', 'notsold']);
+
+export function isLocalTagVerdict(v) {
+  return LOCAL_TAG_VERDICTS.has(v);
+}
+
 export function contactTagList(contact) {
   return String(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '')
     .split(';')
@@ -49,7 +70,7 @@ export function scoredTagOptions(tagOptions = TAG_OPTIONS) {
 /**
  * { answered, total, pct, done } for one contact.
  *
- * `review` is that contact's local answer map ({ tag: 'no' | 'unsure' }).
+ * `review` is that contact's local answer map ({ tag: LOCAL_TAG_VERDICTS }).
  * A "yes" is never read from there — it's read off the contact's own tags,
  * so a tag changed in a bulk edit or in HubSpot itself can't leave a stale
  * yes behind. `total` of 0 yields 0%, not a division by zero.
@@ -60,7 +81,7 @@ export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
   const marks = (review && typeof review === 'object') ? review : {};
   const markedLower = new Set(
     Object.entries(marks)
-      .filter(([, v]) => v === 'no' || v === 'unsure')
+      .filter(([, v]) => isLocalTagVerdict(v))
       .map(([k]) => String(k).toLowerCase()),
   );
   let answered = 0;

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, isLocalTagVerdict } from '../../utils/contactTagReview';
 import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
@@ -748,9 +748,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
     metCid != null ? !!contactInvitedToLouisville[metCid] : false
   );
-  // Per-tag review answers that HubSpot can't hold: { tag: 'no' | 'unsure' }.
-  // "Yes" isn't in here — that's the tag itself, read off the contact — so
-  // this map only ever records the two verdicts an absent tag can't
+  // Per-tag review answers that HubSpot can't hold: { tag: 'no' | 'unsure' |
+  // 'notsold' }. "Yes" isn't in here — that's the tag itself, read off the
+  // contact — so this map only ever records the verdicts an absent tag can't
   // distinguish between.
   const [tagVerdicts, setTagVerdicts] = useState(() =>
     (metCid != null && contactTagReview[metCid] && typeof contactTagReview[metCid] === 'object')
@@ -1021,11 +1021,16 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // Set one tag's review verdict.
   //
   // Yes is the tag itself — it goes to HubSpot, which only ever holds tags
-  // that apply. No and Not sure are answers HubSpot has no way to express
-  // (an absent tag means "doesn't apply", "haven't looked" and "don't know"
-  // all at once), so they're kept locally against the contact, and only the
-  // Yes set is ever pushed. Clicking the current answer again clears it back
-  // to unreviewed.
+  // that apply. No, Not sure and Not sold are answers HubSpot has no way to
+  // express (an absent tag means "doesn't apply", "haven't looked", "don't
+  // know" and "holding off" all at once), so they're kept locally against the
+  // contact, and only the Yes set is ever pushed. Clicking the current answer
+  // again clears it back to unreviewed.
+  //
+  // Not sold takes the tag off like the other two, and that's the point: the
+  // person owns the area but their company hasn't bought it yet, so a pull of
+  // everyone who owns it shouldn't hand them over as workable. The answer
+  // here remembers that they do own it.
   function setTagVerdict(tag, verdict) {
     const current = tagVerdicts[tag] || (checkedTags.has(tag) ? 'yes' : '');
     const next = current === verdict ? '' : verdict;
@@ -1044,7 +1049,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     // contradicting HubSpot.
     setTagVerdicts(prev => {
       const map = { ...prev };
-      if (next === 'no' || next === 'unsure') map[tag] = next;
+      if (isLocalTagVerdict(next)) map[tag] = next;
       else delete map[tag];
       const cid = contact.id || contact.vid;
       if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
@@ -1882,11 +1887,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
             </button>
             {tagsOpen && (() => {
-              // One row per tag, answered Yes / No / Not sure. Yes is the tag
-              // and goes to HubSpot; the other two are recorded here only, so
-              // a tag left off can say WHY it's off — decided against, or not
-              // yet known — rather than being indistinguishable from one
-              // nobody has looked at.
+              // One row per tag, answered Yes / No / Not sure / Not sold. Yes
+              // is the tag and goes to HubSpot; the other three are recorded
+              // here only, so a tag left off can say WHY it's off — decided
+              // against, not yet known, or true of the person but not yet
+              // sold to their company — rather than being indistinguishable
+              // from one nobody has looked at.
               const verdictOf = (tag) => (checkedTags.has(tag) ? 'yes' : (tagVerdicts[tag] || ''));
               // Hide, Left and Test are housekeeping, not classifications:
               // the first two control whether a contact surfaces at all and
@@ -1899,9 +1905,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
               const done = total > 0 && answered === total;
               const CHOICES = [
-                { key: 'yes',    label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' } },
-                { key: 'no',     label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' } },
-                { key: 'unsure', label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' } },
+                { key: 'yes',     label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' },
+                  tip: (tag) => `Tag ${tag} on this contact (pushes to HubSpot)` },
+                { key: 'no',      label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
+                  tip: (tag) => `Record ${tag} as “No” — doesn't apply to this person. Kept here, not sent to HubSpot` },
+                { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+                  tip: (tag) => `Record ${tag} as “Not sure” — haven't worked it out yet. Kept here, not sent to HubSpot` },
+                { key: 'notsold', label: 'Not sold', on: { bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3' },
+                  tip: (tag) => `Hold off on ${tag} — they own it, but their company hasn't been sold on it yet. Keeps the tag off, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
               ];
               return (
                 <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
@@ -1912,7 +1923,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     fontSize: '0.68rem', fontWeight: 700,
                     color: done ? '#166534' : '#475569',
                   }}>
-                    <span title={`${answered} of ${total} scored tags have an answer. Hide, Left and Test are excluded — they're housekeeping, not classifications. "Not sure" counts as answered.`}>
+                    <span title={`${answered} of ${total} scored tags have an answer. Hide, Left and Test are excluded — they're housekeeping, not classifications. "Not sure" and "Not sold" both count as answered.`}>
                       Tagged {pct}%
                       <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
                         {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
@@ -1926,7 +1937,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                         <tr style={{ background: '#F1F5F9', color: '#475569' }}>
                           <th style={{ textAlign: 'left', padding: '0.3rem 0.7rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
                           {CHOICES.map(c => (
-                            <th key={c.key} style={{ width: 74, textAlign: 'center', padding: '0.3rem 0.2rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{c.label}</th>
+                            <th key={c.key} style={{ width: 66, textAlign: 'center', padding: '0.3rem 0.2rem', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>{c.label}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1960,11 +1971,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                                       onClick={() => setTagVerdict(tag, c.key)}
                                       title={active
                                         ? `${tag}: ${c.label} — click again to clear`
-                                        : (c.key === 'yes'
-                                          ? `Tag ${tag} on this contact (pushes to HubSpot)`
-                                          : `Record ${tag} as “${c.label}” — kept here, not sent to HubSpot`)}
+                                        : c.tip(tag)}
                                       style={{
-                                        width: 58, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
+                                        width: 54, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
                                         fontFamily: 'inherit', fontSize: '0.68rem',
                                         fontWeight: active ? 700 : 500,
                                         border: `1px solid ${active ? c.on.border : '#E2E8F0'}`,

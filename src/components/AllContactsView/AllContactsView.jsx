@@ -17,7 +17,7 @@ import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
 import { isCancellingForSure } from '../../utils/serviceCoverage';
-import { tagReviewScore } from '../../utils/contactTagReview';
+import { tagReviewScore, isLocalTagVerdict } from '../../utils/contactTagReview';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -52,22 +52,25 @@ function contactTagList(c) {
     .filter(Boolean);
 }
 
-// The three answers the contact popup records against a tag, in the order
+// The four answers the contact popup records against a tag, in the order
 // the filter offers them.
 const TAG_STATUSES = [
-  { key: 'yes',    label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag' },
-  { key: 'unsure', label: 'Not sure', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Contacts answered "Not sure" for this tag in the contact popup' },
-  { key: 'no',     label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
+  { key: 'yes',     label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag' },
+  { key: 'unsure',  label: 'Not sure', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Contacts answered "Not sure" for this tag in the contact popup' },
+  { key: 'no',      label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
+  { key: 'notsold', label: 'Not sold', bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3', tip: 'Contacts who own this area but whose company hasn\'t been sold on it yet — held off in the contact popup, so they stay out of a plain pull of this tag. This is the list of accounts still to sell on it' },
 ];
 
 // One contact's answer for one tag, read the same way the contact popup
 // reads it: the tag being present IS the Yes — HubSpot only ever holds tags
-// that apply — while No and Not sure are answers HubSpot can't express and
-// live in settings.contactTagReview. No answer at all returns ''.
+// that apply — while No, Not sure and Not sold are answers HubSpot can't
+// express and live in settings.contactTagReview. No answer at all returns ''.
 //
 // That asymmetry is why this page could only ever show the Yes contacts
-// under a tag: answering No takes the tag off, so the contact left the tag
-// filter along with the answer.
+// under a tag: every other answer takes the tag off, so the contact left the
+// tag filter along with the answer. Not sold leans on it deliberately — the
+// hold-off works precisely because the tag comes off, and the status pill is
+// how you get that contact back.
 function contactTagStatus(c, tag, reviewMap) {
   if (!tag) return '';
   const lower = tag.toLowerCase();
@@ -79,7 +82,7 @@ function contactTagStatus(c, tag, reviewMap) {
   // for the same reason the tag filter itself does.
   for (const [k, v] of Object.entries(answers)) {
     if (k.toLowerCase() !== lower) continue;
-    return (v === 'no' || v === 'unsure') ? v : '';
+    return isLocalTagVerdict(v) ? v : '';
   }
   return '';
 }
@@ -579,8 +582,22 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // the most contacts use (ties broken alphabetically, so the label doesn't
   // hinge on cache order). Matching is case-insensitive either way — the
   // spelling only decides what the dropdown reads.
+  //
+  // A tag someone has been answered No / Not sure / Not sold on is offered
+  // too, even with nobody left carrying it. Every one of those answers takes
+  // the tag off, so a list built from carriers alone would drop the tag out
+  // of the dropdown at exactly the moment the answers become worth looking
+  // at — you could hold a contact off Procurement and then have no way to
+  // pick Procurement and see who you're holding. The count stays the number
+  // of contacts CARRYING the tag, so it keeps meaning the same thing; the
+  // status pills below break out the rest once a tag is chosen.
   const tagOptions = useMemo(() => {
     const byKey = new Map();
+    const touch = (key) => {
+      let hit = byKey.get(key);
+      if (!hit) { hit = { count: 0, spellings: new Map() }; byKey.set(key, hit); }
+      return hit;
+    };
     for (const c of hubspotContacts) {
       if (!rosterSelector(c)) continue;
       const seenHere = new Set();
@@ -589,10 +606,22 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         // A tag repeated within one contact still only counts once.
         if (seenHere.has(key)) continue;
         seenHere.add(key);
-        let hit = byKey.get(key);
-        if (!hit) { hit = { count: 0, spellings: new Map() }; byKey.set(key, hit); }
+        const hit = touch(key);
         hit.count += 1;
         hit.spellings.set(tag, (hit.spellings.get(tag) || 0) + 1);
+      }
+      const cid = c?.id ?? c?.vid;
+      const answers = cid == null ? null : tagReviewMap?.[cid];
+      if (!answers || typeof answers !== 'object') continue;
+      for (const [tag, v] of Object.entries(answers)) {
+        if (!isLocalTagVerdict(v)) continue;
+        const key = String(tag).toLowerCase();
+        // Registers the spelling without a count — these contacts don't carry
+        // the tag, and saying they do would contradict the table. The half
+        // weight only breaks spelling ties: any contact actually wearing the
+        // tag outvotes an answer for how the dropdown spells it.
+        const hit = touch(key);
+        hit.spellings.set(tag, (hit.spellings.get(tag) || 0) + 0.5);
       }
     }
     return [...byKey.values()]
@@ -602,7 +631,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0],
       }))
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-  }, [hubspotContacts, rosterSelector]);
+  }, [hubspotContacts, rosterSelector, tagReviewMap]);
 
   // The tag actually in force. A tag that stops existing — retagged from the
   // bulk editor, or the cache reloaded without it — falls back to no filter
@@ -623,7 +652,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // pills don't collapse as you toggle them — same reason the tag dropdown
   // counts before its own gate.
   const tagStatusCounts = useMemo(() => {
-    const out = { yes: 0, unsure: 0, no: 0 };
+    const out = { yes: 0, unsure: 0, no: 0, notsold: 0 };
     if (!activeTag) return out;
     for (const c of hubspotContacts) {
       if (!rosterSelector(c)) continue;
@@ -679,7 +708,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No or Not sure recorded against every scored tag counts as answered.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
