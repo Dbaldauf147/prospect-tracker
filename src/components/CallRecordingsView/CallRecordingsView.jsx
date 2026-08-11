@@ -65,7 +65,8 @@ import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { runGranolaSync } from '../../utils/runGranolaSync';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
-import { setOppField } from '../../utils/opps2Store';
+import { setOppFields } from '../../utils/opps2Store';
+import { nextStepLinesFromCall, appendNextSteps } from '../../utils/nextSteps';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
   filterByOppTag, oppTagCounts, isAutoNa, autoNaPatch, OPP_TAG_FILTERS,
@@ -1541,16 +1542,28 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     persist(recordingId, { prospectId: '', company: '', oppId: '', oppLabel: '' });
   }
 
-  function tagOpp(recordingId, opp) {
+  async function tagOpp(recordingId, opp) {
     const rec = visible.find(r => r.id === recordingId);
-    persist(recordingId, {
+    setOppPickerFor(null);
+    const saved = await persist(recordingId, {
       ...(rec ? metaFor(rec) : {}),
       ...tagOppPatch(opp, {
         label: oppLabel(opp),
         company: recordsRef.current[recordingId]?.company || '',
       }),
     });
-    setOppPickerFor(null);
+    // Saying which deal this call belongs to is what makes its follow-ups
+    // that deal's next steps, so they go on now rather than waiting for a
+    // second button. Nothing happens when the call hasn't been summarised
+    // yet — the summary's own push picks them up then.
+    if (!saved?.oppId) return;
+    try {
+      await pushNextStepsOnTag(recordingId, saved);
+    } catch (err) {
+      // The tag itself is saved; only the copy onto the opp failed. Say
+      // which, so the user doesn't re-tag chasing a step that landed.
+      setErrorFor(recordingId, `Tagged, but the next steps didn’t reach the opp: ${err?.message || err}`);
+    }
   }
 
   /**
@@ -1686,15 +1699,68 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
     if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
 
-    await setOppField(uid, oppId, 'Notes', mergeIntoNotes(opp['Notes'], block, recordingId));
+    const patch = { Notes: mergeIntoNotes(opp['Notes'], block, recordingId) };
     // "Last Spoke" is the date the call happened, not today — a call
     // transcribed a week late shouldn't read as a fresh conversation.
     const when = record?.recordedAt ? new Date(record.recordedAt) : null;
     if (when && !Number.isNaN(when.getTime())) {
-      const stamp = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
-      await setOppField(uid, oppId, 'Last Spoke', stamp);
+      patch['Last Spoke'] = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
     }
-    return persist(recordingId, { pushedToOppAt: new Date().toISOString() });
+
+    // The call's follow-ups, onto the opp's Next Steps checklist — the
+    // column Opps 2 shows as "Notes", which is where the rep actually
+    // works from. The summary block above lands in the Memo field and is
+    // prose about the call; this is the list of what to do next.
+    const steps = appendNextSteps(
+      opp['Next Steps'], opp['_nextStepsWaiting'], nextStepLinesFromCall(record),
+    );
+    if (steps.added > 0) {
+      patch['Next Steps'] = steps.text;
+      patch['_nextStepsWaiting'] = steps.waiting;
+    }
+
+    // One write: the steps and their Waiting On array are index-aligned,
+    // and an opp holding one without the other reads every step below
+    // the break against the wrong Waiting On.
+    await setOppFields(uid, oppId, patch);
+    return persist(recordingId, {
+      pushedToOppAt: new Date().toISOString(),
+      nextStepsPushed: steps.added,
+    });
+  }, [uid, persist]);
+
+  /**
+   * The call's next steps onto the opp it was just tagged to.
+   *
+   * Tagging is the moment the user says which deal a call belongs to, so
+   * it is the moment its follow-ups become that deal's to-do list. This
+   * runs on its own rather than through pushSummaryToOpp because the two
+   * push different things for different reasons: that one writes AI prose
+   * into the Memo field and is opt-in for exactly that reason, while
+   * these are the actions off the call and are what was asked for.
+   *
+   * Silent when there is nothing to add — a call tagged before it was
+   * summarised has no steps yet, and the summary's own push picks them
+   * up later.
+   */
+  const pushNextStepsOnTag = useCallback(async (recordingId, record) => {
+    const oppId = record?.oppId;
+    if (!oppId) return;
+    const lines = nextStepLinesFromCall(record);
+    if (lines.length === 0) return;
+
+    const cache = await loadOppsFromCache();
+    const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
+    if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
+
+    const steps = appendNextSteps(opp['Next Steps'], opp['_nextStepsWaiting'], lines);
+    if (steps.added === 0) return;
+    await setOppFields(uid, oppId, {
+      'Next Steps': steps.text,
+      _nextStepsWaiting: steps.waiting,
+    });
+    await persist(recordingId, { nextStepsPushed: steps.added });
+    return steps.added;
   }, [uid, persist]);
 
   async function summarize(rec) {
@@ -2764,6 +2830,16 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 {stored?.pushedToOppAt && (
                   <div className={styles.pushedNote}>
                     Pushed to {stored.oppLabel || 'the opp'} on {fmtWhen(stored.pushedToOppAt)}.
+                  </div>
+                )}
+                {/* Steps appearing on an opp the user didn't type them
+                    into should be traceable to the call that wrote them.
+                    Shown on its own because it can happen at tag time,
+                    with no summary push behind it. */}
+                {stored?.nextStepsPushed > 0 && (
+                  <div className={styles.pushedNote}>
+                    {stored.nextStepsPushed} next step{stored.nextStepsPushed === 1 ? '' : 's'} added to
+                    {' '}{stored.oppLabel || 'the opp'}’s Notes.
                   </div>
                 )}
 

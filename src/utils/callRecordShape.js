@@ -105,6 +105,12 @@ export function emptyRecord(recordingId) {
     summarizedAt: null,
     // --- write-back ---
     pushedToOppAt: null,
+    // How many of this call's follow-ups were appended to the opp's Next
+    // Steps checklist. Stored so the card can say it: steps turning up on
+    // an opp the user never typed them into should be traceable to the
+    // call that put them there. Zero means the call had none to give, or
+    // the opp already had every one of them.
+    nextStepsPushed: 0,
     createdAt: null,
     updatedAt: null,
   };
