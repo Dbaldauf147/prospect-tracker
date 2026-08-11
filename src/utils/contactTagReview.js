@@ -12,10 +12,19 @@
 
 // The tag vocabulary. Lives here rather than in the popup so a page that
 // only wants the score doesn't have to import the popup to get it.
+//
+// NAM Only sits next to EU: both say what a contact's remit covers, and
+// they're the two the rest of the app's regions collapse to. It's a scored
+// tag like EU, so answering it is part of working a contact out — which does
+// mean every Tagged % is now out of one more question than before.
+//
+// A value HubSpot's dans_tags enumeration doesn't have yet isn't a problem:
+// the first contact saved with it gets a 400, and api/hubspot.js registers
+// the option on the property and retries (see ensureDansTagsOptions).
 export const TAG_OPTIONS = [
   'ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning',
   'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker',
-  'Primary Point of Contact', 'Test', 'EU', 'Hide', 'Left',
+  'Primary Point of Contact', 'Test', 'NAM Only', 'EU', 'Hide', 'Left',
 ];
 
 // Tags left out of the score. Hide and Left decide whether a contact appears
