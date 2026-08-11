@@ -5,6 +5,7 @@
 // The Clients-tab "Days Until" computation lives here so the Issues tab
 // and the Clients tab agree on what's expired — there's one definition
 // of soonest expiration, not two that can drift apart.
+import { RENEWAL_WARNING_DAYS } from './renewalWindow';
 import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
@@ -111,12 +112,10 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
   return issues;
 }
 
-// A client whose soonest renewal falls inside this many days without a
-// Status set is surfaced as an issue — mirrors the "needs a status" red
-// row tint on the Clients tab (ClientsView's RENEWAL_WARNING_DAYS).
-// Exported so the Prospecting ladder can name the same window in the text
-// it shows for the renewals step.
-export const RENEWAL_WARNING_DAYS = 270;
+// The renewal window itself lives in renewalWindow.js — see the note
+// there. Re-exported so this stays the import site everything already
+// uses.
+export { RENEWAL_WARNING_DAYS };
 
 // A Clients-tab Status cell counts as "unset" when it's blank or just a
 // dash placeholder. Matches the noStatus check in ClientsView.

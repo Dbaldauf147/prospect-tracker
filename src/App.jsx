@@ -471,6 +471,7 @@ function App() {
               onSelectProspect={handleSelect}
               cdmName={cdmName}
               settings={settings}
+              updateSettings={updateSettings}
             />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
