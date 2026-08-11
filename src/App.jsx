@@ -469,6 +469,8 @@ function App() {
               serviceGaps={prospectingServiceGaps}
               prospects={dataLoading ? null : prospects}
               onSelectProspect={handleSelect}
+              cdmName={cdmName}
+              settings={settings}
             />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />

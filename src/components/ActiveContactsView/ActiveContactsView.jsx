@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { useAuth } from '../../contexts/AuthContext';
+import { FREE_MAIL, makeActiveSelector } from '../../utils/contactRosters';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -21,31 +22,6 @@ const WINDOW_OPTIONS = [
   { key: 365, label: 'Last year' },
   { key: 0,   label: 'Any time' },
 ];
-
-function parseHubspotDate(v) {
-  if (!v) return NaN;
-  const ts = Date.parse(v);
-  if (!Number.isNaN(ts)) return ts;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-// Schneider Electric is the user's own employer — internal coworkers
-// shouldn't show up in the Active Contacts list, so anything matching
-// the company name (or an @se.com / @schneider-electric.com email
-// domain) is excluded regardless of activity.
-const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
-const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
-function isSchneiderContact(c) {
-  if (SCHNEIDER_COMPANY_RE.test(String(c.company || ''))) return true;
-  const email = String(c.email || '').toLowerCase().trim();
-  const at = email.lastIndexOf('@');
-  if (at >= 0) {
-    const domain = email.slice(at + 1).trim();
-    if (SCHNEIDER_DOMAIN_RE.test(domain)) return true;
-  }
-  return false;
-}
 
 // Cheap fuzzy company-name match used to recognize current-client
 // contacts (so they're suppressed from Active Contacts since they
@@ -61,71 +37,6 @@ function companiesMatch(a, b) {
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
   const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
   return strip(na) === strip(nb);
-}
-
-const FREE_MAIL = new Set([
-  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
-  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
-]);
-
-// A contact is "active" when at least one HubSpot email-activity
-// timestamp (sent / replied / opened / clicked / last contacted) sits
-// inside the chosen window. Window of 0 → any timestamp present.
-// Schneider coworkers, "Dan Key Target"-tagged contacts, and contacts
-// whose company is already a current Client are all filtered so this
-// page shows only people who don't already live on Key Contacts or
-// Client Contacts. The selector can be inverted (`mode = 'hidden'`)
-// to surface ONLY hide-tagged active contacts so the user can review
-// what's been suppressed.
-export function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = [], clientDomains = new Set() } = {}) {
-  const cutoff = windowDays > 0 ? Date.now() - windowDays * 86400000 : null;
-  return (c) => {
-    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    const hidden = tags.includes('hide');
-    if (mode === 'hidden') {
-      if (!hidden) return false;
-    } else {
-      if (hidden) return false;
-      // Contacts tagged "Left" belong on the Changed Jobs tab, not
-      // here — even if HubSpot still shows recent activity from
-      // before they departed.
-      if (tags.includes('left')) return false;
-      if (tags.includes('dan key target')) return false;
-    }
-    if (isSchneiderContact(c)) return false;
-    // Drop client-company contacts so they don't double up with the
-    // Client Contacts tab. Match strictly 1:1 on company name (so a
-    // "Marriott International" contact doesn't get suppressed because
-    // a "Marriott" Client prospect exists), with email-domain match
-    // as a fallback when the contact has no company text.
-    if (clientCompanies.length || clientDomains.size) {
-      const company = String(c.company || '').trim();
-      const companyLower = company.toLowerCase();
-      if (company && clientCompanies.some(name => String(name || '').toLowerCase().trim() === companyLower)) return false;
-      if (!company) {
-        const email = (c.email || '').toLowerCase().trim();
-        const at = email.lastIndexOf('@');
-        if (at >= 0) {
-          const domain = email.slice(at + 1).trim();
-          if (domain && !FREE_MAIL.has(domain) && clientDomains.has(domain)) return false;
-        }
-      }
-    }
-    const fields = [
-      c.hs_email_last_send_date,
-      c.hs_sales_email_last_replied,
-      c.hs_email_last_open_date,
-      c.hs_email_last_click_date,
-      c.notes_last_contacted,
-    ];
-    for (const v of fields) {
-      const ts = parseHubspotDate(v);
-      if (Number.isNaN(ts)) continue;
-      if (cutoff === null) return true;
-      if (ts >= cutoff) return true;
-    }
-    return false;
-  };
 }
 
 export function ActiveContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName }) {
