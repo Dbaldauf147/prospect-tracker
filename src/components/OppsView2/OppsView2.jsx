@@ -11077,6 +11077,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             const tgt = String(editingContact?.company || '').trim().toLowerCase();
             return cCompany && tgt && cCompany === tgt;
           })}
+          allContacts={hubspotContacts || []}
           emailDomains={[]}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
         />

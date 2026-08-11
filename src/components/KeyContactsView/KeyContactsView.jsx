@@ -4627,6 +4627,7 @@ function KeyContactsViewInner({
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}
+            allContacts={allHs}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
           />

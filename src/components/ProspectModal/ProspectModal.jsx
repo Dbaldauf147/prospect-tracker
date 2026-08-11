@@ -674,7 +674,7 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -2013,8 +2013,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
         {companyNote && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', fontSize: '0.75rem', color: '#166534' }}>{companyNote}</div>}
         {mergeOpen && (() => {
+          // Same-company contacts first, then every other contact the caller
+          // handed over. A duplicate almost never has the company spelled the
+          // same way — that's usually WHY it's a duplicate — so a pool built
+          // from an exact company match couldn't offer the one contact you
+          // opened this panel to merge. The list stays company-first so the
+          // common case is still what you see before typing, and the search
+          // box below now reaches the rest.
           const allCandidates = (companyContacts || [])
-            .concat((contact && Array.isArray(contact.__allContacts)) ? contact.__allContacts : [])
+            .concat(Array.isArray(allContacts) ? allContacts : [])
             .filter(c => String(c.id || c.vid) !== String(contact.id || contact.vid));
           const seen = new Set();
           const unique = [];
@@ -2136,6 +2143,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // Compare the reportsTo array for this specific contact so changes rerender the picker.
   const prevMgrs = JSON.stringify((prev.contactReportsTo || {})[prevId] || []);
   const nextMgrs = JSON.stringify((next.contactReportsTo || {})[nextId] || []);
+  const allContactsEqual = (prev.allContacts || []).length === (next.allContacts || []).length;
   const companyContactsEqual = (prev.companyContacts || []).length === (next.companyContacts || []).length
     && (prev.companyContacts || []).every((c, i) => (c.id || c.vid) === ((next.companyContacts || [])[i]?.id || (next.companyContacts || [])[i]?.vid));
   // Re-render when this contact's event membership (or any event's
@@ -2144,7 +2152,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
   ]));
   const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
