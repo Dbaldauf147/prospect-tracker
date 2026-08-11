@@ -10,35 +10,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
-import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
-import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
-import { isCancellingForSure } from '../../utils/serviceCoverage';
-import { tagReviewScore, isLocalTagVerdict } from '../../utils/contactTagReview';
-
-const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
-const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-
-const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
-const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
-function isSchneiderContact(c) {
-  if (SCHNEIDER_COMPANY_RE.test(String(c?.company || ''))) return true;
-  const email = String(c?.email || '').toLowerCase().trim();
-  const at = email.lastIndexOf('@');
-  if (at >= 0) {
-    const domain = email.slice(at + 1).trim();
-    if (SCHNEIDER_DOMAIN_RE.test(domain)) return true;
-  }
-  return false;
-}
-
-const FREE_MAIL = new Set([
-  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
-  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
-]);
+import { isLocalTagVerdict } from '../../utils/contactTagReview';
+import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 
 // A contact's Dan's Tags as individual values. Stored as one ';'-joined
 // string (the separator the tag picker and the bulk tag editor write), so
@@ -87,34 +63,16 @@ function contactTagStatus(c, tag, reviewMap) {
   return '';
 }
 
-// Cheap fuzzy company-name compare — used to mirror the dedicated
-// Active page's open-opp gate (an opp Account often differs in
-// suffix / abbreviation from the contact's HubSpot Company text).
-function companiesMatch(a, b) {
-  const na = String(a || '').toLowerCase().trim();
-  const nb = String(b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const longer = na.length >= nb.length ? na : nb;
-  const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const sa = strip(na);
-  const sb = strip(nb);
-  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
-  return false;
-}
-
 export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
 
-  // ---- Cancelling clients ------------------------------------------
-  // A client whose Clients-tab Status says "Cancelling for Sure" is on its
-  // way out, so its people don't belong on a roster of who to work. The
-  // status map is the Clients tab's own store, keyed by company name
-  // lowercased + trimmed, and it's re-read on the same events the Clients
-  // tab fires so a status change here takes effect without a reload.
+  // ---- Rosters -----------------------------------------------------
+  // The Key / Active / Client / Key Prospect gates, mirrored from the
+  // dedicated tabs and shared with the Prospecting tab's Tagged readout
+  // (see utils/contactRosters.js). The Clients-tab status map is read from
+  // that tab's own store and re-read on the events it fires, so a company
+  // switched to "Cancelling for Sure" drops off this page without a reload.
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
   useEffect(() => {
     function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
@@ -126,140 +84,6 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
     };
   }, []);
-
-  // The cancelling accounts, by name and by email domain. Domains come off
-  // the account record (its Email Domain and Website), so a contact whose
-  // HubSpot Company text is spelled differently from the account — the
-  // common case — is caught too. Names alone would miss most of them.
-  const cancellingClients = useMemo(() => {
-    const companies = new Set();
-    const domains = new Set();
-    for (const p of (prospects || [])) {
-      const key = String(p?.company || '').trim().toLowerCase();
-      if (!key || !isCancellingForSure(clientStatusMap[key])) continue;
-      companies.add(key);
-      collectClientDomains(p, domains);
-    }
-    return { companies, domains };
-  }, [prospects, clientStatusMap]);
-
-  // Is this contact one of a cancelling account's people? Free-mail domains
-  // are nobody's account domain, so they never match on domain — a personal
-  // gmail address at a cancelling client is caught by the company name or
-  // not at all, rather than by a domain every account could share.
-  const isAtCancellingClient = useCallback((c) => {
-    if (cancellingClients.companies.size === 0 && cancellingClients.domains.size === 0) return false;
-    const company = String(c?.company || '').trim().toLowerCase();
-    if (company && cancellingClients.companies.has(company)) return true;
-    const email = String(c?.email || '').toLowerCase().trim();
-    const at = email.lastIndexOf('@');
-    const domain = at >= 0 ? email.slice(at + 1).trim() : '';
-    return !!domain && !FREE_MAIL.has(domain) && cancellingClients.domains.has(domain);
-  }, [cancellingClients]);
-
-  // ---- Active gate (mirror of ActiveContactsView) -------------------
-  // Build the same client-company exclusion set the Active page uses,
-  // so a contact whose company is a current Client doesn't get pushed
-  // out of the Active bucket here when the same user would still see
-  // them on the Client tab. We keep the contact in if it matches Key
-  // OR Client OR Active anyway.
-  const activeClientFilter = useMemo(() => {
-    const companies = [];
-    const domains = new Set();
-    for (const p of (prospects || [])) {
-      if (p.status !== 'Client') continue;
-      if (p.company) companies.push(p.company);
-      if (p.emailDomain) {
-        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
-          const at = entry.lastIndexOf('@');
-          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
-          if (d) domains.add(d);
-        }
-      }
-      if (p.website) {
-        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
-        if (d) domains.add(d);
-      }
-    }
-    return { clientCompanies: companies, clientDomains: domains };
-  }, [prospects]);
-
-  // Companies (raw-cased strings) with at least one open / active opp.
-  // Matches KeyContactsView's requireActiveOpp = true derivation so
-  // the Active gate here lines up with the dedicated page's count.
-  const activeOppCompanies = useMemo(() => {
-    if (!oppsRecords || oppsRecords.length === 0) return [];
-    const out = [];
-    const seen = new Set();
-    for (const r of oppsRecords) {
-      const stage = String(r['Stage'] || '').trim();
-      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
-      const acct = String(r['Account'] || '').trim();
-      const k = acct.toLowerCase();
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push(acct);
-    }
-    return out;
-  }, [oppsRecords]);
-
-  // ---- Key Prospect gate (mirror of KeyProspectsView) ---------------
-  // A contact is a "Key Prospect" when it's tagged Decision Maker at a
-  // Tier 1 / Tier 2 account on this CDM whose company has no opps yet.
-  const myTierAccounts = useMemo(() => {
-    return (prospects || []).filter(p => {
-      if (!matchesCdm(p.cdm, cdmName)) return false;
-      // Clients aren't prospects — keep them out of the Key Prospect bucket.
-      if (p.status === 'Client') return false;
-      const t = (p.tier || '').toLowerCase();
-      return t === 'tier 1' || t === 'tier 2';
-    });
-  }, [prospects, cdmName]);
-
-  const allOppAccounts = useMemo(() => {
-    const set = new Set();
-    if (!oppsRecords) return set;
-    for (const r of oppsRecords) {
-      const acct = String(r['Account'] || '').trim().toLowerCase();
-      if (acct) set.add(acct);
-    }
-    return set;
-  }, [oppsRecords]);
-  const allOppAccountsArr = useMemo(() => Array.from(allOppAccounts), [allOppAccounts]);
-
-  // Map<lowercase company, { tier, hasOpp }> for the Tier 1/2 accounts.
-  const tierAccountStatus = useMemo(() => {
-    const map = new Map();
-    for (const p of myTierAccounts) {
-      const lc = String(p.company || '').toLowerCase().trim();
-      if (!lc) continue;
-      let hasOpp = allOppAccounts.has(lc);
-      if (!hasOpp) {
-        for (const acct of allOppAccountsArr) {
-          if (companiesMatch(p.company, acct)) { hasOpp = true; break; }
-        }
-      }
-      map.set(lc, { tier: p.tier, hasOpp });
-    }
-    return map;
-  }, [myTierAccounts, allOppAccounts, allOppAccountsArr]);
-
-  // Shared decision: does this contact sit at a Tier 1/2 account (CDM = me)
-  // with no opps yet? `tags` is the lowercased dans_tags string.
-  const isKeyProspectAtTierAccount = useCallback((c) => {
-    const company = String(c.company || '').trim();
-    if (!company) return false;
-    const lc = company.toLowerCase();
-    const direct = tierAccountStatus.get(lc);
-    if (direct) return !direct.hasOpp;
-    for (const p of myTierAccounts) {
-      if (companiesMatch(p.company, company)) {
-        const status = tierAccountStatus.get(String(p.company || '').toLowerCase().trim());
-        if (status) return !status.hasOpp;
-      }
-    }
-    return false;
-  }, [tierAccountStatus, myTierAccounts]);
 
   // "Show hidden contacts" toggle. Same review-mode behaviour the
   // dedicated Active page exposes — when on, the page becomes a list
@@ -288,7 +112,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // Chosen Dan's Tag, or '' for no tag gate. Transient like categoryFilter
   // (not persisted) — it's an exploration filter, not a page preference.
   const [tagFilter, setTagFilter] = useState('');
-  // Which of the three tag answers to show, as a Set of TAG_STATUSES keys.
+  // Which of the four tag answers to show, as a Set of TAG_STATUSES keys.
   // Empty means no status gate — the tag filter behaves as it always has,
   // showing the contacts that carry the tag. Transient, like the tag itself.
   const [tagStatusFilter, setTagStatusFilter] = useState(() => new Set());
@@ -296,90 +120,27 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
   }, [showHidden]);
 
-  const baseActiveSelector = useMemo(
-    () => makeActiveSelector(90, showHidden ? 'hidden' : 'visible', activeClientFilter),
-    [activeClientFilter, showHidden]
+  // The gates the page runs on, and the inverted set behind the Show Hidden
+  // badge. Two calls rather than two hand-written copies of the same logic:
+  // the only thing that differs is which side of the Hide tag counts.
+  const gates = useMemo(
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, showHidden],
   );
-  const isActive = useCallback((c) => {
-    if (!baseActiveSelector(c)) return false;
-    const cName = String(c.company || '').trim();
-    if (!cName) return false;
-    const lc = cName.toLowerCase();
-    if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
-    if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
-    return false;
-  }, [baseActiveSelector, activeOppCompanies]);
-
-  // ---- Client gate (mirror of ClientContactsView) -------------------
-  const clientProspects = useMemo(
-    () => (prospects || []).filter(p => p.status === 'Client' && matchesCdm(p.cdm, cdmName)),
-    [prospects, cdmName]
+  const hiddenGates = useMemo(
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden: true }),
+    [prospects, cdmName, oppsRecords, clientStatusMap],
   );
-  const oldClientProspects = useMemo(
-    () => (prospects || []).filter(p => p.status === 'Old Client'),
-    [prospects]
+  // Visible-mode gates for the Totals pills: the counts should say what each
+  // dedicated tab would surface today, not what the inverted review view is
+  // showing. Reuses `gates` when Show Hidden is already off.
+  const visibleGates = useMemo(
+    () => (showHidden
+      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden: false })
+      : gates),
+    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap],
   );
-  const clientDomains = useMemo(() => {
-    const set = new Set();
-    for (const p of clientProspects) collectClientDomains(p, set);
-    return set;
-  }, [clientProspects]);
-  const oldClientDomains = useMemo(() => {
-    const set = new Set();
-    for (const p of oldClientProspects) collectClientDomains(p, set);
-    return set;
-  }, [oldClientProspects]);
-  const isClient = useCallback((c) => {
-    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    const hidden = tags.includes('hide');
-    // Show Hidden flips the Hide gate so the page becomes a review of
-    // suppressed contacts that would otherwise have qualified.
-    if (showHidden ? !hidden : hidden) return false;
-    if (tags.includes('left')) return false;
-    if (isSchneiderContact(c)) return false;
-    const company = String(c.company || '').trim();
-    const companyLower = company.toLowerCase();
-    const email = (c.email || '').toLowerCase().trim();
-    const at = email.lastIndexOf('@');
-    const domain = at >= 0 ? email.slice(at + 1).trim() : '';
-    const domainOk = domain && !FREE_MAIL.has(domain);
-    if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
-    if (domainOk && oldClientDomains.has(domain)) return false;
-    if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
-    if (!company && domainOk && clientDomains.has(domain)) return true;
-    return false;
-  }, [clientProspects, oldClientProspects, clientDomains, oldClientDomains, showHidden]);
-
-  // ---- Key gate (no-override default from KeyContactsView) ----------
-  const isKey = useCallback((c) => {
-    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    const hidden = tags.includes('hide');
-    if (showHidden ? !hidden : hidden) return false;
-    if (tags.includes('left')) return false;
-    if (isSchneiderContact(c)) return false;
-    return tags.includes('dan key target');
-  }, [showHidden]);
-
-  // ---- Key Prospect gate --------------------------------------------
-  const isKeyProspect = useCallback((c) => {
-    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    const hidden = tags.includes('hide');
-    if (showHidden ? !hidden : hidden) return false;
-    if (tags.includes('left')) return false;
-    if (isSchneiderContact(c)) return false;
-    if (!tags.includes('decision maker')) return false;
-    return isKeyProspectAtTierAccount(c);
-  }, [showHidden, isKeyProspectAtTierAccount]);
-
-  // Roster gate — a contact passes when it would land on at least one of
-  // the dedicated rosters and isn't at an account that's cancelling. The
-  // exclusion sits here, above the individual gates, so it holds however
-  // the contact would otherwise have qualified. The tag filter composes on
-  // top of this below.
-  const rosterSelector = useCallback(
-    (c) => !isAtCancellingClient(c) && (isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c)),
-    [isAtCancellingClient, isKey, isActive, isClient, isKeyProspect]
-  );
+  const { rosterSelector } = gates;
 
   // (combinedSelector — the roster gate plus the tag gate — is defined with
   // the tag list further down, since it needs the loaded HubSpot cache.)
@@ -387,19 +148,8 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // Categorisation function for the Category column. Returns the
   // array of labels (Key / Active / Client / Key Prospect) the contact
   // qualifies for so KeyContactsView can render a colored pill per label.
-  const categorizeContact = useCallback((c) => {
-    const out = [];
-    if (isKey(c)) out.push('Key');
-    if (isActive(c)) out.push('Active');
-    if (isClient(c)) out.push('Client');
-    if (isKeyProspect(c)) out.push('Key Prospect');
-    return out;
-  }, [isKey, isActive, isClient, isKeyProspect]);
+  const categorizeContact = useCallback((c) => gates.categorize(c), [gates]);
 
-  // Count of hide-tagged contacts that WOULD qualify if not hidden,
-  // so the toggle pill shows the user how many they'd uncover. We
-  // re-run the selectors with showHidden inverted via a probe that
-  // mirrors the visible-mode gates and flips the Hide check.
   const [hubspotContacts, setHubspotContacts] = useState([]);
   useEffect(() => {
     let cancelled = false;
@@ -410,62 +160,17 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Count of hide-tagged contacts that WOULD qualify if not hidden, so the
+  // toggle pill shows the user how many they'd uncover — the same gates with
+  // the Hide check flipped. The cancelling exclusion applies here too, so the
+  // badge doesn't promise contacts that Show Hidden wouldn't surface.
   const hiddenCount = useMemo(() => {
     if (!hubspotContacts.length) return 0;
-    // Build a "hidden mode" probe — same combined logic but with the
-    // Hide gate flipped, so we count contacts that would surface if
-    // the user toggled Show Hidden on.
-    const baseHiddenActive = makeActiveSelector(90, 'hidden', activeClientFilter);
-    const isActiveHidden = (c) => {
-      if (!baseHiddenActive(c)) return false;
-      const cName = String(c.company || '').trim();
-      if (!cName) return false;
-      const lc = cName.toLowerCase();
-      if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
-      if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
-      return false;
-    };
-    const isKeyHidden = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (!tags.includes('hide')) return false;
-      if (tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      return tags.includes('dan key target');
-    };
-    const isClientHidden = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (!tags.includes('hide')) return false;
-      if (tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      const company = String(c.company || '').trim();
-      const companyLower = company.toLowerCase();
-      const email = (c.email || '').toLowerCase().trim();
-      const at = email.lastIndexOf('@');
-      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
-      const domainOk = domain && !FREE_MAIL.has(domain);
-      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
-      if (domainOk && oldClientDomains.has(domain)) return false;
-      if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
-      if (!company && domainOk && clientDomains.has(domain)) return true;
-      return false;
-    };
-    const isKeyProspectHidden = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (!tags.includes('hide')) return false;
-      if (tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      if (!tags.includes('decision maker')) return false;
-      return isKeyProspectAtTierAccount(c);
-    };
     let n = 0;
-    for (const c of hubspotContacts) {
-      // Same cancelling exclusion the roster gate applies, so the badge
-      // doesn't promise contacts that Show Hidden wouldn't surface.
-      if (isAtCancellingClient(c)) continue;
-      if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c) || isKeyProspectHidden(c)) n += 1;
-    }
+    for (const c of hubspotContacts) if (hiddenGates.rosterSelector(c)) n += 1;
     return n;
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, isKeyProspectAtTierAccount, isAtCancellingClient]);
+  }, [hubspotContacts, hiddenGates]);
 
   // The tag review answers — the No / Not sure the contact popup records,
   // which HubSpot can't hold. Memoized: the `|| {}` fallback would otherwise
@@ -473,104 +178,36 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // re-filtering and re-counting the whole page.
   const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
 
-  // Per-category totals across the loaded HubSpot cache. Uses the
-  // visible-mode selectors (showHidden = false) so the numbers reflect
-  // what each dedicated tab would surface today, not the inverted
-  // "review hidden" view. Each category counted independently and the
-  // total is the de-duped union across all three.
+  // Per-category totals across the loaded HubSpot cache, plus how far
+  // through the tag vocabulary each group has been worked. Uses the
+  // visible-mode gates (showHidden = false) so the numbers reflect what each
+  // dedicated tab would surface today, not the inverted "review hidden"
+  // view. Each category is counted independently and the total is the
+  // de-duped union across all four.
   //
-  // Each category also carries how far through the tag vocabulary its
-  // contacts are: `answered` / `slots` summed over the group, where a slot is
-  // one contact × one scored tag and an answer is a Yes (the tag is on the
-  // contact) or a No / Not sure recorded in the popup. Summing the raw counts
-  // rather than averaging per-contact percentages keeps a group of 400 from
-  // being swung by one contact, and `done` tracks how many are fully worked
-  // through — the figure that says "this roster is finished".
-  const categoryCounts = useMemo(() => {
-    const visibleActiveBase = makeActiveSelector(90, 'visible', activeClientFilter);
-    const visIsActive = (c) => {
-      if (!visibleActiveBase(c)) return false;
-      const cName = String(c.company || '').trim();
-      if (!cName) return false;
-      const lc = cName.toLowerCase();
-      if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
-      if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
-      return false;
-    };
-    const visIsKey = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      return tags.includes('dan key target');
-    };
-    const visIsClient = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      const company = String(c.company || '').trim();
-      const companyLower = company.toLowerCase();
-      const email = (c.email || '').toLowerCase().trim();
-      const at = email.lastIndexOf('@');
-      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
-      const domainOk = domain && !FREE_MAIL.has(domain);
-      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
-      if (domainOk && oldClientDomains.has(domain)) return false;
-      if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
-      if (!company && domainOk && clientDomains.has(domain)) return true;
-      return false;
-    };
-    const visIsKeyProspect = (c) => {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) return false;
-      if (isSchneiderContact(c)) return false;
-      if (!tags.includes('decision maker')) return false;
-      return isKeyProspectAtTierAccount(c);
-    };
-    let key = 0, active = 0, client = 0, keyProspect = 0, total = 0, cancelling = 0;
-    const localFields = settings?.contactLocalFields || {};
-    const emptyTags = () => ({ answered: 0, slots: 0, done: 0 });
-    const tags = { key: emptyTags(), active: emptyTags(), client: emptyTags(), keyProspect: emptyTags(), total: emptyTags() };
-    const addTags = (bucket, score) => {
-      bucket.answered += score.answered;
-      bucket.slots += score.total;
-      if (score.done) bucket.done += 1;
-    };
-    for (const baseC of hubspotContacts) {
-      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
-      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
-        ? { ...baseC, company: lf._companyOverride }
-        : baseC;
-      const k = visIsKey(c);
-      const a = visIsActive(c);
-      const cl = visIsClient(c);
-      const kp = visIsKeyProspect(c);
-      // Counted, not tallied into the pills: how many the cancelling
-      // exclusion took out. A page that quietly shrinks is worse than one
-      // that says what it left behind.
-      if (isAtCancellingClient(c)) {
-        if (k || a || cl || kp) cancelling++;
-        continue;
-      }
-      if (k) key++;
-      if (a) active++;
-      if (cl) client++;
-      if (kp) keyProspect++;
-      if (k || a || cl || kp) total++;
-      // Score once per contact, then credit it to each roster the contact is
-      // on — a contact who is both Key and Client counts toward both figures,
-      // exactly as the counts above do.
-      if (k || a || cl || kp) {
-        const cid = c?.id ?? c?.vid;
-        const score = tagReviewScore(c, cid == null ? null : tagReviewMap[String(cid)]);
-        if (k) addTags(tags.key, score);
-        if (a) addTags(tags.active, score);
-        if (cl) addTags(tags.client, score);
-        if (kp) addTags(tags.keyProspect, score);
-        addTags(tags.total, score);
-      }
-    }
-    return { key, active, client, keyProspect, total, cancelling, tags };
-  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields, isKeyProspectAtTierAccount, isAtCancellingClient, tagReviewMap]);
+  // The Prospecting tab prints the same coverage under its market-updates
+  // step, off this same function — the two read one number, not two.
+  const coverage = useMemo(
+    () => rosterTagCoverage({
+      contacts: hubspotContacts,
+      gates: visibleGates,
+      tagReviewMap,
+      localFields: settings?.contactLocalFields || null,
+    }),
+    [hubspotContacts, visibleGates, tagReviewMap, settings?.contactLocalFields],
+  );
+  const categoryCounts = useMemo(() => ({
+    key: coverage.key.contacts,
+    active: coverage.active.contacts,
+    client: coverage.client.contacts,
+    keyProspect: coverage.keyProspect.contacts,
+    total: coverage.all.contacts,
+    cancelling: coverage.cancelling,
+    tags: {
+      key: coverage.key, active: coverage.active, client: coverage.client,
+      keyProspect: coverage.keyProspect, total: coverage.all,
+    },
+  }), [coverage]);
 
   // Every distinct tag worn by a contact on this page, with how many wear
   // it, most-used first. Derived from the roster gate rather than the full

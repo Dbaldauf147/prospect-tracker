@@ -11,6 +11,7 @@ import { useMemo, useCallback, useState, useEffect } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { collectClientDomains } from '../../utils/contactRosters';
 
 const FREE_MAIL = new Set([
   'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
@@ -50,22 +51,6 @@ function companiesMatch(a, b) {
   return false;
 }
 
-export function collectClientDomains(p, into) { return collectDomainsImpl(p, into); }
-function collectDomainsImpl(p, into) {
-  if (!p) return;
-  if (p.emailDomain) {
-    for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
-      const at = entry.lastIndexOf('@');
-      const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
-      if (d) into.add(d);
-    }
-  }
-  if (p.website) {
-    const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
-    if (d) into.add(d);
-  }
-}
-
 export function ClientContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
   // Only the logged-in user's clients. Mirrors how ClientsView scopes
   // its list — `matchesCdm` handles "Dan Baldauf" / "Baldauf, Dan" /
@@ -87,12 +72,12 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
   );
   const clientDomains = useMemo(() => {
     const set = new Set();
-    for (const p of clientProspects) collectDomainsImpl(p, set);
+    for (const p of clientProspects) collectClientDomains(p, set);
     return set;
   }, [clientProspects]);
   const oldClientDomains = useMemo(() => {
     const set = new Set();
-    for (const p of oldClientProspects) collectDomainsImpl(p, set);
+    for (const p of oldClientProspects) collectClientDomains(p, set);
     return set;
   }, [oldClientProspects]);
 
@@ -156,7 +141,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     const clientByDomain = new Map();
     for (const p of clientProspects) {
       const ds = new Set();
-      collectDomainsImpl(p, ds);
+      collectClientDomains(p, ds);
       for (const d of ds) {
         if (!clientByDomain.has(d)) clientByDomain.set(d, p);
       }
