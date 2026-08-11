@@ -193,38 +193,61 @@ export function applyCompanyOverride(c, localFields) {
  * been suppressed" set. Everything else is derived from the Table View
  * prospects, the opps records, and the Clients tab's status map.
  *
- * Returns the four gates plus `isAtCancellingClient` (the exclusion that
- * sits above all of them), a `rosterSelector` that ORs the four, and
- * `categorize`, which names the rosters a contact lands on.
+ * Returns the four gates plus `clientExclusionOf` (the Clients-tab flag that
+ * takes a contact off all of them, or '' for none), a `rosterSelector` that
+ * ORs the four, and `categorize`, which names the rosters a contact lands
+ * on.
  */
 export function makeRosterGates({
   prospects = [],
   cdmName = '',
   oppsRecords = null,
   clientStatusMap = {},
+  clientUntrackedMap = {},
   showHidden = false,
 } = {}) {
   const rows = prospects || [];
 
-  // ---- Cancelling clients ------------------------------------------
-  // A client whose Clients-tab Status says "Cancelling for Sure" is on its
-  // way out, so its people don't belong on a roster of who to work. Matched
-  // by name and by the account's email domains, since a contact's HubSpot
-  // Company text is usually spelled differently from the account.
-  const cancellingCompanies = new Set();
-  const cancellingDomains = new Set();
+  // ---- Accounts left off every roster --------------------------------
+  // Two Clients-tab flags take an account's people off all four rosters:
+  //
+  //   Cancelling for Sure (Status)  the account is on its way out
+  //   Don't Track                   the account isn't being worked at all
+  //
+  // Either way it isn't an account to work today, so its contacts don't
+  // belong on a roster of who to work. Matched by name and by the account's
+  // email domains, since a contact's HubSpot Company text is usually spelled
+  // differently from the account. Kept apart by reason so a page can say
+  // which flag took a contact out — and which one to change to get them
+  // back.
+  const excluded = {
+    cancelling: { companies: new Set(), domains: new Set() },
+    untracked: { companies: new Set(), domains: new Set() },
+  };
   for (const p of rows) {
     const key = String(p?.company || '').trim().toLowerCase();
-    if (!key || !isCancellingForSure(clientStatusMap?.[key])) continue;
-    cancellingCompanies.add(key);
-    collectClientDomains(p, cancellingDomains);
+    if (!key) continue;
+    const bucket = isCancellingForSure(clientStatusMap?.[key]) ? excluded.cancelling
+      : clientUntrackedMap?.[key] ? excluded.untracked
+      : null;
+    if (!bucket) continue;
+    bucket.companies.add(key);
+    collectClientDomains(p, bucket.domains);
   }
-  const isAtCancellingClient = (c) => {
-    if (cancellingCompanies.size === 0 && cancellingDomains.size === 0) return false;
+  const matchesSet = (c, set) => {
+    if (set.companies.size === 0 && set.domains.size === 0) return false;
     const company = String(c?.company || '').trim().toLowerCase();
-    if (company && cancellingCompanies.has(company)) return true;
+    if (company && set.companies.has(company)) return true;
     const domain = accountDomain(c);
-    return !!domain && cancellingDomains.has(domain);
+    return !!domain && set.domains.has(domain);
+  };
+  // Which flag takes this contact out, or '' when nothing does. One string
+  // rather than a predicate per flag, so a caller can gate and attribute in
+  // a single pass.
+  const clientExclusionOf = (c) => {
+    if (matchesSet(c, excluded.cancelling)) return 'cancelling';
+    if (matchesSet(c, excluded.untracked)) return 'untracked';
+    return '';
   };
 
   // Shared opening gate: hidden-or-not per `showHidden`, never someone who
@@ -353,10 +376,10 @@ export function makeRosterGates({
   };
 
   // Roster gate — a contact passes when it would land on at least one of
-  // the dedicated rosters and isn't at an account that's cancelling. The
-  // exclusion sits above the individual gates, so it holds however the
-  // contact would otherwise have qualified.
-  const rosterSelector = (c) => !isAtCancellingClient(c)
+  // the dedicated rosters and isn't at an account the Clients tab flags as
+  // cancelling or Don't Track. The exclusion sits above the individual
+  // gates, so it holds however the contact would otherwise have qualified.
+  const rosterSelector = (c) => !clientExclusionOf(c)
     && (isKey(c) || isActive(c) || isClient(c) || isKeyProspect(c));
 
   const gateFor = { key: isKey, active: isActive, client: isClient, keyProspect: isKeyProspect };
@@ -366,7 +389,7 @@ export function makeRosterGates({
 
   return {
     isKey, isActive, isClient, isKeyProspect,
-    isAtCancellingClient, rosterSelector, categorize, gateFor,
+    clientExclusionOf, rosterSelector, categorize, gateFor,
   };
 }
 
@@ -384,26 +407,27 @@ export function makeRosterGates({
  * raw answered/slots counts rather than averaging per-contact percentages
  * keeps a group of 400 from being swung by one contact.
  *
- * Contacts at cancelling clients are counted separately under `cancelling`
- * and left out of every roster, for the same reason they're off the rosters
- * themselves. A roster with no contacts reports `pct: null` — "nothing to
- * answer for" is not 0%.
+ * Contacts at cancelling and Don't Track clients are counted separately
+ * under `cancelling` and `untracked`, and left out of every roster, for the
+ * same reason they're off the rosters themselves. A roster with no contacts
+ * reports `pct: null` — "nothing to answer for" is not 0%.
  */
 export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, localFields = null }) {
   const empty = () => ({ contacts: 0, answered: 0, slots: 0, done: 0 });
   const buckets = { all: empty() };
   for (const { key } of ROSTER_CATEGORIES) buckets[key] = empty();
-  let cancelling = 0;
-  if (!gates) return finalizeCoverage(buckets, cancelling);
+  const left = { cancelling: 0, untracked: 0 };
+  if (!gates) return finalizeCoverage(buckets, left);
 
   for (const baseC of contacts) {
     const c = localFields ? applyCompanyOverride(baseC, localFields) : baseC;
     const hits = ROSTER_CATEGORIES.filter(({ key }) => gates.gateFor[key](c));
     if (!hits.length) continue;
-    // Counted, not tallied into the rosters: how many the cancelling
-    // exclusion took out. A page that quietly shrinks is worse than one that
-    // says what it left behind.
-    if (gates.isAtCancellingClient(c)) { cancelling += 1; continue; }
+    // Counted, not tallied into the rosters: how many each account exclusion
+    // took out. A page that quietly shrinks is worse than one that says what
+    // it left behind.
+    const why = gates.clientExclusionOf(c);
+    if (why) { left[why] += 1; continue; }
     // Scored once, then credited to every roster the contact is on — someone
     // who is both Key and Client counts toward both figures, exactly as the
     // contact counts do.
@@ -417,11 +441,11 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
       if (score.done) b.done += 1;
     }
   }
-  return finalizeCoverage(buckets, cancelling);
+  return finalizeCoverage(buckets, left);
 }
 
-function finalizeCoverage(buckets, cancelling) {
-  const out = { cancelling };
+function finalizeCoverage(buckets, left) {
+  const out = { ...left };
   for (const [key, b] of Object.entries(buckets)) {
     out[key] = { ...b, pct: b.slots > 0 ? Math.round((b.answered / b.slots) * 100) : null };
   }

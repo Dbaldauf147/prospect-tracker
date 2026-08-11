@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
+import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
 import { isLocalTagVerdict } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 
@@ -70,18 +70,26 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // ---- Rosters -----------------------------------------------------
   // The Key / Active / Client / Key Prospect gates, mirrored from the
   // dedicated tabs and shared with the Prospecting tab's Tagged readout
-  // (see utils/contactRosters.js). The Clients-tab status map is read from
-  // that tab's own store and re-read on the events it fires, so a company
-  // switched to "Cancelling for Sure" drops off this page without a reload.
+  // (see utils/contactRosters.js). The Clients-tab maps are read from that
+  // tab's own stores and re-read on the events it fires, so a company
+  // switched to "Cancelling for Sure" or ticked "Don't Track" drops off this
+  // page without a reload.
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
   useEffect(() => {
-    function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
+    function onStorage(e) {
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
+    }
     function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     };
   }, []);
 
@@ -124,21 +132,21 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // badge. Two calls rather than two hand-written copies of the same logic:
   // the only thing that differs is which side of the Hide tag counts.
   const gates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, showHidden],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden],
   );
   const hiddenGates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden: true }),
-    [prospects, cdmName, oppsRecords, clientStatusMap],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: true }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
   );
   // Visible-mode gates for the Totals pills: the counts should say what each
   // dedicated tab would surface today, not what the inverted review view is
   // showing. Reuses `gates` when Show Hidden is already off.
   const visibleGates = useMemo(
     () => (showHidden
-      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, showHidden: false })
+      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false })
       : gates),
-    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap],
+    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
   );
   const { rosterSelector } = gates;
 
@@ -203,6 +211,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     keyProspect: coverage.keyProspect.contacts,
     total: coverage.all.contacts,
     cancelling: coverage.cancelling,
+    untracked: coverage.untracked,
     tags: {
       key: coverage.key, active: coverage.active, client: coverage.client,
       keyProspect: coverage.keyProspect, total: coverage.all,
@@ -345,7 +354,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — a Yes, No, Not sure or Not sold recorded against every scored tag counts as answered. <strong>Not sold</strong> is the hold-off: the contact owns that area but their company hasn't been sold on it, so the tag stays off and they don't come back in a plain pull of it. Pick the tag and hit the <strong>Not sold</strong> status to see who's being held.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -374,19 +383,28 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
-        {categoryCounts.cancelling > 0 && (
+        {/* Said out loud rather than silently dropped: both flags live on the
+            Clients tab, so each note names the one to change to get those
+            people back. */}
+        {[
+          { attr: 'cancelling', count: categoryCounts.cancelling, label: 'at cancelling clients, left out',
+            tip: 'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.' },
+          { attr: 'untracked', count: categoryCounts.untracked, label: "at Don't Track clients, left out",
+            tip: 'Contacts at accounts ticked "Don\'t Track" on the Clients tab. They\'d otherwise qualify for one of the rosters; untick Don\'t Track there to bring them back.' },
+        ].filter(n => n.count > 0).map(({ attr, count, label, tip }) => (
           <span
-            data-cancelling-note
-            title={'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.'}
+            key={attr}
+            {...{ [`data-${attr}-note`]: true }}
+            title={tip}
             style={{
               padding: '1px 8px', borderRadius: 999,
               background: '#F1F5F9', border: '1px dashed #CBD5E1', color: '#64748B',
               fontSize: '0.68rem', fontWeight: 700,
             }}
           >
-            {categoryCounts.cancelling} at cancelling clients, left out
+            {count} {label}
           </span>
-        )}
+        ))}
       </div>
       {/* How far through the tags each roster is. Same groups, same colours
           as the row above, read as a share of the answers rather than a head

@@ -34,7 +34,7 @@ import {
 } from '../../utils/prospectingStatus';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadClientStatusMap, CLIENT_STATUS_EVENT } from '../../utils/clientManagerStore';
+import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
 import { makeRosterGates, rosterTagCoverage, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -165,26 +165,34 @@ function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  // Same store and the same events the contacts pages listen to, so a
-  // company switched to "Cancelling for Sure" drops out of these numbers
-  // without a reload.
+  // Same stores and the same events the contacts pages listen to, so a
+  // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
+  // out of these numbers without a reload — and drops out here exactly as it
+  // does on All Contacts, which is the point of sharing the gates.
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
+  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
   useEffect(() => {
-    function onStorage(e) { if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap()); }
+    function onStorage(e) {
+      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
+    }
     function onStatus() { setClientStatusMap(loadClientStatusMap()); }
+    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
     };
   }, []);
 
   // Visible mode, matching the Totals pills on All Contacts: the figure
   // should describe the rosters as they're worked, not the hidden-review view.
   const gates = useMemo(
-    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, showHidden: false }),
-    [prospects, cdmName, oppsRecords, clientStatusMap],
+    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
   );
   return useMemo(() => {
     if (contacts == null) return null;
