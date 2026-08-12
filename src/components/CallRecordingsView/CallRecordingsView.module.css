@@ -772,6 +772,29 @@
   color: var(--color-text-muted);
 }
 
+/* "Show all calls", beside the KPI lines on History and Call breakdown:
+   the numbers describe one set of calls and the list under them another,
+   and this puts them back in agreement. Sized to the bars it sits in
+   rather than to the page toolbar, and never full-width in the
+   breakdown's flex column. */
+.showAllBtn {
+  align-self: flex-start;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.showAllBtn:hover {
+  border-color: var(--color-accent);
+}
+
 /* Triage filters: four piles, one of them the queue. */
 .historyFilters {
   display: inline-flex;

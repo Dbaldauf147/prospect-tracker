@@ -1132,6 +1132,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   );
   const totals = useMemo(() => historyTotals(filteredHistory), [filteredHistory]);
 
+  // The totals line is a count of whatever is filtered in, so a search or
+  // a tag chip quietly narrows it. This is the way back to the numbers
+  // for every stored call — one press, both filters.
+  const historyNarrowed = historyQuery.trim() !== '' || oppTagFilter !== 'all';
+  const showAllHistory = useCallback(() => {
+    setHistoryQuery('');
+    setOppTagFilter('all');
+  }, []);
+
   // Read the cache once per account, as early as possible: this is the
   // paint that beats Firestore to the screen.
   useEffect(() => {
@@ -2524,6 +2533,20 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               {' · '}{totals.withCompany} tagged to a company
               {totals.needsOppTag > 0 && <> · <strong>{totals.needsOppTag}</strong> still need an opp or N/A</>}
             </span>
+            {/* Only when something is actually narrowing the totals: with
+                nothing filtered they already cover every call, and a
+                button that does nothing reads as one that's broken. */}
+            {historyNarrowed && (
+              <button
+                type="button"
+                className={styles.showAllBtn}
+                onClick={showAllHistory}
+                title={`These numbers cover ${totals.calls} of your ${historyRows.length} stored call`
+                  + `${historyRows.length === 1 ? '' : 's'}. Clear the search and the tag filter to count them all.`}
+              >
+                Show all {historyRows.length} calls
+              </button>
+            )}
           </div>
           {recordsReadError && (
             <div className={styles.error}>
@@ -2628,6 +2651,22 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   </span>
                 )}
               </div>
+            )}
+            {/* The averages above are taken over every transcribed call,
+                but the search narrows the list under them — so while one
+                is on, the numbers and the calls you can see disagree.
+                This puts the whole basis back on screen. */}
+            {!recordsReadError && breakdownQuery.trim() !== '' && (
+              <button
+                type="button"
+                className={styles.showAllBtn}
+                onClick={() => setBreakdownQuery('')}
+                title={`The numbers above cover all ${breakdownRows.length} transcribed call`
+                  + `${breakdownRows.length === 1 ? '' : 's'}; the list is showing the `
+                  + `${filteredBreakdown.length} that match your search. Clear it to see them all.`}
+              >
+                Show all {breakdownRows.length} calls
+              </button>
             )}
             {/* A failed read comes back empty, which would otherwise draw
                 as "you have no transcribed calls". The History tab can
