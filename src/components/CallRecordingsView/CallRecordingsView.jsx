@@ -67,6 +67,7 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppFields } from '../../utils/opps2Store';
 import { nextStepLinesFromCall, appendNextSteps } from '../../utils/nextSteps';
+import { withLastCallStamp, clearLastCallPatch } from '../../utils/lastCallOnOpp';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
   filterByOppTag, oppTagCounts, isAutoNa, autoNaPatch, OPP_TAG_FILTERS,
@@ -1553,16 +1554,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       }),
     });
     // Saying which deal this call belongs to is what makes its follow-ups
-    // that deal's next steps, so they go on now rather than waiting for a
-    // second button. Nothing happens when the call hasn't been summarised
-    // yet — the summary's own push picks them up then.
+    // that deal's next steps, and what makes it that deal's last
+    // conversation — so both go on now rather than waiting for a second
+    // button. A call not yet summarised contributes no steps; the
+    // reference still lands, and the summary's push adds the steps later.
     if (!saved?.oppId) return;
     try {
-      await pushNextStepsOnTag(recordingId, saved);
+      await recordCallOnOpp(recordingId, saved);
     } catch (err) {
       // The tag itself is saved; only the copy onto the opp failed. Say
       // which, so the user doesn't re-tag chasing a step that landed.
-      setErrorFor(recordingId, `Tagged, but the next steps didn’t reach the opp: ${err?.message || err}`);
+      setErrorFor(recordingId, `Tagged, but this call didn’t reach the opp’s notes: ${err?.message || err}`);
     }
   }
 
@@ -1587,8 +1589,28 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // Undoes either decision — back into the queue. Also marks the call as
   // the user's, so a rule that matches its name doesn't put it straight
   // back on the next sync.
-  function untagOpp(recordingId) {
-    persist(recordingId, clearOppTagPatch());
+  async function untagOpp(recordingId) {
+    const previous = recordsRef.current[recordingId] || null;
+    await persist(recordingId, clearOppTagPatch());
+    // The opp may be naming this call as its last conversation. Left
+    // alone it would keep doing so after the call stopped belonging to
+    // it — a wrong answer where a blank is an honest one.
+    //
+    // The next steps it contributed are NOT taken back: they were
+    // appended to a list the user works off and may have reworded,
+    // reordered, or already done, and silently deleting lines out of a
+    // checklist is the one thing this whole path has been careful not to
+    // do. Untagging is a correction about which deal a call belongs to,
+    // not an undo of the work it generated.
+    if (!previous?.oppId) return;
+    try {
+      const cache = await loadOppsFromCache();
+      const opp = (cache?.records || []).find(r => String(r?._id) === String(previous.oppId));
+      const patch = opp ? clearLastCallPatch(opp, recordingId) : null;
+      if (patch) await setOppFields(uid, previous.oppId, patch);
+    } catch (err) {
+      setErrorFor(recordingId, `Untagged, but the opp still names this call: ${err?.message || err}`);
+    }
   }
 
   // ---- auto-N/A rules --------------------------------------------------------
@@ -1721,8 +1743,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
 
     // One write: the steps and their Waiting On array are index-aligned,
     // and an opp holding one without the other reads every step below
-    // the break against the wrong Waiting On.
-    await setOppFields(uid, oppId, patch);
+    // the break against the wrong Waiting On. The call reference goes in
+    // the same write — it is what the Notes popup names as the last
+    // conversation, and it explains the steps sitting under it.
+    await setOppFields(uid, oppId, withLastCallStamp(patch, opp, record));
     return persist(recordingId, {
       pushedToOppAt: new Date().toISOString(),
       nextStepsPushed: steps.added,
@@ -1730,36 +1754,44 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }, [uid, persist]);
 
   /**
-   * The call's next steps onto the opp it was just tagged to.
+   * What the opp learns the moment a call is mapped to it: the call's
+   * next steps, and the call itself.
    *
    * Tagging is the moment the user says which deal a call belongs to, so
-   * it is the moment its follow-ups become that deal's to-do list. This
-   * runs on its own rather than through pushSummaryToOpp because the two
-   * push different things for different reasons: that one writes AI prose
+   * it is the moment its follow-ups become that deal's to-do list and
+   * the moment it becomes that deal's last conversation. This runs on
+   * its own rather than through pushSummaryToOpp because the two push
+   * different things for different reasons: that one writes AI prose
    * into the Memo field and is opt-in for exactly that reason, while
-   * these are the actions off the call and are what was asked for.
+   * these are the facts of the mapping and are what was asked for.
    *
-   * Silent when there is nothing to add — a call tagged before it was
-   * summarised has no steps yet, and the summary's own push picks them
-   * up later.
+   * Returns how many next steps were added — zero when the call hasn't
+   * been summarised yet, or when the opp already had every one of them.
+   * The reference is still stamped in that case.
    */
-  const pushNextStepsOnTag = useCallback(async (recordingId, record) => {
+  const recordCallOnOpp = useCallback(async (recordingId, record) => {
     const oppId = record?.oppId;
-    if (!oppId) return;
-    const lines = nextStepLinesFromCall(record);
-    if (lines.length === 0) return;
+    if (!oppId) return 0;
 
     const cache = await loadOppsFromCache();
     const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
     if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
 
-    const steps = appendNextSteps(opp['Next Steps'], opp['_nextStepsWaiting'], lines);
-    if (steps.added === 0) return;
-    await setOppFields(uid, oppId, {
-      'Next Steps': steps.text,
-      _nextStepsWaiting: steps.waiting,
-    });
-    await persist(recordingId, { nextStepsPushed: steps.added });
+    const steps = appendNextSteps(
+      opp['Next Steps'], opp['_nextStepsWaiting'], nextStepLinesFromCall(record),
+    );
+    const patch = steps.added > 0
+      ? { 'Next Steps': steps.text, _nextStepsWaiting: steps.waiting }
+      : {};
+    // The reference goes on even when there are no steps to add: a call
+    // mapped before it was summarised has nothing to say about what to
+    // do next, but it is still the last conversation on that deal, and
+    // that is the fact the Notes popup is being asked for.
+    const withStamp = withLastCallStamp(patch, opp, record);
+    if (Object.keys(withStamp).length === 0) return 0;
+
+    await setOppFields(uid, oppId, withStamp);
+    if (steps.added > 0) await persist(recordingId, { nextStepsPushed: steps.added });
     return steps.added;
   }, [uid, persist]);
 
