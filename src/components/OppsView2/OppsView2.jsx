@@ -6,7 +6,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { DataTable } from '../common/DataTable';
-import { textToBulletItems, encodeNoteLine } from '../../utils/nextSteps';
+import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, NOTE_LINEBREAK } from '../../utils/nextSteps';
+import { loadCallRecord } from '../../utils/callRecordingsStore';
 import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
 import { DateCell } from '../common/DateCell';
 import { toISODate, formatDateDisplay } from '../../utils/isoDate';
@@ -6480,12 +6481,50 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // Renders nothing for an opp no call has been mapped to, which includes
 // every opp mapped before the stamp existed: an empty frame saying "no
 // call" would be a finding about the feature, not about the deal.
+// The follow-ups a call is carrying, fetched once per call id and kept
+// for the session. Popups open and close constantly and the answer for a
+// given call barely changes, so refetching per open is waste.
+const callStepsCache = new Map();
+
 function LastCallLine({ opp }) {
   // Read once per mount rather than on every render: the popup is open
   // for seconds, "5 days ago" cannot change while it is, and a clock read
   // in the render body is impure.
   const [now] = useState(() => Date.now());
+  const { user } = useAuth();
   const call = lastCallOn(opp);
+  const callId = call?.id || '';
+
+  // The call's own follow-ups, read from the call record rather than from
+  // what was copied onto the opp when it was tagged.
+  //
+  // They're pushed onto the opp's Next Steps checklist when a call is
+  // tagged or summarised — but a call mapped before that existed never
+  // pushed, and its follow-ups have been sitting on the record unread
+  // ever since, with nothing on this page to suggest they exist. Showing
+  // them here doesn't depend on that push having happened, so the
+  // question "what did we say we'd do?" is answerable either way.
+  //
+  // Same lines the push would add, through the same helper, so this is a
+  // preview of that rather than a second opinion about it.
+  // Held against the id it was loaded for, so a cached answer is picked up
+  // during render rather than through a setState the effect would have to
+  // fire synchronously.
+  const [loaded, setLoaded] = useState(() => ({ id: callId, steps: callStepsCache.get(callId) || null }));
+  if (loaded.id !== callId) setLoaded({ id: callId, steps: callStepsCache.get(callId) || null });
+  const steps = loaded.id === callId ? loaded.steps : null;
+
+  useEffect(() => {
+    if (!callId || !user?.uid || callStepsCache.has(callId)) return undefined;
+    let live = true;
+    loadCallRecord(user.uid, callId).then(record => {
+      const lines = record ? nextStepLinesFromCall(record) : [];
+      callStepsCache.set(callId, lines);
+      if (live) setLoaded({ id: callId, steps: lines });
+    });
+    return () => { live = false; };
+  }, [callId, user?.uid]);
+
   if (!call) return null;
   const age = describeCallAge(call.atMs, now);
   const when = [call.at ? formatDateDisplay(call.at) : '', age ? `(${age})` : '']
@@ -6515,6 +6554,24 @@ function LastCallLine({ opp }) {
       {call.gist && (
         <div style={{ marginTop: 3, fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
           {call.gist}
+        </div>
+      )}
+      {steps && steps.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{
+            fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
+          }}>Next steps from this call</div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
+            {steps.map((line, i) => (
+              // Steps carry their own internal newlines as U+2028 so a
+              // multi-line follow-up stays one step; put them back for
+              // display rather than running the lines together.
+              <li key={i} style={{ whiteSpace: 'pre-wrap' }}>
+                {line.split(NOTE_LINEBREAK).join('\n')}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
@@ -6977,8 +7034,12 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
       <div
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        // Sized like the Update Status popup, which holds the same two
+        // tables: at 820px the Timelines columns and the Note / Waiting On
+        // pair were narrow enough to wrap their own text, spending height
+        // on a screen with spare width either side.
         style={{
-          width: 'min(820px, 94vw)', maxHeight: '88vh',
+          width: 'min(1200px, 96vw)', maxHeight: '94vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
