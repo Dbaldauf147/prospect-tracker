@@ -6695,34 +6695,24 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
     );
   };
 
-  // The Delivery Lead Time cell. A value that still matches the service's
-  // Rollout Time says where it came from, so a number nobody typed isn't
-  // mistaken for one this deal agreed — and so an edited one is visibly the
-  // user's own.
+  // The Delivery Lead Time cell. Where the value came from stays in the
+  // tooltip rather than beside the cell: the table is already four columns
+  // of small text, and a caption on some rows and not others drew the eye
+  // to the pull rather than to the lead times being compared.
   const renderLeadTime = (row, idx) => {
-    const leadTime = String(row?.leadTime ?? '');
     const rollout = serviceRolloutTime(row?.type, serviceOverrides);
-    const fromServices = !!rollout && leadTime.trim() === rollout;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-        <input
-          type="text"
-          value={leadTime}
-          onChange={(e) => updateRow(idx, 'leadTime', e.target.value)}
-          placeholder={rollout ? `${rollout} (from Services)` : 'e.g. 6 weeks'}
-          title={rollout
-            ? `How long delivery takes once this timeline kicks off. ${row.type} is `
-              + `${rollout} on Dropdowns › Services — type over it for a lead time just for this deal.`
-            : 'How long delivery takes once this timeline kicks off'}
-          style={{ ...cellInput, width: 130 }}
-        />
-        {fromServices ? (
-          <span
-            style={{ fontSize: '0.66rem', fontWeight: 700, color: '#64748B' }}
-            title={`Pulled from the Rollout Time set for ${row.type} on Dropdowns › Services`}
-          >from Services</span>
-        ) : null}
-      </div>
+      <input
+        type="text"
+        value={String(row?.leadTime ?? '')}
+        onChange={(e) => updateRow(idx, 'leadTime', e.target.value)}
+        placeholder="e.g. 6 weeks"
+        title={rollout
+          ? `How long delivery takes once this timeline kicks off. ${row.type} is `
+            + `${rollout} on Dropdowns › Services — type over it for a lead time just for this deal.`
+          : 'How long delivery takes once this timeline kicks off'}
+        style={{ ...cellInput, width: 130 }}
+      />
     );
   };
 
