@@ -194,7 +194,7 @@ export function formatRolloutWeeks(raw) {
 // empty.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
-  'timelineDriven', 'rolloutTime',
+  'timelineDriven', 'rolloutTime', 'dependsOn',
 ];
 
 // Merge the static seed catalog with the user's per-service overrides.
@@ -223,7 +223,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
-      timelineDriven: '', rolloutTime: '', sme: '',
+      timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '',
     };
   }
   return {
@@ -236,6 +236,10 @@ export function getEffectiveServiceMetadata(name, overrides) {
     localProjectName: override?.localProjectName ?? seed?.localProjectName ?? '',
     timelineDriven:   override?.timelineDriven   ?? seed?.timelineDriven   ?? '',
     rolloutTime:      override?.rolloutTime      ?? seed?.rolloutTime      ?? '',
+    // Services that have to be rolled out before this one can start,
+    // as a comma-separated list of Solutions names. No seed — the
+    // dependencies are whatever the user maps on the Services tab.
+    dependsOn:        override?.dependsOn        ?? seed?.dependsOn        ?? '',
     // Free text: the Schneider subject-matter expert for this service. No
     // seed value — it's whoever the user names on the Services tab.
     sme:              override?.sme              ?? seed?.sme              ?? '',

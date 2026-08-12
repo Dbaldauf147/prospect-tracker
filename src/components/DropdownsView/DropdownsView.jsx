@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
 import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCatalog';
 import {
@@ -9,6 +10,7 @@ import { QuestionsTab } from './QuestionsTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { DataTable } from '../common/DataTable';
+import { parseMulti } from '../common/columnLinks';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -29,11 +31,21 @@ const SERVICE_TABLE_COLUMNS = [
   // Wider than the numbers in it need, because the header is what has to
   // fit: "Rollout Time (weeks)" is where the unit is stated.
   { key: 'rolloutTime',      label: 'Rollout Time (weeks)', width: 190, editable: true  },
+  { key: 'dependsOn',        label: 'Dependent Rollout Services', width: 260, editable: true },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
   // alwaysVisible), which also means it needs no reveal migration for users
   // who already have a saved column set.
   { key: 'hide',             label: 'Hide',              width: 58,     editable: false },
+];
+
+// Columns added to the Services table after it gained saved column prefs.
+// A user with a stored visible-set has it without these keys, so DataTable
+// would keep them hidden forever — each is revealed once, then its flag is
+// recorded so a user who later hides it isn't re-fought.
+const SERVICES_LATE_COLUMNS = [
+  { key: 'sme',       flag: 'servicesSmeColumnRevealed' },
+  { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
 ];
 
 // Inline cell editor for the Services subtab. Renders the current
@@ -204,6 +216,174 @@ function ServiceWeeksCell({ value, onCommit }) {
         boxSizing: 'border-box',
       }}
     />
+  );
+}
+
+// The Dependent Rollout Services cell: the services that have to be rolled
+// out before this one can start. Stored as a comma-separated list of
+// Solutions names — the same shape every other multi-value column in the
+// app uses, so it reads back through parseMulti and searches as plain text.
+//
+// Picked from the Solutions list rather than typed, so a dependency always
+// names a service that exists; a row can't depend on itself, so it isn't
+// offered. A name that no longer matches a live service (renamed or
+// retired since it was picked) still shows, flagged, rather than being
+// dropped — losing a mapping silently is worse than showing a stale one.
+//
+// The popover is portalled to the body: the table scrolls both ways inside
+// its own wrapper, which would otherwise clip it.
+function ServiceDependsCell({ value, options, selfName, onCommit }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [rect, setRect] = useState(null);
+  const cellRef = useRef(null);
+
+  const selected = useMemo(() => parseMulti(value), [value]);
+  const selectedSet = useMemo(
+    () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
+  // Everything pickable: every other service, self excluded.
+  const pickable = useMemo(
+    () => options.filter(o => o.trim().toLowerCase() !== String(selfName).trim().toLowerCase()),
+    [options, selfName]);
+  const liveSet = useMemo(
+    () => new Set(pickable.map(o => o.trim().toLowerCase())), [pickable]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? pickable.filter(o => o.toLowerCase().includes(q)) : pickable;
+  }, [pickable, query]);
+
+  function openPicker() {
+    const el = cellRef.current;
+    if (el) setRect(el.getBoundingClientRect());
+    setQuery('');
+    setOpen(true);
+  }
+  function close() { setOpen(false); setQuery(''); }
+
+  // Order follows the Solutions list for picked names, so two rows with the
+  // same dependencies read identically; anything stale trails at the end.
+  function toggle(name) {
+    const key = name.trim().toLowerCase();
+    const next = selectedSet.has(key)
+      ? selected.filter(s => s.trim().toLowerCase() !== key)
+      : [...selected, name];
+    const nextKeys = new Set(next.map(s => s.trim().toLowerCase()));
+    const ordered = [
+      ...pickable.filter(o => nextKeys.has(o.trim().toLowerCase())),
+      ...next.filter(s => !liveSet.has(s.trim().toLowerCase())),
+    ];
+    onCommit(ordered.join(', '));
+  }
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const chip = (name, stale) => (
+    <span
+      key={name}
+      title={stale ? `"${name}" isn't in the Solutions list any more` : name}
+      className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
+    >{name}</span>
+  );
+
+  return (
+    <>
+      <span
+        ref={cellRef}
+        onClick={openPicker}
+        title={selected.length > 0
+          ? `Rolled out before ${selfName}: ${selected.join(', ')}. Click to change.`
+          : `Click to pick the services that must be rolled out before ${selfName}`}
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em' }}
+      >
+        {selected.length > 0
+          ? selected.map(n => chip(n, !liveSet.has(n.trim().toLowerCase())))
+          : <span className={styles.serviceMutedCell}>-</span>}
+      </span>
+      {open && rect && createPortal(
+        <>
+          {/* Click-away catcher, so the picker closes on any outside click
+              without each cell wiring up its own document listener. */}
+          <div
+            onClick={close}
+            style={{ position: 'fixed', inset: 0, zIndex: 9000, background: 'transparent' }}
+          />
+          <div
+            style={{
+              position: 'fixed', zIndex: 9001,
+              left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
+              ...(window.innerHeight - rect.bottom < 280 && rect.top > window.innerHeight - rect.bottom
+                ? { bottom: Math.round(window.innerHeight - rect.top + 4) }
+                : { top: Math.round(rect.bottom + 4) }),
+              width: 320, maxHeight: 300, background: '#fff',
+              border: '1px solid var(--color-border)', borderRadius: 6,
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+              display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '0.4rem 0.45rem', borderBottom: '1px solid var(--color-border-light)' }}>
+              <input
+                type="text"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search services…"
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.75rem', fontFamily: 'inherit',
+                }}
+              />
+            </div>
+            <div style={{ overflowY: 'auto', padding: '0.2rem 0' }}>
+              {shown.length === 0 && (
+                <div style={{ padding: '0.4rem 0.55rem', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                  No services match “{query}”.
+                </div>
+              )}
+              {shown.map(name => {
+                const on = selectedSet.has(name.trim().toLowerCase());
+                return (
+                  <label
+                    key={name}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer',
+                      background: on ? 'var(--color-bg)' : 'transparent',
+                    }}
+                  >
+                    <input type="checkbox" checked={on} onChange={() => toggle(name)} />
+                    <span style={{ flex: 1, minWidth: 0 }}>{name}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
+              fontSize: '0.7rem', color: 'var(--color-text-muted)',
+            }}>
+              <span>{selected.length} selected</span>
+              <span style={{ display: 'flex', gap: '0.5rem' }}>
+                {selected.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onCommit('')}
+                    className={styles.serviceLinkEditBtn}
+                  >Clear</button>
+                )}
+                <button type="button" onClick={close} className={styles.serviceLinkEditBtn}>Done</button>
+              </span>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -661,6 +841,10 @@ export function DropdownsView({ settings, updateSettings }) {
   // getEffectiveServiceMetadata so the editor and any downstream
   // consumers (AI Prompt etc.) see exactly the same values.
   const solutionsList = useMemo(() => lists.find(l => l.key === 'solutions'), [lists]);
+  // Every service name, for the Dependent Rollout Services picker. Read off
+  // the live Solutions list — the same source the rows come from — so a
+  // service added there is immediately pickable as a dependency.
+  const solutionNames = useMemo(() => solutionsList?.options || [], [solutionsList]);
   const serviceRows = useMemo(() => {
     const options = solutionsList?.options || [];
     return options.map(name => ({ name, meta: getEffectiveServiceMetadata(name, serviceOverrides) }));
@@ -693,34 +877,44 @@ export function DropdownsView({ settings, updateSettings }) {
     return visible.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.sme]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
 
-  // The SME column shipped after the Services table gained saved column
-  // prefs, so anyone who has already resized or hidden a column has a stored
-  // visible-set that omits it — DataTable would keep it hidden forever.
-  // Reveal it once, then record that we did so we never re-fight a user who
-  // later chooses to hide it. Gated on settings._lastWriteAt so we only act
-  // once synced settings have actually loaded. Mirrors the same one-time
-  // reveal Opps 2 used when it added its PE Owner column.
+  // Reveal any SERVICES_LATE_COLUMNS the user's stored visible-set predates,
+  // once each. Gated on settings._lastWriteAt so we only act after synced
+  // settings have actually loaded. Mirrors the same one-time reveal Opps 2
+  // used when it added its PE Owner column.
   useEffect(() => {
     if (!settings || !settings._lastWriteAt) return;
-    if (settings.servicesSmeColumnRevealed) return;
-    const updates = { servicesSmeColumnRevealed: true };
+    const due = SERVICES_LATE_COLUMNS.filter(c => !settings[c.flag]);
+    if (due.length === 0) return;
+    const updates = {};
+    for (const c of due) updates[c.flag] = true;
+
+    // Remote prefs win in DataTable when they're non-empty, so the keys
+    // have to go in here or the reveal doesn't show. Built up across all
+    // due columns so two arriving together are one write, not two.
     const remote = settings?.tablePrefs?.[SERVICES_TABLE_ID]?.visible;
-    if (Array.isArray(remote) && remote.length > 0 && !remote.includes('sme')) {
-      updates.tablePrefs = {
-        ...(settings.tablePrefs || {}),
-        [SERVICES_TABLE_ID]: { ...(settings.tablePrefs[SERVICES_TABLE_ID] || {}), visible: [...remote, 'sme'] },
-      };
+    if (Array.isArray(remote) && remote.length > 0) {
+      const add = due.map(c => c.key).filter(k => !remote.includes(k));
+      if (add.length > 0) {
+        updates.tablePrefs = {
+          ...(settings.tablePrefs || {}),
+          [SERVICES_TABLE_ID]: {
+            ...(settings.tablePrefs[SERVICES_TABLE_ID] || {}),
+            visible: [...remote, ...add],
+          },
+        };
+      }
     }
     try {
       const LS_KEY = `prospect-col-visible-${SERVICES_TABLE_ID}`;
       const saved = JSON.parse(localStorage.getItem(LS_KEY));
-      if (Array.isArray(saved) && saved.length > 0 && !saved.includes('sme')) {
-        localStorage.setItem(LS_KEY, JSON.stringify([...saved, 'sme']));
+      if (Array.isArray(saved) && saved.length > 0) {
+        const add = due.map(c => c.key).filter(k => !saved.includes(k));
+        if (add.length > 0) localStorage.setItem(LS_KEY, JSON.stringify([...saved, ...add]));
       }
     } catch { /* ignore */ }
     updateSettings?.(updates);
@@ -740,6 +934,7 @@ export function DropdownsView({ settings, updateSettings }) {
     localProjectName: meta?.localProjectName || '',
     timelineDriven: meta?.timelineDriven || '',
     rolloutTime: meta?.rolloutTime || '',
+    dependsOn: meta?.dependsOn || '',
     sme: meta?.sme || '',
     _url: serviceLinks[name] || '',
     _muted: !!meta?.graveyard,
@@ -785,12 +980,21 @@ export function DropdownsView({ settings, updateSettings }) {
               onCommit={(v) => saveServiceField(row.name, 'rolloutTime', v)}
             />
           )
-          : (row) => (
-            <ServiceCell
-              value={row[col.key]}
-              onCommit={(v) => saveServiceField(row.name, col.key, v)}
-            />
-          ),
+          : col.key === 'dependsOn'
+            ? (row) => (
+              <ServiceDependsCell
+                value={row.dependsOn}
+                options={solutionNames}
+                selfName={row.name}
+                onCommit={(v) => saveServiceField(row.name, 'dependsOn', v)}
+              />
+            )
+            : (row) => (
+              <ServiceCell
+                value={row[col.key]}
+                onCommit={(v) => saveServiceField(row.name, col.key, v)}
+              />
+            ),
     // Weeks sort by size, not as text — otherwise 10 lands between 1 and
     // 2 — and rows with nothing set (or legacy text that isn't a number)
     // tail the list either way rather than clumping at the top.
