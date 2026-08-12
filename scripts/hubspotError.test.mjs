@@ -114,6 +114,55 @@ const scopeBody = JSON.stringify({
 });
 contains('scope errors still name the scope', describeHubSpotError(403, scopeBody), 'crm.objects.contacts.write');
 contains('and still say where to fix it', describeHubSpotError(403, scopeBody), 'Private Apps');
+check('a lone scope is named without alternatives', describeHubSpotError(403, scopeBody).includes('also accepts'), false);
+
+// --- several scopes would satisfy the call ---------------------------------
+// The company-rename 403. HubSpot lists the sensitive-data variants first,
+// so replaying its order told the user to grant
+// crm.objects.companies.highly_sensitive.write.v2 — a scope a private app
+// can't hold until the portal is enabled for sensitive data — when
+// crm.objects.companies.write is what the call actually wanted.
+const companyScopeBody = JSON.stringify({
+  status: 'error',
+  message: "This app hasn't been granted all required scopes to make this call.",
+  correlationId: 'def',
+  category: 'MISSING_SCOPES',
+  errors: [{
+    message: 'One or more of the following scopes are required: '
+      + 'crm.objects.companies.highly_sensitive.write.v2, crm.objects.companies.sensitive.write.v2, '
+      + 'crm.objects.companies.write, crm.schemas.companies.write.',
+  }],
+});
+const companyDescribed = describeHubSpotError(403, companyScopeBody);
+contains('the ordinary object scope is the one recommended', companyDescribed, 'needs the crm.objects.companies.write scope');
+contains('the rest are demoted to alternatives', companyDescribed, 'HubSpot also accepts crm.schemas.companies.write, crm.objects.companies.sensitive.write.v2, or crm.objects.companies.highly_sensitive.write.v2');
+check('and none of them is what "Add it" points at', /needs the crm\.objects\.companies\.(highly_)?sensitive/.test(companyDescribed), false);
+contains('the fix instruction survives in full', companyDescribed, 'Add it in HubSpot under Settings → Integrations → Private Apps → Auth, then save the app.');
+check('and the whole thing stays readable', companyDescribed.length <= 420, true);
+
+// A pile of alternatives drops the parenthetical rather than the instruction.
+const manyScopes = JSON.stringify({
+  status: 'error',
+  category: 'MISSING_SCOPES',
+  message: "This app hasn't been granted all required scopes to make this call.",
+  errors: [{
+    message: 'One or more of the following scopes are required: '
+      + Array.from({ length: 12 }, (_, i) => `crm.objects.companies.sensitive.write.v${i}`).join(', ')
+      + ', crm.objects.companies.write.',
+  }],
+});
+const manyDescribed = describeHubSpotError(403, manyScopes);
+contains('a long list still recommends the plain scope', manyDescribed, 'needs the crm.objects.companies.write scope.');
+contains('and still says where to fix it', manyDescribed, 'Private Apps → Auth');
+check('and stays within budget', manyDescribed.length <= 420, true);
+
+// No scope names at all: the instruction is still the point.
+const bareScopeBody = JSON.stringify({
+  status: 'error',
+  category: 'MISSING_SCOPES',
+  message: "This app hasn't been granted all required scopes to make this call.",
+});
+contains('a nameless scope failure still points somewhere', describeHubSpotError(403, bareScopeBody), 'Private Apps → Auth');
 
 check('a non-JSON body falls back to its text', describeHubSpotError(500, 'Bad Gateway'), 'Bad Gateway');
 check('an empty body still says something', describeHubSpotError(502, ''), 'HubSpot returned HTTP 502 with no details');

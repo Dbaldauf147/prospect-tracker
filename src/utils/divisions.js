@@ -415,6 +415,101 @@ export function moveDivisionContactsPatch(settings, fromId, toId) {
   return { divisionContacts: { ...map, [toId]: list.map(c => ({ ...c })) } };
 }
 
+// ── Reporting lines ─────────────────────────────────────────────────
+// Who reports to whom among the people on one box, read off
+// settings.contactReportsTo — the same mapping the contact editor's
+// "Reports To" picker writes and the By Category org chart draws. Nothing
+// new is stored here: the chart only renders what's already mapped at the
+// contact level, so a division box and the org chart can't disagree.
+//
+// A line is only drawn INSIDE a box: a person whose manager is also on
+// that box nests under them. A manager on a different box (or not on the
+// chart at all) has no line to draw from here, so that person stays at
+// the top level and carries the manager's NAME instead — every mapped
+// relationship shows up somewhere rather than the cross-box ones
+// silently vanishing.
+//
+// Returns [{ contact, managerNames, children }]:
+//   contact      the stored { id, name, jobtitle, email } entry
+//   managerNames managers NOT drawn as the node's parent, by name
+//   children     the people on this box who report to them
+//
+// `nameById` resolves a manager id to a display name when that manager
+// isn't on this box (their name is stored on whatever box they sit on,
+// or comes from the company's contact list).
+export function buildDivisionContactTree(assigned, reportsTo, nameById) {
+  const list = (assigned || []).filter(Boolean);
+  const names = nameById || new Map();
+  const map = reportsTo || {};
+
+  // Only a contact with a real id can take part: reportsTo is keyed by
+  // HubSpot id, and a division entry typed as bare text has none.
+  const byId = new Map();
+  for (const c of list) {
+    const id = String(c.id || '');
+    if (id && !byId.has(id)) byId.set(id, c);
+  }
+
+  const managersOf = (c) => {
+    const id = String(c?.id || '');
+    if (!id) return [];
+    const raw = map[id];
+    const arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return arr.map(String).filter(m => m && m !== id);
+  };
+
+  // The manager to nest under: the first one who's also on this box,
+  // unless following the chain up from them leads back to the person we
+  // started from. A mapping that has two people managing each other
+  // would otherwise leave both of them off the chart entirely.
+  const parentIdOf = (c) => {
+    const selfId = String(c?.id || '');
+    if (!selfId) return '';
+    for (const mgrId of managersOf(c)) {
+      if (!byId.has(mgrId)) continue;
+      let cursor = mgrId;
+      let looped = false;
+      for (let hops = 0; cursor && hops <= list.length; hops++) {
+        if (cursor === selfId) { looped = true; break; }
+        cursor = managersOf(byId.get(cursor)).find(m => byId.has(m));
+      }
+      if (!looped) return mgrId;
+    }
+    return '';
+  };
+
+  const parentOf = new Map();
+  const childrenBy = new Map();
+  const roots = [];
+  for (const c of list) {
+    const pid = parentIdOf(c);
+    parentOf.set(c, pid);
+    if (!pid) { roots.push(c); continue; }
+    if (!childrenBy.has(pid)) childrenBy.set(pid, []);
+    childrenBy.get(pid).push(c);
+  }
+
+  // A contact mapped onto the same box twice would otherwise render
+  // twice; the first placement wins, as it does in the box's own list.
+  const placed = new Set();
+  function node(c) {
+    const id = String(c.id || '');
+    if (id) placed.add(id);
+    const pid = parentOf.get(c);
+    return {
+      contact: c,
+      managerNames: managersOf(c)
+        .filter(m => m !== pid)
+        .map(m => byId.get(m)?.name || names.get(m) || '')
+        .filter(Boolean),
+      children: (childrenBy.get(id) || [])
+        .filter(k => !placed.has(String(k.id || '')))
+        .map(node),
+    };
+  }
+  return roots.map(node);
+}
+
 // ── Layout ──────────────────────────────────────────────────────────
 // How a box's children are arranged: 'row' fans them out horizontally
 // under a bus, 'column' stacks them vertically off a spine. Stored per
