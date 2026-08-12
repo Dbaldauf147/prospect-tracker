@@ -51,6 +51,7 @@ import {
   moveDivisionContactsPatch,
   divisionLayoutFor,
   setDivisionLayoutPatch,
+  buildDivisionContactTree,
   nameKey,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2622,11 +2623,17 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
               <div
                 key={c.id || c.name}
                 onClick={() => actions.addContact(boxId, c)}
-                style={{ padding: '0.15rem 0.3rem', fontSize: '0.65rem', color: '#1E293B', cursor: 'pointer', borderRadius: 3 }}
+                style={{ padding: '0.15rem 0.3rem', fontSize: '0.65rem', color: c.left ? '#94A3B8' : '#1E293B', cursor: 'pointer', borderRadius: 3 }}
                 onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
                 onMouseOut={e => e.currentTarget.style.background = ''}
               >
-                <div style={{ fontWeight: 600 }}>{c.name}</div>
+                {/* Someone tagged Left can still be put on a box — that's
+                    how the chart keeps showing who used to cover it — but
+                    the list says so rather than letting it pass unnoticed. */}
+                <div style={{ fontWeight: 600 }}>
+                  {c.name}
+                  {c.left && <span style={{ fontWeight: 500, color: '#94A3B8' }}> · left</span>}
+                </div>
                 {(c.jobtitle || c.email) && (
                   <div style={{ color: '#94A3B8', fontSize: '0.6rem' }}>{c.jobtitle || c.email}</div>
                 )}
@@ -2651,35 +2658,110 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
   );
 }
 
+// One person on a box, with anyone who reports to them — and is on the
+// same box — nested underneath off a short spine.
+//
+// Colour is the person's standing: green while they're still there, grey
+// once they're tagged Left. A leaver is never dropped from the chart —
+// who used to cover a division is worth knowing, and quietly removing
+// them would look like the mapping was never made.
+function DivisionContactRow({ node, boxId, boxName, hasLeft, actions }) {
+  const c = node.contact;
+  const gone = hasLeft(c);
+  const tone = gone
+    ? { bg: '#F1F5F9', border: '#E2E8F0', text: '#94A3B8' }
+    : { bg: '#ECFDF5', border: '#A7F3D0', text: '#065F46' };
+  const managers = node.managerNames;
+  return (
+    <div>
+      <span
+        title={[
+          c.name,
+          c.jobtitle,
+          c.email,
+          gone ? 'Tagged Left: no longer at the company' : 'Still at the company',
+          managers.length ? `Reports to ${managers.join(', ')}` : '',
+        ].filter(Boolean).join(' · ')}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '0.2rem',
+          fontSize: '0.62rem', color: tone.text, background: tone.bg,
+          border: `1px solid ${tone.border}`, borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {c.name}
+        </span>
+        <button
+          type="button"
+          onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
+          aria-label={`Remove ${c.name} from ${boxName}`}
+          title={`Remove ${c.name} from ${boxName}`}
+          style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
+        >&times;</button>
+      </span>
+      {/* A manager who isn't on this box has no line to draw to, so their
+          name goes under the chip instead — otherwise a mapped reporting
+          line would simply be missing from the chart. */}
+      {managers.length > 0 && (
+        <div
+          title={`${c.name} reports to ${managers.join(', ')}`}
+          style={{
+            fontSize: '0.55rem', color: '#94A3B8', textAlign: 'left',
+            padding: '0 0.3rem 0 0.45rem', overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+        >&#8593; {managers.join(', ')}</div>
+      )}
+      {node.children.length > 0 && (
+        <div style={{
+          marginTop: '0.12rem', marginLeft: '0.4rem', paddingLeft: '0.3rem',
+          borderLeft: '1px solid #CBD5E1', display: 'flex', flexDirection: 'column', gap: '0.12rem',
+        }}>
+          {node.children.map(child => (
+            <DivisionContactRow
+              key={divisionContactKey(child.contact)}
+              node={child}
+              boxId={boxId}
+              boxName={boxName}
+              hasLeft={hasLeft}
+              actions={actions}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The people on a division, listed under its box. The picker above is a
 // separate component so it mounts fresh every time it opens — otherwise
 // its search text survived a close and prepended itself to the next one.
-function DivisionContacts({ boxId, boxName, contacts, assigned, picking, actions }) {
+//
+// `contactBook` carries what the chips need about the live contacts:
+// who reports to whom (settings.contactReportsTo) and who's tagged Left.
+function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, picking, actions }) {
+  const nodes = useMemo(
+    () => buildDivisionContactTree(assigned, contactBook.reportsTo, contactBook.nameById),
+    [assigned, contactBook],
+  );
+  // A person the company's contact list doesn't have — typed straight
+  // onto the box, or since deleted — carries no Left tag, so they read
+  // as still there. That's the same reading the contacts panel gives.
+  const hasLeft = useCallback(
+    (c) => contactBook.leftIds.has(String(c?.id || '')), [contactBook]);
   return (
     <>
-      {assigned.length > 0 && (
+      {nodes.length > 0 && (
         <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: '0.12rem' }}>
-          {assigned.map(c => (
-            <span
-              key={divisionContactKey(c)}
-              title={[c.name, c.jobtitle, c.email].filter(Boolean).join(' · ')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.2rem',
-                fontSize: '0.62rem', color: '#334155', background: '#F1F5F9',
-                border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {c.name}
-              </span>
-              <button
-                type="button"
-                onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
-                aria-label={`Remove ${c.name} from ${boxName}`}
-                title={`Remove ${c.name} from ${boxName}`}
-                style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
-              >&times;</button>
-            </span>
+          {nodes.map(node => (
+            <DivisionContactRow
+              key={divisionContactKey(node.contact)}
+              node={node}
+              boxId={boxId}
+              boxName={boxName}
+              hasLeft={hasLeft}
+              actions={actions}
+            />
           ))}
         </div>
       )}
@@ -2745,8 +2827,8 @@ function DivisionChildren({ node, layout, shared }) {
 // `ownerId` is the id whose list this box lives in — renaming or removing
 // the box edits that list, and a box added from here lands in THIS box's
 // list (node.id), which is what nests it one level deeper.
-function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
-  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
+function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, contactBook, layoutOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, contactBook, layoutOf, actions };
   const isEditing = editing === node.id;
   const assigned = contactsByBox(node.id);
   const layout = layoutOf(node.id);
@@ -2829,6 +2911,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
           boxName={node.company}
           contacts={contacts}
           assigned={assigned}
+          contactBook={contactBook}
           picking={picking === node.id}
           actions={actions}
         />
@@ -2846,7 +2929,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
 // No "+" control: a division added under the parent would be a SIBLING of
 // this company, and this chart doesn't draw siblings — a control whose
 // result you can't see is worse than no control.
-function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, contactBook, actions }) {
   const btn = {
     border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
     fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
@@ -2908,6 +2991,7 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
         boxName={parent.company}
         contacts={contacts}
         assigned={contactsByBox(parent.id)}
+        contactBook={contactBook}
         picking={picking === parent.id}
         actions={actions}
       />
@@ -2920,7 +3004,7 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
 // Normally there's a single parent and the bus collapses to that stem;
 // more than one only happens when the mapping has it, and drawing them
 // all beats hiding an edge the user can't otherwise find to undo.
-function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, contactBook, actions }) {
   if (!parents.length && !addingParent) return null;
   return (
     <>
@@ -2934,6 +3018,7 @@ function DivisionParents({ parents, addingParent, rootCompany, editing, picking,
               picking={picking}
               contacts={contacts}
               contactsByBox={contactsByBox}
+              contactBook={contactBook}
               actions={actions}
             />
           </div>
@@ -2958,8 +3043,8 @@ function DivisionParents({ parents, addingParent, rootCompany, editing, picking,
 // The root box is the company the popup is showing, so it isn't renamable
 // or removable here — its own name field is a few rows up. Everything
 // below it is editable in place, and the parent above it is set here.
-function DivisionsChart({ tree, parents, addingParent, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
-  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
+function DivisionsChart({ tree, parents, addingParent, editing, adding, picking, contacts, contactsByBox, contactBook, layoutOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, contactBook, layoutOf, actions };
   const rootLayout = layoutOf(tree.id, 'row');
   const rootHasBelow = tree.children.length > 0 || adding === tree.id;
   return (
@@ -2973,6 +3058,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
           picking={picking}
           contacts={contacts}
           contactsByBox={contactsByBox}
+          contactBook={contactBook}
           actions={actions}
         />
         <div className={styles.divRootRow}>
@@ -3025,6 +3111,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
               boxName={tree.company}
               contacts={contacts}
               assigned={contactsByBox(tree.id)}
+              contactBook={contactBook}
               picking={picking === tree.id}
               actions={actions}
             />
@@ -3069,13 +3156,43 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
 
   // The company's contacts, flattened to { id, name, jobtitle, email }.
   // Contacts arrive in a couple of shapes (HubSpot `vid` vs `id`), so the
-  // id is resolved the same way the contacts panel does it.
+  // id is resolved the same way the contacts panel does it. `left` is the
+  // Left tag, carried so the picker can say who's already gone.
   const contactOptions = useMemo(() => (contacts || []).map(c => ({
     id: String(c.id || c.vid || c.email || ''),
     name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
     jobtitle: c.jobtitle || '',
     email: c.email || '',
+    left: contactHasTag(c, 'left'),
   })).filter(c => c.name), [contacts]);
+
+  // What the chips need about the live contacts behind them: the
+  // contact-level reporting map (the same one the By Category org chart
+  // draws), who's tagged Left, and a name per contact id so a manager
+  // sitting on another box can still be named.
+  const contactBook = useMemo(() => {
+    const leftIds = new Set();
+    const contactNames = new Map();
+    for (const c of contactOptions) {
+      if (!c.id) continue;
+      contactNames.set(c.id, c.name);
+      if (c.left) leftIds.add(c.id);
+    }
+    // A manager can be someone this company's list no longer carries —
+    // they were mapped onto a box back when it did — so the names stored
+    // on the boxes themselves fill the gaps.
+    for (const list of Object.values(settings?.divisionContacts || {})) {
+      for (const c of (list || [])) {
+        const id = String(c?.id || '');
+        if (id && c.name && !contactNames.has(id)) contactNames.set(id, c.name);
+      }
+    }
+    return {
+      reportsTo: settings?.contactReportsTo || {},
+      leftIds,
+      nameById: contactNames,
+    };
+  }, [contactOptions, settings?.divisionContacts, settings?.contactReportsTo]);
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
@@ -3231,6 +3348,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 picking={picking}
                 contacts={contactOptions}
                 contactsByBox={contactsByBox}
+                contactBook={contactBook}
                 layoutOf={layoutOf}
                 actions={actions}
               />
@@ -3238,6 +3356,15 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
                 {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions'}
+              </p>
+              {/* Says what the two chip colours mean, and where the
+                  nesting comes from — the reporting lines are read off
+                  each contact's own Reports To, never set here. */}
+              <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
+                Contacts sit under whoever they report to (set on the contact's own Reports To) ·
+                <span style={{ color: '#065F46' }}> green</span> is still at the company ·
+                <span style={{ color: '#64748B' }}> grey</span> is tagged Left ·
+                ↑ names a manager who sits on another box
               </p>
             </>
           )}
