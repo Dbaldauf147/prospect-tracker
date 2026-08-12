@@ -648,6 +648,33 @@ function withServiceTimelines(list, services) {
   return rows;
 }
 
+// The Rollout Time a service carries on Dropdowns › Services, which is the
+// same fact as a timeline row's Delivery Lead Time: how long the work takes
+// once it starts. '' when the row's type doesn't name a known service, or
+// names one nobody has given a rollout time.
+function serviceRolloutTime(type, serviceOverrides) {
+  const name = String(type ?? '').trim();
+  if (!name) return '';
+  const meta = getEffectiveServiceMetadata(name, serviceOverrides);
+  return String(meta?.rolloutTime ?? '').trim();
+}
+
+// Fill in each row's Delivery Lead Time from its service's Rollout Time, so a
+// timeline named after a service arrives with the lead time already on it
+// instead of asking the user to copy it across from Dropdowns.
+//
+// Only ever fills an empty cell: a lead time typed on the row is the one that
+// deal negotiated, and the catalog default must not overwrite it. Nothing is
+// written to the opp here — like the auto-seeded service rows, a pulled-in
+// lead time only persists once the user saves or edits the popup.
+function withServiceRolloutTimes(list, serviceOverrides) {
+  return (Array.isArray(list) ? list : []).map(row => {
+    if (String(row?.leadTime ?? '').trim()) return row;
+    const rollout = serviceRolloutTime(row?.type, serviceOverrides);
+    return rollout ? { ...row, leadTime: rollout } : row;
+  });
+}
+
 // The Kickoff Deadline enters its Flags-column warning window when it's fewer
 // than this many days out (overdue deadlines are always in the window).
 const KICKOFF_WARN_DAYS = 10;
@@ -4845,11 +4872,15 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
   // with its own Kickoff Deadline and delivery lead time, seeded from the opp
   // (falling back to the legacy free-text Timeline? column). Any service in the
   // opp's Scope flagged "Timeline Driven = Yes" also gets an auto row so its
-  // table always appears.
+  // table always appears, and every row named after a service starts with that
+  // service's Rollout Time as its lead time.
   // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
-    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    () => withServiceRolloutTimes(
+      withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+      serviceOverrides,
+    ),
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
@@ -5004,6 +5035,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
             <TimelinesEditor
               list={timelineList}
               onChangeList={setTimelineList}
+              serviceOverrides={serviceOverrides}
             />
           </div>
           <div>
@@ -6553,15 +6585,33 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 // carries its own Kickoff Deadline and delivery lead time in the right-hand
 // columns so every timeline gets its own deadline and its own lead time.
 //
+// A row whose type names a service starts with that service's Rollout Time
+// (Dropdowns › Services) as its lead time — the parent seeds the list, and
+// typing a type in here pulls it across the same way. Filling only ever
+// touches an empty cell, so a lead time agreed for this deal stands.
+//
 // Rows can be hidden or deleted. Hiding keeps the row (and whatever's typed in
 // it) in `_timelines` while dropping it out of the table, the Timeline? summary
 // and the kickoff flag — that's the right move for the auto-seeded
 // timeline-driven service rows, which a delete would only re-seed on the next
 // open. Delete is still there for rows added by mistake.
-function TimelinesEditor({ list, onChangeList }) {
+function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
-    onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+    onChangeList(rows.map((r, i) => {
+      if (i !== idx) return r;
+      const next = { ...r, [key]: value };
+      // Naming a service in the Timeline Type brings its Rollout Time across
+      // as the delivery lead time, the same way the popup fills them in on
+      // open — typing the type is when the row learns which service it is.
+      // Only into an empty cell: a lead time already on the row was put
+      // there for this deal and outranks the catalog default.
+      if (key === 'type' && !String(r?.leadTime ?? '').trim()) {
+        const rollout = serviceRolloutTime(value, serviceOverrides);
+        if (rollout) next.leadTime = rollout;
+      }
+      return next;
+    }));
   const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '', leadTime: '', hidden: false }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
   const setHidden = (idx, hidden) => updateRow(idx, 'hidden', hidden);
@@ -6640,6 +6690,37 @@ function TimelinesEditor({ list, onChangeList }) {
     );
   };
 
+  // The Delivery Lead Time cell. A value that still matches the service's
+  // Rollout Time says where it came from, so a number nobody typed isn't
+  // mistaken for one this deal agreed — and so an edited one is visibly the
+  // user's own.
+  const renderLeadTime = (row, idx) => {
+    const leadTime = String(row?.leadTime ?? '');
+    const rollout = serviceRolloutTime(row?.type, serviceOverrides);
+    const fromServices = !!rollout && leadTime.trim() === rollout;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+        <input
+          type="text"
+          value={leadTime}
+          onChange={(e) => updateRow(idx, 'leadTime', e.target.value)}
+          placeholder={rollout ? `${rollout} (from Services)` : 'e.g. 6 weeks'}
+          title={rollout
+            ? `How long delivery takes once this timeline kicks off. ${row.type} is `
+              + `${rollout} on Dropdowns › Services — type over it for a lead time just for this deal.`
+            : 'How long delivery takes once this timeline kicks off'}
+          style={{ ...cellInput, width: 130 }}
+        />
+        {fromServices ? (
+          <span
+            style={{ fontSize: '0.66rem', fontWeight: 700, color: '#64748B' }}
+            title={`Pulled from the Rollout Time set for ${row.type} on Dropdowns › Services`}
+          >from Services</span>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
       <datalist id={typeListId}>
@@ -6691,16 +6772,7 @@ function TimelinesEditor({ list, onChangeList }) {
                     />
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    <input
-                      type="text"
-                      value={row.leadTime || ''}
-                      onChange={(e) => updateRow(idx, 'leadTime', e.target.value)}
-                      placeholder="e.g. 6 weeks"
-                      title="How long delivery takes once this timeline kicks off"
-                      style={{ ...cellInput, width: 130 }}
-                    />
-                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderLeadTime(row, idx)}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
                     <button
                       type="button"
@@ -6810,17 +6882,21 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
     return 'Timeline?';
   }, [opp]);
 
-  // Structured timelines: a list of { type, value, kickoff } rows, each with
-  // its own Kickoff Deadline. Seeded from the opp (falling back to the legacy
-  // free-text Timeline? column) and persisted on every change — the list also
-  // writes a readable summary back into Timeline? so table cells / flags keep
-  // working.
+  // Structured timelines: a list of { type, value, kickoff, leadTime } rows,
+  // each with its own Kickoff Deadline. Seeded from the opp (falling back to
+  // the legacy free-text Timeline? column) and persisted on every change — the
+  // list also writes a readable summary back into Timeline? so table cells /
+  // flags keep working.
   // Any service in the opp's Scope flagged "Timeline Driven = Yes" also gets
   // an auto row so its table always appears (empty auto rows aren't persisted
-  // until the user logs a date).
+  // until the user logs a date), and a row named after a service starts with
+  // that service's Rollout Time as its lead time.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
-    () => withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+    () => withServiceRolloutTimes(
+      withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
+      serviceOverrides,
+    ),
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
@@ -6971,6 +7047,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
             <TimelinesEditor
               list={timelineList}
               onChangeList={changeTimelineList}
+              serviceOverrides={serviceOverrides}
             />
           </div>
 
