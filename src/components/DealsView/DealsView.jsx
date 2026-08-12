@@ -2202,6 +2202,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       )}
       {historyRowId != null && data[historyRowId] && (
         <DealHistoryModal
+          // Keyed on the row so opening a different deal remounts the modal
+          // — its projection inputs seed from the deal being shown, and a
+          // plain prop update would leave the previous deal's numbers in.
+          key={historyRowId}
           deal={data[historyRowId]}
           commissionsRows={commissionsData}
           onClose={() => setHistoryRowId(null)}
