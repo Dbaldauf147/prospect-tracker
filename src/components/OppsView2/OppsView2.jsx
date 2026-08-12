@@ -505,10 +505,10 @@ function snoozeCountdownLabel(days) {
 // Budget + one Compliance timeline).
 
 // Read the structured timelines off an opp. Newer records store an array of
-// { type, value, kickoff, hidden } rows under `_timelines`, each with its own
-// Kickoff Deadline. Older records only carry the free-text "Timeline?" column —
-// we surface that as a single untyped row so nothing is lost when the popup
-// first opens. Older-still records kept one per-opp kickoff under
+// { type, value, kickoff, leadTime, hidden } rows under `_timelines`, each with
+// its own Kickoff Deadline and delivery lead time. Older records only carry the
+// free-text "Timeline?" column — we surface that as a single untyped row so
+// nothing is lost when the popup first opens. Older-still records kept one per-opp kickoff under
 // `_kickoffDeadline`; we surface that on the first row so an existing deadline
 // isn't dropped. `hidden` rows are kept verbatim — hiding is a display choice,
 // not a delete, so the row (and anything typed into it) survives round-trips.
@@ -521,6 +521,11 @@ function readTimelines(opp) {
       type: String(r?.type ?? ''),
       value: String(r?.value ?? ''),
       kickoff: String(r?.kickoff ?? ''),
+      // How long delivery takes once this timeline kicks off, as the user
+      // writes it ("6 weeks", "2 months"). Free text on purpose: a lead
+      // time is quoted in whatever unit the service uses, and rounding it
+      // into days would lose the quote it came from.
+      leadTime: String(r?.leadTime ?? ''),
       hidden: r?.hidden === true,
     }));
     // Migrate a pre-per-row single kickoff onto the first row when none of the
@@ -530,7 +535,7 @@ function readTimelines(opp) {
     }
   } else {
     const legacy = String(rowValueByHeader(opp, 'timeline?') ?? '').trim();
-    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff, hidden: false }] : [];
+    list = legacy ? [{ type: '', value: legacy, kickoff: legacyKickoff, leadTime: '', hidden: false }] : [];
   }
   return { list };
 }
@@ -637,7 +642,7 @@ function withServiceTimelines(list, services) {
   for (const name of services) {
     const key = String(name).trim().toLowerCase();
     if (!key || present.has(key)) continue;
-    rows.push({ type: name, value: '', kickoff: '', hidden: false });
+    rows.push({ type: name, value: '', kickoff: '', leadTime: '', hidden: false });
     present.add(key);
   }
   return rows;
@@ -4836,10 +4841,11 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
   const curFollowUp = toISODate(opp?.['Follow Up']);
   const [followUp, setFollowUp] = useState(curFollowUp);
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
-  // Structured timelines: a list of { type, value, kickoff } rows, each with its
-  // own Kickoff Deadline, seeded from the opp (falling back to the legacy
-  // free-text Timeline? column). Any service in the opp's Scope flagged
-  // "Timeline Driven = Yes" also gets an auto row so its table always appears.
+  // Structured timelines: a list of { type, value, kickoff, leadTime } rows, each
+  // with its own Kickoff Deadline and delivery lead time, seeded from the opp
+  // (falling back to the legacy free-text Timeline? column). Any service in the
+  // opp's Scope flagged "Timeline Driven = Yes" also gets an auto row so its
+  // table always appears.
   // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
@@ -6541,11 +6547,11 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 
 // Shared "Timelines" editor used inside both the Notes and Follow Up popups.
 // Presentational only — the parent owns the `list` (array of
-// { type, value, kickoff }) and passes a change handler. Rows are laid out as a
-// table: each row types a timeline kind (the two presets are offered via a
-// datalist, but any custom type can be typed), logs a date or note, and carries
-// its own Kickoff Deadline in the right-hand column so every timeline gets its
-// own deadline.
+// { type, value, kickoff, leadTime }) and passes a change handler. Rows are laid
+// out as a table: each row types a timeline kind (the two presets are offered
+// via a datalist, but any custom type can be typed), logs a date or note, and
+// carries its own Kickoff Deadline and delivery lead time in the right-hand
+// columns so every timeline gets its own deadline and its own lead time.
 //
 // Rows can be hidden or deleted. Hiding keeps the row (and whatever's typed in
 // it) in `_timelines` while dropping it out of the table, the Timeline? summary
@@ -6556,7 +6562,7 @@ function TimelinesEditor({ list, onChangeList }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
     onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
-  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '', hidden: false }]);
+  const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '', leadTime: '', hidden: false }]);
   const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
   const setHidden = (idx, hidden) => updateRow(idx, 'hidden', hidden);
 
@@ -6645,13 +6651,14 @@ function TimelinesEditor({ list, onChangeList }) {
             <th style={{ ...th, width: '32%' }}>Timeline Type</th>
             <th style={th}>Details</th>
             <th style={{ ...th, whiteSpace: 'nowrap' }}>Kickoff Deadline</th>
+            <th style={{ ...th, whiteSpace: 'nowrap' }}>Delivery Lead Time</th>
             <th style={{ ...th, width: 1 }} aria-hidden="true" />
           </tr>
         </thead>
         <tbody>
           {visibleRows.length === 0 ? (
             <tr>
-              <td style={td} colSpan={4}>
+              <td style={td} colSpan={5}>
                 <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.2rem 0' }}>
                   {rows.length === 0 ? 'No timelines yet.' : 'All timelines are hidden.'}
                 </div>
@@ -6684,6 +6691,16 @@ function TimelinesEditor({ list, onChangeList }) {
                     />
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{renderKickoff(row, idx)}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    <input
+                      type="text"
+                      value={row.leadTime || ''}
+                      onChange={(e) => updateRow(idx, 'leadTime', e.target.value)}
+                      placeholder="e.g. 6 weeks"
+                      title="How long delivery takes once this timeline kicks off"
+                      style={{ ...cellInput, width: 130 }}
+                    />
+                  </td>
                   <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
                     <button
                       type="button"
