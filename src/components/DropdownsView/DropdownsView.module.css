@@ -84,6 +84,16 @@
   color: var(--color-text-muted);
 }
 
+/* Rollout Time saved as free text before the column became a number of
+   weeks. Shown as it was written, underlined as something to replace,
+   rather than dropped or reduced to a guessed number. */
+.serviceLegacyWeeksCell {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-decoration: underline dotted #F59E0B;
+  text-underline-offset: 2px;
+}
+
 .serviceRowMuted td {
   color: var(--color-text-muted);
   background: #FAFAFA;

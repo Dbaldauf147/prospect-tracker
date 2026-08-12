@@ -160,12 +160,38 @@ export function getServiceMetadata(name) {
   return SERVICE_BY_NAME.get(String(name).toLowerCase()) || null;
 }
 
+// Rollout Time is a number of weeks. It was free text before, so a value
+// saved back then can be anything — "6", "6 weeks", or a range like
+// "4-6 weeks". A bare number, with or without a weeks unit written after
+// it, reads as that many weeks; anything else doesn't, and is left alone
+// rather than guessed at.
+const ROLLOUT_WEEKS_RE = /^\s*(\d+(?:\.\d+)?)\s*(?:w|wk|wks|week|weeks)?\s*$/i;
+
+// The number of weeks a stored Rollout Time means, or null when it isn't a
+// number of weeks (including empty).
+export function rolloutWeeks(raw) {
+  const m = ROLLOUT_WEEKS_RE.exec(String(raw ?? ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+// A Rollout Time written out with its unit, for the places that show it
+// outside the Services table — where the column header isn't there to say
+// what the number counts. Legacy free text passes through as written.
+export function formatRolloutWeeks(raw) {
+  const weeks = rolloutWeeks(raw);
+  if (weeks === null) return String(raw ?? '').trim();
+  return `${weeks} ${weeks === 1 ? 'week' : 'weeks'}`;
+}
+
 // Editable per-service fields the Dropdowns › Services subtab exposes.
 // The seed values above are the defaults; the user can override any of
 // them via settings.serviceOverrides. Local Project Name has no seed —
 // it's a user-supplied label that flows into the AI Prompt (New BFO
-// Opp) prompt block. Timeline Driven (yes/no) and Rollout Time also
-// have no seed — they're user-supplied and default to empty.
+// Opp) prompt block. Timeline Driven (yes/no) and Rollout Time (a number
+// of weeks) also have no seed — they're user-supplied and default to
+// empty.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
   'timelineDriven', 'rolloutTime',

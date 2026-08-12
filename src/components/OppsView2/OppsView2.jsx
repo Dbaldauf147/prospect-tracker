@@ -22,7 +22,7 @@ import {
 import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
 import { KeithAgenda } from './KeithAgenda';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
 import {
   OPPS2_FIRESTORE_COLLECTION,
@@ -652,11 +652,16 @@ function withServiceTimelines(list, services) {
 // same fact as a timeline row's Delivery Lead Time: how long the work takes
 // once it starts. '' when the row's type doesn't name a known service, or
 // names one nobody has given a rollout time.
+//
+// Rollout Time is a number of weeks, and it's stored as the bare number
+// because its column header carries the unit. Nothing here does, so the
+// unit is written back on — "6 weeks", not "6" — before it lands in a
+// free-text lead-time cell.
 function serviceRolloutTime(type, serviceOverrides) {
   const name = String(type ?? '').trim();
   if (!name) return '';
   const meta = getEffectiveServiceMetadata(name, serviceOverrides);
-  return String(meta?.rolloutTime ?? '').trim();
+  return formatRolloutWeeks(meta?.rolloutTime);
 }
 
 // Fill in each row's Delivery Lead Time from its service's Rollout Time, so a
