@@ -83,6 +83,28 @@ export async function loadCallRecordsResult(userId) {
 }
 
 /**
+ * One stored recording, by id. Null when it's missing or the read fails.
+ *
+ * The bulk `loadCallRecords` above pulls every record, transcripts and
+ * all, which is why pages that only need a fact or two about a single
+ * call stamp it onto the thing they're showing instead. That reasoning
+ * doesn't extend to fetching ONE document on demand: an opp popup that
+ * already knows its call's id can read that call's follow-ups directly,
+ * for one document read, and see whatever the call says right now
+ * rather than whatever was copied out of it when it was tagged.
+ */
+export async function loadCallRecord(userId, recordingId) {
+  if (!userId || !recordingId) return null;
+  try {
+    const snap = await getDoc(doc(itemsRef(userId), docIdFor(recordingId)));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    console.warn('callRecordings: single load failed', err);
+    return null;
+  }
+}
+
+/**
  * Merge `patch` into the stored record for one recording and save it.
  * Returns the record as written (so callers can put it straight into
  * state), or null when the save failed.
