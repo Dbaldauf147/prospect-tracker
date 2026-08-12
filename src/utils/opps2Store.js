@@ -466,3 +466,42 @@ export async function bulkSetOppField(userId, oppIds, field, value) {
   await trySaveOpps2ToFirestore(userId, next);
   return changed;
 }
+
+/**
+ * A different patch on each of many opps, in one load/save cycle.
+ *
+ * bulkSetOppField sets ONE field to ONE value across a list; this takes
+ * `{ [oppId]: { field: value, … } }` and applies each opp's own. A
+ * backfill that looped setOppFields would rewrite the entire dataset
+ * once per opp — a hundred opps, a hundred full saves, and a hundred
+ * chances to stop halfway with the job half done.
+ *
+ * Returns the number of records actually patched. Opps in the map that
+ * aren't in the dataset are skipped rather than throwing: a bulk pass
+ * shouldn't fail on one stale id.
+ */
+export async function bulkSetOppFields(userId, patchesById) {
+  const entries = Object.entries(patchesById || {}).filter(([, p]) => p && Object.keys(p).length > 0);
+  if (entries.length === 0) return 0;
+  const byId = new Map(entries.map(([id, patch]) => [String(id), patch]));
+  const data = await loadOpps2Newest(userId);
+  if (!data || !Array.isArray(data.records)) {
+    throw new Error('Opps data has not loaded yet.');
+  }
+  let changed = 0;
+  const now = Date.now();
+  const records = data.records.map((r) => {
+    const patch = byId.get(String(r?._id));
+    if (!patch) return r;
+    changed += 1;
+    const prevStamps = (r._fieldUpdatedAt && typeof r._fieldUpdatedAt === 'object') ? r._fieldUpdatedAt : null;
+    const stamps = { ...(prevStamps || {}) };
+    for (const field of Object.keys(patch)) stamps[field] = now;
+    return { ...r, ...patch, _rowUpdatedAt: now, _fieldUpdatedAt: stamps };
+  });
+  if (changed === 0) return 0;
+  const next = { ...data, records };
+  await saveOpps2Cache(next);
+  await trySaveOpps2ToFirestore(userId, next);
+  return changed;
+}
