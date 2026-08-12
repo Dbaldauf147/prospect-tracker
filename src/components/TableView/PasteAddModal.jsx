@@ -25,7 +25,7 @@ const FIELDS = [
   { key: 'website', label: 'Website', aliases: ['url', 'web site'] },
   { key: 'emailDomain', label: 'Email Domain', aliases: ['domain'] },
   { key: 'bfoCompanyName', label: 'BFO Company Name', aliases: [] },
-  { key: 'peOwner', label: 'PE Owner', aliases: ['pe owner (if portfolio co)'] },
+  { key: 'peOwner', label: 'PE Owner', aliases: ['pe owner (if portfolio co)', 'pe owner/parent company', 'pe owner / parent company', 'parent company'] },
 ];
 
 const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);

@@ -6131,7 +6131,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
+              <label className={styles.label}>PE Owner/Parent Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
               {(() => {
                 const setPeOpen = setPeOwnerPickerOpen;
                 const peOpen = peOwnerPickerOpen;
