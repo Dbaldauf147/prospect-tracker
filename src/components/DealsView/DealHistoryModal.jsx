@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { asNumber, asDate, fmtCurrency, fmtDate, fmtPercent } from '../../utils/dealsFormat';
 import { DEAL_BFO_KEY, matchCommissionRowsForDeal } from '../../utils/dealCommissions';
 import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
@@ -37,6 +37,47 @@ function runningTotal(series) {
   return out;
 }
 
+// The Commissions tab stores its 12 month columns year-agnostically
+// ("January", "January Revenue"), but a deal's commission window pins each
+// of those months to a real calendar year — an August-to-July window puts
+// Aug–Dec in the first year and Jan–Jul in the next. Walk the window from
+// its start month to recover the year behind every populated column, so the
+// history reads chronologically instead of Jan-first. Returns null (no
+// years shown, calendar order) when the deal has no window to walk.
+// A window longer than 12 months can't map a month to a single year, so we
+// take the first pass over it — the columns only hold one year of data.
+function buildMonthYears(start, span) {
+  if (!start) return null;
+  const years = new Array(12).fill(null);
+  for (let i = 0; i < Math.min(span || 12, 12); i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    years[d.getMonth()] = d.getFullYear();
+  }
+  return years;
+}
+
+// Step a {month index, year} cursor forward. The year rides along when it's
+// known and stays null when the deal has no window to anchor it to.
+function addMonths(cursor, k) {
+  const total = cursor.idx + k;
+  return {
+    idx: ((total % 12) + 12) % 12,
+    year: cursor.year == null ? null : cursor.year + Math.floor(total / 12),
+  };
+}
+
+// Which month of the commission window a dated column falls in, 1-based:
+// the window's own first month is 1. Only meaningful for a column whose
+// year is known.
+function runningMonthOffset(start, col) {
+  if (!start || col?.year == null) return null;
+  return (col.year - start.getFullYear()) * 12 + (col.idx - start.getMonth()) + 1;
+}
+
+function monthLabel(col) {
+  return col.year == null ? MONTH_ABBR[col.idx] : `${MONTH_ABBR[col.idx]} ${col.year}`;
+}
+
 function minDate(dates) {
   return dates.length ? dates.reduce((m, d) => (d.getTime() < m.getTime() ? d : m)) : null;
 }
@@ -59,6 +100,15 @@ function statusFor(actual, expected) {
 function pctText(actual, expected) {
   if (!expected) return null;
   return `${((actual / expected) * 100).toLocaleString('en-US', { maximumFractionDigits: 1 })}%`;
+}
+
+// Compact inline number input for the projection controls.
+function numInputStyle(width) {
+  return {
+    width, padding: '2px 4px', border: '1px solid #CBD5E1', borderRadius: 4,
+    fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B',
+    fontVariantNumeric: 'tabular-nums',
+  };
 }
 
 function Figure({ label, value, sub, fg = '#334155' }) {
@@ -185,10 +235,6 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
 
     const revenueByMonth = COMMISSION_MONTH_NAMES.map((_, i) => projects.reduce((s, p) => s + p.revenue[i], 0));
     const commissionByMonth = COMMISSION_MONTH_NAMES.map((_, i) => projects.reduce((s, p) => s + p.commission[i], 0));
-    // Running totals down the month columns — the "history" half of the
-    // question: not just what has landed, but when it landed.
-    const cumulativeRevenue = runningTotal(revenueByMonth);
-    const cumulativeCommission = runningTotal(commissionByMonth);
 
     // Contract side of the comparison — identical to what the grid's
     // Revenue Recorded / Paid to Date denominators use.
@@ -236,27 +282,113 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
     }
 
     // Only render month columns that carry data on either metric, so the
-    // table stays scannable instead of always showing all twelve.
-    const activeMonthIdx = COMMISSION_MONTH_NAMES
+    // table stays scannable instead of always showing all twelve. Each one
+    // is stamped with the calendar year its window puts it in and sorted
+    // chronologically — a July-to-June deal would otherwise list January
+    // before the previous August, and the running totals underneath would
+    // accumulate in the wrong order.
+    const monthYears = buildMonthYears(start, span);
+    const actualCols = COMMISSION_MONTH_NAMES
       .map((_, i) => i)
-      .filter((i) => revenueByMonth[i] !== 0 || commissionByMonth[i] !== 0);
+      .filter((i) => revenueByMonth[i] !== 0 || commissionByMonth[i] !== 0)
+      .map((i) => ({ idx: i, year: monthYears?.[i] ?? null, revenue: revenueByMonth[i], commission: commissionByMonth[i] }))
+      .sort((a, b) => ((a.year ?? 0) * 12 + a.idx) - ((b.year ?? 0) * 12 + b.idx));
+    // Running totals down the month columns — the "history" half of the
+    // question: not just what has landed, but when it landed.
+    const cumulativeRevenue = runningTotal(actualCols.map((c) => c.revenue));
+    const cumulativeCommission = runningTotal(actualCols.map((c) => c.commission));
+
+    // Where a projection picks up: the month after the last one that
+    // carries an amount, or — with nothing recorded yet — the month before
+    // the window opens, so the first projected column is the window's own
+    // first month. With neither, project from next month.
+    const lastActual = actualCols.length ? actualCols[actualCols.length - 1] : null;
+    const projectionAnchor = lastActual
+      || (start
+        ? addMonths({ idx: start.getMonth(), year: start.getFullYear() }, -1)
+        : { idx: today.getMonth(), year: today.getFullYear() });
+
+    // Seed the projection's monthly amounts from what the deal has actually
+    // been paying: the average of the months that carry an amount. Both are
+    // editable — this is only a starting point.
+    const paidRevenue = actualCols.filter((c) => c.revenue !== 0);
+    const paidCommission = actualCols.filter((c) => c.commission !== 0);
+    const avg = (cols, pick) => (cols.length
+      ? Math.round(cols.reduce((s, c) => s + pick(c), 0) / cols.length)
+      : 0);
+    // Default horizon: whatever is left of the commission window after the
+    // last recorded month, so the obvious question ("what if it keeps
+    // paying to the end of the term?") is one glance away. A window that's
+    // already run out falls back to a plain year.
+    const monthsLeft = (span && lastActual && monthYears)
+      ? span - runningMonthOffset(start, lastActual)
+      : null;
+    const defaultRevenueRate = avg(paidRevenue, (c) => c.revenue);
+    const defaultCommissionRate = avg(paidCommission, (c) => c.commission);
+    // Nothing recorded means no rate to project from, so the horizon starts
+    // at zero and the section stays quiet until the user types an amount in.
+    const defaultProjMonths = (defaultRevenueRate === 0 && defaultCommissionRate === 0)
+      ? 0
+      : (monthsLeft != null && monthsLeft > 0 ? monthsLeft : 12);
 
     return {
-      projects, revenueByMonth, commissionByMonth, activeMonthIdx,
-    cumulativeRevenue, cumulativeCommission,
+      projects, actualCols, cumulativeRevenue, cumulativeCommission,
       expectedRevenue, expectedCommission, actualRevenue, actualCommission,
       mapped, setup, recurring, start, end, span, elapsed,
       paceRevenue, paceCommission,
+      projectionAnchor, defaultProjMonths, defaultRevenueRate, defaultCommissionRate,
     };
   }, [deal, commissionsRows]);
 
   const {
-    projects, revenueByMonth, commissionByMonth, activeMonthIdx,
-    cumulativeRevenue, cumulativeCommission,
+    projects, actualCols, cumulativeRevenue, cumulativeCommission,
     expectedRevenue, expectedCommission, actualRevenue, actualCommission,
     mapped, setup, recurring, start, end, span, elapsed,
     paceRevenue, paceCommission,
+    projectionAnchor, defaultProjMonths, defaultRevenueRate, defaultCommissionRate,
   } = model;
+
+  // Projection controls. Held as strings so a half-typed value doesn't get
+  // stomped back to a number mid-keystroke; parsed and clamped on use.
+  const [monthsInput, setMonthsInput] = useState(() => String(defaultProjMonths));
+  const [revenueRateInput, setRevenueRateInput] = useState(() => String(defaultRevenueRate));
+  const [commissionRateInput, setCommissionRateInput] = useState(() => String(defaultCommissionRate));
+
+  const projMonths = Math.max(0, Math.min(120, Math.round(asNumber(monthsInput) ?? 0)));
+  const revenueRate = asNumber(revenueRateInput) ?? 0;
+  const commissionRate = asNumber(commissionRateInput) ?? 0;
+
+  // Projected columns continue straight on from the last actual month, at
+  // the flat monthly amounts above.
+  const projCols = Array.from({ length: projMonths }, (_, k) => ({
+    ...addMonths(projectionAnchor, k + 1),
+    revenue: revenueRate,
+    commission: commissionRate,
+  }));
+  const projectedRevenue = actualRevenue + revenueRate * projMonths;
+  const projectedCommission = actualCommission + commissionRate * projMonths;
+
+  // Recorded months then projected ones, each carrying the running total at
+  // that point. The projected running totals pick up from the actual total
+  // (which is the deal's stored cell when nothing is mapped), so the
+  // cumulative row reads continuously across the divider.
+  const tableCols = [
+    ...actualCols.map((c, i) => ({
+      ...c, projected: false,
+      cumRevenue: cumulativeRevenue[i],
+      cumCommission: cumulativeCommission[i],
+    })),
+    ...projCols.map((c, k) => ({
+      ...c, projected: true,
+      cumRevenue: actualRevenue + revenueRate * (k + 1),
+      cumCommission: actualCommission + commissionRate * (k + 1),
+    })),
+  ];
+  // Projected columns are tinted, and the first one carries the divider
+  // that separates "recorded" from "what if".
+  const projStyle = (col, k) => (col.projected
+    ? { background: '#F8FAFC', ...(k === actualCols.length ? { borderLeft: '2px dashed #CBD5E1' } : null) }
+    : null);
 
   const bfoRaw = String(deal?.[DEAL_BFO_KEY] ?? '').trim();
   const dealName = String(deal?.['Client Name'] ?? '').trim() || String(deal?.['Agreement Name'] ?? '').trim() || '(unnamed deal)';
@@ -349,12 +481,49 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
             ))}
           </div>
 
-          {/* Month-by-month history */}
+          {/* Month-by-month history, plus the what-if projection */}
           <div style={{ marginTop: '1.1rem' }}>
-            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0F172A' }}>Month-by-month history</div>
-            <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.1rem' }}>
-              Actuals as recorded on the Commissions tab, with the running total after each month.
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0F172A' }}>
+                  Month-by-month history{projMonths > 0 ? ' & projection' : ''}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.1rem' }}>
+                  Actuals as recorded on the Commissions tab, with the running total after each month.
+                  {projMonths > 0 && ' Shaded columns are projected, not recorded.'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem' }}>
+                <span>Project</span>
+                <input
+                  type="number" min="0" max="120" step="1"
+                  value={monthsInput}
+                  onChange={(e) => setMonthsInput(e.target.value)}
+                  title="How many more months to project forward (0–120)"
+                  style={numInputStyle(52)}
+                />
+                <span>more months at</span>
+                <span style={{ color: '#94A3B8' }}>$</span>
+                <input
+                  type="number" step="any"
+                  value={revenueRateInput}
+                  onChange={(e) => setRevenueRateInput(e.target.value)}
+                  title="Monthly revenue to project forward"
+                  style={numInputStyle(78)}
+                />
+                <span>/mo revenue ·</span>
+                <span style={{ color: '#94A3B8' }}>$</span>
+                <input
+                  type="number" step="any"
+                  value={commissionRateInput}
+                  onChange={(e) => setCommissionRateInput(e.target.value)}
+                  title="Monthly commission to project forward"
+                  style={numInputStyle(78)}
+                />
+                <span>/mo commission</span>
+              </div>
             </div>
+
             {!bfoRaw ? (
               <div style={{ marginTop: '0.5rem', padding: '0.75rem', color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.75rem' }}>
                 This deal has no BFO opportunity name, so nothing on the Commissions tab can be mapped to it. Set the deal’s BFO name to pull in its commission history.
@@ -363,55 +532,102 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
               <div style={{ marginTop: '0.5rem', padding: '0.75rem', color: '#991B1B', background: '#FEE2E2', border: '1px solid #FECACA', borderRadius: 6, fontSize: '0.75rem' }}>
                 No Commissions-tab rows are mapped to “{bfoRaw}”. Add a matching <strong>BFO Name</strong> on the Commissions tab to record revenue and commissions against this deal.
               </div>
-            ) : activeMonthIdx.length === 0 ? (
+            ) : actualCols.length === 0 ? (
               <div style={{ marginTop: '0.5rem', padding: '0.75rem', color: '#475569', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem' }}>
                 {projects.length} commission row{projects.length === 1 ? ' is' : 's are'} mapped to this deal, but no month carries an amount yet.
               </div>
-            ) : (
+            ) : null}
+
+            {tableCols.length > 0 && (
               <div style={{ overflowX: 'auto', marginTop: '0.45rem' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                   <thead>
                     <tr style={{ background: '#F1F5F9' }}>
                       <th style={thLeft}>&nbsp;</th>
-                      {activeMonthIdx.map((i) => <th key={i} style={th}>{MONTH_ABBR[i]}</th>)}
-                      <th style={{ ...th, color: '#0F172A' }}>Total</th>
+                      {tableCols.map((c, k) => (
+                        <th key={k} style={{ ...th, ...projStyle(c, k), textAlign: 'right' }}>
+                          {MONTH_ABBR[c.idx]}
+                          <div style={{ fontSize: '0.6rem', fontWeight: 500, color: '#94A3B8' }}>
+                            {c.year == null ? '·' : c.year}
+                          </div>
+                        </th>
+                      ))}
+                      <th style={{ ...th, color: '#0F172A', borderLeft: '2px solid #E2E8F0' }}>
+                        Actual
+                        <div style={{ fontSize: '0.6rem', fontWeight: 500, color: '#94A3B8' }}>total</div>
+                      </th>
+                      {projMonths > 0 && (
+                        <th style={{ ...th, color: '#0F172A' }}>
+                          Projected
+                          <div style={{ fontSize: '0.6rem', fontWeight: 500, color: '#94A3B8' }}>total</div>
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td style={tdLeft}>Revenue</td>
-                      {activeMonthIdx.map((i) => (
-                        <td key={i} style={{ ...td, color: revenueByMonth[i] ? '#0F172A' : '#CBD5E1' }}>
-                          {revenueByMonth[i] ? fmtCurrency(revenueByMonth[i]) : '-'}
-                        </td>
-                      ))}
-                      <td style={{ ...td, fontWeight: 700, color: '#0F172A' }}>{fmtCurrency(actualRevenue)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ ...tdLeft, fontWeight: 400, color: '#94A3B8', paddingLeft: '1.1rem' }}>cumulative</td>
-                      {activeMonthIdx.map((i) => (
-                        <td key={i} style={{ ...td, color: '#94A3B8' }}>{fmtCurrency(cumulativeRevenue[i])}</td>
-                      ))}
-                      <td style={{ ...td, color: '#94A3B8' }} />
-                    </tr>
-                    <tr>
-                      <td style={tdLeft}>Commission</td>
-                      {activeMonthIdx.map((i) => (
-                        <td key={i} style={{ ...td, color: commissionByMonth[i] ? '#0F172A' : '#CBD5E1' }}>
-                          {commissionByMonth[i] ? fmtCurrency(commissionByMonth[i]) : '-'}
-                        </td>
-                      ))}
-                      <td style={{ ...td, fontWeight: 700, color: '#0F172A' }}>{fmtCurrency(actualCommission)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ ...tdLeft, fontWeight: 400, color: '#94A3B8', paddingLeft: '1.1rem' }}>cumulative</td>
-                      {activeMonthIdx.map((i) => (
-                        <td key={i} style={{ ...td, color: '#94A3B8' }}>{fmtCurrency(cumulativeCommission[i])}</td>
-                      ))}
-                      <td style={{ ...td, color: '#94A3B8' }} />
-                    </tr>
+                    {[
+                      { label: 'Revenue', pick: (c) => c.revenue, cum: (c) => c.cumRevenue, total: actualRevenue, projected: projectedRevenue },
+                      { label: 'Commission', pick: (c) => c.commission, cum: (c) => c.cumCommission, total: actualCommission, projected: projectedCommission },
+                    ].map((row) => (
+                      <Fragment key={row.label}>
+                        <tr>
+                          <td style={tdLeft}>{row.label}</td>
+                          {tableCols.map((c, k) => (
+                            <td key={k} style={{ ...td, ...projStyle(c, k), color: c.projected ? '#64748B' : (row.pick(c) ? '#0F172A' : '#CBD5E1'), fontStyle: c.projected ? 'italic' : 'normal' }}>
+                              {row.pick(c) ? fmtCurrency(row.pick(c)) : '-'}
+                            </td>
+                          ))}
+                          <td style={{ ...td, fontWeight: 700, color: '#0F172A', borderLeft: '2px solid #E2E8F0' }}>{fmtCurrency(row.total)}</td>
+                          {projMonths > 0 && (
+                            <td style={{ ...td, fontWeight: 700, color: '#334155' }}>{fmtCurrency(row.projected)}</td>
+                          )}
+                        </tr>
+                        <tr>
+                          <td style={{ ...tdLeft, fontWeight: 400, color: '#94A3B8', paddingLeft: '1.1rem' }}>cumulative</td>
+                          {tableCols.map((c, k) => (
+                            <td key={k} style={{ ...td, ...projStyle(c, k), color: '#94A3B8', fontStyle: c.projected ? 'italic' : 'normal' }}>
+                              {fmtCurrency(row.cum(c))}
+                            </td>
+                          ))}
+                          <td style={{ ...td, borderLeft: '2px solid #E2E8F0' }} />
+                          {projMonths > 0 && <td style={td} />}
+                        </tr>
+                      </Fragment>
+                    ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {projMonths > 0 && (
+              <div style={{ marginTop: '0.55rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                {[
+                  { label: 'Revenue', actual: actualRevenue, expected: expectedRevenue, rate: revenueRate, projected: projectedRevenue },
+                  { label: 'Commission', actual: actualCommission, expected: expectedCommission, rate: commissionRate, projected: projectedCommission },
+                ].map((m) => {
+                  // The month the running total would finally reach what the
+                  // contract expects, when that happens inside the horizon.
+                  let clearsAt = null;
+                  if (m.expected > 0 && m.rate > 0 && m.actual < m.expected) {
+                    const need = Math.ceil((m.expected - m.actual) / m.rate);
+                    if (need <= projMonths) clearsAt = monthLabel(addMonths(projectionAnchor, need));
+                  }
+                  const gap = m.expected - m.projected;
+                  return (
+                    <div key={m.label} style={{ fontSize: '0.7rem', color: '#475569', lineHeight: 1.5 }}>
+                      <strong style={{ color: '#0F172A' }}>{m.label}:</strong>{' '}
+                      {fmtCurrency(m.actual)} today → <strong style={{ color: '#0F172A' }}>{fmtCurrency(m.projected)}</strong>{' '}
+                      by {monthLabel(addMonths(projectionAnchor, projMonths))} at {fmtCurrency(m.rate)}/mo
+                      {m.expected > 0 && (
+                        clearsAt
+                          ? <span style={{ color: '#166534', fontWeight: 600 }}> · clears the {fmtCurrency(m.expected)} expected in {clearsAt}</span>
+                          : gap > 0
+                            ? <span style={{ color: '#991B1B', fontWeight: 600 }}> · still {fmtCurrency(gap)} short of the {fmtCurrency(m.expected)} expected</span>
+                            : <span style={{ color: '#92400E', fontWeight: 600 }}> · {fmtCurrency(-gap)} over the {fmtCurrency(m.expected)} expected</span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
