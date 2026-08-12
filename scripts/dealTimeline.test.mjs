@@ -160,6 +160,48 @@ same('so a step dependency still points inside its own band',
   [golive.dependsOn], ['monitoring::st-1']);
 check('authoring dates are cleared so months are the only placement', install.start, '');
 
+// --- showing only what the opportunity sold -------------------------------
+// The bands come out; the dates must not move. A deal doesn't deliver
+// sooner because the chart stopped drawing the work it waits on.
+const scoped = buildDealTimeline({
+  scopeServices: ['Monitoring'],
+  templates,
+  serviceOverrides: overrides,
+  anchorMonth: '2026-08',
+  showPrerequisites: false,
+});
+same('only the sold service gets a band', scoped.services.map(s => s.name), ['Monitoring']);
+same('and the prerequisite is reported as hidden', scoped.hidden.map(s => s.name), ['Meters']);
+check('its steps are gone from the chart', scoped.template.stages.length, 2);
+check('but it still starts in month 2', scoped.services[0].startMonth, 2);
+same('and still says what it is waiting for', scoped.services[0].dependsOn, ['Meters']);
+check('the plan is still 4 months, hidden work included', scoped.monthsNeeded, 4);
+// The window follows what's drawn, not what's counted — columns past the
+// last visible bar would be empty months on screen.
+check('the chart is sized to the drawn bands', scoped.template.monthCount, 5);
+
+check('showing them is still the default', buildDealTimeline({
+  scopeServices: ['Monitoring'], templates, serviceOverrides: overrides,
+}).services.length, 2);
+same('and nothing is hidden then', buildDealTimeline({
+  scopeServices: ['Monitoring'], templates, serviceOverrides: overrides,
+}).hidden, []);
+
+// A deal with no prerequisites at all is unaffected by the switch.
+const noDeps = buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides, showPrerequisites: false,
+});
+same('a deal with no prerequisites hides nothing', noDeps.hidden, []);
+check('and keeps its own service', noDeps.services.length, 1);
+
+// A prerequisite the Scope ALSO names is a sold service, so it stays drawn.
+const alsoSold = buildDealTimeline({
+  scopeServices: ['Monitoring', 'Meters'], templates, serviceOverrides: overrides, showPrerequisites: false,
+});
+same('a prerequisite the deal also sold keeps its band',
+  alsoSold.services.map(s => s.name), ['Meters', 'Monitoring']);
+same('and nothing is hidden', alsoSold.hidden, []);
+
 // --- a service with nothing attached at all -------------------------------
 const bare = buildDealTimeline({ scopeServices: ['Mystery'], templates: [], serviceOverrides: overrides });
 check('an unplannable service still gets a band', bare.services.length, 1);

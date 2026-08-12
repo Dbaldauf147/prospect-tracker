@@ -35,6 +35,12 @@ const SOURCE_NOTE = {
 
 export function DealTimelineModal({ account = '', scopeServices = [], settings, serviceOverrides, onClose }) {
   const [format, setFormat] = useState('phased');
+  // The deal's own services only, by default. A deal whose services depend
+  // on half the catalog draws mostly bands nobody sold, and the question
+  // being asked here is about this opportunity. The prerequisites still set
+  // the dates — hiding them takes the bands out, not the wait — and the
+  // toggle brings them back when the sequencing is what's being checked.
+  const [showPrerequisites, setShowPrerequisites] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -49,7 +55,8 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     anchorMonth,
     name: account ? `${account} — rollout` : 'Deal rollout',
     clientName: account,
-  }), [scopeServices, templates, serviceOverrides, anchorMonth, account]);
+    showPrerequisites,
+  }), [scopeServices, templates, serviceOverrides, anchorMonth, account, showPrerequisites]);
 
   // The format switch only changes how the same plan is drawn, so it lives
   // here rather than in the composer.
@@ -59,6 +66,8 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     catch (err) { console.error('Deal timeline render failed', err); return ''; }
   }, [template]);
 
+  // Only ever about the bands actually drawn: a warning naming a service
+  // the user can't see is a warning about nothing.
   const prerequisites = plan.services.filter(s => !s.inScope);
   const weak = plan.services.filter(s => s.source !== 'template');
   const multi = plan.services.filter(s => s.extraTemplates.length > 0);
@@ -104,7 +113,7 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
               Rollout timeline{account ? `: ${account}` : ''}
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              {plan.services.length === 0
+              {plan.services.length === 0 && plan.hidden.length === 0
                 ? 'Nothing in this deal’s Scope to plan.'
                 : <>
                     Kickoff this month · {plan.services.length} service{plan.services.length === 1 ? '' : 's'}
@@ -118,6 +127,28 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* Shown whenever prerequisites exist, in either direction, so
+                the chart never quietly omits work. */}
+            {(plan.hidden.length > 0 || prerequisites.length > 0) && (
+              <button
+                type="button"
+                onClick={() => setShowPrerequisites(v => !v)}
+                title={showPrerequisites
+                  ? 'Show only the services this opportunity sold. The ones they depend on still set the dates.'
+                  : 'Also draw the services this deal doesn’t sell but has to wait on. They already set the dates either way.'}
+                style={{
+                  ...btnStyle,
+                  background: showPrerequisites ? '#EEF2FF' : '#fff',
+                  borderColor: showPrerequisites ? '#C7D2FE' : 'var(--color-border)',
+                  color: showPrerequisites ? '#3730A3' : 'var(--color-text)',
+                  fontWeight: showPrerequisites ? 700 : 400,
+                }}
+              >
+                {showPrerequisites
+                  ? `Hide ${prerequisites.length} prerequisite${prerequisites.length === 1 ? '' : 's'}`
+                  : `Show ${plan.hidden.length} prerequisite${plan.hidden.length === 1 ? '' : 's'}`}
+              </button>
+            )}
             <select
               value={format}
               onChange={(e) => setFormat(e.target.value)}
@@ -163,6 +194,16 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
           {multi.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {multi.map(s => `${s.name} has ${s.extraTemplates.length + 1} timelines attached — using “${s.templateName}”`).join(' · ')}.
+            </div>
+          )}
+          {/* The hidden work is still in the dates. Saying so is what keeps a
+              service that starts in month 6 from looking like a mistake —
+              the Waits on column below names what it's waiting for. */}
+          {plan.hidden.length > 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              Showing this opportunity’s services only. {plan.hidden.length} service
+              {plan.hidden.length === 1 ? '' : 's'} it depends on {plan.hidden.length === 1 ? 'is' : 'are'} not
+              drawn but still set the start dates: {plan.hidden.map(s => s.name).join(', ')}.
             </div>
           )}
 
