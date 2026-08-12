@@ -84,6 +84,30 @@
   color: var(--color-text-muted);
 }
 
+/* One service in the Dependent Rollout Services cell. */
+.serviceDepChip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1E40AF;
+  white-space: nowrap;
+}
+
+/* A dependency naming a service the Solutions list no longer carries —
+   renamed or retired since it was picked. Kept visible so the mapping
+   isn't lost silently; the tooltip says what's wrong with it. */
+.serviceDepChipStale {
+  composes: serviceDepChip;
+  background: #FEF3C7;
+  border-color: #FDE68A;
+  color: #92400E;
+  text-decoration: line-through;
+}
+
 /* Rollout Time saved as free text before the column became a number of
    weeks. Shown as it was written, underlined as something to replace,
    rather than dropped or reduced to a guessed number. */
