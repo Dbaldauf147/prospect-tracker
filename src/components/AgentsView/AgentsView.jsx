@@ -159,9 +159,9 @@ const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforc
 5.  Repeat for every lead listed below.`;
 
 const DEFAULT_AI_PROMPT_DUPLICATE_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
-2.  Each lead listed below appears more than once on the Leads list — the same person with more than one Lead record. Search the list by Name to find every copy (the name may be written "Last, First" on one and "First Last" on another).
+2.  Each lead listed below appears more than once on the Leads list — the same person with more than one Lead record — and at least one of those copies carries the wrong Status. Search the list by Name to find every copy (the name may be written "Last, First" on one and "First Last" on another).
 3.  For each copy, compare its Status in Salesforce against the Marketing Leads Status shown below. The Marketing Leads Status (from this website's Marketing Leads page) is the source of truth.
-4.  The rows flagged "Status mismatch" already have at least one copy that disagrees. Open each copy whose Status differs, go to the Assessment tab, set the Status to the Marketing Leads Status, and Save. A copy that already agrees is left alone.
+4.  Open each copy whose Status differs, go to the Assessment tab, set the Status to the Marketing Leads Status, and Save. A copy that already agrees is left alone.
 5.  Do NOT merge or delete any Lead record. When every copy carries the right status, report back the list of leads that have duplicate records, with each record's URL, so the duplicates can be merged by hand.
 6.  Repeat for every lead listed below.`;
 
@@ -1169,17 +1169,6 @@ function leadStatusKey(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// What the Duplicate Leads agent says about one set of duplicate records.
-// Four states, and the two that aren't a verdict say why: a duplicate the
-// Marketing Leads page has never heard of, or one it carries without a
-// status, can't be checked against anything — which is a different fact
-// from its copies agreeing.
-function duplicateLeadFlagLabel(row) {
-  if (!row?.onMarketingLeads) return 'Not on Marketing Leads';
-  if (!row?.mlStatus) return 'No Marketing Leads status';
-  return row.mismatch ? 'Status mismatch' : 'Statuses agree';
-}
-
 // Best-effort company guess from a recipient's email domain — used
 // only when neither an Opps-tab row nor a HubSpot contact carries a
 // company so the Company column doesn't render empty.
@@ -1892,51 +1881,46 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     return out;
   }, [settings, leadsSubtabByName, hiddenMarketingLeadIds]);
 
-  // Leads pasted more than once on the BFO Activity page's Leads subtab:
-  // one person carrying two or more Salesforce Lead records. Each row
-  // reports how many copies there are, the statuses they carry, and
-  // whether any of them disagrees with the Marketing Leads page.
+  // Leads pasted more than once on the BFO Activity page's Leads subtab —
+  // one person carrying two or more Salesforce Lead records — where at
+  // least one of those copies carries a status the Marketing Leads page
+  // disagrees with. Each row reports how many copies there are and the
+  // statuses they carry.
   //
-  // Every duplicate is listed, not just the mismatching ones — a duplicate
-  // pair that agrees is still two records where there should be one, and
-  // the flag is what separates "untidy" from "wrong somewhere". Mismatches
-  // sort to the top. Leads the user hid on the Contacts → Marketing Leads
-  // page are set aside there, so their duplicates aren't this agent's
-  // business either.
+  // Only the mismatching duplicates: a duplicate whose copies all agree
+  // has nothing to fix here, and listing it would bury the ones that do
+  // behind a list of leads that only need merging. Leads with no matching
+  // Marketing Leads row, or one with no status, can't be compared and are
+  // left out for the same reason. So are leads the user hid on the
+  // Contacts → Marketing Leads page, which are set aside there.
   const duplicateLeadRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     const leadByKey = new Map();
-    const hiddenKeys = new Set();
     for (const r of arr) {
       const key = leadNameKey(r?.name);
-      if (!key) continue;
-      if (hiddenMarketingLeadIds.has(String(r?.id))) { hiddenKeys.add(key); continue; }
+      if (!key || hiddenMarketingLeadIds.has(String(r?.id))) continue;
       if (!leadByKey.has(key)) leadByKey.set(key, r);
     }
     const out = [];
     for (const [key, entry] of leadsSubtabByName) {
       if (entry.statuses.length < 2) continue; // one record → not a duplicate
-      const lead = leadByKey.get(key) || null;
-      if (!lead && hiddenKeys.has(key)) continue; // hidden on Contacts → skip
-      const mlStatus = String(lead?.status || '').trim();
+      const lead = leadByKey.get(key);
+      if (!lead) continue; // not on Marketing Leads (or hidden) → nothing to compare
+      const mlStatus = String(lead.status || '').trim();
+      if (!mlStatus) continue; // no source of truth to compare against
       // A copy with no status at all counts as disagreeing: an empty
       // status is not the status the Marketing Leads page says it is.
-      const mismatch = !!mlStatus
-        && entry.statuses.some(s => leadStatusKey(s) !== leadStatusKey(mlStatus));
+      if (!entry.statuses.some(s => leadStatusKey(s) !== leadStatusKey(mlStatus))) continue;
       out.push({
         key,
-        name: String(lead?.name || entry.name || '').trim(),
-        company: String(lead?.company || entry.company || '').trim(),
+        name: String(lead.name || entry.name || '').trim(),
+        company: String(lead.company || entry.company || '').trim(),
         copies: entry.statuses.length,
         statuses: [...new Set(entry.statuses.map(s => s || '(blank)'))],
         mlStatus,
-        onMarketingLeads: !!lead,
-        mismatch,
       });
     }
-    // Mismatches first, then alphabetically — the flagged ones are the
-    // work, the rest are a cleanup list.
-    out.sort((a, b) => (Number(b.mismatch) - Number(a.mismatch)) || a.name.localeCompare(b.name));
+    out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }, [settings, leadsSubtabByName, hiddenMarketingLeadIds]);
 
@@ -3131,10 +3115,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const marketingLeadStatusBlock = ['Name\tCompany\tMarketing Leads Status', ...marketingLeadStatusRows.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}\t${(l.status || '').trim()}`)].join('\n');
 
     const duplicateLeadsBlock = [
-      'Name\tCompany\tCopies\tLeads Subtab Statuses\tMarketing Leads Status\tFlag',
+      'Name\tCompany\tCopies\tLeads Subtab Statuses\tMarketing Leads Status',
       ...duplicateLeadRows.map(l => [
         l.name, l.company, l.copies, l.statuses.join(' | '), l.mlStatus,
-        duplicateLeadFlagLabel(l),
       ].join('\t')),
     ].join('\n');
 
@@ -3907,7 +3890,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{duplicateLeadRows.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Leads that appear more than once on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the same person carrying more than one Salesforce Lead record. Each row shows every status those copies carry and flags <strong>Status mismatch</strong> when any of them disagrees with that lead&rsquo;s Marketing Leads Status (the source of truth on the Contacts page). Copies that agree are still listed, because two records for one person is worth merging either way. Paste the Salesforce Leads printable view into the Leads subtab to feed this. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+          Leads that appear more than once on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the same person carrying more than one Salesforce Lead record &mdash; where at least one of those copies disagrees with that lead&rsquo;s Marketing Leads Status (the source of truth on the Contacts page). Duplicates whose copies all agree aren&rsquo;t listed: there&rsquo;s no status to fix on them. Neither are leads the Marketing Leads page doesn&rsquo;t carry, which there&rsquo;s nothing to compare against. Paste the Salesforce Leads printable view into the Leads subtab to feed this. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
         </p>
         {revealedPrompts.duplicateLeads && (
           <textarea
@@ -3928,10 +3911,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               const fullPrompt = duplicateLeadRows.length === 0
                 ? duplicateLeadsPrompt
                 : `${duplicateLeadsPrompt}\n\n${[
-                  'Name\tCompany\tCopies\tLeads Subtab Statuses\tMarketing Leads Status\tFlag',
+                  'Name\tCompany\tCopies\tLeads Subtab Statuses\tMarketing Leads Status',
                   ...duplicateLeadRows.map(l => [
                     l.name, l.company, l.copies, l.statuses.join(' | '), l.mlStatus,
-                    duplicateLeadFlagLabel(l),
                   ].join('\t')),
                 ].join('\n')}`;
               try {
@@ -3959,17 +3941,16 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 <th>Company</th>
                 <th>Copies</th>
                 <th>Leads Subtab Statuses</th>
-                <th>Marketing Leads Status</th>
-                <th>Flag</th>
+                <th>Marketing Leads Status (apply)</th>
               </tr>
             </thead>
             <tbody>
               {duplicateLeadRows.length === 0 ? (
                 <tr className={styles.emptyRow}>
-                  <td colSpan={6}>
+                  <td colSpan={5}>
                     {leadsSubtabByName.size === 0
-                      ? 'Paste the Salesforce Leads printable view into the BFO Activity page\u2019s Leads subtab to find duplicates.'
-                      : 'No duplicates: every lead on the Leads subtab appears once.'}
+                      ? 'Paste the Salesforce Leads printable view into the BFO Activity page\u2019s Leads subtab to find duplicate leads.'
+                      : 'No duplicate lead has a status mismatch: every lead pasted twice already agrees with its Marketing Leads Status.'}
                   </td>
                 </tr>
               ) : duplicateLeadRows.map((l, i) => (
@@ -3978,12 +3959,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                   <td className={l.company ? '' : styles.muted}>{l.company || '-'}</td>
                   <td>{l.copies}</td>
                   <td className={l.statuses.length ? '' : styles.muted}>{l.statuses.join(', ') || '-'}</td>
-                  <td className={l.mlStatus ? '' : styles.muted}>{l.mlStatus || '-'}</td>
-                  <td>
-                    <span className={`${styles.pill} ${l.mismatch ? styles.pillMismatch : styles.pillAgree}`}>
-                      {duplicateLeadFlagLabel(l)}
-                    </span>
-                  </td>
+                  <td>{l.mlStatus}</td>
                 </tr>
               ))}
             </tbody>
