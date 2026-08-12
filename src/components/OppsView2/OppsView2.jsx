@@ -80,6 +80,7 @@ import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_CO
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { DealTimelineModal } from './DealTimelineModal';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -4870,7 +4871,7 @@ function followUpWhenLabel(days) {
 // they just picked and can correct it here instead of closing the popup and
 // re-dating the cell. `prevFollowUp` is the pre-edit date, surfaced in the
 // hint so it's clear what the date moved from.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, prevFollowUp, onSave, onClose, onCancel }) {
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const curFollowUp = toISODate(opp?.['Follow Up']);
@@ -4979,10 +4980,19 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+        <div style={{
+          padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem',
+        }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             Update Status{opp?.['Account'] ? <>: {opp['Account']}</> : null}
           </div>
+          <DealTimelineButton
+            opp={opp}
+            solutionOptions={solutionOptions}
+            serviceOverrides={serviceOverrides}
+            settings={settings}
+          />
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
@@ -6647,6 +6657,53 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
   );
 }
 
+// The "Timelines" button both the Notes and Update Status popups carry, and
+// the rollout plan it opens.
+//
+// The Timelines table below it logs the dates THIS deal has agreed. This
+// button answers the other question — what delivering the deal actually
+// looks like if it kicked off today — by composing the timelines attached to
+// its services with the services those depend on. Shared between the two
+// popups so the entry points can't drift apart.
+//
+// Portalled to the body rather than nested: the popups it opens from close
+// on Escape and on a backdrop click, and a nested modal's own Escape would
+// bubble up and close both.
+function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }) {
+  const [open, setOpen] = useState(false);
+  const services = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
+  const account = String(opp?.['Account'] ?? '').trim();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={services.length
+          ? `Rollout timeline for ${services.join(', ')} — with the services they depend on, kicked off today`
+          : 'Rollout timeline for this deal’s services. Nothing in Scope yet, so there’s nothing to plan.'}
+        // Same pill the activity marks in the Notes header use, so the
+        // header reads as one row of controls rather than two styles.
+        style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+          fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
+          cursor: 'pointer', fontFamily: 'inherit',
+          background: '#fff', color: '#64748B', border: '1px dashed #CBD5E1',
+        }}
+      >📅 Timelines</button>
+      {open && createPortal(
+        <DealTimelineModal
+          account={account}
+          scopeServices={services}
+          settings={settings}
+          serviceOverrides={serviceOverrides}
+          onClose={() => setOpen(false)}
+        />,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // Shared "Timelines" editor used inside both the Notes and Follow Up popups.
 // Presentational only — the parent owns the `list` (array of
 // { type, value, kickoff, leadTime }) and passes a change handler. Rows are laid
@@ -6890,7 +6947,7 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
   );
 }
 
-function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, onClose, updateOppField }) {
+function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, settings, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const initialRows = useMemo(() => {
@@ -7049,6 +7106,12 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
             Notes: {account}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <DealTimelineButton
+              opp={opp}
+              solutionOptions={solutionOptions}
+              serviceOverrides={serviceOverrides}
+              settings={settings}
+            />
             {markBtn('_calledOn', '📞', 'Called')}
             {markBtn('_metOn', '🤝', 'Meeting')}
             <button
@@ -11071,6 +11134,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             clientManager={clientManagerForAccount(opp?.['Account'])}
             solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
+            settings={settings}
             prevFollowUp={followUpStatusPrev?.hadFollowUp ? followUpStatusPrev.followUp : ''}
             onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
               // A Follow Up date corrected inside the popup. Written with
@@ -11226,6 +11290,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             clientManager={clientManagerForAccount(opp?.['Account'])}
             solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
+            settings={settings}
             onClose={() => setNextStepsPopupId(null)}
             updateOppField={updateOppField}
           />
