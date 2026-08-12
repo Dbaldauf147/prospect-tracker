@@ -967,8 +967,11 @@
   padding: 0 1.25rem 1rem;
 }
 
+/* Wider than the two-line list it replaced: the table carries four
+   numeric columns beside the call name, and at 300px the name had no
+   room left to be recognisable. */
 .breakdownPicker {
-  flex: 0 0 300px;
+  flex: 0 0 420px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -992,64 +995,134 @@
   padding-right: 2px;
 }
 
-.pick,
-.pickOn {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+/* The call list as a table: talk share and the three filler-word rates,
+   one column each, so a call's numbers can be read against the calls
+   above and below it. Fixed layout — the name column takes whatever the
+   numbers leave, and its overflow ellipsis needs a resolved width. */
+.pickTable {
   width: 100%;
-  text-align: left;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: none;
-  font-family: inherit;
-  cursor: pointer;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.pick:hover {
+/* Each just wide enough for its own header — the headers are the widest
+   thing in these columns, and every pixel here comes off the call name,
+   which is what the user is actually scanning for. */
+.pickColNum {
+  width: 2.8rem;
+}
+
+.pickColCount {
+  width: 3.5rem;
+}
+
+.pickColRate {
+  width: 3.1rem;
+}
+
+/* Sticky against .breakdownScroll: the column a number belongs to has to
+   stay legible 20 calls down the list. */
+.pickTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg, #fff);
+  padding: 0.2rem 0.3rem 0.3rem;
+  /* An inset shadow, not a border: under border-collapse the border
+     belongs to the table rather than the cell, so it stays behind while
+     the header sticks — leaving the header floating over the row
+     scrolling beneath it with nothing between them. */
+  box-shadow: inset 0 -1px 0 var(--color-border);
+  text-align: left;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+.pickRow,
+.pickRowOn {
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-subtle, #eef2f7);
+}
+
+.pickRow:hover {
   background: var(--color-surface-alt, #f0f3f7);
 }
 
-.pickOn {
+/* A left bar rather than the old full outline: a border around a row in
+   a collapsed table fights the row separators either side of it. */
+.pickRowOn {
   background: var(--color-surface, #fff);
-  border-color: #009530;
+  box-shadow: inset 3px 0 0 #009530;
 }
 
-.pickTop {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+.pickTable td {
+  padding: 0.35rem 0.3rem;
+  vertical-align: top;
 }
 
+.pickTable td:first-child {
+  padding-left: 0.55rem;
+}
+
+/* The row's focusable element, styled as the label it looks like. */
 .pickName {
-  flex: 1;
-  min-width: 0;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text);
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Tabular so the column of percentages reads down the list as numbers
-   rather than as ragged text. */
-.pickShare {
+/* Tabular so each column reads down the list as numbers rather than as
+   ragged text. */
+.pickNum {
+  text-align: right;
+  white-space: nowrap;
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+/* The talk share keeps the weight and colour it had as the list's one
+   number, so the column it moved into still reads as the same fact —
+   and four columns of bold would leave nothing leading the row. */
+.pickNum[data-share='true'] {
+  font-weight: 700;
   color: #7c3aed;
 }
 
-/* An unmeasurable call keeps its row — it is a call the user may be
-   looking for — but its dash must not read as a share of zero. */
-.pickShare[data-measured='false'] {
+/* A call with nothing to measure keeps its row — it is a call the user
+   may be looking for — but its dash must not read as a zero. */
+.pickNum[data-measured='false'] {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+/* A rate off too few words is real but not comparable, and the summary
+   line above already excludes these calls from cleanest/heaviest. Dimmed
+   so the eye doesn't rank the column by it. */
+.pickNum[data-thin='true'] {
   color: var(--color-text-muted);
   font-weight: 600;
 }
 
 .pickMeta {
+  display: block;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   overflow: hidden;

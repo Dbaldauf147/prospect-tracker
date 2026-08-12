@@ -2659,36 +2659,92 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     ? `No transcribed call matches “${breakdownQuery}”.`
                     : 'No transcribed calls yet. Sync from Granola, or transcribe a recording, and it can be broken down here.'}
                 </div>
-              ) : filteredBreakdown.map(r => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className={pickedBreakdown?.id === r.id ? styles.pickOn : styles.pick}
-                  onClick={() => setBreakdownPick(r.id)}
-                  title={[
-                    r.measurable
-                      ? `You spoke ${formatShare(r.youShare)} of this call`
-                      : r.blockedReason,
-                    // Only in the tooltip: the rate is a second measure of
-                    // the same call, and a second number in the row would
-                    // compete with the share the list is sorted to show.
-                    r.fillers && r.fillers.words > 0
-                      ? `${r.fillers.fillers} filler word${r.fillers.fillers === 1 ? '' : 's'}`
-                        + ` (${formatRate(r.fillers.per100Words)} per 100)`
-                      : '',
-                  ].filter(Boolean).join(' · ')}
-                >
-                  <span className={styles.pickTop}>
-                    <span className={styles.pickName}>{r.name}</span>
-                    <span className={styles.pickShare} data-measured={r.measurable ? 'true' : 'false'}>
-                      {r.measurable ? formatShare(r.youShare) : '—'}
-                    </span>
-                  </span>
-                  <span className={styles.pickMeta}>
-                    {[fmtWhen(r.recordedAt) || 'No date', r.company].filter(Boolean).join(' · ')}
-                  </span>
-                </button>
-              ))}
+              ) : (
+                /* A table rather than a stack of cards: the filler-word
+                   rates only mean anything read against each other, and
+                   four numbers per call can't line up into columns unless
+                   they are in columns. The picked call is still picked by
+                   clicking its row. */
+                <table className={styles.pickTable}>
+                  <colgroup>
+                    <col />
+                    <col className={styles.pickColNum} />
+                    <col className={styles.pickColCount} />
+                    <col className={styles.pickColRate} />
+                    <col className={styles.pickColNum} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">Call</th>
+                      <th scope="col" className={styles.pickNum} title="Share of the call you spoke">You</th>
+                      <th scope="col" className={styles.pickNum} title="Filler words in your turns">Filler</th>
+                      <th scope="col" className={styles.pickNum} title="Filler words per 100 words you spoke">/100w</th>
+                      <th scope="col" className={styles.pickNum} title="Filler words per minute of your talk time — only for calls where every one of your turns was timed">/min</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredBreakdown.map(r => {
+                      // words === 0 is a transcript with timings but no
+                      // text of yours: nothing to count fillers in, which
+                      // is a dash, not a zero.
+                      const use = r.fillers && r.fillers.words > 0 ? r.fillers : null;
+                      // A rate off a handful of words isn't comparable to
+                      // the rest of the column — the summary above already
+                      // holds these calls out of cleanest/heaviest, so the
+                      // cell says the same thing rather than sitting in
+                      // the column looking authoritative.
+                      const thin = use ? use.words < MIN_RATE_WORDS : false;
+                      const on = pickedBreakdown?.id === r.id;
+                      return (
+                        <tr
+                          key={r.id}
+                          className={on ? styles.pickRowOn : styles.pickRow}
+                          onClick={() => setBreakdownPick(r.id)}
+                          title={[
+                            r.measurable
+                              ? `You spoke ${formatShare(r.youShare)} of this call`
+                              : r.blockedReason,
+                            use
+                              ? `${use.fillers} filler word${use.fillers === 1 ? '' : 's'}`
+                                + ` in the ${use.words.toLocaleString()} words you spoke`
+                              : '',
+                          ].filter(Boolean).join(' · ')}
+                        >
+                          <td>
+                            {/* The focusable element of the row: a click on
+                                it bubbles to the row's handler, so Enter
+                                and Space pick the call the same way the
+                                old list of buttons did. */}
+                            <button type="button" className={styles.pickName}>{r.name}</button>
+                            <span className={styles.pickMeta}>
+                              {[fmtWhen(r.recordedAt) || 'No date', r.company].filter(Boolean).join(' · ')}
+                            </span>
+                          </td>
+                          <td className={styles.pickNum} data-measured={r.measurable ? 'true' : 'false'} data-share="true">
+                            {r.measurable ? formatShare(r.youShare) : '—'}
+                          </td>
+                          <td className={styles.pickNum} data-measured={use ? 'true' : 'false'}>
+                            {use ? use.fillers.toLocaleString() : '—'}
+                          </td>
+                          <td
+                            className={styles.pickNum}
+                            data-measured={use ? 'true' : 'false'}
+                            data-thin={thin ? 'true' : 'false'}
+                            title={thin
+                              ? `Only ${use.words} words — too few for this rate to compare with the others`
+                              : undefined}
+                          >
+                            {use ? formatRate(use.per100Words) : '—'}
+                          </td>
+                          <td className={styles.pickNum} data-measured={use?.perMinute != null ? 'true' : 'false'}>
+                            {use?.perMinute != null ? formatRate(use.perMinute) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
           <div className={styles.breakdownDetail}>
