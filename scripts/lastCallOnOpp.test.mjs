@@ -7,7 +7,7 @@
 // batch of old ones tagged in one sitting would otherwise leave the opp
 // claiming whichever was tagged last as the most recent conversation.
 import {
-  lastCallStamp, shouldReplaceLastCall, withLastCallStamp, clearLastCallPatch,
+  lastCallStamp, shouldReplaceLastCall, withLastCallStamp, clearLastCallPatch, backfillLastCallPatches,
   lastCallOn, describeCallAge, LAST_CALL_FIELDS,
 } from '../src/utils/lastCallOnOpp.js';
 
@@ -122,6 +122,64 @@ const call = (over = {}) => ({
     'a call dated ahead reads as ahead, not as negative days');
   eq(describeCallAge(Date.parse('2026-08-13T12:00:00.000Z'), now), 'in 3 days', 'and further ahead too');
   eq(describeCallAge(null, now), '', 'no date, nothing said');
+}
+
+// --- backfilling the opps mapped before the stamp existed ---------------
+{
+  const records = {
+    a: call({ id: 'granola:jan', recordedAt: '2026-01-09T15:00:00.000Z', name: 'Intro call', oppId: 'opp-1' }),
+    b: call({ id: 'granola:aug', recordedAt: '2026-08-05T15:00:00.000Z', name: 'Renewal call', oppId: 'opp-1' }),
+    c: call({ id: 'granola:mar', recordedAt: '2026-03-02T15:00:00.000Z', name: 'Site walk', oppId: 'opp-2' }),
+    d: call({ id: 'granola:none', recordedAt: '2026-04-01T15:00:00.000Z', name: 'Untagged call', oppId: '' }),
+  };
+  const opps = [{ _id: 'opp-1' }, { _id: 'opp-2' }, { _id: 'opp-3' }];
+  const out = backfillLastCallPatches(records, opps);
+
+  eq(out.opps, 2, 'only the opps with a mapped call are patched');
+  eq(out.calls, 3, 'the untagged call is not counted as mapped');
+  eq(out.patches['opp-1']._lastCallId, 'granola:aug',
+    'the newest call on an opp wins, not the last one in the list');
+  eq(out.patches['opp-2']._lastCallName, 'Site walk', 'an opp with one call takes it');
+  ok(!out.patches['opp-3'], 'an opp with no mapped call is left alone');
+  eq(out.patches['opp-1']._lastCallGist, 'Talked through the renewal and the March expiry.',
+    'the patch carries the same fields the live path writes');
+}
+
+{
+  // Running it twice must be a no-op, and an opp already carrying a
+  // NEWER stamp must not be dragged backwards.
+  const records = [call({ id: 'granola:aug', recordedAt: '2026-08-05T15:00:00.000Z', oppId: 'opp-1' })];
+  const first = backfillLastCallPatches(records, [{ _id: 'opp-1' }]);
+  eq(first.opps, 1, 'the first pass has work to do');
+
+  const stamped = [{ _id: 'opp-1', ...first.patches['opp-1'] }];
+  eq(backfillLastCallPatches(records, stamped).opps, 0, 'the second pass has none');
+
+  const newer = [{ _id: 'opp-1', _lastCallId: 'granola:sep', _lastCallAt: '2026-09-01T15:00:00.000Z' }];
+  eq(backfillLastCallPatches(records, newer).opps, 0,
+    'an opp already naming a newer call is not dragged backwards');
+
+  const older = [{ _id: 'opp-1', _lastCallId: 'granola:jan', _lastCallAt: '2026-01-09T15:00:00.000Z' }];
+  eq(backfillLastCallPatches(records, older).opps, 1,
+    'an opp naming an older call is corrected');
+}
+
+{
+  // A re-summarise since the stamp was written: same call, new gist.
+  const records = [call({ id: 'granola:aug', oppId: 'opp-1', summary: 'A better summary.' })];
+  const stale = [{
+    _id: 'opp-1', _lastCallId: 'granola:aug', _lastCallAt: '2026-08-05T15:00:00.000Z',
+    _lastCallName: 'Renewal call — Acme Corp', _lastCallGist: 'The old gist.',
+  }];
+  eq(backfillLastCallPatches(records, stale).patches['opp-1']._lastCallGist, 'A better summary.',
+    'the same call with a fresher summary refreshes the gist');
+}
+
+{
+  eq(backfillLastCallPatches([], []), { patches: {}, opps: 0, calls: 0 }, 'nothing in, nothing out');
+  eq(backfillLastCallPatches(null, null).opps, 0, 'missing inputs are not a crash');
+  eq(backfillLastCallPatches([{ oppId: 'opp-1' }], [{ _id: 'opp-1' }]).opps, 0,
+    'a call with no id cannot be stamped, so it patches nothing');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

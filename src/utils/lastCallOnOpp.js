@@ -142,6 +142,68 @@ export function lastCallOn(opp) {
 }
 
 /**
+ * The stamps every already-mapped opp is missing, as one patch per opp.
+ *
+ * The live path stamps an opp when a call is mapped to it, which does
+ * nothing for the calls mapped before it existed — the mapping is
+ * already on the call record, so the opp is simply not carrying what it
+ * could. This works out what those opps should say, from the records
+ * that are already loaded, without asking Firestore for anything.
+ *
+ * The winner per opp is decided by the same `shouldReplaceLastCall`
+ * rule the live path uses, so a backfill can only ever produce what
+ * tagging those same calls in date order would have. Opps already
+ * carrying the right (or a newer) stamp come back with no patch at all,
+ * which is what makes running it twice a no-op.
+ *
+ *   records — stored call records (array, or the id-keyed map)
+ *   opps    — the Opps 2 records
+ *
+ *   { patches: { [oppId]: patch }, opps, calls }
+ *
+ * `opps` counts the opps that would change; `calls` counts the mapped
+ * calls those stamps came from, so a caller can say what it is about to
+ * do before doing it.
+ */
+export function backfillLastCallPatches(records, opps) {
+  const list = Array.isArray(records) ? records : Object.values(records || {});
+  const byOpp = new Map();
+  let calls = 0;
+
+  for (const record of list) {
+    const oppId = textOf(record?.oppId);
+    const stamp = lastCallStamp(record);
+    if (!oppId || !stamp) continue;
+    calls += 1;
+    const held = byOpp.get(oppId);
+    // Reusing the replace rule with the running winner cast as an opp:
+    // one definition of "which of these two calls is the later one",
+    // used by the live path and by this.
+    if (!held || shouldReplaceLastCall(held, stamp)) byOpp.set(oppId, stamp);
+  }
+
+  const patches = {};
+  let changed = 0;
+  for (const opp of (Array.isArray(opps) ? opps : [])) {
+    const id = textOf(opp?._id);
+    const stamp = id ? byOpp.get(id) : null;
+    if (!stamp || !shouldReplaceLastCall(opp, stamp)) continue;
+    // An opp already naming this exact call is not a change, even though
+    // the rule says the same call wins against itself — that clause is
+    // there so a re-summarise can refresh the gist, and a backfill that
+    // rewrote every opp to what it already said would report work it
+    // didn't do.
+    if (textOf(opp._lastCallId) === stamp._lastCallId
+      && textOf(opp._lastCallGist) === stamp._lastCallGist
+      && textOf(opp._lastCallName) === stamp._lastCallName) continue;
+    patches[id] = stamp;
+    changed += 1;
+  }
+
+  return { patches, opps: changed, calls };
+}
+
+/**
  * "3 days ago", "today", "in 2 days" — how long before now the call was.
  *
  * Takes `now` so it can be tested without a clock, and so a list of opps

@@ -65,9 +65,9 @@ import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { runGranolaSync } from '../../utils/runGranolaSync';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
-import { setOppFields } from '../../utils/opps2Store';
+import { setOppFields, bulkSetOppFields } from '../../utils/opps2Store';
 import { nextStepLinesFromCall, appendNextSteps } from '../../utils/nextSteps';
-import { withLastCallStamp, clearLastCallPatch } from '../../utils/lastCallOnOpp';
+import { withLastCallStamp, clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
   filterByOppTag, oppTagCounts, isAutoNa, autoNaPatch, OPP_TAG_FILTERS,
@@ -1067,6 +1067,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       .sort((a, b) => String(b.recordedAt || '').localeCompare(String(a.recordedAt || '')))
   ), [records]);
 
+  // How many stored calls carry an opp tag, whatever source they came
+  // from. It is what the backfill has to work with, so it decides
+  // whether that button can do anything at all.
+  const taggedToOppCount = useMemo(
+    () => Object.values(records).filter(r => String(r?.oppId || '').trim()).length,
+    [records],
+  );
+
   // What the body renders. Granola comes from the stored records; the two
   // media sources from whatever the last listing returned.
   const visible = source === 'granola' ? granolaRecordings : recordings;
@@ -1464,6 +1472,48 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       ? `Linked ${linked} call${linked === 1 ? '' : 's'} to a company from their attendees.`
       : 'No unlinked call matched a company by attendee email.');
   }, [prospects, persist]);
+
+  /**
+   * Every opp already mapped to a call, told which call that was.
+   *
+   * Tagging stamps the opp with the call, but only from the day that
+   * started happening — an opp mapped before then carries nothing, and
+   * its notes name no conversation even though the mapping is sitting
+   * right there on the call record. This reads the mappings already
+   * loaded on this page and writes what tagging those same calls in date
+   * order would have written.
+   *
+   * Only ever fills a blank or corrects a stamp to a newer call, and
+   * only ever writes the opps that would actually change, so running it
+   * again does nothing. It touches no other field on the opp: not the
+   * notes, not the steps, not Last Spoke.
+   */
+  const backfillOppCallRefs = useCallback(async () => {
+    setSyncNote('Looking for opps that don’t name their last call…');
+    try {
+      const cache = await loadOppsFromCache();
+      const opps = cache?.records || [];
+      if (opps.length === 0) {
+        setSyncNote('No opps are loaded: open the Opps 2 tab once and try again.');
+        return;
+      }
+      const { patches, opps: count, calls } = backfillLastCallPatches(recordsRef.current, opps);
+      if (count === 0) {
+        setSyncNote('Every opp with a mapped call already names it — nothing to backfill.');
+        return;
+      }
+      // One load/save for the whole batch: a loop of single-opp writes
+      // would rewrite the entire dataset once per opp, and could stop
+      // halfway with the job half done.
+      const written = await bulkSetOppFields(uid, patches);
+      setSyncNote(
+        `Named the most recent call on ${written} opp${written === 1 ? '' : 's'}`
+        + `, from ${calls} mapped call${calls === 1 ? '' : 's'}.`,
+      );
+    } catch (err) {
+      setSyncNote(`Couldn’t backfill the call references: ${err?.message || err}`);
+    }
+  }, [uid]);
 
   // One re-list of whichever source is selected. Granola is deliberately
   // absent: its hourly sync runs at the app level (hooks/useGranolaAutoSync)
@@ -2349,6 +2399,20 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             disabled={syncing || granolaRecordings.length === 0}
             title="Match calls that still have no company against your prospect list, using who was on the call"
           >Link companies from attendees</button>
+          {/* A one-off catch-up for the opps tagged before their notes
+              could name the call. Left as a button rather than run on
+              load: it writes to opps, and a page opening shouldn't
+              quietly edit a hundred deals. Safe to press twice — the
+              second press finds nothing to do. */}
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={backfillOppCallRefs}
+            disabled={syncing || taggedToOppCount === 0}
+            title={taggedToOppCount === 0
+              ? 'No call is tagged to an opportunity yet'
+              : `Give every opp already mapped to a call the reference its notes show. ${taggedToOppCount} call${taggedToOppCount === 1 ? ' is' : 's are'} tagged to an opp.`}
+          >Backfill call refs on opps</button>
           <span className={styles.transcriptStatus}>
             {syncNote
               || (settings.granolaSyncedThrough
