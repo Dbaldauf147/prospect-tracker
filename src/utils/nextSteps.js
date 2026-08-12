@@ -100,6 +100,95 @@ export function nextStepLinesFromCall(record) {
 }
 
 /**
+ * The steps every already-mapped opp never received, as one patch per opp.
+ *
+ * The live path appends a call's follow-ups when the call is tagged, and
+ * again when it is summarised — which does nothing for the calls mapped
+ * before either of those existed. Their follow-ups are still sitting on
+ * the call records, attached to the opp by a mapping the user already
+ * made, and the opp's checklist has never seen them.
+ *
+ * Per opp, its calls are replayed OLDEST FIRST through the same
+ * `appendNextSteps` the live path uses, so this can only produce what
+ * tagging those calls in date order would have: the same lines, in the
+ * same order, deduped the same way. Calls with no follow-ups contribute
+ * nothing, and an opp that already has every line comes back with no
+ * patch at all — which is what makes running it twice a no-op.
+ *
+ * Undated calls are replayed last. A call with no date can't be shown to
+ * belong anywhere in the order, and putting it at the end is the reading
+ * that doesn't push a dated call's steps down the list.
+ *
+ *   records — stored call records (array, or the id-keyed map)
+ *   opps    — the Opps 2 records
+ *
+ *   { patches: { [oppId]: patch }, opps, steps, calls }
+ *
+ * `opps` counts the opps that would change, `steps` the lines they would
+ * gain, and `calls` the mapped calls those lines came from — so a caller
+ * can say what it is about to write into a checklist the user works off
+ * BEFORE writing it.
+ */
+export function backfillNextStepPatches(records, opps) {
+  const list = Array.isArray(records) ? records : Object.values(records || {});
+  const byOpp = new Map();
+  for (const record of list) {
+    const oppId = String(record?.oppId || '').trim();
+    if (!oppId) continue;
+    if (!byOpp.has(oppId)) byOpp.set(oppId, []);
+    byOpp.get(oppId).push(record);
+  }
+
+  const patches = {};
+  let changed = 0, steps = 0, calls = 0;
+  for (const opp of (Array.isArray(opps) ? opps : [])) {
+    const id = String(opp?._id || '').trim();
+    const mapped = id ? byOpp.get(id) : null;
+    if (!mapped || mapped.length === 0) continue;
+
+    let text = opp['Next Steps'];
+    let waiting = opp['_nextStepsWaiting'];
+    let added = 0, from = 0;
+    for (const record of oldestFirst(mapped)) {
+      // One call at a time rather than one flattened list, so a call that
+      // contributes nothing new can be told from one that does — the
+      // count is what the confirm dialog is quoting.
+      const out = appendNextSteps(text, waiting, nextStepLinesFromCall(record));
+      if (out.added === 0) continue;
+      text = out.text;
+      waiting = out.waiting;
+      added += out.added;
+      from += 1;
+    }
+    if (added === 0) continue;
+
+    patches[id] = { 'Next Steps': text, _nextStepsWaiting: waiting };
+    changed += 1;
+    steps += added;
+    calls += from;
+  }
+
+  return { patches, opps: changed, steps, calls };
+}
+
+// Mapped calls in the order the live path would have seen them. Undated
+// calls keep their relative order and sit at the end.
+function oldestFirst(records) {
+  return records
+    .map((record, i) => {
+      const t = new Date(record?.recordedAt || 0).getTime();
+      return { record, i, at: Number.isFinite(t) && t > 0 ? t : null };
+    })
+    .sort((a, b) => {
+      if (a.at == null && b.at == null) return a.i - b.i;
+      if (a.at == null) return 1;
+      if (b.at == null) return -1;
+      return a.at - b.at || a.i - b.i;
+    })
+    .map(x => x.record);
+}
+
+/**
  * New steps appended to an opp's existing list.
  *
  * Append-only, and never a replacement. The Next Steps list is a

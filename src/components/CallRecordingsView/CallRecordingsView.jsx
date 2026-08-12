@@ -69,7 +69,7 @@ import { runGranolaSync } from '../../utils/runGranolaSync';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppFields, bulkSetOppFields } from '../../utils/opps2Store';
-import { nextStepLinesFromCall, appendNextSteps } from '../../utils/nextSteps';
+import { nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches } from '../../utils/nextSteps';
 import { withLastCallStamp, clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
@@ -1622,6 +1622,63 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     }
   }, [uid]);
 
+  /**
+   * The follow-ups every already-mapped call never got to give its opp.
+   *
+   * Same catch-up as the reference backfill, for the other half of what
+   * tagging writes — but kept as its own button behind its own confirm,
+   * because the two are not the same kind of write. A reference is one
+   * field the opp didn't have; steps land in a checklist the user works
+   * off and reads every day, and steps from a call last spring are as
+   * likely to be already done as to be news.
+   *
+   * So it says exactly how much it is about to add, and to how many opps,
+   * and does nothing unless that is accepted. Append-only and deduped
+   * like every other path into this field: it can add lines, never edit
+   * or remove one, and pressing it twice adds nothing the second time.
+   */
+  const backfillOppNextSteps = useCallback(async () => {
+    setSyncNote('Looking for steps your mapped calls never sent…');
+    try {
+      const cache = await loadOppsFromCache();
+      const opps = cache?.records || [];
+      if (opps.length === 0) {
+        setSyncNote('No opps are loaded: open the Opps 2 tab once and try again.');
+        return;
+      }
+      const { patches, opps: count, steps, calls } = backfillNextStepPatches(recordsRef.current, opps);
+      if (count === 0) {
+        setSyncNote('Every opp already has the steps from the calls mapped to it — nothing to backfill.');
+        return;
+      }
+      const ok = window.confirm(
+        `Add ${steps} next step${steps === 1 ? '' : 's'} to ${count} opp${count === 1 ? '' : 's'}, `
+        + `from ${calls} call${calls === 1 ? '' : 's'} already mapped to them?\n\n`
+        + 'These are the follow-ups those calls would have sent when they were tagged. Older calls are '
+        + 'included, so some may already be done.\n\n'
+        + 'Steps are added to the end of each list. Nothing you have written is edited or removed.',
+      );
+      if (!ok) {
+        setSyncNote('Left the notes alone.');
+        return;
+      }
+      // One load/save for the whole batch, same as the reference
+      // backfill: a loop of single-opp writes rewrites the entire dataset
+      // once per opp and can stop halfway with the job half done.
+      const written = await bulkSetOppFields(uid, patches);
+      // The call records are deliberately NOT stamped with what they gave
+      // here. `nextStepsPushed` is written per call by the live path; a
+      // backfill would need one write per call to keep it honest, and the
+      // steps are already on the opps either way.
+      setSyncNote(
+        `Added ${steps} next step${steps === 1 ? '' : 's'} to ${written} opp${written === 1 ? '' : 's'}`
+        + `, from ${calls} mapped call${calls === 1 ? '' : 's'}.`,
+      );
+    } catch (err) {
+      setSyncNote(`Couldn’t backfill the next steps: ${err?.message || err}`);
+    }
+  }, [uid]);
+
   // One re-list of whichever source is selected. Granola is deliberately
   // absent: its hourly sync runs at the app level (hooks/useGranolaAutoSync)
   // so it keeps working from any tab, and duplicating it here would have
@@ -2543,6 +2600,19 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               ? 'No call is tagged to an opportunity yet'
               : `Give every opp already mapped to a call the reference its notes show. ${taggedToOppCount} call${taggedToOppCount === 1 ? ' is' : 's are'} tagged to an opp.`}
           >Backfill call refs on opps</button>
+          {/* The other half of the same catch-up, kept separate because
+              it writes into the checklist the user works off rather than
+              a field they never filled in. It asks first. */}
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={backfillOppNextSteps}
+            disabled={syncing || taggedToOppCount === 0}
+            title={taggedToOppCount === 0
+              ? 'No call is tagged to an opportunity yet'
+              : 'Add the follow-ups from calls already mapped to an opp onto that opp’s notes.'
+                + ' Says how many before it writes anything, and only ever adds to the end of a list.'}
+          >Backfill next steps on opps</button>
           <span className={styles.transcriptStatus}>
             {syncNote
               || (settings.granolaSyncedThrough
