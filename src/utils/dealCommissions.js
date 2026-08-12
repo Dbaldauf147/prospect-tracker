@@ -31,6 +31,16 @@ export function normBfo(v) {
   return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// Every Commissions-tab row mapped to a deal, matched on the deal's BFO
+// opp name. Shared by the per-metric breakdown popup and the row-level
+// deal history modal so both drill-downs agree on what "this deal's
+// commission rows" means. Returns [] when the deal has no BFO name.
+export function matchCommissionRowsForDeal(deal, rows) {
+  const bfo = normBfo(deal?.[DEAL_BFO_KEY]);
+  if (!bfo) return [];
+  return (rows || []).filter((r) => normBfo(r?.['BFO Name']) === bfo);
+}
+
 // Mirror of the Commissions tab's Payment Status logic, run against the
 // per-BFO aggregate so a deal that maps to multiple commission rows
 // gets a single Active / Stopped read-out. Prefers the latest Comm End
