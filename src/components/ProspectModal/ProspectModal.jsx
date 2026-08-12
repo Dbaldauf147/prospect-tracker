@@ -49,6 +49,7 @@ import {
   addDivisionContactPatch,
   removeDivisionContactPatch,
   moveDivisionContactsPatch,
+  groupDivisionContactsByTeam,
   divisionLayoutFor,
   setDivisionLayoutPatch,
   nameKey,
@@ -2579,7 +2580,10 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
       .filter(c => !q
         || c.name.toLowerCase().includes(q)
         || (c.jobtitle || '').toLowerCase().includes(q)
-        || (c.email || '').toLowerCase().includes(q))
+        || (c.email || '').toLowerCase().includes(q)
+        // Searching a team name pulls up that team, so a whole bucket can
+        // be added without remembering who's on it.
+        || (c.team || '').toLowerCase().includes(q))
       .slice(0, 12);
   }, [contacts, query, assignedKeys]);
 
@@ -2626,7 +2630,18 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
                 onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
                 onMouseOut={e => e.currentTarget.style.background = ''}
               >
-                <div style={{ fontWeight: 600 }}>{c.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ fontWeight: 600 }}>{c.name}</span>
+                  {c.team && (
+                    <span
+                      title={`Team Name: ${c.team}`}
+                      style={{
+                        fontSize: '0.55rem', color: '#475569', background: '#E2E8F0',
+                        borderRadius: 999, padding: '0 0.3rem', whiteSpace: 'nowrap',
+                      }}
+                    >{c.team}</span>
+                  )}
+                </div>
                 {(c.jobtitle || c.email) && (
                   <div style={{ color: '#94A3B8', fontSize: '0.6rem' }}>{c.jobtitle || c.email}</div>
                 )}
@@ -2651,35 +2666,65 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
   );
 }
 
-// The people on a division, listed under its box. The picker above is a
-// separate component so it mounts fresh every time it opens — otherwise
-// its search text survived a close and prepended itself to the next one.
-function DivisionContacts({ boxId, boxName, contacts, assigned, picking, actions }) {
+// The people on a division, listed under its box, bucketed by the Team
+// Name on their contact record when they carry one. Boxes where nobody
+// has a team draw the plain list they always did — the headers only turn
+// up once there's a team to head.
+//
+// The picker above is a separate component so it mounts fresh every time
+// it opens — otherwise its search text survived a close and prepended
+// itself to the next one.
+function DivisionContacts({ boxId, boxName, contacts, assigned, picking, teamOf, actions }) {
+  const groups = useMemo(
+    () => groupDivisionContactsByTeam(assigned, teamOf), [assigned, teamOf]);
+  // One unlabelled bucket means nobody here has a Team Name: draw the flat
+  // list rather than putting a "No team" header over the whole box.
+  const bucketed = groups.some(g => g.team);
+
   return (
     <>
       {assigned.length > 0 && (
-        <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: '0.12rem' }}>
-          {assigned.map(c => (
-            <span
-              key={divisionContactKey(c)}
-              title={[c.name, c.jobtitle, c.email].filter(Boolean).join(' · ')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.2rem',
-                fontSize: '0.62rem', color: '#334155', background: '#F1F5F9',
-                border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {c.name}
-              </span>
-              <button
-                type="button"
-                onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
-                aria-label={`Remove ${c.name} from ${boxName}`}
-                title={`Remove ${c.name} from ${boxName}`}
-                style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
-              >&times;</button>
-            </span>
+        <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: bucketed ? '0.25rem' : '0.12rem' }}>
+          {groups.map(group => (
+            <div key={group.team || ' none'}>
+              {bucketed && (
+                <div
+                  className={`${styles.divTeamLabel}${group.team ? '' : ` ${styles.divTeamNone}`}`}
+                  title={group.team
+                    ? `${group.team} — Team Name on ${group.contacts.length === 1 ? 'this contact' : 'these contacts'}`
+                    : 'No Team Name on these contacts yet — set one on the contact to bucket them'}
+                >
+                  {group.team || 'No team'}
+                </div>
+              )}
+              <div
+                className={bucketed ? styles.divTeamChips : undefined}
+                style={{ display: 'flex', flexDirection: 'column', gap: '0.12rem' }}
+              >
+                {group.contacts.map(c => (
+                  <span
+                    key={divisionContactKey(c)}
+                    title={[c.name, c.jobtitle, c.email, group.team && `Team: ${group.team}`].filter(Boolean).join(' · ')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.2rem',
+                      fontSize: '0.62rem', color: '#334155', background: '#F1F5F9',
+                      border: '1px solid #E2E8F0', borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
+                      aria-label={`Remove ${c.name} from ${boxName}`}
+                      title={`Remove ${c.name} from ${boxName}`}
+                      style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
+                    >&times;</button>
+                  </span>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -2745,8 +2790,8 @@ function DivisionChildren({ node, layout, shared }) {
 // `ownerId` is the id whose list this box lives in — renaming or removing
 // the box edits that list, and a box added from here lands in THIS box's
 // list (node.id), which is what nests it one level deeper.
-function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
-  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
+function DivisionNode({ node, ownerId, editing, adding, picking, contacts, contactsByBox, layoutOf, teamOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, teamOf, actions };
   const isEditing = editing === node.id;
   const assigned = contactsByBox(node.id);
   const layout = layoutOf(node.id);
@@ -2830,6 +2875,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
           contacts={contacts}
           assigned={assigned}
           picking={picking === node.id}
+          teamOf={teamOf}
           actions={actions}
         />
       </div>
@@ -2846,7 +2892,7 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
 // No "+" control: a division added under the parent would be a SIBLING of
 // this company, and this chart doesn't draw siblings — a control whose
 // result you can't see is worse than no control.
-function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, teamOf, actions }) {
   const btn = {
     border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
     fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
@@ -2909,6 +2955,7 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
         contacts={contacts}
         assigned={contactsByBox(parent.id)}
         picking={picking === parent.id}
+        teamOf={teamOf}
         actions={actions}
       />
     </div>
@@ -2920,7 +2967,7 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
 // Normally there's a single parent and the bus collapses to that stem;
 // more than one only happens when the mapping has it, and drawing them
 // all beats hiding an edge the user can't otherwise find to undo.
-function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, actions }) {
+function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, teamOf, actions }) {
   if (!parents.length && !addingParent) return null;
   return (
     <>
@@ -2934,6 +2981,7 @@ function DivisionParents({ parents, addingParent, rootCompany, editing, picking,
               picking={picking}
               contacts={contacts}
               contactsByBox={contactsByBox}
+              teamOf={teamOf}
               actions={actions}
             />
           </div>
@@ -2958,8 +3006,8 @@ function DivisionParents({ parents, addingParent, rootCompany, editing, picking,
 // The root box is the company the popup is showing, so it isn't renamable
 // or removable here — its own name field is a few rows up. Everything
 // below it is editable in place, and the parent above it is set here.
-function DivisionsChart({ tree, parents, addingParent, editing, adding, picking, contacts, contactsByBox, layoutOf, actions }) {
-  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, actions };
+function DivisionsChart({ tree, parents, addingParent, editing, adding, picking, contacts, contactsByBox, layoutOf, teamOf, actions }) {
+  const shared = { editing, adding, picking, contacts, contactsByBox, layoutOf, teamOf, actions };
   const rootLayout = layoutOf(tree.id, 'row');
   const rootHasBelow = tree.children.length > 0 || adding === tree.id;
   return (
@@ -2973,6 +3021,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
           picking={picking}
           contacts={contacts}
           contactsByBox={contactsByBox}
+          teamOf={teamOf}
           actions={actions}
         />
         <div className={styles.divRootRow}>
@@ -3026,6 +3075,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
               contacts={contacts}
               assigned={contactsByBox(tree.id)}
               picking={picking === tree.id}
+              teamOf={teamOf}
               actions={actions}
             />
           </div>
@@ -3067,18 +3117,47 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     return m;
   }, [prospects]);
 
-  // The company's contacts, flattened to { id, name, jobtitle, email }.
+  // The company's contacts, flattened to { id, name, jobtitle, email, team }.
   // Contacts arrive in a couple of shapes (HubSpot `vid` vs `id`), so the
-  // id is resolved the same way the contacts panel does it.
-  const contactOptions = useMemo(() => (contacts || []).map(c => ({
-    id: String(c.id || c.vid || c.email || ''),
-    name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
-    jobtitle: c.jobtitle || '',
-    email: c.email || '',
-  })).filter(c => c.name), [contacts]);
+  // id is resolved the same way the contacts panel does it. `team` is the
+  // Team Name typed on the contact — read live, so a team renamed there
+  // re-buckets the chart rather than freezing at whatever it said when the
+  // contact was put on a division.
+  // Memoized so an absent map doesn't hand out a fresh {} every render and
+  // re-run everything keyed on it.
+  const teamNames = useMemo(() => settings?.contactTeamNames || {}, [settings?.contactTeamNames]);
+  const contactOptions = useMemo(() => (contacts || []).map(c => {
+    const id = String(c.id || c.vid || c.email || '');
+    return {
+      id,
+      name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
+      jobtitle: c.jobtitle || '',
+      email: c.email || '',
+      // Keyed on id||vid, the same key the contact editor saves under.
+      team: String(teamNames[String(c.id || c.vid || '')] || '').trim(),
+    };
+  }).filter(c => c.name), [contacts, teamNames]);
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
+
+  // The team a division contact belongs to. A contact assigned from the
+  // picker carries the id it was found under, so the team comes straight
+  // from the contact record; a name typed in by hand has no id, so fall
+  // back to matching the company's contact list by name — that's how a
+  // typed "Dan Egan" still lands in his team.
+  const teamByName = useMemo(() => {
+    const m = new Map();
+    for (const c of contactOptions) {
+      if (c.team && c.name && !m.has(nameKey(c.name))) m.set(nameKey(c.name), c.team);
+    }
+    return m;
+  }, [contactOptions]);
+
+  const teamOf = useCallback((c) => {
+    const byId = c?.id ? String(teamNames[String(c.id)] || '').trim() : '';
+    return byId || teamByName.get(nameKey(c?.name)) || '';
+  }, [teamNames, teamByName]);
 
   // How each box arranges what's under it. The company's own divisions
   // default to running across the page and everything deeper to stacking
@@ -3232,11 +3311,13 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 contacts={contactOptions}
                 contactsByBox={contactsByBox}
                 layoutOf={layoutOf}
+                teamOf={teamOf}
                 actions={actions}
               />
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
+                {' · people with a Team Name bucket under it'}
                 {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions'}
               </p>
             </>
