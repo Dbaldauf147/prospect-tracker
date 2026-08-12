@@ -7,6 +7,7 @@ import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { DataTable } from '../common/DataTable';
 import { textToBulletItems, encodeNoteLine } from '../../utils/nextSteps';
+import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
 import { DateCell } from '../common/DateCell';
 import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 import {
@@ -3955,6 +3956,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
           </div>
           <div>
             <label style={labelStyle}>Notes</label>
+            <LastCallLine opp={opp} />
             <NextStepsRowsEditor
               rows={rows}
               onUpdateRow={updateRow}
@@ -5044,6 +5046,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
           </div>
           <div>
             <label style={labelStyle}>Notes</label>
+            <LastCallLine opp={opp} />
             <NextStepsRowsEditor
               rows={rows}
               onUpdateRow={updateRow}
@@ -6459,6 +6462,58 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // NextStepsEditor modal and the Follow Up status popup, so both edit
 // Next Steps in the exact same format. Presentational only — the
 // parent owns the `rows` state and the add / delete / commit handlers.
+// The last call mapped to this opp, above the notes it explains.
+//
+// Steps arrive in this list from a tagged call recording, so the first
+// thing worth knowing when reading them is which conversation they came
+// out of and how long ago it was. Read straight off the opp — the Call
+// Recordings page stamps the reference when the call is mapped, so this
+// costs no lookup and is there on whatever device the opp syncs to.
+//
+// Renders nothing for an opp no call has been mapped to, which includes
+// every opp mapped before the stamp existed: an empty frame saying "no
+// call" would be a finding about the feature, not about the deal.
+function LastCallLine({ opp }) {
+  // Read once per mount rather than on every render: the popup is open
+  // for seconds, "5 days ago" cannot change while it is, and a clock read
+  // in the render body is impure.
+  const [now] = useState(() => Date.now());
+  const call = lastCallOn(opp);
+  if (!call) return null;
+  const age = describeCallAge(call.atMs, now);
+  const when = [call.at ? formatDateDisplay(call.at) : '', age ? `(${age})` : '']
+    .filter(Boolean).join(' ');
+  return (
+    <div style={{
+      border: '1px solid var(--color-border)', borderLeft: '3px solid #7C3AED',
+      borderRadius: 4, background: 'var(--color-bg)', padding: '0.5rem 0.6rem',
+      marginBottom: '0.5rem',
+    }}>
+      <div style={{
+        fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
+      }}>Most recent call</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)' }}>{call.name}</span>
+        {when && <span style={{ fontSize: '0.75rem', color: '#64748B' }}>{when}</span>}
+        {call.url && (
+          <a
+            href={call.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: '0.72rem', color: '#1D4ED8', textDecoration: 'underline' }}
+          >Open in Granola ↗</a>
+        )}
+      </div>
+      {call.gist && (
+        <div style={{ marginTop: 3, fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
+          {call.gist}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommit }) {
   const inputStyle = {
     width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
@@ -6948,6 +7003,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
 
           <div>
             <label style={labelStyle}>Notes</label>
+            <LastCallLine opp={opp} />
             <NextStepsRowsEditor
               rows={rows}
               onUpdateRow={updateRow}
