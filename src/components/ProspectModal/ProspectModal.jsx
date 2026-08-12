@@ -49,6 +49,7 @@ import {
   addDivisionContactPatch,
   removeDivisionContactPatch,
   moveDivisionContactsPatch,
+  groupDivisionContactsByTeam,
   divisionLayoutFor,
   setDivisionLayoutPatch,
   buildDivisionContactTree,
@@ -2580,7 +2581,10 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
       .filter(c => !q
         || c.name.toLowerCase().includes(q)
         || (c.jobtitle || '').toLowerCase().includes(q)
-        || (c.email || '').toLowerCase().includes(q))
+        || (c.email || '').toLowerCase().includes(q)
+        // Searching a team name pulls up that team, so a whole bucket can
+        // be added without remembering who's on it.
+        || (c.team || '').toLowerCase().includes(q))
       .slice(0, 12);
   }, [contacts, query, assignedKeys]);
 
@@ -2629,10 +2633,23 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
               >
                 {/* Someone tagged Left can still be put on a box — that's
                     how the chart keeps showing who used to cover it — but
-                    the list says so rather than letting it pass unnoticed. */}
-                <div style={{ fontWeight: 600 }}>
-                  {c.name}
-                  {c.left && <span style={{ fontWeight: 500, color: '#94A3B8' }}> · left</span>}
+                    the list says so rather than letting it pass unnoticed.
+                    The team beside the name says which bucket they'll land
+                    in once they're on. */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ fontWeight: 600 }}>
+                    {c.name}
+                    {c.left && <span style={{ fontWeight: 500, color: '#94A3B8' }}> · left</span>}
+                  </span>
+                  {c.team && (
+                    <span
+                      title={`Team Name: ${c.team}`}
+                      style={{
+                        fontSize: '0.55rem', color: '#475569', background: '#E2E8F0',
+                        borderRadius: 999, padding: '0 0.3rem', whiteSpace: 'nowrap',
+                      }}
+                    >{c.team}</span>
+                  )}
                 </div>
                 {(c.jobtitle || c.email) && (
                   <div style={{ color: '#94A3B8', fontSize: '0.6rem' }}>{c.jobtitle || c.email}</div>
@@ -2733,17 +2750,36 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, actions }) {
   );
 }
 
-// The people on a division, listed under its box. The picker above is a
-// separate component so it mounts fresh every time it opens — otherwise
-// its search text survived a close and prepended itself to the next one.
+// The people on a division, listed under its box and bucketed by the
+// Team Name on their contact record when they carry one. A box where
+// nobody has a team draws the plain list it always did — the headers
+// only turn up once there's a team to head.
+//
+// Reporting lines are drawn WITHIN a bucket: teams are the coarser
+// grouping, so a manager in another team is named under the chip the
+// same way a manager on another box already was. Nothing about a
+// reporting line is lost, it just isn't a nesting across teams.
+//
+// The picker above is a separate component so it mounts fresh every time
+// it opens — otherwise its search text survived a close and prepended
+// itself to the next one.
 //
 // `contactBook` carries what the chips need about the live contacts:
-// who reports to whom (settings.contactReportsTo) and who's tagged Left.
+// who reports to whom (settings.contactReportsTo), who's tagged Left,
+// and the Team Name each contact carries.
 function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, picking, actions }) {
-  const nodes = useMemo(
-    () => buildDivisionContactTree(assigned, contactBook.reportsTo, contactBook.nameById),
+  const groups = useMemo(
+    () => groupDivisionContactsByTeam(assigned, contactBook.teamOf)
+      .map(g => ({
+        ...g,
+        nodes: buildDivisionContactTree(g.contacts, contactBook.reportsTo, contactBook.nameById),
+      }))
+      .filter(g => g.nodes.length > 0),
     [assigned, contactBook],
   );
+  // One unlabelled bucket means nobody here has a Team Name: draw the
+  // flat list rather than putting a "No team" header over the whole box.
+  const bucketed = groups.some(g => g.team);
   // A person the company's contact list doesn't have — typed straight
   // onto the box, or since deleted — carries no Left tag, so they read
   // as still there. That's the same reading the contacts panel gives.
@@ -2751,17 +2787,36 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, pic
     (c) => contactBook.leftIds.has(String(c?.id || '')), [contactBook]);
   return (
     <>
-      {nodes.length > 0 && (
-        <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: '0.12rem' }}>
-          {nodes.map(node => (
-            <DivisionContactRow
-              key={divisionContactKey(node.contact)}
-              node={node}
-              boxId={boxId}
-              boxName={boxName}
-              hasLeft={hasLeft}
-              actions={actions}
-            />
+      {groups.length > 0 && (
+        <div style={{ marginTop: '0.2rem', display: 'flex', flexDirection: 'column', gap: bucketed ? '0.25rem' : '0.12rem' }}>
+          {groups.map(group => (
+            <div key={group.team || ' none'}>
+              {bucketed && (
+                <div
+                  className={`${styles.divTeamLabel}${group.team ? '' : ` ${styles.divTeamNone}`}`}
+                  title={group.team
+                    ? `${group.team} — Team Name on ${group.contacts.length === 1 ? 'this contact' : 'these contacts'}`
+                    : 'No Team Name on these contacts yet — set one on the contact to bucket them'}
+                >
+                  {group.team || 'No team'}
+                </div>
+              )}
+              <div
+                className={bucketed ? styles.divTeamChips : undefined}
+                style={{ display: 'flex', flexDirection: 'column', gap: '0.12rem' }}
+              >
+                {group.nodes.map(node => (
+                  <DivisionContactRow
+                    key={divisionContactKey(node.contact)}
+                    node={node}
+                    boxId={boxId}
+                    boxName={boxName}
+                    hasLeft={hasLeft}
+                    actions={actions}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -3154,26 +3209,40 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     return m;
   }, [prospects]);
 
-  // The company's contacts, flattened to { id, name, jobtitle, email }.
-  // Contacts arrive in a couple of shapes (HubSpot `vid` vs `id`), so the
-  // id is resolved the same way the contacts panel does it. `left` is the
-  // Left tag, carried so the picker can say who's already gone.
+  // The company's contacts, flattened to
+  // { id, name, jobtitle, email, left, team }. Contacts arrive in a couple
+  // of shapes (HubSpot `vid` vs `id`), so the id is resolved the same way
+  // the contacts panel does it. `left` is the Left tag, carried so the
+  // picker can say who's already gone; `team` is the Team Name typed on
+  // the contact — read live, so a team renamed there re-buckets the chart
+  // rather than freezing at whatever it said when the contact was put on
+  // a division.
+  //
+  // teamNames is memoized so an absent map doesn't hand out a fresh {}
+  // every render and re-run everything keyed on it.
+  const teamNames = useMemo(() => settings?.contactTeamNames || {}, [settings?.contactTeamNames]);
   const contactOptions = useMemo(() => (contacts || []).map(c => ({
     id: String(c.id || c.vid || c.email || ''),
     name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
     jobtitle: c.jobtitle || '',
     email: c.email || '',
     left: contactHasTag(c, 'left'),
-  })).filter(c => c.name), [contacts]);
+    // Keyed on id||vid, the same key the contact editor saves under.
+    team: String(teamNames[String(c.id || c.vid || '')] || '').trim(),
+  })).filter(c => c.name), [contacts, teamNames]);
 
   // What the chips need about the live contacts behind them: the
   // contact-level reporting map (the same one the By Category org chart
-  // draws), who's tagged Left, and a name per contact id so a manager
-  // sitting on another box can still be named.
+  // draws), who's tagged Left, the team each person is bucketed under, and
+  // a name per contact id so a manager sitting on another box can still
+  // be named.
   const contactBook = useMemo(() => {
     const leftIds = new Set();
     const contactNames = new Map();
+    // Team by normalized name, for the fallback below.
+    const teamByName = new Map();
     for (const c of contactOptions) {
+      if (c.team && c.name && !teamByName.has(nameKey(c.name))) teamByName.set(nameKey(c.name), c.team);
       if (!c.id) continue;
       contactNames.set(c.id, c.name);
       if (c.left) leftIds.add(c.id);
@@ -3191,8 +3260,17 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       reportsTo: settings?.contactReportsTo || {},
       leftIds,
       nameById: contactNames,
+      // The team a division contact is bucketed under. Someone assigned
+      // from the picker carries the id they were found under, so the team
+      // comes straight off the contact record; a name typed in by hand has
+      // no id, so fall back to matching the company's contact list by name
+      // — that's how a typed "Dan Egan" still lands in his team.
+      teamOf: (c) => {
+        const byId = c?.id ? String(teamNames[String(c.id)] || '').trim() : '';
+        return byId || teamByName.get(nameKey(c?.name)) || '';
+      },
     };
-  }, [contactOptions, settings?.divisionContacts, settings?.contactReportsTo]);
+  }, [contactOptions, teamNames, settings?.divisionContacts, settings?.contactReportsTo]);
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
@@ -3357,14 +3435,15 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
                 {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions'}
               </p>
-              {/* Says what the two chip colours mean, and where the
-                  nesting comes from — the reporting lines are read off
-                  each contact's own Reports To, never set here. */}
+              {/* Says where the buckets and the nesting come from — both
+                  are read off the contacts themselves (their Team Name and
+                  their Reports To), never set here — and what the two chip
+                  colours mean. */}
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
-                Contacts sit under whoever they report to (set on the contact's own Reports To) ·
-                <span style={{ color: '#065F46' }}> green</span> is still at the company ·
-                <span style={{ color: '#64748B' }}> grey</span> is tagged Left ·
-                ↑ names a manager who sits on another box
+                Contacts bucket by their Team Name and sit under whoever they report to
+                (both set on the contact) · <span style={{ color: '#065F46' }}>green</span> is
+                still at the company · <span style={{ color: '#64748B' }}>grey</span> is tagged Left ·
+                ↑ names a manager outside their bucket
               </p>
             </>
           )}

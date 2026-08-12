@@ -378,6 +378,34 @@ export function divisionContactKey(c) {
   return String(c?.id || '') || nameKey(c?.name);
 }
 
+// Bucket a division's contacts by the Team Name on their contact record
+// (settings.contactTeamNames, resolved by the caller through `teamOf` —
+// this file doesn't know how a contact id maps to a team).
+//
+// Teams come out in the order they first appear in the list, so the chart
+// keeps the order the contacts were assigned in rather than re-sorting
+// people out from under whoever added them. Anyone with no team lands in
+// a single trailing bucket whose `team` is '' — the caller labels that
+// however it likes, and when nobody on the box has a team the result is
+// exactly one bucket, which is the ungrouped list it always drew.
+export function groupDivisionContactsByTeam(contacts, teamOf) {
+  const buckets = new Map();
+  const untagged = [];
+  for (const c of contacts || []) {
+    const team = String((teamOf ? teamOf(c) : '') || '').trim();
+    if (!team) { untagged.push(c); continue; }
+    // Keyed on the normalized name so "FP&A" and "fp&a" are one team; the
+    // label shown is the first spelling seen.
+    const key = nameKey(team);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.contacts.push(c);
+    else buckets.set(key, { team, contacts: [c] });
+  }
+  const out = [...buckets.values()];
+  if (untagged.length) out.push({ team: '', contacts: untagged });
+  return out;
+}
+
 // Carry a division's contacts across when a linked entry is renamed into
 // a typed one, so the people on it don't fall off with the id change.
 export function moveDivisionContactsPatch(settings, fromId, toId) {
