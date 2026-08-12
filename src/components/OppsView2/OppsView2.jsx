@@ -44,6 +44,18 @@ import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { loadTimelineTypeOptions, addTimelineTypeOption, TIMELINE_TYPE_OPTIONS_EVENT } from '../../utils/timelineTypeOptions';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import {
+  NFAT_SCHEDULE_TYPES,
+  NFAT_TYPE_LABELS,
+  NFAT_SETTINGS_KEY,
+  anyNfatScheduleEnabled,
+  defaultNfatSchedules,
+  easternWallToUtcMs,
+  loadLegacyNfatSchedules,
+  nfatRunStampPaths,
+  nfatTypesDue,
+  normalizeNfatSchedules,
+} from '../../utils/nfatSchedules';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
@@ -92,25 +104,6 @@ const SHOW_IMPORT_BUTTONS = false;
 // shared across the Opps 2 and Agents detail popups. Stored as a JSON
 // array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
-
-// The "No Further Action Today" clear schedules — one per mark type —
-// live on user settings (`settings.nfatSchedules`), which is
-// Firestore-backed. They used to sit in per-browser localStorage, which
-// meant a schedule set on one machine simply didn't exist on the next
-// one, and clearing site data switched the feature off with nothing on
-// screen to say so. The legacy key is still read once, to promote an
-// existing browser-local schedule into settings.
-//
-// These replace the old fixed start-of-day blank-all + 2 PM X sweep
-// with user-configured day-of-week + time schedules set from the
-// toolbar button.
-const NFAT_SCHEDULES_KEY = 'opps2-nfat-schedules';
-
-// The three things a schedule can clear from the tristate column:
-// ✓ checks, ✗ X marks, or any non-blank value. Each gets its own
-// independent schedule (days of week + time of day).
-const NFAT_SCHEDULE_TYPES = ['check', 'x', 'any'];
-const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', any: 'Any value' };
 
 // HQ Region choices offered when the New Opp modal creates a new Table
 // View company. Mirrors the option set the MyAccounts / PE Portfolio
@@ -173,37 +166,6 @@ function ServiceSMEInput({ value, onSave, label }) {
       }}
     />
   );
-}
-
-function defaultNfatSchedules() {
-  const base = { enabled: false, days: [1, 2, 3, 4, 5], time: '06:00', lastRunAt: 0 };
-  return { check: { ...base }, x: { ...base }, any: { ...base } };
-}
-
-// A stored config merged onto defaults, so a partial or older shape
-// still yields a complete schedule for every type.
-function normalizeNfatSchedules(stored) {
-  const def = defaultNfatSchedules();
-  for (const t of NFAT_SCHEDULE_TYPES) {
-    if (stored && stored[t]) def[t] = { ...def[t], ...stored[t] };
-  }
-  return def;
-}
-
-// The pre-settings schedule, if this browser still has one. Read only to
-// promote it into settings the first time the tab loads after the move.
-function loadLegacyNfatSchedules() {
-  try {
-    const raw = userLsGet(NFAT_SCHEDULES_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-// True when any type is set to clear on a schedule — surfaced on the
-// toolbar button so a schedule that isn't configured (or was never
-// carried over from another browser) is visible rather than silent.
-function anyNfatScheduleEnabled(schedules) {
-  return NFAT_SCHEDULE_TYPES.some(t => schedules?.[t]?.enabled);
 }
 
 // True when the row's "No Further Action Today" mark was placed after
@@ -1025,59 +987,6 @@ function businessDaysSince(rawISO) {
 // correct across DST flips. One pass is enough — we compute the
 // observed Eastern wall time of our initial UTC guess, take the
 // difference, and apply it.
-function easternWallToUtcMs(year, month, day, hour, minute) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-  const guess = Date.UTC(year, month - 1, day, hour, minute);
-  const parts = {};
-  for (const p of fmt.formatToParts(new Date(guess))) {
-    if (p.type !== 'literal') parts[p.type] = p.value;
-  }
-  const obs = Date.UTC(
-    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-    Number(parts.hour) % 24, Number(parts.minute),
-  );
-  return guess + (guess - obs);
-}
-
-// Eastern calendar parts (+ weekday, 0=Sun..6=Sat) for a UTC ms instant.
-// Used to align the configurable No-Further-Action-Today clear schedules
-// to Eastern days/times for every user, independent of browser timezone.
-function easternDayParts(ms) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
-  });
-  const out = {};
-  for (const p of fmt.formatToParts(new Date(ms))) {
-    if (p.type !== 'literal') out[p.type] = p.value;
-  }
-  const dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[out.weekday];
-  return { year: Number(out.year), month: Number(out.month), day: Number(out.day), dow };
-}
-
-// The most recent scheduled occurrence (UTC ms) at or before `nowMs` for
-// a schedule that fires on the given Eastern weekdays at "HH:MM" Eastern.
-// Returns null when nothing matches within the last week. The scheduler
-// compares this against the schedule's lastRunAt: a newer occurrence means
-// the clear is due — which also lets it catch up if the app was closed
-// across a scheduled time.
-function mostRecentNfatScheduleMs(days, time, nowMs = Date.now()) {
-  if (!Array.isArray(days) || !days.length) return null;
-  const [hh, mm] = String(time || '').split(':').map(n => parseInt(n, 10));
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-  for (let k = 0; k < 8; k++) {
-    const p = easternDayParts(nowMs - k * 24 * 60 * 60 * 1000);
-    if (!days.includes(p.dow)) continue;
-    const occ = easternWallToUtcMs(p.year, p.month, p.day, hh, mm);
-    if (occ <= nowMs) return occ;
-  }
-  return null;
-}
-
 // ---- Scheduled opps ---------------------------------------------
 
 // A stored scheduled-opp list coerced into a complete, well-typed shape.
@@ -7218,7 +7127,7 @@ function TodoBox() {
   );
 }
 
-export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
+export function OppsView2({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user, isAdmin } = useAuth();
 
   // Client Manager lookup for the status / notes popups. Managers are
@@ -8463,10 +8372,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     () => normalizeNfatSchedules(settings?.nfatSchedules),
     [settings?.nfatSchedules],
   );
+  // Live copy for the fallback write below, so it reads the freshest
+  // schedules rather than the ones its closure captured.
+  const nfatSchedulesRef = useRef(nfatSchedules);
+  nfatSchedulesRef.current = nfatSchedules;
   const [nfatScheduleOpen, setNfatScheduleOpen] = useState(false);
+  // The user's edit from the modal: the whole config, deliberately.
   const saveNfatSchedules = useCallback((next) => {
-    updateSettings?.({ nfatSchedules: next });
+    updateSettings?.({ [NFAT_SETTINGS_KEY]: next });
   }, [updateSettings]);
+  // The runner's own bookkeeping: only the lastRunAt leaves, written as
+  // dotted paths so the stamp can't carry a stale copy of the times the
+  // user set. Falls back to the whole-object write when the page wasn't
+  // handed updateSettingsPath — a run that isn't recorded re-fires, which
+  // is worse than the clobber this avoids.
+  const stampNfatRuns = useCallback((types, atMs) => {
+    const paths = nfatRunStampPaths(types, atMs);
+    if (!Object.keys(paths).length) return;
+    if (updateSettingsPath) { updateSettingsPath(paths); return; }
+    const next = { ...nfatSchedulesRef.current };
+    for (const t of types) next[t] = { ...next[t], lastRunAt: atMs };
+    updateSettings?.({ [NFAT_SETTINGS_KEY]: next });
+  }, [updateSettingsPath, updateSettings]);
   const nfatScheduled = anyNfatScheduleEnabled(nfatSchedules);
   const nfatScheduleSummary = useMemo(() => NFAT_SCHEDULE_TYPES
     .filter(t => nfatSchedules[t]?.enabled)
@@ -9018,31 +8945,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (!hydrated) return undefined;
     const tick = () => {
       const now = Date.now();
-      let changed = false;
-      const next = { ...nfatSchedules };
-      for (const type of NFAT_SCHEDULE_TYPES) {
-        const s = next[type];
-        if (!s?.enabled) continue;
-        const occ = mostRecentNfatScheduleMs(s.days, s.time, now);
-        if (occ == null || (s.lastRunAt || 0) >= occ) continue;
-        // The advanced lastRunAt goes out through settings, which is a
-        // round trip — remember in-session which occurrence each type has
-        // already handled so the minute tick can't fire it again while
-        // that write is in flight.
-        if ((nfatFiredRef.current[type] || 0) >= occ) continue;
-        nfatFiredRef.current[type] = occ;
-        clearNfat(type, { since: occ });
-        next[type] = { ...s, lastRunAt: now };
-        changed = true;
+      const due = nfatTypesDue(nfatSchedules, now, nfatFiredRef.current);
+      if (!due.length) return;
+      for (const { type, occurrence } of due) {
+        // The run stamp goes out through settings, which is a round trip —
+        // remember in-session which occurrence each type has already
+        // handled so the minute tick can't fire it again while that write
+        // is in flight.
+        nfatFiredRef.current[type] = occurrence;
+        clearNfat(type, { since: occurrence });
       }
-      // Persist the advanced lastRunAt stamps so a missed-run catch-up
-      // doesn't re-fire on the next tick / reload.
-      if (changed) saveNfatSchedules(next);
+      // Record the run as a stamp on those types and nothing else. This
+      // used to write the whole nfatSchedules object back, which meant an
+      // automatic job rewrote `time` / `days` / `enabled` from whatever
+      // copy this tab was holding — see nfatRunStampPaths for why that
+      // quietly undid a time changed on another tab or device.
+      stampNfatRuns(due.map(d => d.type), now);
     };
     tick();
     const t = window.setInterval(tick, 60_000);
     return () => window.clearInterval(t);
-  }, [hydrated, nfatSchedules, clearNfat, saveNfatSchedules]);
+  }, [hydrated, nfatSchedules, clearNfat, stampNfatRuns]);
 
   // Heal opps already parked in Contracting / Agreement Sent with a stale
   // Chance? (an "OK" that predates the auto-stamp, or a fresh sheet
