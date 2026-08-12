@@ -18,7 +18,7 @@ import {
   loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
   SOLD_WARNING_IGNORE_EVENT,
 } from '../../utils/soldWarningIgnore';
-import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo } from '../../utils/dealCommissions';
+import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo, dealTrackStatus } from '../../utils/dealCommissions';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -1253,6 +1253,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     });
   }
 
+  // Write several cells on one row in a single pass — a projection saves
+  // four keys at once, and routing each through updateCell would persist
+  // the whole roster four times over.
+  function updateCells(rowId, patch) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      for (const [key, value] of Object.entries(patch || {})) {
+        if (value === '' || value == null) delete current[key];
+        else current[key] = value;
+      }
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   function addNewDeal() {
     setStore(prev => {
       // Pre-fill Due Date 60 days from today so the Days/Paid on
@@ -1474,22 +1493,28 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     // leading block so it's reachable however far right the sheet is
     // scrolled, and kept out of filtering / export since it carries no
     // value of its own.
+    // The button also carries the deal's commission-tracking status
+    // (Missing / On track / Completed, set inside the modal) as its tint,
+    // so the state is scannable down the grid without opening anything.
     const historyCol = {
       key: '__dealHistory__',
       label: '',
-      defaultWidth: 34,
+      defaultWidth: 40,
       sticky: true,
       renderHeader: () => null,
-      render: (row) => (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setHistoryRowId(row.id); }}
-          onDoubleClick={(e) => e.stopPropagation()}
-          title="Commissions & revenue history for this deal: expected vs actual"
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1, padding: '2px 3px' }}
-        >📊</button>
-      ),
-      exportValue: () => '',
+      render: (row) => {
+        const st = dealTrackStatus(row);
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setHistoryRowId(row.id); }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            title={`Commissions & revenue history for this deal: expected vs actual${st.key ? ` · status: ${st.label}` : ''}`}
+            style={{ background: st.key ? st.bg : 'transparent', border: `1px solid ${st.key ? st.border : 'transparent'}`, borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1, padding: '2px 4px' }}
+          >📊</button>
+        );
+      },
+      exportValue: (row) => dealTrackStatus(row).key || '',
       getFilterValue: () => '',
     };
     // Leading column shows a compact handoff-progress pill for each
@@ -2213,6 +2238,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           // it drops back to the history modal, so the deep dive doesn't
           // lose the user their place.
           onOpenBreakdown={(metric) => setBreakdown({ rowId: historyRowId, metric })}
+          onUpdateDeal={(patch) => updateCells(historyRowId, patch)}
         />
       )}
       {breakdown && data[breakdown.rowId] && (

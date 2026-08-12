@@ -1,6 +1,11 @@
 import { Fragment, useMemo, useState } from 'react';
 import { asNumber, asDate, fmtCurrency, fmtDate, fmtPercent } from '../../utils/dealsFormat';
-import { DEAL_BFO_KEY, matchCommissionRowsForDeal } from '../../utils/dealCommissions';
+import {
+  DEAL_BFO_KEY, matchCommissionRowsForDeal,
+  DEAL_TRACK_STATUS_KEY, DEAL_TRACK_STATUSES, dealTrackStatus,
+  DEAL_PROJ_START_KEY, DEAL_PROJ_END_KEY, DEAL_PROJ_REVENUE_KEY, DEAL_PROJ_COMMISSION_KEY,
+  readSavedProjection, formatProjMonth,
+} from '../../utils/dealCommissions';
 import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 
 // Row-level drill-down for a deal: what the contract says the deal should
@@ -76,6 +81,22 @@ function runningMonthOffset(start, col) {
 
 function monthLabel(col) {
   return col.year == null ? MONTH_ABBR[col.idx] : `${MONTH_ABBR[col.idx]} ${col.year}`;
+}
+
+// Whole months from `a` to `b`. Both must carry a year.
+function monthsBetween(a, b) {
+  if (a?.year == null || b?.year == null) return null;
+  return (b.year - a.year) * 12 + (b.idx - a.idx);
+}
+
+// Is this dated column inside the saved projection's month range? Used to
+// mark the months that were projected and have since been recorded, so the
+// cell can show what it was projected at against what actually landed.
+function withinSavedRange(saved, col) {
+  if (!saved || col?.year == null) return false;
+  const key = col.year * 12 + col.idx;
+  return key >= saved.start.year * 12 + saved.start.idx
+    && key <= saved.end.year * 12 + saved.end.idx;
 }
 
 function minDate(dates) {
@@ -202,7 +223,7 @@ function MetricPanel({ metric, onOpenBreakdown }) {
   );
 }
 
-export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdown }) {
+export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdown, onUpdateDeal }) {
   const model = useMemo(() => {
     const matches = matchCommissionRowsForDeal(deal, commissionsRows);
 
@@ -331,8 +352,15 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
       ? 0
       : (monthsLeft != null && monthsLeft > 0 ? monthsLeft : 12);
 
+    // A saved projection pins the horizon to a calendar month, so as real
+    // months get recorded they eat into it instead of pushing it further
+    // out — the end date the user saved is the end date they keep.
+    const saved = readSavedProjection(deal);
+    const savedMonthsLeft = saved ? Math.max(0, monthsBetween(projectionAnchor, saved.end) ?? 0) : null;
+
     return {
       projects, actualCols, cumulativeRevenue, cumulativeCommission,
+      saved, savedMonthsLeft,
       expectedRevenue, expectedCommission, actualRevenue, actualCommission,
       mapped, setup, recurring, start, end, span, elapsed,
       paceRevenue, paceCommission,
@@ -342,17 +370,19 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
 
   const {
     projects, actualCols, cumulativeRevenue, cumulativeCommission,
+    saved, savedMonthsLeft,
     expectedRevenue, expectedCommission, actualRevenue, actualCommission,
     mapped, setup, recurring, start, end, span, elapsed,
     paceRevenue, paceCommission,
     projectionAnchor, defaultProjMonths, defaultRevenueRate, defaultCommissionRate,
   } = model;
 
-  // Projection controls. Held as strings so a half-typed value doesn't get
-  // stomped back to a number mid-keystroke; parsed and clamped on use.
-  const [monthsInput, setMonthsInput] = useState(() => String(defaultProjMonths));
-  const [revenueRateInput, setRevenueRateInput] = useState(() => String(defaultRevenueRate));
-  const [commissionRateInput, setCommissionRateInput] = useState(() => String(defaultCommissionRate));
+  // Projection controls, seeded from the saved projection when there is
+  // one. Held as strings so a half-typed value doesn't get stomped back to
+  // a number mid-keystroke; parsed and clamped on use.
+  const [monthsInput, setMonthsInput] = useState(() => String(savedMonthsLeft ?? defaultProjMonths));
+  const [revenueRateInput, setRevenueRateInput] = useState(() => String(saved ? saved.revenue : defaultRevenueRate));
+  const [commissionRateInput, setCommissionRateInput] = useState(() => String(saved ? saved.commission : defaultCommissionRate));
 
   const projMonths = Math.max(0, Math.min(120, Math.round(asNumber(monthsInput) ?? 0)));
   const revenueRate = asNumber(revenueRateInput) ?? 0;
@@ -389,6 +419,33 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
   const projStyle = (col, k) => (col.projected
     ? { background: '#F8FAFC', ...(k === actualCols.length ? { borderLeft: '2px dashed #CBD5E1' } : null) }
     : null);
+
+  // A projection can only be saved against real calendar months, which
+  // needs a commission window (or contract dates) to anchor them to.
+  const canSave = !!onUpdateDeal && projectionAnchor.year != null;
+  const projStart = addMonths(projectionAnchor, 1);
+  const projEnd = addMonths(projectionAnchor, projMonths);
+  const savedMatchesInputs = saved
+    && savedMonthsLeft === projMonths
+    && saved.revenue === revenueRate
+    && saved.commission === commissionRate;
+
+  function saveProjection() {
+    onUpdateDeal({
+      [DEAL_PROJ_START_KEY]: formatProjMonth(projStart),
+      [DEAL_PROJ_END_KEY]: formatProjMonth(projEnd),
+      [DEAL_PROJ_REVENUE_KEY]: String(revenueRate),
+      [DEAL_PROJ_COMMISSION_KEY]: String(commissionRate),
+    });
+  }
+  function clearProjection() {
+    onUpdateDeal({
+      [DEAL_PROJ_START_KEY]: '', [DEAL_PROJ_END_KEY]: '',
+      [DEAL_PROJ_REVENUE_KEY]: '', [DEAL_PROJ_COMMISSION_KEY]: '',
+    });
+  }
+
+  const status = dealTrackStatus(deal);
 
   const bfoRaw = String(deal?.[DEAL_BFO_KEY] ?? '').trim();
   const dealName = String(deal?.['Client Name'] ?? '').trim() || String(deal?.['Agreement Name'] ?? '').trim() || '(unnamed deal)';
@@ -469,6 +526,36 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
           >×</button>
         </div>
 
+        {/* Tracking status — the user's own call on where this deal stands,
+            saved on the deal and mirrored on the grid's drill-down button. */}
+        {onUpdateDeal && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', padding: '0.5rem 1.1rem', borderBottom: '1px solid #F1F5F9', background: '#FCFDFE' }}>
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Status</span>
+            {DEAL_TRACK_STATUSES.map((s) => {
+              const on = status.key === s.key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  // Clicking the active one clears it back to unset.
+                  onClick={() => onUpdateDeal({ [DEAL_TRACK_STATUS_KEY]: on ? '' : s.key })}
+                  title={on ? `${s.label} — click to clear` : `Mark this deal ${s.label}`}
+                  style={{
+                    padding: '2px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: '0.7rem', fontWeight: 700,
+                    background: on ? s.bg : '#fff',
+                    color: on ? s.fg : '#94A3B8',
+                    border: `1px solid ${on ? s.border : '#E2E8F0'}`,
+                  }}
+                >{on ? '✓ ' : ''}{s.label}</button>
+              );
+            })}
+            {status.key === '' && (
+              <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>not set — pick one to flag this deal on the grid</span>
+            )}
+          </div>
+        )}
+
         <div style={{ overflow: 'auto', padding: '0.9rem 1.1rem 1.1rem' }}>
           {/* Expected vs actual, one panel per metric */}
           <div style={{ display: 'flex', gap: '0.7rem', flexWrap: 'wrap' }}>
@@ -491,6 +578,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                 <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.1rem' }}>
                   Actuals as recorded on the Commissions tab, with the running total after each month.
                   {projMonths > 0 && ' Shaded columns are projected, not recorded.'}
+                  {saved && ' Underlined months were projected and have since been recorded — hover for the comparison.'}
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem' }}>
@@ -521,8 +609,47 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                   style={numInputStyle(78)}
                 />
                 <span>/mo commission</span>
+                {canSave && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={saveProjection}
+                      disabled={savedMatchesInputs}
+                      title={projMonths > 0
+                        ? `Save this projection through ${monthLabel(projEnd)} — recorded months will replace the projected ones as they come in`
+                        : 'Save a zero-month projection (clears the saved range)'}
+                      style={{
+                        padding: '2px 9px', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+                        border: '1px solid', borderColor: savedMatchesInputs ? '#E2E8F0' : '#3B82F6',
+                        background: savedMatchesInputs ? '#F8FAFC' : '#3B82F6',
+                        color: savedMatchesInputs ? '#94A3B8' : '#fff',
+                        cursor: savedMatchesInputs ? 'default' : 'pointer',
+                      }}
+                    >{savedMatchesInputs ? 'Saved' : saved ? 'Update saved' : 'Save'}</button>
+                    {saved && (
+                      <button
+                        type="button"
+                        onClick={clearProjection}
+                        title="Forget the saved projection for this deal"
+                        style={{ padding: '2px 8px', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 600, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', cursor: 'pointer' }}
+                      >Clear</button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
+
+            {saved && (
+              <div style={{ marginTop: '0.4rem', fontSize: '0.68rem', color: '#475569' }}>
+                <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, background: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE', fontWeight: 700 }}>
+                  Saved projection
+                </span>{' '}
+                {monthLabel(saved.start)} – {monthLabel(saved.end)} at {fmtCurrency(saved.revenue)}/mo revenue · {fmtCurrency(saved.commission)}/mo commission.{' '}
+                {savedMonthsLeft === 0
+                  ? <strong style={{ color: '#166534' }}>All of it has been recorded.</strong>
+                  : <>Recorded months replace the projected ones as they land — <strong style={{ color: '#334155' }}>{savedMonthsLeft} left</strong>.</>}
+              </div>
+            )}
 
             {!bfoRaw ? (
               <div style={{ marginTop: '0.5rem', padding: '0.75rem', color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.75rem' }}>
@@ -566,17 +693,35 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                   </thead>
                   <tbody>
                     {[
-                      { label: 'Revenue', pick: (c) => c.revenue, cum: (c) => c.cumRevenue, total: actualRevenue, projected: projectedRevenue },
-                      { label: 'Commission', pick: (c) => c.commission, cum: (c) => c.cumCommission, total: actualCommission, projected: projectedCommission },
+                      { label: 'Revenue', pick: (c) => c.revenue, cum: (c) => c.cumRevenue, total: actualRevenue, projected: projectedRevenue, savedRate: saved?.revenue },
+                      { label: 'Commission', pick: (c) => c.commission, cum: (c) => c.cumCommission, total: actualCommission, projected: projectedCommission, savedRate: saved?.commission },
                     ].map((row) => (
                       <Fragment key={row.label}>
                         <tr>
                           <td style={tdLeft}>{row.label}</td>
-                          {tableCols.map((c, k) => (
-                            <td key={k} style={{ ...td, ...projStyle(c, k), color: c.projected ? '#64748B' : (row.pick(c) ? '#0F172A' : '#CBD5E1'), fontStyle: c.projected ? 'italic' : 'normal' }}>
-                              {row.pick(c) ? fmtCurrency(row.pick(c)) : '-'}
-                            </td>
-                          ))}
+                          {tableCols.map((c, k) => {
+                            // A recorded month that the saved projection had
+                            // covered: mark it so the user can see what came
+                            // in against what they'd projected for it.
+                            const filledIn = !c.projected && row.savedRate != null && withinSavedRange(saved, c);
+                            const delta = filledIn ? row.pick(c) - row.savedRate : 0;
+                            return (
+                              <td
+                                key={k}
+                                title={filledIn
+                                  ? `Projected ${fmtCurrency(row.savedRate)} · recorded ${fmtCurrency(row.pick(c))} (${delta >= 0 ? '+' : '−'}${fmtCurrency(Math.abs(delta))})`
+                                  : undefined}
+                                style={{
+                                  ...td, ...projStyle(c, k),
+                                  color: c.projected ? '#64748B' : (row.pick(c) ? '#0F172A' : '#CBD5E1'),
+                                  fontStyle: c.projected ? 'italic' : 'normal',
+                                  ...(filledIn ? { boxShadow: `inset 0 -2px 0 ${delta < 0 ? '#FCA5A5' : '#86EFAC'}` } : null),
+                                }}
+                              >
+                                {row.pick(c) ? fmtCurrency(row.pick(c)) : '-'}
+                              </td>
+                            );
+                          })}
                           <td style={{ ...td, fontWeight: 700, color: '#0F172A', borderLeft: '2px solid #E2E8F0' }}>{fmtCurrency(row.total)}</td>
                           {projMonths > 0 && (
                             <td style={{ ...td, fontWeight: 700, color: '#334155' }}>{fmtCurrency(row.projected)}</td>
