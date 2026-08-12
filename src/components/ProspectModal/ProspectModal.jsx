@@ -2675,6 +2675,74 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
   );
 }
 
+// What hovering a contact chip opens: who they are and the note kept on
+// them. Portalled to the body and positioned off the chip's own rect,
+// because the chart scrolls sideways and clips anything drawn inside it,
+// and pointer-transparent so it can't come between the cursor and the
+// chip it belongs to. A long note is clipped here — the click that opens
+// the contact popup is where the whole of it lives.
+function DivisionContactCard({ rect, contact, info, managers, gone, openable }) {
+  const WIDTH = 300;
+  const GAP = 6;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8));
+  // Flip above the chip when there's more room up there than below it.
+  const below = window.innerHeight - rect.bottom;
+  const openUp = below < 200 && rect.top > below;
+  const vertical = openUp
+    ? { bottom: Math.round(window.innerHeight - rect.top + GAP) }
+    : { top: Math.round(rect.bottom + GAP) };
+
+  const note = String(info?.notes || '').trim();
+  const jobtitle = info?.jobtitle || contact.jobtitle || '';
+  const email = info?.email || contact.email || '';
+  const team = info?.team || '';
+  const line = { fontSize: '0.66rem', color: '#64748B', marginTop: '0.1rem' };
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed', left, ...vertical, width: WIDTH, zIndex: 9000,
+        pointerEvents: 'none', background: '#fff', border: '1px solid #E2E8F0',
+        borderRadius: 8, boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+        padding: '0.5rem 0.6rem', fontFamily: 'inherit', textAlign: 'left',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#1E293B' }}>{contact.name}</span>
+        {gone && (
+          <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#64748B', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0 5px' }}>
+            Left
+          </span>
+        )}
+      </div>
+      {jobtitle && <div style={line}>{jobtitle}</div>}
+      {email && <div style={{ ...line, wordBreak: 'break-all' }}>{email}</div>}
+      {team && <div style={line}>Team: {team}</div>}
+      {managers.length > 0 && <div style={line}>Reports to {managers.join(', ')}</div>}
+      <div style={{ borderTop: '1px solid #F1F5F9', margin: '0.4rem 0 0.35rem' }} />
+      <div style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase', color: '#94A3B8' }}>
+        Notes
+      </div>
+      <div
+        style={{
+          fontSize: '0.68rem', lineHeight: 1.45, marginTop: '0.15rem',
+          color: note ? '#334155' : '#94A3B8', fontStyle: note ? 'normal' : 'italic',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          maxHeight: 190, overflow: 'hidden',
+        }}
+      >
+        {note || (info ? 'No notes on this contact yet.' : 'Not in this company’s contact list — no notes to show.')}
+      </div>
+      {openable && (
+        <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginTop: '0.35rem' }}>
+          Click the name to open the contact
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
 // One person on a box, with anyone who reports to them — and is on the
 // same box — nested underneath off a short spine.
 //
@@ -2682,30 +2750,61 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
 // once they're tagged Left. A leaver is never dropped from the chart —
 // who used to cover a division is worth knowing, and quietly removing
 // them would look like the mapping was never made.
-function DivisionContactRow({ node, boxId, boxName, hasLeft, actions }) {
+function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, actions }) {
   const c = node.contact;
   const gone = hasLeft(c);
   const tone = gone
     ? { bg: '#F1F5F9', border: '#E2E8F0', text: '#94A3B8' }
     : { bg: '#ECFDF5', border: '#A7F3D0', text: '#065F46' };
   const managers = node.managerNames;
+  // What the company's live contact list knows about this person — their
+  // note, title, email, team. A name typed straight onto a box matches by
+  // name; someone the list no longer carries matches nothing, and the
+  // card says so rather than showing a blank.
+  const info = infoOf ? infoOf(c) : null;
+  const openable = !!info?.raw;
+  const chipRef = useRef(null);
+  const [hoverRect, setHoverRect] = useState(null);
+  const showCard = useCallback(() => {
+    const el = chipRef.current;
+    if (el) setHoverRect(el.getBoundingClientRect());
+  }, []);
+  const hideCard = useCallback(() => setHoverRect(null), []);
+  const open = useCallback(() => {
+    if (info?.raw) actions.openContact(info.raw);
+  }, [info, actions]);
   return (
     <div>
       <span
-        title={[
-          c.name,
-          c.jobtitle,
-          c.email,
-          gone ? 'Tagged Left: no longer at the company' : 'Still at the company',
-          managers.length ? `Reports to ${managers.join(', ')}` : '',
-        ].filter(Boolean).join(' · ')}
+        ref={chipRef}
+        onMouseEnter={showCard}
+        onMouseLeave={hideCard}
         style={{
           display: 'flex', alignItems: 'center', gap: '0.2rem',
           fontSize: '0.62rem', color: tone.text, background: tone.bg,
           border: `1px solid ${tone.border}`, borderRadius: 999, padding: '0.05rem 0.15rem 0.05rem 0.4rem',
         }}
       >
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span
+          role={openable ? 'button' : undefined}
+          tabIndex={openable ? 0 : undefined}
+          onClick={openable ? open : undefined}
+          onFocus={showCard}
+          onBlur={hideCard}
+          onKeyDown={openable ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+          } : undefined}
+          aria-label={openable ? `Open ${c.name}` : undefined}
+          style={{
+            flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            cursor: openable ? 'pointer' : 'default',
+            textDecoration: openable ? 'underline' : 'none',
+            textDecorationStyle: 'dotted',
+            textDecorationColor: gone ? '#CBD5E1' : '#6EE7B7',
+            textUnderlineOffset: '2px',
+            color: 'inherit', font: 'inherit',
+          }}
+        >
           {c.name}
         </span>
         <button
@@ -2716,6 +2815,16 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, actions }) {
           style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit' }}
         >&times;</button>
       </span>
+      {hoverRect && (
+        <DivisionContactCard
+          rect={hoverRect}
+          contact={c}
+          info={info}
+          managers={managers}
+          gone={gone}
+          openable={openable}
+        />
+      )}
       {/* A manager who isn't on this box has no line to draw to, so their
           name goes under the chip instead — otherwise a mapped reporting
           line would simply be missing from the chart. */}
@@ -2741,6 +2850,7 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, actions }) {
               boxId={boxId}
               boxName={boxName}
               hasLeft={hasLeft}
+              infoOf={infoOf}
               actions={actions}
             />
           ))}
@@ -2812,6 +2922,7 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, pic
                     boxId={boxId}
                     boxName={boxName}
                     hasLeft={hasLeft}
+                    infoOf={contactBook.infoOf}
                     actions={actions}
                   />
                 ))}
@@ -3178,7 +3289,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
   );
 }
 
-function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings }) {
+function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings, onOpenContact = () => {} }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
   // Which box is being renamed, and which box is having one added under
@@ -3221,6 +3332,10 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   // teamNames is memoized so an absent map doesn't hand out a fresh {}
   // every render and re-run everything keyed on it.
   const teamNames = useMemo(() => settings?.contactTeamNames || {}, [settings?.contactTeamNames]);
+  // The per-user note map, read the same way the contacts table and the
+  // contact popup read it: the locally saved note wins, and the HubSpot
+  // fields are the fallback for a contact that never had one typed here.
+  const contactNotes = useMemo(() => settings?.contactNotes || {}, [settings?.contactNotes]);
   const contactOptions = useMemo(() => (contacts || []).map(c => ({
     id: String(c.id || c.vid || c.email || ''),
     name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
@@ -3229,7 +3344,30 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     left: contactHasTag(c, 'left'),
     // Keyed on id||vid, the same key the contact editor saves under.
     team: String(teamNames[String(c.id || c.vid || '')] || '').trim(),
-  })).filter(c => c.name), [contacts, teamNames]);
+    notes: String(contactNotes[String(c.id || c.vid || '')] || c.notes || c.hs_content_membership_notes || c.message || ''),
+    // The contact record itself, so clicking a chip can hand the whole
+    // thing to the contact popup rather than the trimmed-down shape here.
+    raw: c,
+  })).filter(c => c.name), [contacts, teamNames, contactNotes]);
+
+  // A division chip carries only what was stored when the person was put
+  // on the box, so everything live about them — note, title, team, and
+  // the record the popup needs — is looked back up here. By id when the
+  // chip has one, by name for someone typed in by hand.
+  const contactIndex = useMemo(() => {
+    const byId = new Map();
+    const byName = new Map();
+    for (const c of contactOptions) {
+      if (c.id) byId.set(String(c.id), c);
+      if (c.name && !byName.has(nameKey(c.name))) byName.set(nameKey(c.name), c);
+    }
+    return { byId, byName };
+  }, [contactOptions]);
+  const infoOf = useCallback((c) => (
+    (c?.id && contactIndex.byId.get(String(c.id)))
+    || contactIndex.byName.get(nameKey(c?.name))
+    || null
+  ), [contactIndex]);
 
   // What the chips need about the live contacts behind them: the
   // contact-level reporting map (the same one the By Category org chart
@@ -3269,8 +3407,11 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
         const byId = c?.id ? String(teamNames[String(c.id)] || '').trim() : '';
         return byId || teamByName.get(nameKey(c?.name)) || '';
       },
+      // What the hover card reads: the live contact behind a chip, or
+      // null when this company's list no longer carries them.
+      infoOf,
     };
-  }, [contactOptions, teamNames, settings?.divisionContacts, settings?.contactReportsTo]);
+  }, [contactOptions, teamNames, settings?.divisionContacts, settings?.contactReportsTo, infoOf]);
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
@@ -3360,6 +3501,10 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       setPicking(null);
     },
     removeContact: (boxId, key) => updateSettings(removeDivisionContactPatch(settings, boxId, key)),
+    // Clicking a chip opens the same contact popup the contacts table
+    // opens, on the live record — so an edit made there is an edit to the
+    // contact, not to a copy the chart happens to hold.
+    openContact: (raw) => { if (raw) onOpenContact(raw); },
     toggleLayout: (boxId, current) => {
       const patch = setDivisionLayoutPatch(settings, boxId, current === 'row' ? 'column' : 'row');
       if (patch) updateSettings(patch);
@@ -3370,7 +3515,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       setAdding(null);
     },
     remove: (ownerId, childId) => updateSettings(removeDivisionPatch(settings, ownerId, childId)),
-  }), [settings, companies, updateSettings, parentId, parentCompany]);
+  }), [settings, companies, updateSettings, parentId, parentCompany, onOpenContact]);
 
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
@@ -3443,7 +3588,8 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 Contacts bucket by their Team Name and sit under whoever they report to
                 (both set on the contact) · <span style={{ color: '#065F46' }}>green</span> is
                 still at the company · <span style={{ color: '#64748B' }}>grey</span> is tagged Left ·
-                ↑ names a manager outside their bucket
+                ↑ names a manager outside their bucket · hover a name to read their notes,
+                click it to open the contact
               </p>
             </>
           )}
@@ -7601,6 +7747,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               contacts={localContacts}
               settings={settings}
               updateSettings={updateSettings}
+              onOpenContact={setEditingContact}
             />
           )}
 
