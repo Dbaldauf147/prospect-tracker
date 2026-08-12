@@ -202,18 +202,28 @@ function bandLabel(entry) {
  * defaults to the current month, which is what makes the chart read as
  * "starting today" and puts the today marker in the first column.
  *
+ * `showPrerequisites` decides whether the services the Scope never named get
+ * a band of their own. They ALWAYS drive the schedule either way — a deal
+ * doesn't finish sooner because its plan stopped drawing the work it waits
+ * on — so hiding them moves nothing; it only takes the bands out of the
+ * chart and the rows out of the caller's summary. The service they were
+ * pulled in for still lists them under `dependsOn`, which is what explains
+ * why it starts when it does.
+ *
  * Returns:
  *   {
  *     template,      // feed straight to buildTimelineSvg / exportTimelineXlsx
- *     services,      // [{ name, inScope, dependsOn, startMonth, months,
- *                    //    endMonth, source, templateName, extraTemplates }]
- *     monthsNeeded,  // whole months from kickoff to the last step
+ *     services,      // the ones with a band, in start order
+ *     hidden,        // prerequisites left out, [] when they're shown
+ *     monthsNeeded,  // whole months of the FULL plan, hidden work included
  *     cycleBroken,   // a dependency loop had to be broken to order these
  *   }
  *
- * `source` is where the band's length came from: 'template' (a timeline is
- * attached), 'rollout' (no timeline, sized from Rollout Time), or 'unknown'
- * (neither — a one-month placeholder, which the caller should flag).
+ * A service entry is { name, inScope, dependsOn, startMonth, endMonth,
+ * months, band, templateName, extraTemplates, source }. `source` is where
+ * the band's length came from: 'template' (a timeline is attached),
+ * 'rollout' (no timeline, sized from Rollout Time), or 'unknown' (neither —
+ * a one-month placeholder, which the caller should flag).
  */
 export function buildDealTimeline({
   scopeServices = [],
@@ -222,6 +232,7 @@ export function buildDealTimeline({
   anchorMonth = '',
   name = 'Deal rollout',
   clientName = '',
+  showPrerequisites = true,
 } = {}) {
   const entries = expandDealServices(scopeServices, serviceOverrides);
 
@@ -232,8 +243,9 @@ export function buildDealTimeline({
   };
   const { placed, cycleBroken } = scheduleDealServices(entries, spanOf);
 
-  const stages = [];
-  const services = placed.map((entry) => {
+  // Built per service so a hidden band takes its own steps with it.
+  const built = placed.map((entry) => {
+    const stages = [];
     const found = attached.get(norm(entry.name));
     const tpl = found[0] || null;
     const offset = entry.startMonth - 1;
@@ -287,22 +299,36 @@ export function buildDealTimeline({
     }
 
     return {
-      name: entry.name,
-      inScope: entry.inScope,
-      dependsOn: entry.dependsOn,
-      startMonth: entry.startMonth,
-      endMonth: entry.endMonth,
-      months: entry.months,
-      band,
-      templateName: tpl?.name || '',
-      // Named so the caller can say which timeline it used when a service
-      // has several attached, rather than silently picking one.
-      extraTemplates: found.slice(1).map(t => t.name).filter(Boolean),
-      source: tplMonths > 0 ? 'template' : (rolloutMonths(entry.name, serviceOverrides) ? 'rollout' : 'unknown'),
+      stages,
+      service: {
+        name: entry.name,
+        inScope: entry.inScope,
+        dependsOn: entry.dependsOn,
+        startMonth: entry.startMonth,
+        endMonth: entry.endMonth,
+        months: entry.months,
+        band,
+        templateName: tpl?.name || '',
+        // Named so the caller can say which timeline it used when a service
+        // has several attached, rather than silently picking one.
+        extraTemplates: found.slice(1).map(t => t.name).filter(Boolean),
+        source: tplMonths > 0 ? 'template' : (rolloutMonths(entry.name, serviceOverrides) ? 'rollout' : 'unknown'),
+      },
     };
   });
 
-  const monthsNeeded = stages.length
+  const shown = built.filter(b => showPrerequisites || b.service.inScope);
+  const stages = shown.flatMap(b => b.stages);
+  const services = shown.map(b => b.service);
+  const hidden = built.filter(b => !shown.includes(b)).map(b => b.service);
+
+  // The plan's length, counted over every service — including any whose band
+  // is hidden. Dropping the drawn work from the count would say the deal
+  // delivers sooner than it does, when nothing about it moved.
+  const monthsNeeded = placed.length ? Math.max(...placed.map(p => p.endMonth), 1) : 0;
+  // The chart, by contrast, is sized to what it actually draws: columns past
+  // the last visible bar are empty months on screen.
+  const drawnMonths = stages.length
     ? Math.max(...stages.map(s => Number(s.startMonth) + Number(s.months) - 1), 1)
     : 0;
 
@@ -329,7 +355,7 @@ export function buildDealTimeline({
       // column has its label clipped off the edge of the chart. The extra
       // month is room to write in, not schedule — `monthsNeeded` is what the
       // plan actually takes, and that's the number to report.
-      monthCount: monthsNeeded ? monthsNeeded + 1 : '',
+      monthCount: drawnMonths ? drawnMonths + 1 : '',
       rangeStart: '',
       rangeEnd: '',
       clientName: String(clientName || ''),
@@ -338,6 +364,7 @@ export function buildDealTimeline({
       stages,
     },
     services,
+    hidden,
     monthsNeeded,
     cycleBroken,
   };
