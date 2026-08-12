@@ -84,7 +84,9 @@
   color: var(--color-text-muted);
 }
 
-/* One service in the Dependent Rollout Services cell. */
+/* One service in the Dependent Rollout Services cell. The cell keeps to a
+   single line, so a name wider than the column runs out in an ellipsis
+   rather than wrapping the row taller. */
 .serviceDepChip {
   display: inline-block;
   padding: 0 6px;
@@ -94,6 +96,25 @@
   background: #EFF6FF;
   border: 1px solid #BFDBFE;
   color: #1E40AF;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "+4" beside the first dependency: how many more the cell isn't showing.
+   Muted, because it's a count of names rather than a name, and never
+   squeezed out — the count is the part that says there IS more. */
+.serviceDepChipMore {
+  flex: 0 0 auto;
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  color: #475569;
   white-space: nowrap;
 }
 

@@ -298,11 +298,24 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
         title={selected.length > 0
           ? `Rolled out before ${selfName}: ${selected.join(', ')}. Click to change.`
           : `Click to pick the services that must be rolled out before ${selfName}`}
-        style={{ display: 'flex', flexWrap: 'wrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em' }}
+        style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em', overflow: 'hidden' }}
       >
-        {selected.length > 0
-          ? selected.map(n => chip(n, !liveSet.has(n.trim().toLowerCase())))
-          : <span className={styles.serviceMutedCell}>-</span>}
+        {/* One line, whatever the count: a service with five dependencies
+            stacked five chips high and pushed every other column on the row
+            down with it. The first one names what this is, the +N says how
+            much more there is, and the whole list is a hover or a click
+            away — neither of which costs the rows above and below. */}
+        {selected.length > 0 ? (
+          <>
+            {chip(selected[0], !liveSet.has(selected[0].trim().toLowerCase()))}
+            {selected.length > 1 && (
+              <span
+                className={styles.serviceDepChipMore}
+                title={`Also: ${selected.slice(1).join(', ')}`}
+              >+{selected.length - 1}</span>
+            )}
+          </>
+        ) : <span className={styles.serviceMutedCell}>-</span>}
       </span>
       {open && rect && createPortal(
         <>
