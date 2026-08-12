@@ -254,6 +254,22 @@
   border: 1px solid #93C5FD;
 }
 
+/* Duplicate Leads verdicts. A mismatch is the one that names work to do,
+   so it takes the alarm colour; everything else — copies that agree, and
+   the two cases nothing could be compared against — stays grey rather
+   than green, because a duplicate is never actually fine. */
+.pillMismatch {
+  background: #FEE2E2;
+  color: #991B1B;
+  border: 1px solid #FCA5A5;
+}
+
+.pillAgree {
+  background: #F1F5F9;
+  color: #475569;
+  border: 1px solid #CBD5E1;
+}
+
 .pickerWrap {
   position: relative;
   display: inline-block;
