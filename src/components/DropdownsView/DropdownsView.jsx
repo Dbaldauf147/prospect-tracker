@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
-import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCatalog';
 import {
   getEffectiveDropdownLists,
   makeCustomListKey,
@@ -26,7 +26,9 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'serviceType',      label: 'Service Type',      width: 110,    editable: true  },
   { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
   { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
-  { key: 'rolloutTime',      label: 'Rollout Time',      width: 160,    editable: true  },
+  // Wider than the numbers in it need, because the header is what has to
+  // fit: "Rollout Time (weeks)" is where the unit is stated.
+  { key: 'rolloutTime',      label: 'Rollout Time (weeks)', width: 190, editable: true  },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
   // alwaysVisible), which also means it needs no reveal migration for users
@@ -116,6 +118,92 @@ function ServiceYesNoCell({ value, onCommit }) {
       <option value="Yes">Yes</option>
       <option value="No">No</option>
     </select>
+  );
+}
+
+// The Rollout Time (weeks) cell. A number column: it shows the week count
+// on its own — the unit is in the header — and edits through a number
+// input rather than free text.
+//
+// Legacy free text that isn't a number of weeks is shown as it was saved,
+// marked as needing a number, instead of being dropped or having a number
+// guessed out of it: "4-6 weeks" was written by someone who meant both
+// ends of a range, and picking one silently would lose half of what they
+// said. Editing the cell replaces it with a number.
+//
+// A commit only writes when the value in the box actually changed, so
+// clicking a cell and clicking away can't blank a legacy entry.
+function ServiceWeeksCell({ value, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const initialRef = useRef('');
+  const inputRef = useRef(null);
+  const editing = draft !== null;
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  const weeks = rolloutWeeks(value);
+  const legacy = !!value && weeks === null;
+
+  function startEdit() {
+    // A legacy range opens empty — there's no one number to prefill it
+    // with — with the old text still in front of the user as the
+    // placeholder so they can see what they're replacing.
+    const start = weeks === null ? '' : String(weeks);
+    initialRef.current = start;
+    setDraft(start);
+  }
+  function commit() {
+    const typed = (draft ?? '').trim();
+    setDraft(null);
+    if (typed === initialRef.current) return;
+    if (typed === '') { onCommit(''); return; }
+    const n = Number(typed);
+    // Not a usable week count: leave what's stored alone.
+    if (!Number.isFinite(n) || n < 0) return;
+    onCommit(String(n));
+  }
+  function cancel() { setDraft(null); }
+
+  if (!editing) {
+    return (
+      <span
+        onClick={startEdit}
+        title={legacy
+          ? `"${value}" isn't a number of weeks — click to replace it with one`
+          : 'Click to edit: rollout time in weeks'}
+        style={{ display: 'inline-block', width: '100%', cursor: 'text', minHeight: '1em' }}
+      >
+        {weeks !== null
+          ? weeks
+          : legacy
+            ? <span className={styles.serviceLegacyWeeksCell}>{value}</span>
+            : <span className={styles.serviceMutedCell}>-</span>}
+      </span>
+    );
+  }
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      min="0"
+      step="0.5"
+      inputMode="decimal"
+      value={draft}
+      placeholder={legacy ? value : 'weeks'}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      }}
+      style={{
+        width: '100%',
+        padding: '3px 6px',
+        border: '1px solid var(--color-accent)', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: '#fff', color: 'var(--color-text)',
+        boxSizing: 'border-box',
+      }}
+    />
   );
 }
 
@@ -690,12 +778,25 @@ export function DropdownsView({ settings, updateSettings }) {
             onCommit={(v) => saveServiceField(row.name, 'timelineDriven', v)}
           />
         )
-        : (row) => (
-          <ServiceCell
-            value={row[col.key]}
-            onCommit={(v) => saveServiceField(row.name, col.key, v)}
-          />
-        ),
+        : col.key === 'rolloutTime'
+          ? (row) => (
+            <ServiceWeeksCell
+              value={row.rolloutTime}
+              onCommit={(v) => saveServiceField(row.name, 'rolloutTime', v)}
+            />
+          )
+          : (row) => (
+            <ServiceCell
+              value={row[col.key]}
+              onCommit={(v) => saveServiceField(row.name, col.key, v)}
+            />
+          ),
+    // Weeks sort by size, not as text — otherwise 10 lands between 1 and
+    // 2 — and rows with nothing set (or legacy text that isn't a number)
+    // tail the list either way rather than clumping at the top.
+    ...(col.key === 'rolloutTime'
+      ? { getSortValue: (row) => rolloutWeeks(row.rolloutTime) }
+      : {}),
   }));
 
   // Save a list's full options array back to settings. We always
