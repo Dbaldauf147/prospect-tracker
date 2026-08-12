@@ -27,7 +27,8 @@
 // Until the user saves anything, the seeds in data/timelineTemplates are what
 // the page shows; the first edit persists the whole array (seeds included).
 
-import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates';
+// Extension included so this resolves under plain Node for the tests.
+import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates.js';
 
 // The owners a stage can be assigned to. "Both" covers the joint working
 // sessions that neither side runs alone.
