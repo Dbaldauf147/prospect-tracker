@@ -31,6 +31,60 @@ export function normBfo(v) {
   return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// Where a deal stands on getting its commissions in, as the user calls
+// it. Stored on the deal row under a __-prefixed key so it rides along
+// with every other cell (and stays out of the generated column list).
+export const DEAL_TRACK_STATUS_KEY = '__commTrackStatus';
+export const DEAL_TRACK_STATUSES = [
+  { key: 'missing', label: 'Missing', bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+  { key: 'on-track', label: 'On track', bg: '#DBEAFE', fg: '#1E40AF', border: '#BFDBFE' },
+  { key: 'complete', label: 'Completed', bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+];
+export const DEAL_TRACK_STATUS_UNSET = { key: '', label: 'Not set', bg: '#F1F5F9', fg: '#64748B', border: '#E2E8F0' };
+
+export function dealTrackStatus(row) {
+  const v = String(row?.[DEAL_TRACK_STATUS_KEY] ?? '').trim().toLowerCase();
+  return DEAL_TRACK_STATUSES.find((s) => s.key === v) || DEAL_TRACK_STATUS_UNSET;
+}
+
+// A saved payout projection: the month range it covers and the monthly
+// amounts it assumes. Kept as calendar months (YYYY-MM) rather than a
+// rolling count so the horizon stays put as real months get recorded —
+// each month that lands simply consumes one projected column.
+export const DEAL_PROJ_START_KEY = '__projStart';
+export const DEAL_PROJ_END_KEY = '__projEnd';
+export const DEAL_PROJ_REVENUE_KEY = '__projRevenue';
+export const DEAL_PROJ_COMMISSION_KEY = '__projCommission';
+
+// "2027-07" ↔ { year: 2027, idx: 6 }. idx is the 0-based month index the
+// Commissions month columns are keyed by.
+export function parseProjMonth(v) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const idx = Number(m[2]) - 1;
+  if (idx < 0 || idx > 11) return null;
+  return { year: Number(m[1]), idx };
+}
+export function formatProjMonth(col) {
+  if (!col || col.year == null) return '';
+  return `${col.year}-${String(col.idx + 1).padStart(2, '0')}`;
+}
+
+// The deal's saved projection, or null when none is stored / it's
+// unreadable. Amounts default to 0 so a partially written record still
+// renders instead of throwing the modal off.
+export function readSavedProjection(deal) {
+  const start = parseProjMonth(deal?.[DEAL_PROJ_START_KEY]);
+  const end = parseProjMonth(deal?.[DEAL_PROJ_END_KEY]);
+  if (!start || !end) return null;
+  const num = (v) => { const n = Number(String(v ?? '').replace(/[\s,$]/g, '')); return Number.isFinite(n) ? n : 0; };
+  return {
+    start, end,
+    revenue: num(deal?.[DEAL_PROJ_REVENUE_KEY]),
+    commission: num(deal?.[DEAL_PROJ_COMMISSION_KEY]),
+  };
+}
+
 // Every Commissions-tab row mapped to a deal, matched on the deal's BFO
 // opp name. Shared by the per-metric breakdown popup and the row-level
 // deal history modal so both drill-downs agree on what "this deal's
