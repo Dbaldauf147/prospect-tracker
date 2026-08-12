@@ -1714,7 +1714,8 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     // that deal's next steps, and what makes it that deal's last
     // conversation — so both go on now rather than waiting for a second
     // button. A call not yet summarised contributes no steps; the
-    // reference still lands, and the summary's push adds the steps later.
+    // reference still lands, and summarising it later sends the steps
+    // then, on the tag this made.
     if (!saved?.oppId) return;
     try {
       await recordCallOnOpp(recordingId, saved);
@@ -1911,16 +1912,19 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }, [uid, persist]);
 
   /**
-   * What the opp learns the moment a call is mapped to it: the call's
-   * next steps, and the call itself.
+   * What the opp learns from a call mapped to it: the call's next steps,
+   * and the call itself.
    *
-   * Tagging is the moment the user says which deal a call belongs to, so
-   * it is the moment its follow-ups become that deal's to-do list and
-   * the moment it becomes that deal's last conversation. This runs on
-   * its own rather than through pushSummaryToOpp because the two push
-   * different things for different reasons: that one writes AI prose
-   * into the Memo field and is opt-in for exactly that reason, while
-   * these are the facts of the mapping and are what was asked for.
+   * Runs at both moments that can make those facts true — tagging a call
+   * that already has follow-ups, and summarising one that was tagged
+   * before it had any. Either way the user has said which deal this call
+   * belongs to, which is what makes its follow-ups that deal's to-do list
+   * and makes it that deal's last conversation.
+   *
+   * This runs on its own rather than through pushSummaryToOpp because the
+   * two push different things for different reasons: that one writes AI
+   * prose into the Memo field and is opt-in for exactly that reason,
+   * while these are the facts of the mapping and are what was asked for.
    *
    * Returns how many next steps were added — zero when the call hasn't
    * been summarised yet, or when the opp already had every one of them.
@@ -1996,13 +2000,32 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         summarizedAt: new Date().toISOString(),
         summaryClipped: !!data.clipped,
       });
-      // Auto-push is opt-in; a failure here is reported but never
-      // discards the summary that was just saved.
-      if (autoPush && saved?.oppId) {
+      // A summary is the moment a call finally HAS follow-ups, and most
+      // calls are tagged long before that: a Granola call is mapped to its
+      // deal when it lands, and summarised whenever the rep gets to it.
+      // Tagging pushed nothing because there was nothing to push, so
+      // without this the steps never reach the opp at all — the one path
+      // that would have taken them (the summary push below) is opt-in, and
+      // off by default.
+      //
+      // Which write depends on what the user asked for, and only one of
+      // them runs: the summary push carries the follow-ups anyway, so
+      // doing both would land the steps twice over — deduped to nothing,
+      // but reported as "0 next steps added" on a call that just added
+      // several. Without it, the facts of the mapping go on their own —
+      // the steps and the call reference, and none of the AI prose that
+      // makes the summary push a choice.
+      //
+      // A failure here is reported but never discards the summary that was
+      // just saved.
+      if (saved?.oppId) {
         try {
-          await pushSummaryToOpp(id, saved);
+          if (autoPush) await pushSummaryToOpp(id, saved);
+          else await recordCallOnOpp(id, saved);
         } catch (err) {
-          setErrorFor(id, `Summary saved, but the push to the opp failed: ${err?.message || err}`);
+          setErrorFor(id, autoPush
+            ? `Summary saved, but the push to the opp failed: ${err?.message || err}`
+            : `Summary saved, but its next steps didn’t reach the opp: ${err?.message || err}`);
         }
       }
     } catch (err) {
