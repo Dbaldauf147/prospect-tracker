@@ -20,6 +20,14 @@
 // than an unmeasured one, so the counts are best used to compare YOUR
 // calls with each other — all captured the same way — rather than against
 // any published benchmark.
+//
+// Any filler can be IGNORED — taken out of every number on the page. The
+// list below is one opinion about what counts as padding, and a rep who
+// disagrees with one entry ("actually" is a word I mean) would otherwise
+// have to discount every KPI in their head. Ignoring is a view over the
+// same counts, never a different count: each turn keeps the fillers found
+// in it, and the totals are re-derived from those, so a word can be
+// ignored and brought back without re-reading a single transcript.
 
 // The label the note owner's own turns carry (api/granola-calls.js
 // resolves the owner to this).
@@ -117,6 +125,29 @@ export const FILLERS = [
   },
 ];
 
+const BY_ID = new Map(FILLERS.map(f => [f.id, f]));
+
+/** Every filler id, in the order they are counted. */
+export const FILLER_IDS = FILLERS.map(f => f.id);
+
+/** One filler's definition by id, or null when the id isn't one of ours. */
+export function fillerById(id) {
+  return BY_ID.get(String(id || '')) || null;
+}
+
+// An ignore list from a caller (array, Set, or nothing) as a Set of ids
+// this module actually knows. Unknown ids are dropped rather than kept as
+// dead weight: a preference saved against a rule that has since been
+// renamed should stop hiding anything, not hide something else.
+const NO_IGNORES = new Set();
+function ignoreSet(ignored) {
+  if (!ignored) return NO_IGNORES;
+  const list = ignored instanceof Set ? [...ignored] : Array.isArray(ignored) ? ignored : [];
+  const out = new Set();
+  list.forEach((id) => { if (BY_ID.has(id)) out.add(id); });
+  return out;
+}
+
 const SENTENCE_END = /[.!?…]["'’)\]]*$/;
 const QUESTION_END = /\?["'’)\]]*$/;
 
@@ -213,12 +244,84 @@ function excerpt(text) {
 }
 
 /**
+ * The counts a usage is derived from, plus an ignore list, as the numbers
+ * the page shows.
+ *
+ * Split out from `fillerUsage` because ignoring a word has to be able to
+ * produce a new set of numbers from turns that were counted once, long
+ * before anyone decided which words they cared about.
+ */
+function summarize(base, ignored) {
+  const skip = ignoreSet(ignored);
+  const byId = new Map();
+  const hiddenById = new Map();
+  const moments = [];
+  let fillers = 0, turnsHit = 0, hesitations = 0, crutches = 0, hidden = 0;
+
+  base.hitTurns.forEach((turn) => {
+    let kept = 0;
+    // Deduped: a turn with four "you know"s is one habit worth naming
+    // once, not a label repeated four times.
+    const labels = new Set();
+    turn.ids.forEach((id) => {
+      const f = BY_ID.get(id);
+      if (!f) return;
+      const into = skip.has(id) ? hiddenById : byId;
+      const prev = into.get(id) || { id, label: f.label, kind: f.kind, count: 0 };
+      into.set(id, { ...prev, count: prev.count + 1 });
+      if (skip.has(id)) { hidden += 1; return; }
+      kept += 1;
+      if (f.kind === 'hesitation') hesitations += 1; else crutches += 1;
+      labels.add(f.label);
+    });
+    // A turn whose only fillers were ignored is not a turn with a filler
+    // in it any more — it drops out of the count and out of the examples.
+    if (kept === 0) return;
+    turnsHit += 1;
+    fillers += kept;
+    moments.push({ start: turn.start, count: kept, labels: [...labels], text: turn.text });
+  });
+
+  const { words, turns, talkMs } = base;
+  return {
+    fillers,
+    words,
+    turns,
+    turnsHit,
+    // Per 100 words is the rate that survives a comparison: calls differ
+    // in length, and a raw count mostly measures how long the rep talked.
+    per100Words: words > 0 ? (fillers / words) * 100 : null,
+    talkMs,
+    perMinute: talkMs ? fillers / (talkMs / 60000) : null,
+    hesitations,
+    crutches,
+    byFiller: [...byId.values()]
+      .map(f => ({ ...f, share: fillers > 0 ? f.count / fillers : 0 }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    // What the ignore list took out, with the counts it took out — so the
+    // UI can name what is being left uncounted instead of quietly
+    // reporting a smaller number.
+    ignored: [...hiddenById.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    hidden,
+    moments: moments
+      .sort((a, b) => b.count - a.count || (a.start ?? 0) - (b.start ?? 0))
+      .slice(0, MAX_MOMENTS),
+    // The turns the numbers above came from, kept so the same usage can be
+    // re-summarized under a different ignore list. Not for display.
+    hitTurns: base.hitTurns,
+  };
+}
+
+/**
  * How much of what the user said was filler.
  *
  * Returns null when the question cannot be asked of this transcript — no
  * turns at all, or no turn attributed to the user. Null rather than a
  * zero: "you never said um" and "we could not tell which words were
  * yours" are different findings, and only one of them is about the call.
+ *
+ * `options.ignored` is a list of filler ids to leave uncounted; the same
+ * result can be re-derived later with `applyIgnoredFillers`.
  *
  *   {
  *     fillers,            // how many, in the user's own turns
@@ -228,6 +331,8 @@ function excerpt(text) {
  *     talkMs, perMinute,  // null unless every one of their turns was timed
  *     hesitations, crutches,
  *     byFiller: [{ id, label, kind, count, share }],   // most-used first
+ *     ignored:  [{ id, label, kind, count }],          // left uncounted
+ *     hidden,             // fillers the ignore list took out
  *     moments:  [{ start, count, labels, text }],      // worst turns first
  *   }
  */
@@ -237,10 +342,8 @@ export function fillerUsage(utterances, options = {}) {
   const mine = list.filter(u => u && speakerName(u.speaker) === you);
   if (mine.length === 0) return null;
 
-  const byId = new Map();
-  const moments = [];
-  let fillers = 0, words = 0, turnsHit = 0, hesitations = 0, crutches = 0;
-  let talkMs = 0, timed = true;
+  const hitTurns = [];
+  let words = 0, talkMs = 0, timed = true;
 
   mine.forEach(u => {
     const { words: turnWords, hits } = fillersInText(u.text);
@@ -251,42 +354,34 @@ export function fillerUsage(utterances, options = {}) {
     else talkMs += ms;
 
     if (hits.length === 0) return;
-    turnsHit += 1;
-    fillers += hits.length;
-    hits.forEach(hit => {
-      if (hit.kind === 'hesitation') hesitations += 1; else crutches += 1;
-      const prev = byId.get(hit.id) || { ...hit, count: 0 };
-      byId.set(hit.id, { ...prev, count: prev.count + 1 });
-    });
-    moments.push({
+    hitTurns.push({
       start: Number.isFinite(Number(u.start)) ? Number(u.start) : null,
-      count: hits.length,
-      // Deduped: a turn with four "you know"s is one habit worth naming
-      // once, not a label repeated four times.
-      labels: [...new Set(hits.map(h => h.label))],
+      ids: hits.map(h => h.id),
       text: excerpt(u.text),
     });
   });
 
-  return {
-    fillers,
+  return summarize({
     words,
     turns: mine.length,
-    turnsHit,
-    // Per 100 words is the rate that survives a comparison: calls differ
-    // in length, and a raw count mostly measures how long the rep talked.
-    per100Words: words > 0 ? (fillers / words) * 100 : null,
     talkMs: timed && talkMs > 0 ? talkMs : null,
-    perMinute: timed && talkMs > 0 ? fillers / (talkMs / 60000) : null,
-    hesitations,
-    crutches,
-    byFiller: [...byId.values()]
-      .map(f => ({ ...f, share: fillers > 0 ? f.count / fillers : 0 }))
-      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
-    moments: moments
-      .sort((a, b) => b.count - a.count || (a.start ?? 0) - (b.start ?? 0))
-      .slice(0, MAX_MOMENTS),
-  };
+    hitTurns,
+  }, options.ignored);
+}
+
+/**
+ * The same call's usage, read again with a different set of words ignored.
+ *
+ * Returns the object it was given whenever nothing would change, so a
+ * render that ignores nothing costs nothing and memoised callers keep
+ * their identities.
+ */
+export function applyIgnoredFillers(use, ignored) {
+  if (!use || !use.hitTurns) return use;
+  const skip = ignoreSet(ignored);
+  if (skip.size === 0 && use.hidden === 0) return use;
+  if (skip.size === use.ignored.length && use.ignored.every(f => skip.has(f.id))) return use;
+  return summarize(use, ignored);
 }
 
 // A call too short to have a rate worth ranking. Ten words of "sounds
@@ -308,6 +403,8 @@ export const MIN_RATE_WORDS = 100;
  *     per100Words, perMinute,
  *     hesitations, crutches,
  *     byFiller: [{ id, label, kind, count, share, calls }],
+ *     ignored: [{ id, label, kind, count, calls }],    // left uncounted
+ *     hidden,               // fillers the ignore list took out of the above
  *     cleanest, worst,      // { id, name, per100Words } over long-enough calls
  *     shortCalls,           // calls held out of cleanest/worst as too short
  *   }
@@ -317,8 +414,14 @@ export function fillerTotals(rows) {
   const measured = list.filter(r => r?.fillers && r.fillers.words > 0);
 
   const byId = new Map();
-  let fillers = 0, words = 0, turns = 0, hesitations = 0, crutches = 0;
+  const hiddenById = new Map();
+  let fillers = 0, words = 0, turns = 0, hesitations = 0, crutches = 0, hidden = 0;
   let talkMs = 0, timed = measured.length > 0;
+
+  const tally = (into, f) => {
+    const prev = into.get(f.id) || { id: f.id, label: f.label, kind: f.kind, count: 0, calls: 0 };
+    into.set(f.id, { ...prev, count: prev.count + f.count, calls: prev.calls + 1 });
+  };
 
   measured.forEach(row => {
     const use = row.fillers;
@@ -327,12 +430,11 @@ export function fillerTotals(rows) {
     turns += use.turns;
     hesitations += use.hesitations;
     crutches += use.crutches;
+    hidden += use.hidden || 0;
     if (use.talkMs == null) timed = false;
     else talkMs += use.talkMs;
-    use.byFiller.forEach(f => {
-      const prev = byId.get(f.id) || { id: f.id, label: f.label, kind: f.kind, count: 0, calls: 0 };
-      byId.set(f.id, { ...prev, count: prev.count + f.count, calls: prev.calls + 1 });
-    });
+    use.byFiller.forEach(f => tally(byId, f));
+    (use.ignored || []).forEach(f => tally(hiddenById, f));
   });
 
   const rankable = measured.filter(r => r.fillers.words >= MIN_RATE_WORDS);
@@ -354,6 +456,9 @@ export function fillerTotals(rows) {
     byFiller: [...byId.values()]
       .map(f => ({ ...f, share: fillers > 0 ? f.count / fillers : 0 }))
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    ignored: [...hiddenById.values()]
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    hidden,
     cleanest: ranked[0] || null,
     worst: ranked.length > 1 ? ranked[ranked.length - 1] : null,
     shortCalls: measured.length - rankable.length,

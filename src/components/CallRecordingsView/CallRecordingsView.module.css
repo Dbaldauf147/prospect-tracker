@@ -1314,12 +1314,107 @@
    turn detail, so the two lists read as one page. */
 .fillerRow {
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) 3.2rem 3.5rem;
+  grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) 3.2rem 3.5rem 3.6rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0;
   border-bottom: 1px solid var(--color-border-light, #edf2f7);
   font-size: var(--font-size-sm);
+}
+
+/* Takes this word out of every filler number on the tab. Quiet until the
+   row is under the cursor — it sits beside a count, and a button drawn
+   as loud as the number would read as part of the measurement. */
+.fillerIgnore {
+  justify-self: end;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.fillerRow:hover .fillerIgnore,
+.fillerIgnore:focus-visible {
+  border-color: var(--color-border);
+  color: var(--color-text-secondary, #5a6b7e);
+}
+
+.fillerIgnore:hover {
+  border-color: #b45309;
+  color: #b45309;
+}
+
+/* What is being left uncounted, and the way back. Sits under the list it
+   was taken out of rather than in a settings panel somewhere else: the
+   words and the choice about them belong on the same screen. */
+.fillerIgnoredBlock {
+  margin-top: 0.7rem;
+}
+
+.fillerIgnoredRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.fillerIgnoredLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.fillerIgnoredChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-text-secondary, #5a6b7e);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.fillerIgnoredChip:hover,
+.fillerIgnoredChip:focus-visible {
+  border-style: solid;
+  border-color: #b45309;
+  color: #b45309;
+}
+
+/* The word is struck, the count beside it isn't: the strike says "not
+   counted", and striking the count would say the count doesn't hold
+   either. Dropped on hover, where the chip is offering it back. */
+.fillerIgnoredWord {
+  text-decoration: line-through;
+}
+
+.fillerIgnoredChip:hover .fillerIgnoredWord,
+.fillerIgnoredChip:focus-visible .fillerIgnoredWord {
+  text-decoration: none;
+}
+
+.fillerIgnoredCount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.fillerIgnoredAll {
+  padding: 0.15rem 0.35rem;
+  border: none;
+  background: none;
+  color: var(--color-link, #2563eb);
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .fillerWord {
@@ -1459,7 +1554,7 @@
   }
 
   .fillerRow {
-    grid-template-columns: minmax(80px, 1fr) minmax(50px, 1.5fr) 3.2rem 3.5rem;
+    grid-template-columns: minmax(80px, 1fr) minmax(50px, 1.5fr) 3.2rem 3.5rem 3.6rem;
   }
 }
 

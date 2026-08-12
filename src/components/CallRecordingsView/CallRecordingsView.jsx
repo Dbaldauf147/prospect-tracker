@@ -55,11 +55,14 @@ import {
 import { loadCallHistoryCache, saveCallHistoryCache } from '../../utils/callHistoryCache';
 import { describeReadFailure, describeWriteFailure, describeDeleteFailure } from '../../utils/callStoreError';
 import {
-  callBreakdownRows, filterBreakdownRows, breakdownAverages,
+  callBreakdownRows, filterBreakdownRows, breakdownAverages, withIgnoredFillers,
 } from '../../utils/callBreakdown';
 import {
-  fillerTotals, formatRate, describeAgainstAverage, MIN_RATE_WORDS,
+  fillerTotals, formatRate, describeAgainstAverage, MIN_RATE_WORDS, fillerById,
 } from '../../utils/fillerWords';
+import {
+  loadIgnoredFillers, saveIgnoredFillers, toggleIgnoredFiller,
+} from '../../utils/fillerIgnoreStore';
 import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { runGranolaSync } from '../../utils/runGranolaSync';
@@ -279,7 +282,7 @@ function speakerName(label) {
 // compared against the user's own other calls: notetakers differ in how
 // much of the "um" they keep, so a rate from this page is only honestly
 // compared with other calls captured the same way.
-function FillerWords({ use, totals }) {
+function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
   // Nothing said, or nothing attributed: the talk-time notice above
   // already explains why, and a second empty panel would read as a
   // second problem.
@@ -288,6 +291,18 @@ function FillerWords({ use, totals }) {
   // Empty until there are at least two measured calls: with one, the
   // "average" is this call's own number staring back.
   const comparison = describeAgainstAverage(use.per100Words, totals?.per100Words, totals?.measured || 0);
+
+  // Built from the saved ids rather than from this call's hidden counts,
+  // so a word the user ignored is still listed — and still restorable —
+  // on a call where they never said it.
+  const ignoredList = (ignored || []).map((id) => {
+    const def = fillerById(id);
+    return {
+      id,
+      label: def?.label || id,
+      count: use.ignored.find(f => f.id === id)?.count || 0,
+    };
+  });
 
   return (
     <div className={styles.fillerBlock}>
@@ -349,6 +364,17 @@ function FillerWords({ use, totals }) {
                   </span>
                   <span className={styles.speakerPct}>{f.count}</span>
                   <span className={styles.speakerValue}>{formatShare(f.share)}</span>
+                  {/* Per word rather than one settings panel: the moment a
+                      rep disagrees with a rule is the moment they are
+                      looking at the row it produced. */}
+                  <button
+                    type="button"
+                    className={styles.fillerIgnore}
+                    onClick={() => onToggleIgnored?.(f.id)}
+                    title={`Ignore “${f.label}” — take it out of every filler number on this tab`}
+                  >
+                    Ignore
+                  </button>
                 </div>
               ))}
             </div>
@@ -381,9 +407,48 @@ function FillerWords({ use, totals }) {
               wrote it — some clean up hesitations before you ever see them. Compare this with your own other
               calls rather than a published benchmark. “So” and “well” count only when they open a sentence,
               and “right” only as a tag question, so ordinary uses of those words aren’t held against you.
+              Any word you don’t count as filler can be ignored, and every number here drops it.
             </div>
           )}
         </>
+      )}
+
+      {/* Kept outside the branch above so an ignored word can always be
+          brought back — including on a call with no words of yours to
+          count, where the rest of this block has nothing to show. */}
+      {ignoredList.length > 0 && (
+        <div className={styles.fillerIgnoredBlock}>
+          <div className={styles.fillerIgnoredRow}>
+            <span className={styles.fillerIgnoredLabel}>Ignored</span>
+            {ignoredList.map(f => (
+              <button
+                key={f.id}
+                type="button"
+                className={styles.fillerIgnoredChip}
+                onClick={() => onToggleIgnored?.(f.id)}
+                title={`Count “${f.label}” again`}
+              >
+                {/* Struck through on the word alone: it is still in the
+                    transcript, it is just not being counted. */}
+                <span className={styles.fillerIgnoredWord}>{f.label}</span>
+                {/* What ignoring it costs on THIS call, so the number it
+                    was taken out of is still knowable. */}
+                {f.count > 0 && <span className={styles.fillerIgnoredCount}>{f.count}</span>}
+                <span aria-hidden="true">↺</span>
+              </button>
+            ))}
+            {ignoredList.length > 1 && (
+              <button type="button" className={styles.fillerIgnoredAll} onClick={onRestoreAll}>
+                Count all again
+              </button>
+            )}
+          </div>
+          <div className={styles.breakdownCaveat}>
+            Left out of every filler number on this tab — this call, the columns beside it and the average
+            above them{use.hidden > 0 ? `, which drops ${use.hidden} filler${use.hidden === 1 ? '' : 's'} from this call` : ''}.
+            {' '}Click one to count it again.
+          </div>
+        </div>
       )}
     </div>
   );
@@ -396,7 +461,7 @@ function FillerWords({ use, totals }) {
 // the reader do the summing that the question is about. The speaker list
 // under it is the detail behind those two numbers, in the same order the
 // bar draws them.
-function BreakdownDetail({ row, fillerStats }) {
+function BreakdownDetail({ row, fillerStats, ignoredFillers, onToggleIgnored, onRestoreAll }) {
   // Null whenever the transcript can't say which turns were the user's —
   // then the notice explains why instead of a bar implying it can.
   const sides = talkTimeSides(row.split);
@@ -522,7 +587,13 @@ function BreakdownDetail({ row, fillerStats }) {
 
       {/* Under the split on purpose: how much you talked is the first
           question, what it was padded with is the one after it. */}
-      <FillerWords use={row.fillers} totals={fillerStats} />
+      <FillerWords
+        use={row.fillers}
+        totals={fillerStats}
+        ignored={ignoredFillers}
+        onToggleIgnored={onToggleIgnored}
+        onRestoreAll={onRestoreAll}
+      />
     </>
   );
 }
@@ -561,6 +632,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // one", resolved below against the filtered list rather than stored, so
   // a filter that hides the pick lands on a call that is actually there.
   const [breakdownPick, setBreakdownPick] = useState('');
+  // Filler words the user has taken out of the KPIs. Persisted — unlike
+  // the pick and the search box, this is a standing opinion about what
+  // counts as a filler for them, not how they are working right now.
+  const [ignoredFillers, setIgnoredFillers] = useState(() => loadIgnoredFillers());
   const [connected, setConnected] = useState(false);
   const [checkedConnection, setCheckedConnection] = useState(false);
   // Granola: { configured, ok, error, timedOut } from the probe, plus
@@ -1178,7 +1253,14 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // was everyone else. Every number is derived from the turns already
   // stored, so nothing is fetched and nothing can go stale against the
   // transcript it describes.
-  const breakdownRows = useMemo(() => callBreakdownRows(records), [records]);
+  const countedRows = useMemo(() => callBreakdownRows(records), [records]);
+  // Ignoring a word is a second pass over counts already in hand, never a
+  // re-read of the transcripts: toggling one off re-adds up what is
+  // already there instead of re-tokenising every call the user has.
+  const breakdownRows = useMemo(
+    () => withIgnoredFillers(countedRows, ignoredFillers),
+    [countedRows, ignoredFillers],
+  );
   const filteredBreakdown = useMemo(
     () => filterBreakdownRows(breakdownRows, breakdownQuery),
     [breakdownRows, breakdownQuery],
@@ -1196,6 +1278,22 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   const pickedBreakdown = useMemo(() => (
     filteredBreakdown.find(r => r.id === breakdownPick) || filteredBreakdown[0] || null
   ), [filteredBreakdown, breakdownPick]);
+
+  // The saved list belongs to the signed-in account, and this component can
+  // mount before auth has said which one that is — so it is read again once
+  // the uid lands rather than leaving one account looking at another's.
+  useEffect(() => { setIgnoredFillers(loadIgnoredFillers()); }, [uid]);
+
+  // Ignore a filler word, or bring it back. Saved as it is toggled: the
+  // page has no Save button, and a preference that only survived while the
+  // tab was open would have to be re-set every morning.
+  function toggleFillerIgnored(id) {
+    setIgnoredFillers(prev => saveIgnoredFillers(toggleIgnoredFiller(prev, id)));
+  }
+
+  function restoreAllFillers() {
+    setIgnoredFillers(saveIgnoredFillers([]));
+  }
 
   function toggleHistoryRow(row) {
     setExpandedHistory(ids => (
@@ -2638,6 +2736,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 {fillerStats.fillers.toLocaleString()} in all, across {fillerStats.measured} call
                 {fillerStats.measured === 1 ? '' : 's'}
                 {fillerStats.byFiller[0] && <> · most often “{fillerStats.byFiller[0].label}”</>}
+                {/* A rate that quietly excluded words would be the one
+                    number on the page nobody could reproduce, so what is
+                    being left out is named where the total is read. */}
+                {fillerStats.hidden > 0 && (
+                  <span className={styles.transcriptStatus}>
+                    {' '}· not counting {fillerStats.ignored.map(f => `“${f.label}”`).join(', ')}
+                    {' '}({fillerStats.hidden.toLocaleString()} left out)
+                  </span>
+                )}
                 {/* Named rather than silently ranked: a 40-word call with
                     one "so" in it rates worse than any real call, so the
                     best/worst pair leaves short calls out and says so. */}
@@ -2788,7 +2895,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           </div>
           <div className={styles.breakdownDetail}>
             {pickedBreakdown ? (
-              <BreakdownDetail row={pickedBreakdown} fillerStats={fillerStats} />
+              <BreakdownDetail
+                row={pickedBreakdown}
+                fillerStats={fillerStats}
+                ignoredFillers={ignoredFillers}
+                onToggleIgnored={toggleFillerIgnored}
+                onRestoreAll={restoreAllFillers}
+              />
             ) : breakdownRows.length > 0 ? (
               /* There ARE calls to break down — the search just hid them,
                  and blaming a missing transcript would send the user off

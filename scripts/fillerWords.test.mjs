@@ -8,6 +8,7 @@
 // clearly, which is worse than no number at all.
 import {
   fillersInText, fillerUsage, fillerTotals, formatRate, describeAgainstAverage, MIN_RATE_WORDS,
+  applyIgnoredFillers, fillerById,
 } from '../src/utils/fillerWords.js';
 
 let passed = 0, failed = 0;
@@ -153,6 +154,89 @@ const turn = (speaker, text, startSec, endSec) => ({
   eq(totals.measured, 0, 'no calls measure nothing');
   eq(totals.per100Words, null, 'no words means no rate, rather than zero');
   eq(totals.cleanest, null, 'nothing is named cleanest out of nothing');
+}
+
+// --- ignoring a word ------------------------------------------------------
+// The point of ignoring is that every number moves together: a rep who
+// doesn't count "actually" should not see it drop out of the list while
+// the rate above it still includes it.
+{
+  const turns = [
+    turn('You', 'Um, actually, we can do that. Actually, yes.', 0, 60),
+    turn('You', 'Basically it works.', 60, 120),
+  ];
+  const all = fillerUsage(turns);
+  eq(all.fillers, 4, 'nothing is ignored by default');
+  eq(all.hidden, 0, 'nothing hidden means nothing was ignored');
+  eq(all.ignored, [], 'and nothing to list as ignored');
+
+  const use = fillerUsage(turns, { ignored: ['actually'] });
+  eq(use.fillers, 2, 'an ignored word is out of the total');
+  eq(use.crutches, 1, 'and out of the crutch half it belonged to');
+  eq(use.hesitations, 1, 'the halves it did not belong to are untouched');
+  eq(use.byFiller.map(f => f.id), ['basically', 'um'], 'and out of the per-word list');
+  eq(use.words, all.words, 'ignoring a word does not change what the user said');
+  // 2 fillers left in the same 11 words the user spoke.
+  eq(Math.round(use.per100Words * 10) / 10, 18.2, 'the rate is re-derived from what is left');
+  eq(use.perMinute, 1, 'so is the per-minute rate');
+  eq(use.hidden, 2, 'what was left out is still counted, to be reported');
+  eq(use.ignored.map(f => [f.id, f.count]), [['actually', 2]],
+    'and named, so a smaller number is never unexplained');
+  eq(use.byFiller.reduce((t, f) => t + f.share, 0), 1,
+    'shares are of what is counted now, not of the old total');
+
+  // The example turns follow the same rule: a turn only kept its place
+  // because of a word that is no longer counted has no place.
+  const kept = fillerUsage([
+    turn('You', 'Actually, actually, actually.', 0, 30),
+    turn('You', 'Um, fine.', 30, 60),
+  ], { ignored: ['actually'] });
+  eq(kept.turnsHit, 1, 'a turn whose only fillers were ignored is no longer a hit');
+  eq(kept.moments.length, 1, 'and is no longer an example');
+  eq(kept.moments[0].labels, ['um'], 'an example names only the words still counted');
+}
+
+// --- ignoring, applied after the fact ------------------------------------
+// The UI toggles this on counts it already has, so re-deriving must give
+// exactly what counting from scratch would have given.
+{
+  const turns = [
+    turn('You', 'Um, so, basically it is, you know, ready.', 0, 60),
+    turn('You', 'Uh, right?', 60, 90),
+  ];
+  const strip = u => ({ ...u, hitTurns: undefined });
+  const counted = fillerUsage(turns, { ignored: ['you-know', 'um'] });
+  const derived = applyIgnoredFillers(fillerUsage(turns), ['you-know', 'um']);
+  eq(strip(derived), strip(counted),
+    're-deriving with an ignore list matches counting with it from the start');
+  eq(strip(applyIgnoredFillers(derived, [])), strip(fillerUsage(turns)),
+    'and bringing the words back matches never having ignored them');
+
+  const none = fillerUsage(turns);
+  ok(applyIgnoredFillers(none, []) === none, 'ignoring nothing hands back the same object');
+  ok(applyIgnoredFillers(none, ['not-a-filler']) === none, 'an unknown id ignores nothing');
+  eq(applyIgnoredFillers(null, ['um']), null, 'a call with no usage stays null');
+  eq(fillerById('um').label, 'um', 'a filler can be looked up by id, for the UI to label it');
+  eq(fillerById('nope'), null, 'and an id that is not ours resolves to nothing');
+}
+
+// --- ignoring, across calls ----------------------------------------------
+{
+  const row = (id, name, text, ignored) => ({
+    id, name, fillers: fillerUsage([turn('You', text, 0, 60)], { ignored }),
+  });
+  const heavy = `${'um '.repeat(6)}${'basically '.repeat(6)}${'word '.repeat(108)}`;
+  const totals = fillerTotals([
+    row('a', 'One', heavy, ['um']),
+    row('b', 'Two', heavy, ['um']),
+  ]);
+  eq(totals.fillers, 12, 'the totals count only what is still counted');
+  eq(totals.hidden, 12, 'and carry what was left out of them');
+  eq(totals.ignored.map(f => [f.id, f.count, f.calls]), [['um', 12, 2]],
+    'an ignored word says how much it hid, and over how many calls');
+  eq(totals.byFiller.map(f => f.id), ['basically'], 'the ignored word is out of the ranking');
+  // 12 "basically" left across 240 words — the 12 "um" are gone from both.
+  eq(Math.round(totals.per100Words * 100) / 100, 5, 'and out of the overall rate');
 }
 
 // --- how the numbers read -------------------------------------------------
