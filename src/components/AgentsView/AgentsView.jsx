@@ -246,6 +246,14 @@ function writeActiveSubTab(tab) {
 // Seed content for the Prompt Library sub-tab. These show immediately so
 // the user can copy them out of the box; they only persist to
 // settings.savedPrompts once the user edits/adds/deletes something.
+// Seeds added after the Prompt Library shipped. A library that's already
+// the user's own never picks a new seed up on its own, so these are the
+// ones merged into the list at render time (see savedPrompts below).
+// Only genuinely new seeds belong here: an id listed here would come back
+// for a user who deleted it long ago, which is why the original four
+// aren't.
+const LATE_SEED_IDS = ['seed-big-site-list-python'];
+
 const DEFAULT_SAVED_PROMPTS = [
   {
     id: 'seed-contract-review',
@@ -1686,35 +1694,41 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
 
   // Saved prompts for the Prompt Library. Falls back to the seed list
   // until the user edits anything, then persists via settings.savedPrompts.
-  const savedPrompts = Array.isArray(settings?.savedPrompts)
-    ? settings.savedPrompts
-    : DEFAULT_SAVED_PROMPTS;
-  const handleSavedPromptsChange = (next) => {
-    if (updateSettings) updateSettings({ savedPrompts: next });
-  };
+  //
+  // A seed added after that switch has already happened would never be
+  // seen, since the seed list stops being consulted the moment the library
+  // becomes the user's own. Those (LATE_SEED_IDS) are merged in here at
+  // render time rather than migrated into stored settings on load: showing
+  // them takes no write at all, so nothing about it can fail quietly —
+  // a rejected save, a settings document at its size ceiling, or a
+  // half-loaded snapshot all left the earlier migration silently doing
+  // nothing. Deleting one records it in dismissedSeedPrompts, which is
+  // what keeps it gone.
+  const savedPrompts = useMemo(() => {
+    const own = settings?.savedPrompts;
+    if (!Array.isArray(own)) return DEFAULT_SAVED_PROMPTS;
+    const dismissed = new Set(settings?.dismissedSeedPrompts || []);
+    const present = new Set(own.map(p => p?.id));
+    const missing = DEFAULT_SAVED_PROMPTS.filter(
+      s => LATE_SEED_IDS.includes(s.id) && !present.has(s.id) && !dismissed.has(s.id));
+    return missing.length > 0 ? [...own, ...missing] : own;
+  }, [settings?.savedPrompts, settings?.dismissedSeedPrompts]);
 
-  // Big Site List Python shipped after the library had already been made
-  // the user's own, and the seed list is only consulted until that happens
-  // — so anyone who has ever added or edited a prompt would never see it.
-  // Append it once, then record that we did, so a user who later deletes
-  // it doesn't get it handed back on the next load. Gated on
-  // settings._lastWriteAt, so we only act once synced settings have
-  // actually arrived and can't append to a not-yet-loaded list. Mirrors
-  // the one-time reveal the Services table used for its SME column.
-  useEffect(() => {
-    if (!settings || !settings._lastWriteAt || !updateSettings) return;
-    if (settings.bigSiteListPromptSeeded) return;
-    const saved = settings.savedPrompts;
-    // Not customized yet: the seed list already carries it, and writing
-    // one here would freeze the rest of the seeds as they stand today.
-    if (!Array.isArray(saved)) { updateSettings({ bigSiteListPromptSeeded: true }); return; }
-    const seed = DEFAULT_SAVED_PROMPTS.find(p => p.id === 'seed-big-site-list-python');
-    if (!seed || saved.some(p => p?.id === seed.id)) {
-      updateSettings({ bigSiteListPromptSeeded: true });
-      return;
+  // Any late seed that isn't in the list being saved has been deleted, so
+  // it goes on the dismissed list in the same write — otherwise the merge
+  // above would hand it straight back.
+  const handleSavedPromptsChange = (next) => {
+    if (!updateSettings) return;
+    const keptIds = new Set((next || []).map(p => p?.id));
+    const dismissed = new Set(settings?.dismissedSeedPrompts || []);
+    let newlyDismissed = false;
+    for (const id of LATE_SEED_IDS) {
+      if (!keptIds.has(id) && !dismissed.has(id)) { dismissed.add(id); newlyDismissed = true; }
     }
-    updateSettings({ savedPrompts: [...saved, seed], bigSiteListPromptSeeded: true });
-  }, [settings, updateSettings]);
+    updateSettings(newlyDismissed
+      ? { savedPrompts: next, dismissedSeedPrompts: [...dismissed] }
+      : { savedPrompts: next });
+  };
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
