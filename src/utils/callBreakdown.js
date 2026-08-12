@@ -22,7 +22,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { talkTimeSplit } from './talkTime.js';
-import { fillerUsage } from './fillerWords.js';
+import { fillerUsage, applyIgnoredFillers } from './fillerWords.js';
 import { sourceLabel, externalAttendees } from './callHistory.js';
 
 function textOf(value) {
@@ -124,6 +124,23 @@ export function callBreakdownRows(records) {
       if (b.recordedAtMs == null) return -1;
       return b.recordedAtMs - a.recordedAtMs;
     });
+}
+
+/**
+ * The same rows with the user's ignored filler words left uncounted.
+ *
+ * A separate pass rather than an argument to `callBreakdownRows` so the
+ * expensive half — reading every transcript — happens once per set of
+ * calls, and toggling a word off only re-adds up counts that are already
+ * in hand. Rows nothing changed for keep their identity, so the memo above
+ * this doesn't invalidate a page's worth of derived state either.
+ */
+export function withIgnoredFillers(rows, ignored) {
+  const list = rows || [];
+  return list.map((row) => {
+    const use = applyIgnoredFillers(row.fillers, ignored);
+    return use === row.fillers ? row : { ...row, fillers: use };
+  });
 }
 
 /** Free-text filter over what the picker list shows. */
