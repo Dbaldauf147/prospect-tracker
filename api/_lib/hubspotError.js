@@ -59,6 +59,47 @@ function requiredScopes(body) {
   return out;
 }
 
+// HubSpot answers a scope failure with every scope that would have
+// satisfied the call, and the order it lists them in is not advice — the
+// sensitive-data variants tend to come first. Replayed verbatim, the
+// message told the user to grant the most privileged scope on the list:
+//
+//   needs the crm.objects.companies.highly_sensitive.write.v2 or
+//   crm.objects.companies.sensitive.write.v2 or crm.objects.companies.write
+//   or crm.schemas.companies.write scopes
+//
+// — four alternatives read as a set of requirements, led by one that a
+// private app can't even be granted until the portal is enabled for
+// sensitive data. Rank them so the ordinary object-write scope is the one
+// we name, and demote the rest to alternatives:
+//
+//   0  crm.objects.companies.write            — the one to grant
+//   1  crm.schemas.companies.write            — edits property definitions,
+//                                               not the record
+//   2  …sensitive.write.v2                    — gated on a portal setting
+//   3  …highly_sensitive.write.v2             — gated, and broader still
+function scopeRank(name) {
+  if (/(^|\.)highly_sensitive(\.|$)/i.test(name)) return 3;
+  if (/(^|\.)sensitive(\.|$)/i.test(name)) return 2;
+  if (/^crm\.schemas\./i.test(name)) return 1;
+  return 0;
+}
+
+// "a", "a or b", "a, b, or c".
+function orList(names) {
+  if (names.length <= 1) return names.join('');
+  if (names.length === 2) return names.join(' or ');
+  return `${names.slice(0, -1).join(', ')}, or ${names[names.length - 1]}`;
+}
+
+// Least-privilege first, preserving HubSpot's order within a rank.
+function rankScopes(scopes) {
+  return scopes
+    .map((name, i) => ({ name, i }))
+    .sort((a, b) => scopeRank(a.name) - scopeRank(b.name) || a.i - b.i)
+    .map(e => e.name);
+}
+
 // True when the failure is HubSpot refusing the call for lack of a scope,
 // rather than rejecting the data we sent.
 function isMissingScopes(body) {
@@ -153,14 +194,23 @@ export function describeHubSpotError(status, bodyText) {
   }
 
   if (isMissingScopes(body)) {
-    const scopes = requiredScopes(body);
-    const needs = scopes.length
-      ? `needs the ${scopes.join(' or ')} scope${scopes.length > 1 ? 's' : ''}`
-      : 'is missing a required scope';
-    return truncate(
-      `The HubSpot private app ${needs}. Add it in HubSpot under Settings → Integrations → Private Apps → Auth, then save the app.`,
-      420,
-    );
+    const [preferred, ...alternatives] = rankScopes(requiredScopes(body));
+    let lead = preferred
+      ? `The HubSpot private app needs the ${preferred} scope.`
+      : 'The HubSpot private app is missing a required scope.';
+    if (alternatives.length) {
+      lead = `The HubSpot private app needs the ${preferred} scope `
+        + `(HubSpot also accepts ${orList(alternatives)}).`;
+    }
+    // The instruction is the half the user has to act on, so it's held out
+    // of the truncation budget: an over-long alternatives list loses its
+    // own tail rather than the sentence saying where to go.
+    const fix = 'Add it in HubSpot under Settings → Integrations → Private Apps → Auth, then save the app.';
+    const budget = 420 - fix.length - 1;
+    // Rather than sever the list mid-scope-name, drop it — the scope we
+    // recommend is the only one the user needs.
+    if (lead.length > budget && preferred) lead = `The HubSpot private app needs the ${preferred} scope.`;
+    return `${truncate(lead, budget)} ${fix}`;
   }
 
   // Property-validation failures: say which value on which property was
