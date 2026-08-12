@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { asNumber, asDate, fmtCurrency, fmtDate, fmtPercent } from '../../utils/dealsFormat';
 import {
   DEAL_BFO_KEY, matchCommissionRowsForDeal,
-  DEAL_TRACK_STATUS_KEY, DEAL_TRACK_STATUSES, dealTrackStatus,
+  DEAL_TRACK_STATUSES, dealTrackStatus, dealTrackStatusPatch,
   DEAL_PROJ_START_KEY, DEAL_PROJ_END_KEY, DEAL_PROJ_REVENUE_KEY, DEAL_PROJ_COMMISSION_KEY,
   readSavedProjection, formatProjMonth,
 } from '../../utils/dealCommissions';
@@ -526,8 +526,10 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
           >×</button>
         </div>
 
-        {/* Tracking status — the user's own call on where this deal stands,
-            saved on the deal and mirrored on the grid's drill-down button. */}
+        {/* Tracking status — the user's own call on where this deal stands.
+            Saved into the sheet's Comm Status column, so it shows in that
+            column on the grid, tints the drill-down button, and turns the
+            whole row green once the deal is On track or Completed. */}
         {onUpdateDeal && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', padding: '0.5rem 1.1rem', borderBottom: '1px solid #F1F5F9', background: '#FCFDFE' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Status</span>
@@ -538,7 +540,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                   key={s.key}
                   type="button"
                   // Clicking the active one clears it back to unset.
-                  onClick={() => onUpdateDeal({ [DEAL_TRACK_STATUS_KEY]: on ? '' : s.key })}
+                  onClick={() => onUpdateDeal(dealTrackStatusPatch(on ? '' : s.key))}
                   title={on ? `${s.label} — click to clear` : `Mark this deal ${s.label}`}
                   style={{
                     padding: '2px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
@@ -551,7 +553,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
               );
             })}
             {status.key === '' && (
-              <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>not set — pick one to flag this deal on the grid</span>
+              <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>not set — pick one to fill Comm Status and flag this deal on the grid</span>
             )}
           </div>
         )}

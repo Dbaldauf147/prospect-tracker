@@ -18,7 +18,7 @@ import {
   loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
   SOLD_WARNING_IGNORE_EVENT,
 } from '../../utils/soldWarningIgnore';
-import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo, dealTrackStatus } from '../../utils/dealCommissions';
+import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo, dealTrackStatus, isDealTrackHealthy } from '../../utils/dealCommissions';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -2188,6 +2188,16 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
             rowStyle={(row) => {
+              // A deal marked On track or Completed reads green down the
+              // whole row — the point of the status is to see, without
+              // reading a column, which deals still need chasing.
+              //
+              // It wins over the unmatched-client amber below: the amber
+              // says a Client Name hasn't been mapped, which the header
+              // count and the "Show only unmapped" filter both still say,
+              // while the green is a call the user made on this deal by
+              // hand and would look ignored if a row swallowed it.
+              if (isDealTrackHealthy(row)) return { background: '#F0FDF4' };
               if (clientNameSet.size === 0) return undefined;
               const raw = String(row['Client Name'] || '').trim();
               if (!raw) return undefined;

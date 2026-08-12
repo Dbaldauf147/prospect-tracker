@@ -32,8 +32,14 @@ export function normBfo(v) {
 }
 
 // Where a deal stands on getting its commissions in, as the user calls
-// it. Stored on the deal row under a __-prefixed key so it rides along
-// with every other cell (and stays out of the generated column list).
+// it. Lives in the sheet's own Comm Status column rather than off to the
+// side: that column already answered this question by hand, and two
+// places to say the same thing is one place to disagree. Setting the
+// status in the modal writes the label there, and typing the label into
+// the grid cell sets the status — same field, two ways in.
+export const DEAL_COMM_STATUS_KEY = 'Comm Status';
+// Where the status used to live. Still read, so a deal flagged before the
+// move keeps its status, but never written.
 export const DEAL_TRACK_STATUS_KEY = '__commTrackStatus';
 export const DEAL_TRACK_STATUSES = [
   { key: 'missing', label: 'Missing', bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
@@ -42,9 +48,41 @@ export const DEAL_TRACK_STATUSES = [
 ];
 export const DEAL_TRACK_STATUS_UNSET = { key: '', label: 'Not set', bg: '#F1F5F9', fg: '#64748B', border: '#E2E8F0' };
 
+// Letters and digits only, so "On track", "on-track" and "ontrack" are
+// one value — the cell is hand-typed and pasted from a sheet, and a
+// hyphen shouldn't decide whether a deal counts as tracked.
+function trackStatusKey(v) {
+  return String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+const TRACK_STATUS_BY_KEY = new Map();
+for (const s of DEAL_TRACK_STATUSES) {
+  TRACK_STATUS_BY_KEY.set(trackStatusKey(s.key), s);
+  TRACK_STATUS_BY_KEY.set(trackStatusKey(s.label), s);
+}
+
+// Anything else in Comm Status — "Payment in progress", "Fully paid", a
+// note someone typed — is left as it is and reads as unset. The column
+// carries whatever the sheet carried; only the three status labels mean
+// something to the grid.
 export function dealTrackStatus(row) {
-  const v = String(row?.[DEAL_TRACK_STATUS_KEY] ?? '').trim().toLowerCase();
-  return DEAL_TRACK_STATUSES.find((s) => s.key === v) || DEAL_TRACK_STATUS_UNSET;
+  return TRACK_STATUS_BY_KEY.get(trackStatusKey(row?.[DEAL_COMM_STATUS_KEY]))
+    || TRACK_STATUS_BY_KEY.get(trackStatusKey(row?.[DEAL_TRACK_STATUS_KEY]))
+    || DEAL_TRACK_STATUS_UNSET;
+}
+
+// The cell patch that sets (or clears) a deal's status. Clearing empties
+// Comm Status rather than leaving the old label behind, and every write
+// drops the legacy key so the two can't drift apart.
+export function dealTrackStatusPatch(statusKey) {
+  const hit = DEAL_TRACK_STATUSES.find((s) => s.key === statusKey);
+  return { [DEAL_COMM_STATUS_KEY]: hit ? hit.label : '', [DEAL_TRACK_STATUS_KEY]: '' };
+}
+
+// A deal the user has marked On track or Completed: the two states that
+// say this one needs no chasing. Drives the grid's green row tint.
+export function isDealTrackHealthy(row) {
+  const key = dealTrackStatus(row).key;
+  return key === 'on-track' || key === 'complete';
 }
 
 // A saved payout projection: the month range it covers and the monthly
