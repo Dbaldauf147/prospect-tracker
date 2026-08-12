@@ -3803,10 +3803,12 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
         style={{
-          // Sized like the Update Status popup rather than the narrow
-          // four-field original: the Next Step / Waiting On rows editor below
-          // needs the width, and a long note list needs the body to scroll
-          // instead of pushing the Save button off-screen.
+          // Wider than the narrow four-field original: the Next Step /
+          // Waiting On rows editor below needs the width, and a long note
+          // list needs the body to scroll instead of pushing the Save button
+          // off-screen. (The Update Status popup, which this used to match,
+          // has since been widened again to fit its two tables — this one
+          // carries neither, so it stays here.)
           width: 'min(820px, 94vw)', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -4964,8 +4966,14 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
+        // Sized to hold a normally-loaded opp without scrolling. Width does
+        // most of that work: at 820px the four short fields wrapped onto two
+        // rows, and the Timelines and Notes inputs were narrow enough to wrap
+        // their own text — height spent on a screen that had spare width. Wide
+        // enough now for one row of fields, and for the two tables to get the
+        // room their columns actually want.
         style={{
-          width: 'min(820px, 94vw)', maxHeight: '88vh',
+          width: 'min(1200px, 96vw)', maxHeight: '94vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
