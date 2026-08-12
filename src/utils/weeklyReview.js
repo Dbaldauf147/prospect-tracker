@@ -146,10 +146,14 @@ function pipelineSection(pipeline, bfo) {
       clientCount: num(pipeline.currentClientCount),
       greenfieldCount: num(pipeline.greenfieldCount),
     },
+    // Trailing windows. The `??` arms read state saved before the table
+    // moved off calendar month / calendar year, so a review run against an
+    // older save still reports a number rather than a dash.
     notQuoted: {
       goalPct: num(pipeline.notQuotedGoal),
-      yearPct: num(pipeline.notQuotedYear),
-      monthPct: num(pipeline.notQuotedMonth),
+      d30Pct: num(pipeline.notQuoted30 ?? pipeline.notQuotedMonth),
+      d90Pct: num(pipeline.notQuoted90),
+      d365Pct: num(pipeline.notQuoted365 ?? pipeline.notQuotedYear),
     },
     activity: {
       newOppsGoal: num(pipeline.newOppsGoal),
@@ -317,7 +321,8 @@ export function serializeReviewSnapshot(snapshot) {
       L.push(`- Current-client mix: ${pct(p.clientMix.actualPct == null ? null : p.clientMix.actualPct * 100)} vs ${pct(p.clientMix.goalPct == null ? null : p.clientMix.goalPct * 100)} goal (${p.clientMix.clientCount ?? '-'} client / ${p.clientMix.greenfieldCount ?? '-'} greenfield opps)`);
     }
     if (p.notQuoted.goalPct != null) {
-      L.push(`- Deals not quoted: ${pct(p.notQuoted.yearPct == null ? null : p.notQuoted.yearPct * 100)} year / ${pct(p.notQuoted.monthPct == null ? null : p.notQuoted.monthPct * 100)} month vs ${pct(p.notQuoted.goalPct * 100)} goal (lower is better)`);
+      const nq = (v) => pct(v == null ? null : v * 100);
+      L.push(`- Deals not quoted: ${nq(p.notQuoted.d30Pct)} past 30d / ${nq(p.notQuoted.d90Pct)} past 90d / ${nq(p.notQuoted.d365Pct)} past year vs ${pct(p.notQuoted.goalPct * 100)} goal (lower is better)`);
     }
     const a = p.activity;
     if (a.newOppsGoal != null || a.activitiesGoal != null) {
