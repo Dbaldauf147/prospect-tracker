@@ -10,7 +10,7 @@
 // those two.
 import {
   textToBulletItems, encodeNoteLine, NOTE_LINEBREAK,
-  nextStepLinesFromCall, appendNextSteps,
+  nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches,
 } from '../src/utils/nextSteps.js';
 
 let passed = 0, failed = 0;
@@ -143,6 +143,96 @@ function ok(value, name) { eq(!!value, true, name); }
   }));
   eq(textToBulletItems(out.text).length, 1, 'a multi-line follow-up lands as a single step');
   eq(out.waiting.length, 1, 'and gets exactly one waiting entry');
+}
+
+// --- the backfill onto opps mapped before any of this existed ------------
+// It may only ever produce what tagging those same calls in date order
+// would have. Anything it adds that the live path wouldn't is a line
+// appearing in a checklist the user never agreed to.
+{
+  const call = (id, oppId, at, ...steps) => ({
+    id, oppId, recordedAt: at, followUps: steps.map(text => ({ text })),
+  });
+  const records = [
+    call('c2', 'opp-1', '2026-03-02T10:00:00Z', 'Send the redline'),
+    call('c1', 'opp-1', '2026-01-05T10:00:00Z', 'Send pricing', 'Book the walk'),
+    call('c3', 'opp-2', '2026-02-01T10:00:00Z', 'Chase the meter list'),
+    call('c4', '', '2026-02-01T10:00:00Z', 'Nothing to attach this to'),
+  ];
+  const opps = [
+    { _id: 'opp-1', 'Next Steps': 'Call Rita back', _nextStepsWaiting: ['Rita'] },
+    { _id: 'opp-2' },
+    { _id: 'opp-3', 'Next Steps': 'Untouched' },
+  ];
+
+  const out = backfillNextStepPatches(records, opps);
+  eq(out.opps, 2, 'only the opps with mapped calls are patched');
+  eq(out.steps, 4, 'every follow-up those calls carried is counted');
+  eq(out.calls, 3, 'and the calls they came from');
+  eq(textToBulletItems(out.patches['opp-1']['Next Steps']),
+    ['Call Rita back', 'Send pricing', 'Book the walk', 'Send the redline'],
+    'a call’s steps replay oldest first, under what the user already had');
+  eq(out.patches['opp-1']._nextStepsWaiting, ['Rita', '', '', ''],
+    'the existing Waiting On stays on its own step, and the new ones get blanks');
+  eq(out.patches['opp-2']['Next Steps'], 'Chase the meter list',
+    'an opp with an empty field takes the steps as the whole list');
+  ok(!('opp-3' in out.patches), 'an opp with no mapped call is not touched');
+
+  // Running it again on what it just wrote.
+  const settled = [
+    { _id: 'opp-1', ...out.patches['opp-1'] },
+    { _id: 'opp-2', ...out.patches['opp-2'] },
+  ];
+  eq(backfillNextStepPatches(records, settled), { patches: {}, opps: 0, steps: 0, calls: 0 },
+    'pressing it twice adds nothing the second time');
+}
+
+{
+  // The same list the live path would have built, arrived at the other
+  // way round: two calls tagged one after another.
+  const calls = [
+    { id: 'a', oppId: 'o', recordedAt: '2026-01-01T00:00:00Z', followUps: [{ text: 'One' }] },
+    { id: 'b', oppId: 'o', recordedAt: '2026-01-02T00:00:00Z', followUps: [{ text: 'Two' }] },
+  ];
+  const live = appendNextSteps(
+    appendNextSteps('', [], nextStepLinesFromCall(calls[0])).text,
+    appendNextSteps('', [], nextStepLinesFromCall(calls[0])).waiting,
+    nextStepLinesFromCall(calls[1]),
+  );
+  const back = backfillNextStepPatches(calls, [{ _id: 'o' }]).patches['o'];
+  eq(back['Next Steps'], live.text, 'the backfill produces exactly what tagging in order would have');
+  eq(back._nextStepsWaiting, live.waiting, 'including the waiting array');
+}
+
+{
+  // A step the user already typed by hand is not added again, and a call
+  // with nothing to say doesn't make an opp look like it changed.
+  const records = [
+    { id: 'a', oppId: 'o', followUps: [{ text: 'Send pricing.' }] },
+    { id: 'b', oppId: 'o', summary: 'Talked.', followUps: [] },
+  ];
+  const out = backfillNextStepPatches(records, [{ _id: 'o', 'Next Steps': 'Send pricing' }]);
+  eq(out, { patches: {}, opps: 0, steps: 0, calls: 0 },
+    'a step already on the list, however it was punctuated, is not added twice');
+}
+
+{
+  // Undated calls can't be placed in the order, so they go last rather
+  // than ahead of a call that can be dated.
+  const records = [
+    { id: 'u', oppId: 'o', followUps: [{ text: 'Undated step' }] },
+    { id: 'd', oppId: 'o', recordedAt: '2026-05-05T00:00:00Z', followUps: [{ text: 'Dated step' }] },
+  ];
+  eq(textToBulletItems(backfillNextStepPatches(records, [{ _id: 'o' }]).patches['o']['Next Steps']),
+    ['Dated step', 'Undated step'], 'the dated call is replayed first');
+}
+
+{
+  eq(backfillNextStepPatches([], []), { patches: {}, opps: 0, steps: 0, calls: 0 },
+    'nothing in, nothing out');
+  eq(backfillNextStepPatches(null, null).opps, 0, 'missing inputs are not a crash');
+  eq(backfillNextStepPatches({ x: { id: 'a', oppId: 'o', followUps: [{ text: 'Step' }] } },
+    [{ _id: 'o' }]).steps, 1, 'the id-keyed record map is accepted as well as an array');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
