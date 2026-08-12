@@ -33,6 +33,7 @@ import {
 } from '../../utils/dealClientMap';
 import { PasteImportModal } from './PasteImportModal';
 import { DealCommissionBreakdownModal } from './DealCommissionBreakdownModal';
+import { DealHistoryModal } from './DealHistoryModal';
 
 const MAPPED_COL_KEY = '__mappedToClient__';
 const MAPPED_COL_LABEL = 'Mapped to Client';
@@ -1084,6 +1085,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // Opened by double-clicking an auto-populated Revenue Recorded / Paid to
   // Date cell.
   const [breakdown, setBreakdown] = useState(null);
+  // Which deal's full history drill-down is open (raw row index, or null).
+  // Opened from the 📊 button in each row's pinned leading block — the
+  // grid edits cells on double-click, so a plain row click can't be the
+  // trigger without stealing the first half of every edit.
+  const [historyRowId, setHistoryRowId] = useState(null);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
@@ -1463,6 +1469,29 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       exportValue: () => '',
       getFilterValue: () => '',
     };
+    // Drill-down button: opens the deal's commissions & revenue history
+    // (expected vs actual, month by month). Pinned with the rest of the
+    // leading block so it's reachable however far right the sheet is
+    // scrolled, and kept out of filtering / export since it carries no
+    // value of its own.
+    const historyCol = {
+      key: '__dealHistory__',
+      label: '',
+      defaultWidth: 34,
+      sticky: true,
+      renderHeader: () => null,
+      render: (row) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setHistoryRowId(row.id); }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title="Commissions & revenue history for this deal: expected vs actual"
+          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1, padding: '2px 3px' }}
+        >📊</button>
+      ),
+      exportValue: () => '',
+      getFilterValue: () => '',
+    };
     // Leading column shows a compact handoff-progress pill for each
     // deal (e.g. "2/4") and opens a popover with the four fields.
     // Always added — independent of the Mapped to Client / Status
@@ -1530,7 +1559,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       },
     };
     if (clientNameSet.size === 0) {
-      return [selectCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
+      return [selectCol, historyCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
     }
     const helperCol = {
       key: MAPPED_COL_KEY,
@@ -1610,15 +1639,18 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         return prospectByName.get(lookupKey)?.status || '';
       },
     };
-    // Order: select · progress · client name · mapped-to-client · status · rest.
-    return [selectCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
+    // Order: select · history · progress · client name · mapped-to-client · status · rest.
+    return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
   }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
   );
+  // Bulk-select, the history drill-down and the progress pill are
+  // affordances rather than data, so they stay on screen whatever the
+  // user hides from the column picker.
   const alwaysVisible = useMemo(
-    () => columns.slice(0, 2).map(c => c.key),
+    () => columns.slice(0, 3).map(c => c.key),
     [columns]
   );
   // Headers that the Link Columns modal lets the user bind to a
@@ -2166,6 +2198,17 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
+        />
+      )}
+      {historyRowId != null && data[historyRowId] && (
+        <DealHistoryModal
+          deal={data[historyRowId]}
+          commissionsRows={commissionsData}
+          onClose={() => setHistoryRowId(null)}
+          // The per-metric popup stacks on top (higher z-index) and closing
+          // it drops back to the history modal, so the deep dive doesn't
+          // lose the user their place.
+          onOpenBreakdown={(metric) => setBreakdown({ rowId: historyRowId, metric })}
         />
       )}
       {breakdown && data[breakdown.rowId] && (
