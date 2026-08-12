@@ -446,6 +446,154 @@ Restaurant (Quick-Service)
 Self-Storage (Non-Climate Controlled)`,
   },
   {
+    id: 'seed-big-site-list-python',
+    title: 'Big Site List Python',
+    body: `**Build a global site register for: \`{COMPANY_NAME}\`**
+Company website: \`{URL — leave blank if you want me to find it}\`
+Position as at: \`{DATE — default: today}\`
+
+### 1. Scope
+
+List every site this company owns, leases, operates or occupies, worldwide. Include all site
+types: headquarters, offices, manufacturing plants, R&D and labs, warehouses and distribution
+centres, data centres, retail, hotels, and any other property type the company holds.
+
+Before you start, tell me which of these the company is, because it changes what "its sites" means:
+
+- **An occupier** (manufacturer, retailer, services firm) — one register of the sites it uses.
+- **A property owner or investment manager** (REIT, developer, fund) — TWO registers on separate
+  tabs: (a) the investment portfolio it owns or manages, and (b) the corporate offices it occupies
+  to run itself. Flag any office that sits inside a building the company owns.
+- **An operator with franchisees** — mark which sites are company-operated vs franchised, or say
+  plainly that the split isn't public.
+
+### 2. Required columns
+
+| Column | Notes |
+|---|---|
+| Site Name | As the company names it |
+| Address | Street address |
+| City | |
+| State / Province | |
+| Postal / ZIP Code | |
+| Country | |
+| Property Type | Must match the controlled vocabulary in rule 6 exactly |
+| Owned / Leased | See rule 4 |
+| Square Footage | See rule 5 |
+
+Also add these supporting columns — they are what make the file auditable:
+
+| Column | Notes |
+|---|---|
+| Site Type (Function) | What happens there, in the company's own words |
+| Company's Own Type | The company's own facility label, kept verbatim — see rule 6 |
+| Tenure Evidence | The specific disclosure behind the Owned/Leased value |
+| Sq Ft Source | Where the area figure came from |
+| Address Confidence | High / Medium / Unverified — see rule 3 |
+| Status | Active / Under construction / Idled / Announced |
+| Notes | Anything that affects how the row should be read |
+| Source | The page or filing this row came from |
+
+### 3. Accuracy rules — these matter more than completeness
+
+- **Never invent an address or postal code.** If a company doesn't publish one, leave it blank
+  and mark the row Unverified rather than guessing from the city.
+- Grade every address: **High** = published by the company or confirmed in a named source;
+  **Medium** = street address solid but postal code inferred from location; **Unverified** = not
+  found. Highlight Unverified rows.
+- Watch ambiguous postal formats. A bare five-digit code is used by the US, Germany, France, Spain
+  and Italy — don't infer a country from it alone.
+- If sources disagree, keep both, pick the more likely one, and say so in Notes.
+- Reproduce obvious errors on the company's own site as published, with a flag — don't silently
+  "correct" them.
+
+### 4. Owned vs leased
+
+Use only what's actually disclosed, and cite it in Tenure Evidence. Good sources, in order:
+
+1. Item 2 (Properties) of a 10-K, which usually footnotes leased sites
+2. Schedule III for REITs (owned only, aggregated by geography)
+3. Annual reports, sustainability reports, investor decks
+
+Where tenure isn't public — which is normal for offices, service centres and private companies —
+write "Not disclosed" and say what would resolve it. Don't dress up an assumption as a fact.
+
+### 5. Square footage
+
+Use published figures only. If the company reports only a network total, put that on the summary
+tab and leave the per-site column blank rather than dividing it up. Flag any figure that looks
+wrong for the building described.
+
+### 6. Property Type — controlled vocabulary
+
+Property Type must match one of the following 32 values exactly. Do not invent new categories,
+and do not reword them — the whole point is that registers for different companies stay
+comparable.
+
+> University / College Campus · Industrial (Heavy Manufacturing) · Data Center ·
+> Hospital / Healthcare · Office - High-Rise · Shopping Mall / Retail Center ·
+> Multifamily High-Rise · Hotel / Lodging · Industrial (Light Manufacturing) · Industrial - Other ·
+> Mixed Use · Laboratory / R&D · Office - Mid-Rise · Multifamily Mid-Rise · Industrial Flex / R&D ·
+> Medical Office · Refrigerated Warehouse · School (K-12) · Senior Housing ·
+> Retail - Neighborhood Retail · BTR Residential · Retail - High Street ·
+> Office - Small (Low-Rise) · Retail - Other · Non-Refrigerated Warehouse · Multifamily Low-Rise ·
+> Restaurant (Full-Service) · Self-Storage (Climate Controlled) · Office Occupier ·
+> Retail - Outparcel · Restaurant (Quick-Service) · Self-Storage (Non-Climate Controlled)
+
+How to apply it:
+
+- **Classify by dominant use, not by the company's leasing label.** Landlords tag almost every
+  office tower "Mixed-Use, Retail" because there are shops on the ground floor. That's a marketing
+  label. An office building with a coffee shop in the lobby is an office.
+- **Keep the company's own label** in the "Company's Own Type" column. Where a company runs its own
+  facility taxonomy — port location, production advantaged, dedicated or leased, select suites —
+  that's operational or commercial information, not a property class, and it's worth preserving
+  rather than flattening into this list.
+- **Split offices by height**: High-Rise, Mid-Rise, or Small (Low-Rise), on floor count.
+- **Reserve Mixed Use for genuine multi-component estates** — a campus or district with materially
+  different uses — not for a single building with incidental retail.
+- If a site genuinely straddles two categories, pick the dominant one and explain in Notes.
+- Add a **Reference** tab listing all 32 values, and put a data-validation drop-down on the
+  Property Type column pointing at it, so a non-approved value can't be typed in later.
+
+### 7. Recently divested or closed sites
+
+Put these on a separate "Excluded" tab with the transaction, date, buyer and source. Cached pages
+and old profiles keep these alive long after they've gone, so an explicit exclusion list makes the
+register auditable.
+
+### 8. If the portfolio is large
+
+If there are more than roughly 150 sites, don't try to research them one at a time. Instead:
+
+1. Tell me the true site count up front and where a complete list does or doesn't exist.
+2. Build the workbook with the schema, a summary tab of verified counts by country / region /
+   type, and a notes tab.
+3. Write me a **Python scraper** that extracts the full list from the company's own location
+   directory and outputs the finished Excel in this schema. Requirements:
+   - runs on Windows with \`py script_name.py\`
+   - uses \`requests\` + \`beautifulsoup4\` + \`openpyxl\`
+   - full browser headers, and automatic \`cloudscraper\` fallback if the site returns 403
+   - a \`--max-pages\` or \`--max-hotels\` style flag for a quick test run
+   - saves partial results to CSV periodically so an interrupted run isn't wasted
+   - prints progress, and flags rows where parsing failed
+   - **test the parser against representative markup before you give it to me**
+
+### 9. Deliverable
+
+A single Excel workbook containing:
+
+- **Site Register** — the columns above, with autofilter and frozen header
+- **Summary** — counts by country, type and tenure, as live formulas
+- **Reference** — the 32 Property Type values, with a drop-down on the register bound to it
+- **Excluded** — divested or closed sites (if any)
+- **Notes & Sources** — method, every source used, key judgement calls, and an explicit list of
+  what you could NOT verify
+
+In your reply, lead with the two or three things I'd most want to know: how complete it is, the
+biggest data gap, and anything surprising about the portfolio.`,
+  },
+  {
     id: 'seed-pe-portfolio-analysis',
     title: 'PE Portfolio Analysis',
     body: `https://docs.google.com/document/d/1WoypQRaFrowZ8cK-r_akA7PdgWS2wODoFTQq_XnZcp8/edit?tab=t.0`,
@@ -1510,6 +1658,29 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const handleSavedPromptsChange = (next) => {
     if (updateSettings) updateSettings({ savedPrompts: next });
   };
+
+  // Big Site List Python shipped after the library had already been made
+  // the user's own, and the seed list is only consulted until that happens
+  // — so anyone who has ever added or edited a prompt would never see it.
+  // Append it once, then record that we did, so a user who later deletes
+  // it doesn't get it handed back on the next load. Gated on
+  // settings._lastWriteAt, so we only act once synced settings have
+  // actually arrived and can't append to a not-yet-loaded list. Mirrors
+  // the one-time reveal the Services table used for its SME column.
+  useEffect(() => {
+    if (!settings || !settings._lastWriteAt || !updateSettings) return;
+    if (settings.bigSiteListPromptSeeded) return;
+    const saved = settings.savedPrompts;
+    // Not customized yet: the seed list already carries it, and writing
+    // one here would freeze the rest of the seeds as they stand today.
+    if (!Array.isArray(saved)) { updateSettings({ bigSiteListPromptSeeded: true }); return; }
+    const seed = DEFAULT_SAVED_PROMPTS.find(p => p.id === 'seed-big-site-list-python');
+    if (!seed || saved.some(p => p?.id === seed.id)) {
+      updateSettings({ bigSiteListPromptSeeded: true });
+      return;
+    }
+    updateSettings({ savedPrompts: [...saved, seed], bigSiteListPromptSeeded: true });
+  }, [settings, updateSettings]);
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
