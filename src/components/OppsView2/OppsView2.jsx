@@ -4809,12 +4809,32 @@ function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChan
   );
 }
 
+// "today" / "tomorrow" / "in 8 days" / "6 days ago" for the Follow Up date
+// shown in the status popup, so the picked day reads as a distance as well
+// as a date. Past dates are spelled out rather than folded into "today" —
+// a follow-up that's already overdue should say so.
+function followUpWhenLabel(days) {
+  if (days == null) return '';
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  return days > 0 ? `in ${days} days` : `${-days} days ago`;
+}
+
 // Prompt shown whenever an opp's Follow Up date changes, asking the user
 // to pick the new Status (Who is waiting) for that opp so it stays
 // current with each follow-up. Cleared on Save or Skip.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, onSave, onClose, onCancel }) {
+//
+// The new Follow Up date leads the popup, editable in place: the edit that
+// opened this modal is already applied to the opp, so the user sees what
+// they just picked and can correct it here instead of closing the popup and
+// re-dating the cell. `prevFollowUp` is the pre-edit date, surfaced in the
+// hint so it's clear what the date moved from.
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, prevFollowUp, onSave, onClose, onCancel }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
+  const curFollowUp = toISODate(opp?.['Follow Up']);
+  const [followUp, setFollowUp] = useState(curFollowUp);
   const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
   // Structured timelines: a list of { type, value, kickoff } rows, each with its
   // own Kickoff Deadline, seeded from the opp (falling back to the legacy
@@ -4851,7 +4871,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
+    onSave({ followUp, status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -4859,6 +4879,20 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     const v = (raw ?? '').toString().trim();
     return v ? <div style={hintStyle}>Currently: {v}</div> : null;
   };
+
+  // "6/20/2026 · in 8 days · was 6/12/2026" under the Follow Up picker. The
+  // "was" half only appears when the date actually moved, so a popup reached
+  // some other way doesn't claim a change that didn't happen.
+  const prevFollowUpISO = toISODate(prevFollowUp);
+  const followUpParts = [];
+  if (followUp) {
+    followUpParts.push(formatDateDisplay(followUp));
+    const when = followUpWhenLabel(daysFromToday(followUp));
+    if (when) followUpParts.push(when);
+  }
+  if (prevFollowUpISO && prevFollowUpISO !== curFollowUp) {
+    followUpParts.push(`was ${formatDateDisplay(prevFollowUpISO)}`);
+  }
 
   const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
   const inputStyle = {
@@ -4902,6 +4936,19 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
           <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <label style={labelStyle}>Follow Up</label>
+              <input
+                type="date"
+                value={followUp}
+                onChange={(e) => setFollowUp(e.target.value)}
+                title="The new Follow Up date. Change it here and it saves with the rest of the popup."
+                style={inputStyle}
+              />
+              {followUpParts.length > 0 ? (
+                <div style={hintStyle}>{followUpParts.join(' · ')}</div>
+              ) : null}
+            </div>
             <div style={{ flex: '1 1 200px', minWidth: 0 }}>
               <label style={labelStyle}>Status</label>
               <select
@@ -8503,7 +8550,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     else if (kind === 'qualifyingUsd') setQualifyingUsdPromptId(id);
   }, []);
 
-  const updateOppField = useCallback((id, field, rawValue) => {
+  // `opts.skipFollowUpPrompt` writes a Follow Up date without opening the
+  // status popup that a changed Follow Up normally triggers. Used by the
+  // popup's own Follow Up picker, which would otherwise re-open itself the
+  // moment it saved a corrected date.
+  const updateOppField = useCallback((id, field, rawValue, opts) => {
     // Auto-format a user-entered Quoted Amount to currency ($25,000) so
     // the stored value — and every view that reads it — stays consistent,
     // regardless of how the user typed it (25000, 25,000, $25000.50…).
@@ -8742,7 +8793,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     }
     // Whenever the Follow Up date changes, prompt for the new Status so
     // the "Who is waiting" value stays current with each follow-up.
-    if (followUpChanged) {
+    if (followUpChanged && !opts?.skipFollowUpPrompt) {
       setFollowUpStatusPromptId(id);
       // Remember the pre-edit Follow Up (and the sibling Call In that
       // gets dropped as a side effect) so the modal's Cancel button can
@@ -10862,7 +10913,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             clientManager={clientManagerForAccount(opp?.['Account'])}
             solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
-            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
+            prevFollowUp={followUpStatusPrev?.hadFollowUp ? followUpStatusPrev.followUp : ''}
+            onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
+              // A Follow Up date corrected inside the popup. Written with
+              // skipFollowUpPrompt so saving the new date doesn't immediately
+              // re-open this same popup for the date it just set.
+              if ((followUp || '') !== (toISODate(opp['Follow Up']) || '')) {
+                updateOppField(opp._id, 'Follow Up', followUp, { skipFollowUpPrompt: true });
+              }
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
