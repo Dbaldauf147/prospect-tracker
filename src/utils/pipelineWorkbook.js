@@ -461,8 +461,10 @@ export async function downloadPipelineWorkbook(p) {
 
     sectionTitle(ws, r, 4, lbl('nq-title', '% of deals not Quoted')); r++;
     kv(lbl('nq-goal', 'Goal'), num(p.notQuoted.goal), PCT);
-    kv(lbl('nq-actual-year', 'Actual Year'), num(p.notQuoted.year), PCT, cmpTint(p.notQuoted.year, p.notQuoted.goal, 'lower'));
-    kv(lbl('nq-actual-month', 'Actual Month'), num(p.notQuoted.month), PCT, cmpTint(p.notQuoted.month, p.notQuoted.goal, 'lower'));
+    // One row per trailing window, already label-resolved by the caller.
+    for (const w of (p.notQuoted.windows || [])) {
+      kv(w.label, num(w.pct), PCT, cmpTint(w.pct, p.notQuoted.goal, 'lower'));
+    }
     gap();
 
     sectionTitle(ws, r, 4, 'Current Client vs Greenfield'); r++;

@@ -199,6 +199,24 @@ function quotedStageDays(r) {
   return total;
 }
 
+// The windows the "% of deals not Quoted" table reports, shortest first.
+// Rolling rather than calendar: the table used to show the current
+// calendar year beside the current calendar month, which meant the month
+// cell was a full month of deals on the 31st and two days of them on the
+// 2nd — a number that moved for reasons that had nothing to do with how
+// the quoting was going. A trailing window always covers the same span,
+// so the three cells are comparable with each other and with themselves
+// last week. The 365-day window matches Close Rate's, which is already
+// rolling.
+//
+// `field` is the manual fallback in state, used when the Opps cache has
+// no closed deals in that window.
+const NOT_QUOTED_WINDOWS = [
+  { key: 'd30', days: 30, label: 'Past 30 days', labelId: 'nq-30', field: 'notQuoted30' },
+  { key: 'd90', days: 90, label: 'Past 90 days', labelId: 'nq-90', field: 'notQuoted90' },
+  { key: 'd365', days: 365, label: 'Past year', labelId: 'nq-365', field: 'notQuoted365' },
+];
+
 // The "next move" an opp trips when it sits in a stage past its max target
 // age (the Avg Opp Life "Goal (less than)" for that stage). Mirrors the
 // STAGE_AGE_GUIDANCE next-move copy so a stalled Stage 4 reads "Quote or kill"
@@ -240,9 +258,12 @@ const DEFAULT_STATE = {
   coverageGoal: 3.21,
   coverageActual: 2.74,
 
+  // One manual fallback per NOT_QUOTED_WINDOWS entry, shown only when the
+  // Opps cache has no closed deals in that window.
   notQuotedGoal: 0.40,
-  notQuotedYear: 0.43,
-  notQuotedMonth: 0.40,
+  notQuoted30: 0.40,
+  notQuoted90: 0.43,
+  notQuoted365: 0.43,
 
   target: 1325000,
   closedYTD: 17000,
@@ -337,6 +358,26 @@ function sanitizeStages(savedStages) {
     }
     return row;
   });
+}
+
+// State saved before the "% of deals not Quoted" table went to rolling
+// windows carries notQuotedMonth / notQuotedYear — the manual fallbacks
+// for the calendar-month and calendar-year cells the windows replaced.
+// Those are the closest thing anyone typed to a 30-day and a 1-year
+// number, so they carry across rather than being silently dropped back to
+// the code defaults. The 90-day cell has no predecessor and starts at its
+// default. Returns only the keys worth overriding, to be spread after the
+// saved state.
+function migrateNotQuoted(saved) {
+  const out = {};
+  const carry = (to, from) => {
+    if (saved[to] == null && typeof saved[from] === 'number' && Number.isFinite(saved[from])) {
+      out[to] = saved[from];
+    }
+  };
+  carry('notQuoted30', 'notQuotedMonth');
+  carry('notQuoted365', 'notQuotedYear');
+  return out;
 }
 
 // Outermost safety net for the entire Pipeline page. If anything below
@@ -1151,6 +1192,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         if (saved) setState(() => ({
           ...DEFAULT_STATE,
           ...saved,
+          ...migrateNotQuoted(saved),
           stages: sanitizeStages(saved.stages),
           // Label overrides must be a plain object; anything else falls back to
           // "no overrides" so a corrupt value can't crash the header render.
@@ -1397,22 +1439,29 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     return out;
   }, [oppsRecords]);
 
-  // % of closed deals that were never quoted. A deal counts as "quoted"
-  // when it logged at least one day in the Quoted or Agreement Sent stage
-  // (from its stage history); a closed deal (Sold / Not Sold) with no time
-  // in either stage is "not quoted". Split into the current calendar year
-  // and the current calendar month to feed the Actual Year / Actual Month
-  // cells. Pull-through opps are excluded, mirroring the Close Rate metrics.
-  // Returns null when the Opps cache has no closed deals this year, so the
-  // manual cells stay in place.
+  // % of closed deals that were never quoted, per NOT_QUOTED_WINDOWS. A
+  // deal counts as "quoted" when it logged at least one day in the Quoted
+  // or Agreement Sent stage (from its stage history); a closed deal
+  // (Sold / Not Sold) with no time in either stage is "not quoted".
+  // Pull-through opps are excluded, mirroring the Close Rate metrics.
+  //
+  // Each window is a trailing span ending now, so the windows nest: every
+  // deal in the 30-day cell is also in the 90-day and 1-year cells. Only a
+  // lower bound is applied — a closed deal dated ahead of today counts in
+  // all three rather than falling out of the table entirely, which is what
+  // oppsCloseRateByStage does with its own rolling window.
+  //
+  // Returns null when no closed deal falls in even the longest window, so
+  // the manual cells stay in place; an individual window with no deals is
+  // null on its own and falls back to its manual cell.
   const oppsNotQuoted = useMemo(() => {
     if (oppsRecords.length === 0) return null;
-    const now = new Date();
-    const thisYear = now.getFullYear();
-    const thisMonth = now.getMonth();
+    const now = Date.now();
+    const cutoffFor = (days) => now - days * 86400000;
+    const longest = NOT_QUOTED_WINDOWS[NOT_QUOTED_WINDOWS.length - 1].days;
+    const oldest = cutoffFor(longest);
     const PULL_THROUGH = /pull[\s-]?through/i;
-    const yearDeals = [];
-    const monthDeals = [];
+    const closed = [];
     for (const r of oppsRecords) {
       const stage = (r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
@@ -1420,11 +1469,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       if (!cd) continue;
       const ts = Date.parse(cd);
       if (Number.isNaN(ts)) continue;
-      const d = new Date(ts);
-      if (d.getFullYear() !== thisYear) continue;
+      if (ts < oldest) continue;
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
       const quotedDays = quotedStageDays(r);
-      const entry = {
+      closed.push({
         account: String(r.Account || '').trim() || '(no account)',
         bfoName: bfoOppNameOf(r),
         scope: String(r.Scope || '').trim(),
@@ -1436,20 +1484,20 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         quoted: quotedDays > 0,
         quotedAmount: parseMoney(r['Quoted Amount']),
         quotedDate: String(r['Quoted On'] || r['Quoted Date'] || '').trim(),
-      };
-      yearDeals.push(entry);
-      if (d.getMonth() === thisMonth) monthDeals.push(entry);
+      });
     }
-    const summarize = (deals) => {
-      const total = deals.length;
-      if (total === 0) return null;
+    if (closed.length === 0) return null;
+    const byNewest = closed.slice().sort((a, b) => b.ts - a.ts);
+    const out = {};
+    for (const w of NOT_QUOTED_WINDOWS) {
+      const cutoff = cutoffFor(w.days);
+      const deals = byNewest.filter(e => e.ts >= cutoff);
       const notQuoted = deals.filter(e => !e.quoted).length;
-      const sorted = deals.slice().sort((a, b) => b.ts - a.ts);
-      return { total, notQuoted, pct: notQuoted / total, deals: sorted };
-    };
-    const year = summarize(yearDeals);
-    if (!year) return null;
-    return { year, month: summarize(monthDeals), thisYear };
+      out[w.key] = deals.length === 0
+        ? null
+        : { total: deals.length, notQuoted, pct: notQuoted / deals.length, deals };
+    }
+    return out;
   }, [oppsRecords]);
 
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
@@ -1714,10 +1762,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const effectiveClosedYTD = oppsClosedYTD !== null ? oppsClosedYTD.total : (Number(state.closedYTD) || 0);
   const closedPctOfQuota = state.target ? effectiveClosedYTD / state.target : 0;
 
-  // Prefer the live Opps-derived "% not Quoted" when closed deals exist;
-  // fall back to the manually entered state values otherwise.
-  const effectiveNotQuotedYear = oppsNotQuoted?.year ? oppsNotQuoted.year.pct : state.notQuotedYear;
-  const effectiveNotQuotedMonth = oppsNotQuoted?.month ? oppsNotQuoted.month.pct : state.notQuotedMonth;
+  // Prefer the live Opps-derived "% not Quoted" when closed deals exist in
+  // that window; fall back to the manually entered state value otherwise.
+  // Decided per window, so a quiet month can fall back to its manual cell
+  // while the longer windows stay live.
+  const notQuotedCells = NOT_QUOTED_WINDOWS.map((w) => {
+    const live = oppsNotQuoted?.[w.key] || null;
+    return { ...w, live, pct: live ? live.pct : state[w.field] };
+  });
   // Weighted-by-count averages — SUMPRODUCT(life, count) / SUM(count).
   // Goal weights are activeGoal; Actual weights are the live count
   // (BFO when loaded, manual activeActual otherwise).
@@ -1787,7 +1839,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         clientActualPct: cg && cg.clientActualPct != null ? cg.clientActualPct : state.clientActualPct,
       },
       coverage: { goal: state.coverageGoal, actual: coverageActual },
-      notQuoted: { goal: state.notQuotedGoal, year: effectiveNotQuotedYear, month: effectiveNotQuotedMonth },
+      notQuoted: {
+        goal: state.notQuotedGoal,
+        // Labels resolved here so the export mirrors any renamed header,
+        // the same way every other exported label does.
+        windows: notQuotedCells.map(c => ({ label: lbl(c.labelId, c.label), pct: c.pct })),
+      },
       // Largest Stage 5 & 6 deals above $100k, sorted by amount (biggest
       // first). Same rows shown on-screen (largeStage56Deals); empty when
       // BFO isn't loaded or nothing clears the threshold.
@@ -2492,59 +2549,46 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             </table>
           </div>
 
-          <div className={styles.section} style={{ flex: '0 0 315px' }}>
+          {/* One column per NOT_QUOTED_WINDOWS entry beside the Goal, at
+              the same 105 px the metrics colgroup uses. */}
+          <div className={styles.section} style={{ flex: `0 0 ${105 * (NOT_QUOTED_WINDOWS.length + 1)}px` }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
-                <tr><th colSpan={3}><EL id="nq-title">% of deals not Quoted</EL></th></tr>
-                <tr><th><EL id="nq-goal">Goal</EL></th><th><EL id="nq-actual-year">Actual Year</EL></th><th><EL id="nq-actual-month">Actual Month</EL></th></tr>
+                <tr><th colSpan={NOT_QUOTED_WINDOWS.length + 1}><EL id="nq-title">% of deals not Quoted</EL></th></tr>
+                <tr>
+                  <th><EL id="nq-goal">Goal</EL></th>
+                  {NOT_QUOTED_WINDOWS.map(w => (
+                    <th key={w.key}><EL id={w.labelId}>{w.label}</EL></th>
+                  ))}
+                </tr>
               </thead>
               <tbody>
                 <tr>
                   <td><NumCell value={state.notQuotedGoal} kind="pct" onCommit={(v) => setField('notQuotedGoal', v)} /></td>
-                  <td className={compareClass(effectiveNotQuotedYear, state.notQuotedGoal, 'lower-better')}>
-                    {oppsNotQuoted?.year
-                      ? (
-                          <LiveValue
-                            id="notQuotedYear"
-                            className={styles.liveCell}
-                            breakdown={{
-                              title: `% Not Quoted: Actual Year (${oppsNotQuoted.thisYear})`,
-                              value: `${Math.round(oppsNotQuoted.year.pct * 100)}%  (${oppsNotQuoted.year.notQuoted}/${oppsNotQuoted.year.total})`,
-                              formula: "Closed deals (Sold or Not Sold) that closed this calendar year with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this year.",
-                              inputs: [
-                                { label: 'Not quoted', value: oppsNotQuoted.year.notQuoted },
-                                { label: 'Closed deals', value: oppsNotQuoted.year.total },
-                                { label: '% not quoted', value: `${Math.round(oppsNotQuoted.year.pct * 100)}%` },
-                              ],
-                              rows: notQuotedRows(oppsNotQuoted.year.deals, 'Closed deals this year (newest close first)'),
-                              note: 'Auto-fed from the Opps tab stage history. Pull-through opps are excluded. Re-paste the Opps tab to refresh.',
-                            }}
-                          >{`${Math.round(oppsNotQuoted.year.pct * 100)}%`}</LiveValue>
-                        )
-                      : <NumCell value={state.notQuotedYear} kind="pct" onCommit={(v) => setField('notQuotedYear', v)} />}
-                  </td>
-                  <td className={compareClass(effectiveNotQuotedMonth, state.notQuotedGoal, 'lower-better')}>
-                    {oppsNotQuoted?.month
-                      ? (
-                          <LiveValue
-                            id="notQuotedMonth"
-                            className={styles.liveCell}
-                            breakdown={{
-                              title: '% Not Quoted: Actual Month',
-                              value: `${Math.round(oppsNotQuoted.month.pct * 100)}%  (${oppsNotQuoted.month.notQuoted}/${oppsNotQuoted.month.total})`,
-                              formula: "Closed deals (Sold or Not Sold) that closed this calendar month with no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals this month.",
-                              inputs: [
-                                { label: 'Not quoted', value: oppsNotQuoted.month.notQuoted },
-                                { label: 'Closed deals', value: oppsNotQuoted.month.total },
-                                { label: '% not quoted', value: `${Math.round(oppsNotQuoted.month.pct * 100)}%` },
-                              ],
-                              rows: notQuotedRows(oppsNotQuoted.month.deals, 'Closed deals this month (newest close first)'),
-                              note: 'Auto-fed from the Opps tab stage history. Pull-through opps are excluded. Re-paste the Opps tab to refresh.',
-                            }}
-                          >{`${Math.round(oppsNotQuoted.month.pct * 100)}%`}</LiveValue>
-                        )
-                      : <NumCell value={state.notQuotedMonth} kind="pct" onCommit={(v) => setField('notQuotedMonth', v)} />}
-                  </td>
+                  {notQuotedCells.map(({ key, days, label, field, live, pct }) => (
+                    <td key={key} className={compareClass(pct, state.notQuotedGoal, 'lower-better')}>
+                      {live
+                        ? (
+                            <LiveValue
+                              id={`notQuoted-${key}`}
+                              className={styles.liveCell}
+                              breakdown={{
+                                title: `% Not Quoted: ${label}`,
+                                value: `${Math.round(live.pct * 100)}%  (${live.notQuoted}/${live.total})`,
+                                formula: `Closed deals (Sold or Not Sold) with a close date in the last ${days} days and no days logged in the Quoted or Agreement Sent stages, ÷ all closed deals in that window.`,
+                                inputs: [
+                                  { label: 'Not quoted', value: live.notQuoted },
+                                  { label: 'Closed deals', value: live.total },
+                                  { label: '% not quoted', value: `${Math.round(live.pct * 100)}%` },
+                                ],
+                                rows: notQuotedRows(live.deals, `Closed deals in the last ${days} days (newest close first)`),
+                                note: 'Auto-fed from the Opps tab stage history. Pull-through opps are excluded. Re-paste the Opps tab to refresh.',
+                              }}
+                            >{`${Math.round(live.pct * 100)}%`}</LiveValue>
+                          )
+                        : <NumCell value={state[field]} kind="pct" onCommit={(v) => setField(field, v)} />}
+                    </td>
+                  ))}
                 </tr>
               </tbody>
             </table>
