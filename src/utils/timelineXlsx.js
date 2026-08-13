@@ -12,7 +12,8 @@
 // compliance export already uses.
 
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLogo.js';
-import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
+import { ownerColor, WORKSTREAM_COLOR, tint } from './timelineGraphic.js';
+import { groupStagesByPhase, subRuns } from './timelineTemplatesStore.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
   placeStages, anchorPlus, todayMonthIndex, stageMonthFraction,
@@ -276,8 +277,39 @@ function writeBandHeader(wb, ws, template, ncols, logoCol) {
   ws.getRow(2).height = 14;
 }
 
-// Implementation layout in cells: phase names merged down column A, one row
-// per step, and the month grid to the right. Chips become filled cells
+// A full-width heading row: the label across the lead columns, its colour
+// carried on to every cell right of them.
+//
+// The label's cells merge but the grid's don't. Merging the whole row would
+// be simpler and looks identical — but Excel ignores a border set on any cell
+// of a merged range except its master, and the signature rule has to be able
+// to cross this row. A run of separately filled cells reads as one bar and
+// still takes the rule.
+function writeHeadingRow(ws, row, ncols, lead, { label, fill: bg, color, size }) {
+  ws.mergeCells(row, 1, row, lead);
+  const head = ws.getCell(row, 1);
+  head.value = label;
+  head.font = { name: FONT, bold: true, size, color: { argb: color } };
+  head.fill = fill(bg);
+  head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  for (let c = lead + 1; c <= ncols; c += 1) ws.getCell(row, c).fill = fill(bg);
+}
+
+// The column rules the grid pass drew across a heading row, taken back out:
+// the row is one bar, and a bar with a rule every three characters reads as
+// twenty empty cells that happen to share a colour. Top and bottom stay, so
+// the band still closes against the rows around it.
+function clearRowRules(ws, row, from, to) {
+  for (let c = from; c <= to; c += 1) {
+    const cell = ws.getCell(row, c);
+    const b = cell.border || {};
+    cell.border = { top: b.top, bottom: b.bottom };
+  }
+}
+
+// Implementation layout in cells, built to read as the chart does: a heading
+// row per group (and per sub-group inside it), one row per step with its name
+// in column A, and the month grid to the right. Chips become filled cells
 // carrying the step number, so the numbering still lines up with the deck.
 function writePhasedSheet(wb, ws, template) {
   const stages = template.stages;
@@ -286,7 +318,16 @@ function writePhasedSheet(wb, ws, template) {
   // Same placement the visual uses — including sequencing the steps nobody
   // gave a month to behind what they wait on — so the sheet's grid is the
   // chart's grid.
-  const placed = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
+  const raw = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
+  // The run-up to the contract takes the first columns and everything after
+  // signature shifts right by however many they occupy — the same trick the
+  // chart plays to keep an axis that starts at 1. Without it the sheet drew
+  // the run-up on top of the engagement.
+  const preSpan = raw
+    .filter(p => p.stage?.preKickoff)
+    .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
+  const placed = raw.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan }));
+  const signatureCol = preSpan > 0 ? preSpan + 1 : null;
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // Same resolver the on-screen visual uses, so the sheet's columns are the
   // visual's columns — a declared date range drives both.
@@ -339,17 +380,15 @@ function writePhasedSheet(wb, ws, template) {
     );
   }
 
-  // With no phases set, every band borrows its own step's name — so a Step
-  // column would just repeat column A down the sheet. Drop it and let Stages
-  // carry the names. Once phases exist the two say different things (the band
-  // vs the step inside it) and both are worth the width.
-  const anyPhase = stages.some(st => String(st?.phase || '').trim());
-  const LEAD = anyPhase ? 3 : 2;  // Stages [| Step] | Workstream
+  // Two lead columns, matching the chart: every step names itself in the
+  // left one, grouped or not, because a group now announces itself in a
+  // heading row of its own rather than in a column merged down the side of
+  // its steps.
+  const LEAD = 2;                 // Stages | Workstream
   const DESC = LEAD + NW + 1;     // Description, past the right of the grid
   const NCOLS = DESC;
-  ws.getColumn(1).width = anyPhase ? 32 : 46;
-  ws.getColumn(2).width = anyPhase ? 46 : 20;
-  if (anyPhase) ws.getColumn(3).width = 20;
+  ws.getColumn(1).width = 46;
+  ws.getColumn(2).width = 20;
   // A month column has to hold "Aug 2026", which a week column never does.
   const gridColChars = weekly ? WEEK_COL_CHARS : MONTH_COL_CHARS;
   for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = gridColChars;
@@ -361,7 +400,7 @@ function writePhasedSheet(wb, ws, template) {
   // month band, with the week ticks on the row below it.
   const headRow = 3;
   const weekRow = headRow + 1;
-  (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
+  ['Stages', 'Workstream'].forEach((label, i) => {
     // The lead columns span both header rows, except the last one — the
     // Workstream column keeps its second row free for the caption that names
     // the week numbers. With no week row there's no caption, so it spans too.
@@ -411,118 +450,188 @@ function writePhasedSheet(wb, ws, template) {
   ws.getRow(headRow).height = 22;
   ws.getRow(weekRow).height = 14;
 
-  // One row per step; phase names merge down column A over their band.
-  let r = weekRow + 1;
-  const bandStart = r;
-  let runPhase = null, runFrom = r;
-  const closeBand = (toRow) => {
-    if (runFrom <= toRow) {
-      if (toRow > runFrom) ws.mergeCells(runFrom, 1, toRow, 1);
-      const cell = ws.getCell(runFrom, 1);
-      cell.font = { name: FONT, bold: true, size: 11, color: { argb: INK } };
-      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-      // Keep the light box, darken only the rule that separates bands.
-      cell.border = { ...BOXED, ...(cell.border || {}), top: { style: 'thin', color: { argb: 'FF9AA5B1' } } };
-    }
-  };
-
   // Steps the window leaves out aren't written at all — the same rule the
   // chart follows, so the sheet and the graphic show the same work. The
   // Timelines page is where the user is told what was left out.
   const hidden = new Set(stagesOutsideWindow(template, { baseMonth, mode, monthCount }));
 
-  stages.forEach((stage, i) => {
-    if (hidden.has(stage)) return;
-    const pos = placed[i];
-    const phase = String(stage.phase || '').trim();
-    // Same grouping rule as the graphic: a step with no phase stands alone
-    // and borrows its own name, so column A is never blank.
-    const bandLabel = phase || stage.name || 'Untitled stage';
-    const sameBand = phase && phase === runPhase;
-    if (!sameBand) {
-      if (r > bandStart) closeBand(r - 1);
-      runPhase = phase || null;
-      runFrom = r;
-      ws.getCell(r, 1).value = bandLabel;
-    }
+  // The bands, in plan order, from the same grouper the chart and the
+  // Services popup read — so all three agree where one group ends and the
+  // next begins, and a group is the same colour in every one of them.
+  const groups = groupStagesByPhase(stages, template?.phaseColors)
+    .map(g => ({ ...g, steps: g.steps.filter(st => !hidden.has(st.stage)) }))
+    .filter(g => g.steps.length > 0);
 
-    if (anyPhase) {
-      const stepCell = ws.getCell(r, 2);
-      stepCell.value = stage.name || 'Untitled stage';
-      stepCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-      stepCell.alignment = { vertical: 'middle', indent: 1 };
-    }
+  let r = weekRow + 1;
+  // Cells whose border says something the grid pass must not paint over:
+  // the workstream cap at a bar's leading edge, and the signature rule.
+  // Applied after applyGridBorders, which merges a thin box into every cell.
+  const marks = [];
+  // Rows that are one solid bar rather than a run of cells — see clearRowRules.
+  const headingRows = [];
+  const gridColOf = (month) => LEAD + (monthFirst.get(month) ?? 1);
 
-    const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
-    const wsCell = ws.getCell(r, LEAD);
-    wsCell.value = stage.owner || '';
-    wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
-    wsCell.alignment = { vertical: 'middle', indent: 1 };
-
-    const from = Math.min(pos.month, monthCount);
-    const to = Math.min(pos.month + pos.span - 1, monthCount);
-    let barFrom = monthFirst.get(from) ?? 1;
-    const barTo = monthLast.get(to) ?? NW;
-    // Same rule the chart follows: on a plan that kicks off today, a bar
-    // opening in the current month starts at today's column rather than at
-    // the month's first week. On a monthly axis the month is one column, so
-    // there is no finer place to start and this changes nothing.
-    if (clampBars && !pos.milestone && todayWeekCol && from === todayCol && todayWeekCol > barFrom) {
-      barFrom = Math.min(todayWeekCol, barTo);
-    }
-    // A milestone is a moment: a diamond sitting on its day, exactly as the
-    // chart draws it, rather than a filled block. It goes in as a floating
-    // picture spanning its month's week columns, so it lands on the day
-    // itself rather than snapping to a week boundary — and can be dragged.
-    const frac = pos.milestone ? stageMonthFraction(stage) : null;
-    let milestoneDrawn = false;
-    if (pos.milestone) {
-      const first = monthFirst.get(from) ?? 1;
-      const last = monthLast.get(from) ?? first;
-      const spanCols = [];
-      for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: gridColChars });
-      milestoneDrawn = addMilestoneImage(wb, ws, {
-        cols: spanCols, row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
-      });
-    }
-    // Without a canvas there's no picture, so fall back to the glyph in the
-    // week column the date falls in.
-    const milestoneCol = pos.milestone && !milestoneDrawn
-      ? weekColumnFor(from, frac)
-      : null;
-
-    weekCols.forEach((wcol, wi) => {
-      const gridCol = wi + 1;
-      const cell = ws.getCell(r, LEAD + gridCol);
-      if (wcol.month === todayCol) cell.fill = fill('FFEAF7EE');
-      if (gridCol < barFrom || gridCol > barTo) return;
-      if (pos.milestone) {
-        if (gridCol !== milestoneCol) return;
-        cell.value = `◆${i + 1}`;
-        cell.font = { name: FONT, bold: true, size: 10, color: { argb: color } };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        return;
-      }
-      cell.fill = fill(color);
-      if (gridCol === barFrom) {
-        cell.value = i + 1;
-        cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      }
-    });
-    const descCell = ws.getCell(r, DESC);
-    descCell.value = stage.description || '';
-    descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-    descCell.alignment = { vertical: 'middle', indent: 1 };
-
-    ws.getRow(r).height = 20;
+  // Where the contract is signed: a dashed rule down the whole body at the
+  // head of its column, labelled once above it. The chart draws the same
+  // divide; without it the sheet's run-up columns are just months.
+  if (signatureCol && signatureCol <= monthCount) {
+    const label = String(template?.signatureLabel || '').trim() || 'Contract signature';
+    const cell = ws.getCell(r, gridColOf(signatureCol));
+    cell.value = label.toUpperCase();
+    cell.font = { name: FONT, bold: true, size: 8, color: { argb: INK } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.getRow(r).height = 13;
     r += 1;
+  }
+
+  groups.forEach((group) => {
+    const groupColor = group.phase ? group.color : null;
+    // A group announces itself in a bar of its own colour running the full
+    // width, name in white — the heading over the rows beneath it, exactly
+    // as the chart draws it. Its steps then read as ordinary rows.
+    if (groupColor) {
+      writeHeadingRow(ws, r, NCOLS, LEAD, {
+        label: group.phase,
+        fill: argb(groupColor),
+        color: 'FFFFFFFF',
+        size: 11,
+      });
+      headingRows.push(r);
+      ws.getRow(r).height = 20;
+      r += 1;
+    }
+    // The wash the chart lays under a group's rows, so a band reads as one
+    // block even where its steps are far apart. Faint: the bars and the
+    // today column are drawn over it and have to stay the stronger colour.
+    const wash = groupColor ? argb(tint(groupColor, 0.93)) : null;
+
+    subRuns(group.steps).forEach((run) => {
+      // A sub-heading is subordinate to the band's own header: its colour on
+      // a wash of it rather than white on solid, with a rule down its left
+      // edge, so the two levels don't compete for the same weight.
+      if (run.sub) {
+        const c = run.color || '#475569';
+        // The chart puts a rule of the group's colour down the left edge of
+        // this bar; here the block's own frame owns column A's left edge, so
+        // the wash and the coloured name carry the level on their own.
+        writeHeadingRow(ws, r, NCOLS, LEAD, {
+          label: run.sub,
+          fill: argb(tint(c, 0.84)),
+          color: argb(c),
+          size: 10,
+        });
+        headingRows.push(r);
+        ws.getRow(r).height = 17;
+        r += 1;
+      }
+
+      run.steps.forEach(({ stage, index: i }) => {
+        const pos = placed[i];
+        const nameCell = ws.getCell(r, 1);
+        nameCell.value = stage.name || 'Untitled stage';
+        nameCell.font = { name: FONT, size: 10, color: { argb: INK } };
+        nameCell.alignment = { vertical: 'middle', indent: 1, wrapText: true };
+        if (wash) nameCell.fill = fill(wash);
+
+        const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
+        const wsCell = ws.getCell(r, LEAD);
+        wsCell.value = stage.owner || '';
+        wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
+        wsCell.alignment = { vertical: 'middle', indent: 1 };
+        if (wash) wsCell.fill = fill(wash);
+
+        const from = Math.min(pos.month, monthCount);
+        const to = Math.min(pos.month + pos.span - 1, monthCount);
+        let barFrom = monthFirst.get(from) ?? 1;
+        const barTo = monthLast.get(to) ?? NW;
+        // Same rule the chart follows: on a plan that kicks off today, a bar
+        // opening in the current month starts at today's column rather than at
+        // the month's first week. On a monthly axis the month is one column, so
+        // there is no finer place to start and this changes nothing.
+        if (clampBars && !pos.milestone && todayWeekCol && from === todayCol && todayWeekCol > barFrom) {
+          barFrom = Math.min(todayWeekCol, barTo);
+        }
+        // In a group the bar takes the group's colour washed out, with the
+        // step number written in the full-strength version — the chart's
+        // arrangement, so a printed sheet and a pasted chart read alike.
+        const barFill = groupColor ? argb(tint(groupColor, 0.78)) : color;
+        const numberColor = groupColor ? argb(groupColor) : 'FFFFFFFF';
+        // A milestone is a moment: a diamond sitting on its day, exactly as the
+        // chart draws it, rather than a filled block. It goes in as a floating
+        // picture spanning its month's week columns, so it lands on the day
+        // itself rather than snapping to a week boundary — and can be dragged.
+        const frac = pos.milestone ? stageMonthFraction(stage) : null;
+        let milestoneDrawn = false;
+        if (pos.milestone) {
+          const first = monthFirst.get(from) ?? 1;
+          const last = monthLast.get(from) ?? first;
+          const spanCols = [];
+          for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: gridColChars });
+          milestoneDrawn = addMilestoneImage(wb, ws, {
+            cols: spanCols, row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
+          });
+        }
+        // Without a canvas there's no picture, so fall back to the glyph in the
+        // week column the date falls in.
+        const milestoneCol = pos.milestone && !milestoneDrawn
+          ? weekColumnFor(from, frac)
+          : null;
+
+        weekCols.forEach((wcol, wi) => {
+          const gridCol = wi + 1;
+          const cell = ws.getCell(r, LEAD + gridCol);
+          if (wcol.month === todayCol) cell.fill = fill('FFEAF7EE');
+          else if (wash) cell.fill = fill(wash);
+          if (gridCol < barFrom || gridCol > barTo) return;
+          if (pos.milestone) {
+            if (gridCol !== milestoneCol) return;
+            cell.value = `◆${i + 1}`;
+            cell.font = { name: FONT, bold: true, size: 10, color: { argb: color } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            return;
+          }
+          cell.fill = fill(barFill);
+          if (gridCol === barFrom) {
+            cell.value = i + 1;
+            cell.font = { name: FONT, bold: true, size: 10, color: { argb: numberColor } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            // Who owns the step, kept on a group-coloured bar as a rule at its
+            // leading edge — the chart's cap. Without it the workstream would
+            // be readable only on ungrouped rows, and the legend would name a
+            // distinction the sheet had stopped drawing.
+            if (groupColor) {
+              marks.push({ row: r, col: LEAD + gridCol, border: { left: { style: 'thick', color: { argb: color } } } });
+            }
+          }
+        });
+        const descCell = ws.getCell(r, DESC);
+        descCell.value = stage.description || '';
+        descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
+        descCell.alignment = { vertical: 'middle', indent: 1 };
+        if (wash) descCell.fill = fill(wash);
+
+        ws.getRow(r).height = 20;
+        r += 1;
+      });
+    });
   });
   const lastStageRow = r - 1;
-  // Borders before the merges: a merged range draws its master cell's box, so
-  // the band still gets an outline.
   applyGridBorders(ws, headRow, 1, lastStageRow, NCOLS);
-  closeBand(lastStageRow);
+  for (const row of headingRows) clearRowRules(ws, row, LEAD + 1, NCOLS);
+  // The signature rule runs the height of the body, at the head of its
+  // column — drawn after the grid so the thin box doesn't overwrite it.
+  if (signatureCol && signatureCol <= monthCount) {
+    for (let row = headRow; row <= lastStageRow; row += 1) {
+      marks.push({
+        row, col: gridColOf(signatureCol),
+        border: { left: { style: 'mediumDashed', color: { argb: INK } } },
+      });
+    }
+  }
+  for (const m of marks) {
+    const cell = ws.getCell(m.row, m.col);
+    cell.border = { ...(cell.border || {}), ...m.border };
+  }
 
   ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: weekRow, showGridLines: false }];
 
