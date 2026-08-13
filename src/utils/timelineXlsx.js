@@ -500,10 +500,13 @@ function writePhasedSheet(wb, ws, template) {
       ws.getRow(r).height = 20;
       r += 1;
     }
-    // The wash the chart lays under a group's rows, so a band reads as one
-    // block even where its steps are far apart. Faint: the bars and the
-    // today column are drawn over it and have to stay the stronger colour.
-    const wash = groupColor ? argb(tint(groupColor, 0.93)) : null;
+    // No wash under a group's rows here, and no group colour on its bars.
+    // The chart can afford both because it's read as a picture; a sheet is
+    // read as a grid, and tinting every row of a group turned the whole thing
+    // pastel — the bars stopped being the thing your eye lands on, and a run
+    // of pale cells beside a pale background stopped reading as a bar at all.
+    // The heading rows above carry the grouping on their own, which leaves the
+    // cells free to say the one thing only they say: who owns the step.
 
     subRuns(group.steps).forEach((run) => {
       // A sub-heading is subordinate to the band's own header: its colour on
@@ -531,14 +534,12 @@ function writePhasedSheet(wb, ws, template) {
         nameCell.value = stage.name || 'Untitled stage';
         nameCell.font = { name: FONT, size: 10, color: { argb: INK } };
         nameCell.alignment = { vertical: 'middle', indent: 1, wrapText: true };
-        if (wash) nameCell.fill = fill(wash);
 
         const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
         const wsCell = ws.getCell(r, LEAD);
         wsCell.value = stage.owner || '';
         wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
         wsCell.alignment = { vertical: 'middle', indent: 1 };
-        if (wash) wsCell.fill = fill(wash);
 
         const from = Math.min(pos.month, monthCount);
         const to = Math.min(pos.month + pos.span - 1, monthCount);
@@ -551,11 +552,12 @@ function writePhasedSheet(wb, ws, template) {
         if (clampBars && !pos.milestone && todayWeekCol && from === todayCol && todayWeekCol > barFrom) {
           barFrom = Math.min(todayWeekCol, barTo);
         }
-        // In a group the bar takes the group's colour washed out, with the
-        // step number written in the full-strength version — the chart's
-        // arrangement, so a printed sheet and a pasted chart read alike.
-        const barFill = groupColor ? argb(tint(groupColor, 0.78)) : color;
-        const numberColor = groupColor ? argb(groupColor) : 'FFFFFFFF';
+        // Solid workstream colour with the number in white, in a group or
+        // out of one: green for Schneider Electric, blue for the client. It's
+        // the only place the sheet says who owns a step, and it's what makes
+        // a bar read as a bar against the grid.
+        const barFill = color;
+        const numberColor = 'FFFFFFFF';
         // A milestone is a moment: a diamond sitting on its day, exactly as the
         // chart draws it, rather than a filled block. It goes in as a floating
         // picture spanning its month's week columns, so it lands on the day
@@ -581,7 +583,6 @@ function writePhasedSheet(wb, ws, template) {
           const gridCol = wi + 1;
           const cell = ws.getCell(r, LEAD + gridCol);
           if (wcol.month === todayCol) cell.fill = fill('FFEAF7EE');
-          else if (wash) cell.fill = fill(wash);
           if (gridCol < barFrom || gridCol > barTo) return;
           if (pos.milestone) {
             if (gridCol !== milestoneCol) return;
@@ -608,7 +609,6 @@ function writePhasedSheet(wb, ws, template) {
         descCell.value = stage.description || '';
         descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
         descCell.alignment = { vertical: 'middle', indent: 1 };
-        if (wash) descCell.fill = fill(wash);
 
         ws.getRow(r).height = 20;
         r += 1;
