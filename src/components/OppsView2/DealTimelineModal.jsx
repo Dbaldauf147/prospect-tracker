@@ -34,7 +34,16 @@ const SOURCE_NOTE = {
   unknown: () => 'No timeline and no Rollout Time — shown as one month as a placeholder',
 };
 
-export function DealTimelineModal({ account = '', scopeServices = [], settings, serviceOverrides, planKey = '', onClose }) {
+export function DealTimelineModal({
+  account = '', scopeServices = [], settings, serviceOverrides, planKey = '',
+  // The deal's Target Signature Date and how to change it. The date belongs
+  // to the opp, not to this popup: it's a date being negotiated, it has to
+  // survive the popup closing, and the Notes and Update Status screens show
+  // it too. Blank means nobody has set one — the plan then reads as "if we
+  // signed today" without writing that assumption down as a decision.
+  signDate = '', onChangeSignDate,
+  onClose,
+}) {
   const [format, setFormat] = useState('phased');
   // The deal's own services only, by default. A deal whose services depend
   // on half the catalog draws mostly bands nobody sold, and the question
@@ -68,15 +77,15 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
   }
 
   // The agreement is what starts the engagement, so the date it's signed is
-  // the plan's month 1. Defaults to today — "if we signed this now" is the
-  // question the popup opened with — and moving it forward re-dates the whole
-  // plan against a signature target you're actually negotiating towards.
+  // the plan's month 1. With none set the plan reads as "if we signed this
+  // now"; setting one re-dates the whole plan against the target you're
+  // actually negotiating towards, and keeps it there.
   const todayISO = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
-  const [signDate, setSignDate] = useState(todayISO);
-  // A cleared date box falls back to today rather than drawing nothing.
+  const setSignDate = (next) => onChangeSignDate?.(next);
+  // An unset (or cleared) date falls back to today rather than drawing nothing.
   const kickoffDate = signDate || todayISO;
   const anchorMonth = useMemo(() => {
     const anchor = kickoffDate.slice(0, 7);
@@ -190,10 +199,10 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             {/* First control in the row because it re-dates everything to its
                 right: the whole plan hangs off when the paperwork lands. */}
             <label
-              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it. Defaults to today."
+              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it — and it's saved on the opp, so it's here next time and on the Notes and Update Status popups. Unset plans from today."
               style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}
             >
-              Signed
+              Target signature
               <input
                 type="date"
                 value={signDate}
@@ -201,11 +210,11 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
                 style={{ ...btnStyle, padding: '0.3rem 0.4rem', color: 'var(--color-text)' }}
               />
             </label>
-            {kickoffDate !== todayISO && (
+            {signDate && (
               <button
                 type="button"
-                onClick={() => setSignDate(todayISO)}
-                title="Back to planning from today"
+                onClick={() => setSignDate('')}
+                title="Clear the target date and plan from today again"
                 style={{ ...btnStyle, padding: '0.35rem 0.5rem' }}
               >Today</button>
             )}
