@@ -208,6 +208,54 @@ export function timelineBaseMonth(stages) {
   return ords.length ? Math.min(...ords) : null;
 }
 
+// How long a step lasts, said in the unit that suits it. A survey is a
+// fortnight, a rollout is four months, and writing both in months means
+// writing the short one as a fraction nobody types.
+//
+// Everything downstream of getStageMonths — the SVG bars, the Excel grid, the
+// deal composer's month arithmetic — places steps in whole month columns, so
+// a duration is converted to months and rounded UP: a step of any length
+// occupies at least the column it starts in. Two weeks and three weeks
+// therefore draw the same width; the chart's grain is the month, and the
+// duration is what the step actually says it is.
+// A relative month has no calendar to split on, so the week axis gives it
+// four even weeks; the duration conversion below divides by the same four,
+// which is what keeps a four-week step exactly one column wide.
+export const WEEKS_PER_RELATIVE_MONTH = 4;
+
+export const STEP_DURATION_UNITS = ['days', 'weeks', 'months'];
+export const DEFAULT_DURATION_UNIT = 'weeks';
+export const STEP_DURATION_UNIT_LABELS = { days: 'Days', weeks: 'Weeks', months: 'Months' };
+
+// Weeks convert at WEEKS_PER_RELATIVE_MONTH, the same four-weeks-to-a-month
+// the week axis is drawn with, so a four-week step is exactly one column
+// rather than one-and-a-bit. Days follow at seven to the week for the same
+// reason — the arithmetic a reader can do off the axis is the arithmetic
+// that placed the bar.
+const MONTHS_PER_UNIT = {
+  months: 1,
+  weeks: 1 / WEEKS_PER_RELATIVE_MONTH,
+  days: 1 / (WEEKS_PER_RELATIVE_MONTH * 7),
+};
+
+// The whole months a { duration, durationUnit } occupies, or null when the
+// stage doesn't carry one.
+export function durationToMonths(duration, unit) {
+  const n = Number(duration);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const per = MONTHS_PER_UNIT[unit] ?? MONTHS_PER_UNIT[DEFAULT_DURATION_UNIT];
+  return Math.max(1, Math.ceil(n * per));
+}
+
+// The duration written out — "3 weeks", "1 month" — for the places that show
+// it outside the editor that set it.
+export function formatStepDuration(duration, unit) {
+  const n = Number(duration);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const noun = STEP_DURATION_UNITS.includes(unit) ? unit : DEFAULT_DURATION_UNIT;
+  return `${n} ${n === 1 ? noun.replace(/s$/, '') : noun}`;
+}
+
 // { month, span } for a stage, both 1-based counts of whole months.
 //
 // `mode` decides what drives the position. 'dates' (the standard) measures the
@@ -221,6 +269,15 @@ export function getStageMonths(stage, baseMonth, mode = 'months') {
   const explicitSpan = useTyped ? Number(stage?.months) : NaN;
   let month = Number.isFinite(explicitStart) && explicitStart >= 1 ? Math.floor(explicitStart) : null;
   let span = Number.isFinite(explicitSpan) && explicitSpan >= 1 ? Math.floor(explicitSpan) : null;
+
+  // How long the step was said to last, in the unit it was said in. Ranks
+  // under a typed Span — that cell is someone naming month columns directly —
+  // and over anything read off the dates, because a duration is a statement
+  // about length while a timing label like "Aug 2026" is only a statement
+  // about when. Applies in both positioning modes: a step can be placed by
+  // its date and still be two weeks long.
+  const durationSpan = durationToMonths(stage?.duration, stage?.durationUnit);
+  if (span == null && durationSpan != null) span = durationSpan;
 
   if (month == null || span == null) {
     const range = getStageRange(stage);
@@ -470,7 +527,7 @@ export function describeMonthWindow(anchor, monthCount) {
 // A relative month ("month 1, month 2…") has no calendar to split on, so it
 // takes four even weeks numbered straight through the timeline: week 6 of a
 // 12-month plan reads off the axis without counting.
-export const WEEKS_PER_RELATIVE_MONTH = 4;
+// (declared above, beside the duration conversion that also reads it)
 
 export function timelineWeekTicks(anchor, monthCount, calendar, weekly = true) {
   const out = [];

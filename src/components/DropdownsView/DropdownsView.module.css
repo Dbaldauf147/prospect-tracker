@@ -1717,3 +1717,57 @@
   color: var(--color-text-muted);
   border-color: transparent;
 }
+
+/* How long a step lasts, and in what unit. Its own line under the step's
+   owner / timing / waits-on row: the number and the unit belong together, and
+   the conversion note beside them needs the width. */
+.detailStepDuration {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  padding-left: calc(20px + 0.3rem);
+}
+
+.detailStepDurationLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.detailStepDurationNum {
+  width: 62px;
+  box-sizing: border-box;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface, #fff);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  font-family: inherit;
+}
+
+.detailStepDurationUnit {
+  composes: detailStepDurationNum;
+  width: auto;
+  min-width: 78px;
+  cursor: pointer;
+}
+
+.detailStepDurationNum:focus,
+.detailStepDurationUnit:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* What the duration becomes once it's placed. The chart's grain is the month,
+   so a step shorter than one still fills the column it starts in — said here
+   rather than left to be inferred from a bar that didn't change width. */
+.detailStepDurationHint {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  cursor: help;
+}
