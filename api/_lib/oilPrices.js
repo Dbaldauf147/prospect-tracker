@@ -16,7 +16,14 @@
 // Whichever answers first wins, and the email names it: a number worth
 // forwarding has to say where it came from.
 
+import { renderLineChartPng } from './pngChart.js';
+
 const WINDOW_DAYS = 90;
+
+// The daily line chart is attached to the message and referenced by this
+// Content-ID, so the image travels with the mail instead of being fetched
+// from a host that would then know when the reader opened it.
+const CHART_CID = 'oil-90d-chart';
 
 // ---- sources ----------------------------------------------------------
 
@@ -246,31 +253,39 @@ function changeCell(label, change) {
   </td>`;
 }
 
-// A column chart made of table cells with a coloured block sized in
-// pixels — no images, no SVG, no CSS a mail client can decide not to
-// run. Bars are scaled against a floor a little under the window's low
-// so the movement is visible rather than 13 near-identical columns.
-function barChartHtml(weeks) {
-  if (weeks.length < 2) return '';
-  const values = weeks.map(w => w.close);
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const floor = min - (max - min || max * 0.02) * 0.35;
-  const span = max - floor || 1;
-  const MAX_H = 110;
-  const cells = weeks.map((w, i) => {
-    const h = Math.max(3, Math.round(((w.close - floor) / span) * MAX_H));
-    const last = i === weeks.length - 1;
-    return `<td style="padding:0 3px;vertical-align:bottom;text-align:center">
-      <div style="font-size:10px;color:${last ? '#0F172A' : '#94A3B8'};font-weight:${last ? '700' : '400'};padding-bottom:3px">${esc(w.close.toFixed(0))}</div>
-      <div style="height:${h}px;background:${last ? '#009530' : '#BBF7D0'};border-radius:2px 2px 0 0;font-size:1px;line-height:1px">&nbsp;</div>
-      <div style="font-size:9px;color:#94A3B8;padding-top:3px">${esc(fmtDay(w.weekOf))}</div>
-    </td>`;
-  }).join('');
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:6px 0 2px">
-    <tr>${cells}</tr>
+// The daily line chart: 90 closes drawn as an image (see pngChart.js for
+// why an image and not markup), with its axis labels as real text around
+// the plot so the scale survives a client that blocks pictures. `src` is
+// a cid: reference in a sent mail and a data: URI in the ?dry=1 preview,
+// which no mail client ever sees.
+function lineChartHtml({ chart, stats, src, windowDays }) {
+  if (!chart) return '';
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 4px">
+    <tr>
+      <td style="width:46px;padding:0 6px 0 0;vertical-align:top">
+        <div style="height:${chart.height}px;position:relative">
+          <div style="font-size:10px;color:#94A3B8;text-align:right">${esc(money(chart.axisMax))}</div>
+        </div>
+      </td>
+      <td style="padding:0">
+        <img src="${esc(src)}" width="${chart.width}" height="${chart.height}"
+             alt="Daily closes over the last ${windowDays} days: ${esc(money(stats.low.close))} to ${esc(money(stats.high.close))}, latest ${esc(money(stats.latest.close))}"
+             style="display:block;width:${chart.width}px;height:${chart.height}px;border:0;outline:none;text-decoration:none">
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0 6px 0 0;text-align:right;font-size:10px;color:#94A3B8;vertical-align:top">${esc(money(chart.axisMin))}</td>
+      <td style="padding:2px 0 0">
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">
+          <tr>
+            <td style="font-size:10px;color:#94A3B8;text-align:left">${esc(fmtDay(stats.first.date))}</td>
+            <td style="font-size:10px;color:#94A3B8;text-align:right">${esc(fmtDay(stats.latest.date))}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
   </table>
-  <div style="font-size:11px;color:#94A3B8;margin:0 0 18px">Last close of each week. Bars are scaled to the window, not to $0.</div>`;
+  <div style="font-size:11px;color:#94A3B8;margin:0 0 18px">Daily closes, ${esc(stats.days)} trading days. The axis is scaled to the window, not to $0.</div>`;
 }
 
 function weeklyTableHtml(weeks) {
@@ -303,7 +318,7 @@ export function oilEmailSubject(stats, label) {
   return `${label}: ${money(stats.latest.close)}${move} — 90-day recap`;
 }
 
-export function oilEmailHtml({ stats, weeks, source, label, windowDays }) {
+export function oilEmailHtml({ stats, weeks, source, label, windowDays, chart, chartSrc }) {
   const wk = stats.changeWeek;
   const headlineColor = !wk ? FLAT : wk.abs > 0 ? UP : wk.abs < 0 ? DOWN : FLAT;
   return `
@@ -330,7 +345,7 @@ export function oilEmailHtml({ stats, weeks, source, label, windowDays }) {
       </tr>
     </table>
 
-    ${barChartHtml(weeks)}
+    ${lineChartHtml({ chart, stats, src: chartSrc, windowDays })}
     ${weeklyTableHtml(weeks)}
 
     <p style="font-size:11px;color:#94A3B8;margin:16px 0 0">
@@ -339,13 +354,39 @@ export function oilEmailHtml({ stats, weeks, source, label, windowDays }) {
   </div>`;
 }
 
-/** The whole email, from a fetched series. */
-export function buildOilEmail(series, { now = Date.now() } = {}) {
+/**
+ * The whole email, from a fetched series.
+ *
+ * `inlineImage: true` embeds the chart as a data: URI instead of an
+ * attachment, for the ?dry=1 preview that renders in a browser rather
+ * than a mail client. Returns `attachments` ready for the mailer, empty
+ * when the chart couldn't be drawn — a chart that fails to render must
+ * cost the email its picture, not its numbers.
+ */
+export function buildOilEmail(series, { now = Date.now(), inlineImage = false } = {}) {
   const stats = summarizeOilSeries(series.points, { now });
   const weeks = weeklyCloses(series.points);
+  const windowDays = series.windowDays || WINDOW_DAYS;
+
+  let chart = null;
+  let chartError = null;
+  try {
+    chart = renderLineChartPng({ values: series.points.map(p => p.close) });
+  } catch (err) {
+    chartError = String(err?.message || err);
+  }
+
+  const chartSrc = !chart ? ''
+    : inlineImage ? `data:image/png;base64,${chart.buffer.toString('base64')}`
+    : `cid:${CHART_CID}`;
+
   return {
     subject: oilEmailSubject(stats, series.label),
-    html: oilEmailHtml({ stats, weeks, source: series.source, label: series.label, windowDays: series.windowDays || WINDOW_DAYS }),
+    html: oilEmailHtml({ stats, weeks, source: series.source, label: series.label, windowDays, chart, chartSrc }),
+    attachments: chart && !inlineImage
+      ? [{ filename: 'oil-90-day.png', content: chart.buffer, cid: CHART_CID, contentType: 'image/png' }]
+      : [],
+    chartError,
     stats,
     weeks,
   };

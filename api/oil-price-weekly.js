@@ -55,7 +55,9 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: String(err?.message || err) });
   }
 
-  const { subject, html, stats } = buildOilEmail(series);
+  // The preview embeds the chart as a data: URI so it renders in a
+  // browser; the sent mail attaches it and references it by cid.
+  const { subject, html, attachments, chartError, stats } = buildOilEmail(series, { inlineImage: dry });
 
   // A dry run renders the mail and returns it, so the thing can be read
   // before anyone's inbox sees it.
@@ -65,7 +67,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    await sendEmail({ to, subject, html });
+    await sendEmail({ to, subject, html, attachments: attachments.length ? attachments : undefined });
   } catch (err) {
     return res.status(500).json({ error: `Send failed: ${String(err?.message || err)}` });
   }
@@ -76,6 +78,9 @@ export default async function handler(req, res) {
     subject,
     source: series.source,
     attempts: series.attempts,
+    // Present only when the chart failed to draw: the mail still went,
+    // without its picture, and this says why.
+    ...(chartError ? { chartError } : {}),
     days: stats.days,
     latest: { date: stats.latest.date, close: stats.latest.close },
   });
