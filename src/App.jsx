@@ -467,7 +467,7 @@ function App() {
               updateSettingsPath={updateSettingsPath}
             />
           ) : view === 'clients' ? (
-            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} user={user} targetAccountsData={targetAccountsData} addProspect={addProspect} updateProspect={updateProspect} />
           ) : view === 'prospecting' ? (
             <ProspectingView
               onNavigate={setView}

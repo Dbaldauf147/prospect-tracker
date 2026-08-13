@@ -5,6 +5,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
+import { ContractServicesView } from './ContractServicesView';
 import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
@@ -590,7 +591,7 @@ const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 function readSavedSubtab() {
   try {
     const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
-    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions' || s === 'postsale') return s;
+    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions' || s === 'postsale' || s === 'contractservices') return s;
   } catch {}
   return 'clients';
 }
@@ -607,7 +608,7 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect, updateProspect }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
@@ -1260,6 +1261,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
         { key: 'postsale', label: 'Post-Sale Follow-Up' },
+        { key: 'contractservices', label: 'Contract Services' },
       ].map(t => {
         const active = subtab === t.key;
         return (
@@ -1310,6 +1312,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
         <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
+      </div>
+    );
+  }
+
+  if (subtab === 'contractservices') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <ContractServicesView prospects={prospects} settings={settings} updateProspect={updateProspect} />
       </div>
     );
   }

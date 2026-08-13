@@ -1,0 +1,434 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { SERVICE_STATUSES } from '../../data/enums';
+import { buildServiceCatalog } from '../../utils/serviceCoverage';
+import { mergeExtractedServices } from '../../utils/contractServices';
+import { apiFetch } from '../../utils/apiFetch';
+
+// Vercel caps a serverless request body at 4.5 MB and base64 adds a third,
+// so this is the largest PDF that can be posted whole for Claude to read
+// directly. Past it we fall back to whatever text the browser can pull out.
+const MAX_PDF_BYTES = 3_100_000;
+
+// One file's extraction plus the reviewer's overrides survive a trip to
+// another subtab (this component unmounts when you leave it) but not a
+// different browser. Only the analysis is kept — never the file bytes.
+const STORAGE_KEY = 'clients-view:contract-services';
+
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch { return null; }
+}
+function save(state) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota — the analysis is re-runnable */ }
+}
+
+function extOf(name) {
+  const m = /\.([A-Za-z0-9]+)$/.exec(String(name || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+function fmtBytes(n) {
+  if (!Number.isFinite(n)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Strip the "data:...;base64," prefix FileReader puts on the front. Reading
+// as a data URL (rather than btoa over an ArrayBuffer) keeps a multi-megabyte
+// PDF off the JS stack.
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const s = String(reader.result || '');
+      const comma = s.indexOf(',');
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Turn a picked file into the payload /api/contract-services wants.
+ * A PDF small enough to post goes over whole — Claude reading the document
+ * itself is what copes with scanned pages and service-matrix exhibits.
+ * Everything else is reduced to text in the browser first.
+ */
+async function buildPayload(file) {
+  const ext = extOf(file.name);
+  if (ext === 'pdf') {
+    if (file.size <= MAX_PDF_BYTES) {
+      return { fileName: file.name, mediaType: 'application/pdf', dataBase64: await toBase64(file), readAs: 'pdf' };
+    }
+    throw new Error(`That PDF is ${fmtBytes(file.size)} — over the ${fmtBytes(MAX_PDF_BYTES)} upload limit. Split it, or save the pages that carry the scope as a smaller PDF.`);
+  }
+  if (ext === 'docx') {
+    const { default: mammoth } = await import('mammoth/mammoth.browser');
+    const buf = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer: buf });
+    const text = String(result?.value || '').trim();
+    if (!text) throw new Error('No readable text in that .docx.');
+    return { fileName: file.name, text, readAs: 'text' };
+  }
+  if (ext === 'doc') {
+    throw new Error('Legacy .doc isn’t readable here — save it as .docx or PDF first.');
+  }
+  const text = (await file.text()).trim();
+  if (!text) throw new Error('That file is empty.');
+  return { fileName: file.name, text, readAs: 'text' };
+}
+
+const CONFIDENCE_STYLE = {
+  high: { bg: '#DCFCE7', color: '#166534' },
+  medium: { bg: '#FEF3C7', color: '#92400E' },
+  low: { bg: '#FEE2E2', color: '#B91C1C' },
+};
+
+function pill(text, palette, title) {
+  return (
+    <span title={title} style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
+      {text}
+    </span>
+  );
+}
+
+/**
+ * "Contract Services" subtab: upload a contract, have Claude transcribe the
+ * services it puts in scope, map them onto the tracked service catalogue, and
+ * — for the rows a human ticks — write them onto the client's Services
+ * Explored. Nothing reaches a client record without an explicit Apply.
+ */
+export function ContractServicesView({ prospects = [], settings = {}, updateProspect }) {
+  const saved = useRef(loadSaved()).current;
+  const [clientId, setClientId] = useState(() => saved?.clientId || '');
+  // [{ fileName, readAs, status, error, result }] in the order analyzed —
+  // oldest first, which is what makes an amendment's removals win.
+  const [files, setFiles] = useState(() => (Array.isArray(saved?.files) ? saved.files : []));
+  const [overrides, setOverrides] = useState(() => (saved?.overrides && typeof saved.overrides === 'object' ? saved.overrides : {}));
+  const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [applyNote, setApplyNote] = useState('');
+  const inputRef = useRef(null);
+
+  const catalog = useMemo(() => buildServiceCatalog(settings), [settings]);
+
+  const clients = useMemo(() => {
+    const wanted = new Set(['client', 'old client']);
+    return (prospects || [])
+      .filter(p => wanted.has(String(p?.status || '').trim().toLowerCase()))
+      .sort((a, b) => String(a.company || '').localeCompare(String(b.company || '')));
+  }, [prospects]);
+  const client = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
+
+  // Only the analysis is persisted; a re-render that changes nothing still
+  // rewrites the same JSON, which is cheap next to re-running the model.
+  useEffect(() => {
+    save({ clientId, files, overrides });
+  }, [clientId, files, overrides]);
+
+  const done = useMemo(() => files.filter(f => f.status === 'done' && f.result), [files]);
+  const rows = useMemo(() => mergeExtractedServices(done, catalog), [done, catalog]);
+
+  // A row's effective catalogue key / status / tick: the reviewer's override
+  // when there is one, otherwise what the match implies. Removals default to
+  // N/A and start unticked — dropping a service is the call you most want a
+  // human to make deliberately.
+  function rowState(row) {
+    const o = overrides[row.key] || {};
+    const catalogKey = o.catalogKey !== undefined ? o.catalogKey : (row.match?.key || '');
+    const status = o.status !== undefined ? o.status : (row.removed ? 'N/A' : 'Sold');
+    const checked = o.checked !== undefined ? o.checked : (!!catalogKey && !row.removed);
+    return { catalogKey, status, checked };
+  }
+  function setRowState(row, patch) {
+    setOverrides(prev => ({ ...prev, [row.key]: { ...rowState(row), ...patch } }));
+  }
+
+  async function analyze(fileList) {
+    const picked = Array.from(fileList || []);
+    if (!picked.length) return;
+    setBusy(true);
+    setApplyNote('');
+    for (const file of picked) {
+      // Own id rather than array position or filename: entries are patched
+      // asynchronously and the reviewer can remove one mid-run, and two
+      // amendments really can arrive with the same filename.
+      const id = `f${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setFiles(prev => [...prev, { id, fileName: file.name, size: file.size, status: 'reading', error: '', result: null, readAs: '' }]);
+      const mark = (patch) => setFiles(prev => {
+        const i = prev.findIndex(f => f.id === id);
+        if (i < 0) return prev;  // removed while it was running
+        const next = [...prev];
+        next[i] = { ...next[i], ...patch };
+        return next;
+      });
+      try {
+        const payload = await buildPayload(file);
+        mark({ status: 'analyzing', readAs: payload.readAs });
+        const res = await apiFetch('/api/contract-services', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+        mark({ status: 'done', result: data, readAs: data.readAs || payload.readAs });
+      } catch (err) {
+        mark({ status: 'error', error: err?.message || 'Could not read that contract.' });
+      }
+    }
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = '';
+  }
+
+  function removeFile(idx) {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+    setApplyNote('');
+  }
+  function clearAll() {
+    setFiles([]);
+    setOverrides({});
+    setApplyNote('');
+  }
+
+  const selectedRows = rows.filter(r => { const s = rowState(r); return s.checked && s.catalogKey; });
+
+  function applyToClient() {
+    if (!client || !selectedRows.length || typeof updateProspect !== 'function') return;
+    const next = { ...(client.servicesExplored || {}) };
+    for (const row of selectedRows) {
+      const { catalogKey, status } = rowState(row);
+      if (!status || status === '-') delete next[catalogKey];
+      else next[catalogKey] = status;
+    }
+    updateProspect(client.id, { servicesExplored: next });
+    // No trailing period: plenty of company names already end in one ("Acme
+    // Manufacturing Inc.") and the doubled stop reads like a typo.
+    setApplyNote(`Wrote ${selectedRows.length} service${selectedRows.length === 1 ? '' : 's'} to ${client.company}`);
+  }
+
+  const canApply = !!client && selectedRows.length > 0 && typeof updateProspect === 'function';
+  const currentStatuses = client?.servicesExplored || {};
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '1rem 1.25rem 1.5rem' }}>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Contract Services</h2>
+        <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+          Upload a contract and Claude transcribes the services it puts in scope, mapped onto the tracked service
+          catalogue. Review the rows, then apply the ones you want to a client&apos;s <strong>Services Explored</strong>.
+          Nothing is written until you press Apply.
+        </div>
+      </div>
+
+      {/* --- upload ------------------------------------------------------- */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); analyze(e.dataTransfer?.files); }}
+        style={{
+          border: `2px dashed ${dragging ? '#3B82F6' : '#CBD5E1'}`,
+          background: dragging ? '#EFF6FF' : '#F8FAFC',
+          borderRadius: 8,
+          padding: '1rem',
+          textAlign: 'center',
+          marginBottom: '0.75rem',
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept=".pdf,.docx,.txt,.md"
+          onChange={e => analyze(e.target.files)}
+          style={{ display: 'none' }}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+          style={{
+            padding: '0.45rem 0.9rem', borderRadius: 6, border: '1px solid #2563EB',
+            background: busy ? '#93C5FD' : '#2563EB', color: '#fff', fontSize: '0.78rem',
+            fontWeight: 700, cursor: busy ? 'progress' : 'pointer', fontFamily: 'inherit',
+          }}
+        >{busy ? 'Reading…' : 'Choose contract files'}</button>
+        <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 6 }}>
+          …or drop them here. PDF, .docx, .txt — several at once is fine (an agreement plus its amendments).
+          PDFs up to {fmtBytes(MAX_PDF_BYTES)} are read as documents, so scanned contracts work too.
+        </div>
+      </div>
+
+      {files.length > 0 && (
+        <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, marginBottom: '0.75rem', overflow: 'hidden' }}>
+          {files.map((f, i) => (
+            <div key={f.id || `${f.fileName}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.5rem 0.7rem', borderBottom: i === files.length - 1 ? 'none' : '1px solid #F1F5F9', fontSize: '0.72rem' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {f.fileName}
+                  {f.readAs === 'pdf' && <span style={{ marginLeft: 6, fontWeight: 500, color: '#94A3B8' }}>read as PDF</span>}
+                  {f.readAs === 'text' && <span style={{ marginLeft: 6, fontWeight: 500, color: '#94A3B8' }}>read as text</span>}
+                </div>
+                {f.status === 'error' ? (
+                  <div style={{ color: '#B91C1C', marginTop: 2 }}>{f.error}</div>
+                ) : f.status === 'done' ? (
+                  <div style={{ color: '#64748B', marginTop: 2 }}>
+                    {[f.result?.agreementType, f.result?.agreementName, f.result?.clientName].filter(Boolean).join(' · ') || 'No header details stated.'}
+                    {(f.result?.termStart || f.result?.termEnd) && (
+                      <> · term {f.result.termStart || '?'} → {f.result.termEnd || '?'}</>
+                    )}
+                    {f.result?.restatesFullScope && <> · <strong style={{ color: '#92400E' }}>restates full scope</strong></>}
+                    {f.result?.scopeNote && <div style={{ marginTop: 2, fontStyle: 'italic' }}>{f.result.scopeNote}</div>}
+                  </div>
+                ) : (
+                  <div style={{ color: '#2563EB', marginTop: 2 }}>{f.status === 'reading' ? 'Reading the file…' : 'Claude is reading the contract…'}</div>
+                )}
+              </div>
+              <div style={{ color: '#94A3B8', whiteSpace: 'nowrap' }}>{f.status === 'done' ? `${f.result?.services?.length || 0} service${(f.result?.services?.length || 0) === 1 ? '' : 's'}` : fmtBytes(f.size)}</div>
+              <button
+                type="button"
+                onClick={() => removeFile(i)}
+                title="Remove this file from the review"
+                style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: 0, fontFamily: 'inherit' }}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* --- review ------------------------------------------------------- */}
+      {rows.length > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <label style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 700 }}>Apply to client</label>
+            <select
+              value={clientId}
+              onChange={e => { setClientId(e.target.value); setApplyNote(''); }}
+              style={{ padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit', maxWidth: 320 }}
+            >
+              <option value="">— pick a client —</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.company}{String(c.status || '').toLowerCase() === 'old client' ? ' (old client)' : ''}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!canApply}
+              onClick={applyToClient}
+              style={{
+                padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid',
+                borderColor: canApply ? '#15803D' : '#CBD5E1',
+                background: canApply ? '#16A34A' : '#F1F5F9',
+                color: canApply ? '#fff' : '#94A3B8',
+                fontSize: '0.75rem', fontWeight: 700, cursor: canApply ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
+              }}
+              title={client ? '' : 'Pick the client these contracts belong to first.'}
+            >Apply {selectedRows.length} service{selectedRows.length === 1 ? '' : 's'}</button>
+            <button
+              type="button"
+              onClick={clearAll}
+              style={{ padding: '0.4rem 0.7rem', borderRadius: 6, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
+            >Clear</button>
+            {applyNote && <span style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 600 }}>{applyNote}</span>}
+          </div>
+
+          <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
+            {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}.
+            Rows with no catalogue match need one picking before they can be applied.
+          </div>
+
+          <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
+              <thead>
+                <tr style={{ background: '#F1F5F9' }}>
+                  {['', 'Service in the contract', 'Catalogue service', 'Type', 'Status to write', 'Current', 'Evidence'].map((h, i) => (
+                    <th key={i} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(row => {
+                  const st = rowState(row);
+                  const current = st.catalogKey ? (currentStatuses[st.catalogKey] || '') : '';
+                  return (
+                    <tr key={row.key} style={{ borderBottom: '1px solid #F1F5F9', background: row.removed ? '#FEF2F2' : '#fff' }}>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
+                        <input
+                          type="checkbox"
+                          checked={st.checked}
+                          disabled={!st.catalogKey}
+                          onChange={e => setRowState(row, { checked: e.target.checked })}
+                          title={st.catalogKey ? '' : 'Pick a catalogue service first.'}
+                        />
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', minWidth: 200 }}>
+                        <div style={{ fontWeight: 600, color: '#1E293B' }}>{row.name}</div>
+                        <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
+                          {row.removed && pill('removed', { bg: '#FEE2E2', color: '#B91C1C' }, 'A document says this service type ceases')}
+                          {pill(row.confidence, CONFIDENCE_STYLE[row.confidence] || CONFIDENCE_STYLE.medium, 'How sure the model is this is a named service')}
+                          {row.match?.basis === 'alias' && pill('alias', { bg: '#E0E7FF', color: '#3730A3' }, 'Mapped through the hand-maintained wording table')}
+                          {row.fee && pill(row.fee, { bg: '#F1F5F9', color: '#475569' }, 'Fee as written in the contract')}
+                        </div>
+                        <div style={{ color: '#94A3B8', marginTop: 3 }}>{row.sources.join(', ')}</div>
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
+                        <select
+                          value={st.catalogKey}
+                          onChange={e => setRowState(row, { catalogKey: e.target.value, checked: !!e.target.value && st.checked })}
+                          style={{ padding: '0.25rem 0.4rem', border: '1px solid', borderColor: st.catalogKey ? '#E2E8F0' : '#FCA5A5', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 260 }}
+                        >
+                          <option value="">— no match —</option>
+                          {catalog.map(cat => (
+                            <optgroup key={cat.name} label={cat.name}>
+                              {cat.items.map(it => <option key={it.key} value={it.key}>{it.label}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', color: '#64748B', whiteSpace: 'nowrap' }}>
+                        {row.kind === 'one_time' ? 'One-time' : 'Recurring'}
+                        {row.effectiveDate && <div style={{ color: '#94A3B8' }}>{row.effectiveDate}</div>}
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
+                        <select
+                          value={st.status}
+                          onChange={e => setRowState(row, { status: e.target.value })}
+                          style={{ padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit' }}
+                        >
+                          {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '— clear —' : s}</option>)}
+                        </select>
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', whiteSpace: 'nowrap', color: current ? '#1E293B' : '#94A3B8' }}>
+                        {client ? (current || 'untouched') : '—'}
+                      </td>
+                      <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', color: '#475569', minWidth: 240 }}>
+                        {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>—</span> : row.evidence.map((e, i) => (
+                          <div key={i} style={{ marginBottom: i === row.evidence.length - 1 ? 0 : 4 }}>
+                            <span style={{ fontStyle: 'italic' }}>“{e.quote}”</span>
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {files.length > 0 && rows.length === 0 && !busy && done.length > 0 && (
+        <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
+          Nothing readable as a service in {done.length === 1 ? 'that document' : 'those documents'} — check the scope note above.
+        </div>
+      )}
+    </div>
+  );
+}
