@@ -269,6 +269,89 @@ same('a prerequisite the deal also sold keeps its band',
   alsoSold.services.map(s => s.name), ['Meters', 'Monitoring']);
 same('and nothing is hidden', alsoSold.hidden, []);
 
+// --- waiting on a STEP of a prerequisite, not all of it -------------------
+// The real shape of this: Budgets doesn't need the whole Bill payment
+// programme, it needs the bills actually redirected. Waiting for the tail of
+// the service above — report carding, first accrual — pushed every downstream
+// date out by weeks that nobody was actually waiting on.
+const billing = [{
+  id: 'tl-bill', name: 'Bill payment timeline', services: ['Bill payment'],
+  positionMode: 'months', format: 'phased',
+  stages: [
+    { id: 'st-1', name: 'Project Kickoff', owner: 'Both', startMonth: 1, months: 1, kind: 'timeline' },
+    { id: 'st-2', name: 'Programming & Testing', owner: 'Both', startMonth: 2, months: 2, kind: 'timeline' },
+    { id: 'st-3', name: 'Bill Redirection & Go Live', owner: 'Both', startMonth: 4, months: 1, kind: 'timeline' },
+    { id: 'st-4', name: 'Report Carding & First Accrual', owner: 'Both', startMonth: 5, months: 2, kind: 'timeline' },
+  ],
+}];
+const billingOverrides = {
+  'Bill payment': {},
+  'Budgets whole': { dependsOn: 'Bill payment', rolloutTime: '4' },
+  'Budgets step': { dependsOn: 'Bill payment > st-3', rolloutTime: '4' },
+  'Budgets stale': { dependsOn: 'Bill payment > st-99', rolloutTime: '4' },
+  'Budgets named': { dependsOn: 'Bill payment > Bill Redirection & Go Live', rolloutTime: '4' },
+};
+const planFor = (svc) => buildDealTimeline({
+  scopeServices: [svc], templates: billing, serviceOverrides: billingOverrides, anchorMonth: '2026-08',
+});
+const startOf = (plan, name) => plan.services.find(s => s.name === name).startMonth;
+
+// Bill payment runs months 1-6; st-3 lands in month 4.
+check('the prerequisite still runs its full length', planFor('Budgets whole').services[0].endMonth, 6);
+check('waiting for the whole service starts the month after it ends', startOf(planFor('Budgets whole'), 'Budgets whole'), 7);
+check('waiting for a step starts the month after THAT step', startOf(planFor('Budgets step'), 'Budgets step'), 5);
+// The prerequisite is untouched — refining the wait shortens the plan, it
+// doesn't shorten the service being waited on.
+check('and the prerequisite is unchanged by the refinement', planFor('Budgets step').services[0].endMonth, 6);
+check('so the plan finishes when the longer of the two does', planFor('Budgets step').monthsNeeded, 6);
+check('where waiting for all of it runs longer', planFor('Budgets whole').monthsNeeded, 7);
+
+// A hand-typed step name resolves too, as long as it has no comma in it.
+check('a step named in full resolves the same way', startOf(planFor('Budgets named'), 'Budgets named'), 5);
+
+// A refinement pointing at a step that no longer exists must not silently
+// start the service early — that would be a confidently wrong plan. It falls
+// back to the whole service and says so.
+check('a stale step reference waits for the whole service', startOf(planFor('Budgets stale'), 'Budgets stale'), 7);
+const staleSvc = planFor('Budgets stale').services.find(s => s.name === 'Budgets stale');
+same('and is reported as stale so the caller can flag it',
+  staleSvc.waitsOn, [{ service: 'Bill payment', step: 'st-99', stepName: '', stale: true }]);
+
+// What the caller shows in its "Waits on" column.
+same('a refined dependency names the step it waits for',
+  planFor('Budgets step').services.find(s => s.name === 'Budgets step').waitsOn,
+  [{ service: 'Bill payment', step: 'st-3', stepName: 'Bill Redirection & Go Live', stale: false }]);
+same('a whole-service dependency carries no step',
+  planFor('Budgets whole').services.find(s => s.name === 'Budgets whole').waitsOn,
+  [{ service: 'Bill payment', step: '', stepName: '', stale: false }]);
+// The name-only view every other consumer reads is unchanged either way.
+same('dependsOn stays the plain service names',
+  planFor('Budgets step').services.find(s => s.name === 'Budgets step').dependsOn, ['Bill payment']);
+
+// A service with no timeline has no steps to wait for, so a refinement
+// against it degrades to the whole service rather than to nothing.
+check('a refinement against a rollout-sized service waits for all of it', buildDealTimeline({
+  scopeServices: ['Waiter'], templates: [], serviceOverrides: {
+    ...overrides, Waiter: { dependsOn: 'Audits > st-1', rolloutTime: '4' },
+  },
+}).services.find(s => s.name === 'Waiter').startMonth, 4);
+
+// Refinement decides WHEN, never WHETHER: a step-refined dependency still
+// pulls its service into the plan and still orders behind it.
+same('a step-refined prerequisite is still pulled in',
+  planFor('Budgets step').services.map(s => s.name), ['Bill payment', 'Budgets step']);
+
+// A mutual step refinement is still a cycle — both sides need the other
+// placed before their step's month can be known.
+const stepLoop = buildDealTimeline({
+  scopeServices: ['Loop X'], templates: billing, serviceOverrides: {
+    'Loop X': { dependsOn: 'Loop Y > st-1', rolloutTime: '4' },
+    'Loop Y': { dependsOn: 'Loop X > st-1', rolloutTime: '4' },
+  },
+});
+check('a step-refined loop is still reported', stepLoop.cycleBroken, true);
+check('and both services still get placed', stepLoop.services.length, 2);
+
 // --- planning from a target signature date --------------------------------
 // The agreement starts the engagement, so its date is the plan's month 1.
 // Moving it re-anchors the calendar; it must NOT re-shuffle the sequencing,

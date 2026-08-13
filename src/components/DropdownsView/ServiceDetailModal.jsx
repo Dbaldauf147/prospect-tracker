@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { parseMulti } from '../common/columnLinks';
 import { rolloutWeeks } from '../../data/serviceCatalog';
 import {
   TIMELINE_STAGE_OWNERS,
@@ -20,6 +19,10 @@ import {
   durationToMonths,
 } from '../../utils/timelineDates';
 import { PriorStepsPicker } from './PriorStepsPicker';
+import {
+  parseServiceRefs, formatServiceRef, setRefStep,
+  findTemplateStepIndex, templatesForService,
+} from '../../utils/serviceStepDeps';
 import styles from './DropdownsView.module.css';
 
 // One service, all of it, on one screen. The Services table carries twelve
@@ -147,7 +150,7 @@ function WeeksField({ label, value, onCommit }) {
 // in the Solutions list's own order so two services with the same
 // dependencies read identically. A name the Solutions list no longer carries
 // is kept and flagged rather than dropped.
-function DependsEditor({ value, options, selfName, onCommit }) {
+function DependsEditor({ value, options, selfName, templates, onCommit }) {
   const [query, setQuery] = useState('');
   // The picker is 139 services long. Open by default it would push the
   // section below — which services wait on THIS one — off the bottom of the
@@ -155,7 +158,10 @@ function DependsEditor({ value, options, selfName, onCommit }) {
   // the popup. So it stays behind a button until there's something to pick.
   const [picking, setPicking] = useState(false);
 
-  const selected = useMemo(() => parseMulti(value), [value]);
+  // Each dependency is { service, step }: the step is which point of that
+  // service unblocks this one, '' meaning wait for all of it.
+  const refs = useMemo(() => parseServiceRefs(value), [value]);
+  const selected = useMemo(() => refs.map(r => r.service), [refs]);
   const selectedSet = useMemo(
     () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
   const pickable = useMemo(
@@ -168,17 +174,20 @@ function DependsEditor({ value, options, selfName, onCommit }) {
     return q ? pickable.filter(o => o.toLowerCase().includes(q)) : pickable;
   }, [pickable, query]);
 
+  // Adding or removing a service must carry every other entry's step through
+  // untouched — otherwise picking one more dependency silently re-plans the
+  // deals that were waiting on a step.
   function toggle(name) {
     const key = name.trim().toLowerCase();
     const next = selectedSet.has(key)
-      ? selected.filter(s => s.trim().toLowerCase() !== key)
-      : [...selected, name];
-    const nextKeys = new Set(next.map(s => s.trim().toLowerCase()));
+      ? refs.filter(r => r.service.trim().toLowerCase() !== key)
+      : [...refs, { service: name, step: '' }];
+    const byName = new Map(next.map(r => [r.service.trim().toLowerCase(), r]));
     const ordered = [
-      ...pickable.filter(o => nextKeys.has(o.trim().toLowerCase())),
-      ...next.filter(s => !liveSet.has(s.trim().toLowerCase())),
+      ...pickable.filter(o => byName.has(o.trim().toLowerCase())).map(o => byName.get(o.trim().toLowerCase())),
+      ...next.filter(r => !liveSet.has(r.service.trim().toLowerCase())),
     ];
-    onCommit(ordered.join(', '));
+    onCommit(ordered.map(r => formatServiceRef(r.service, r.step)).join(', '));
   }
 
   return (
@@ -202,24 +211,53 @@ function DependsEditor({ value, options, selfName, onCommit }) {
           Nothing has to be rolled out before {selfName}.
         </p>
       ) : (
-        <div className={styles.detailChips}>
-          {selected.map(name => {
+        <div className={styles.detailDepRows}>
+          {refs.map(({ service: name, step }) => {
             const stale = !liveSet.has(name.trim().toLowerCase());
+            const tpl = templatesForService(templates, name)[0] || null;
+            const steps = tpl?.stages || [];
+            // A step that no longer exists must stay visible and selected, or
+            // the control would silently read as "after all of it" while the
+            // stored value still said otherwise.
+            const missing = !!step && findTemplateStepIndex(tpl, step) < 0;
             return (
-              <span
-                key={name}
-                className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
-                title={stale ? `"${name}" isn't in the Solutions list any more` : name}
-              >
-                {name}
-                <button
-                  type="button"
-                  className={styles.detailChipRemove}
-                  onClick={() => toggle(name)}
-                  title={`Remove ${name}`}
-                  aria-label={`Remove ${name}`}
-                >×</button>
-              </span>
+              <div key={name} className={styles.detailDepRow}>
+                <span
+                  className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
+                  title={stale ? `"${name}" isn't in the Solutions list any more` : name}
+                >
+                  {name}
+                  <button
+                    type="button"
+                    className={styles.detailChipRemove}
+                    onClick={() => toggle(name)}
+                    title={`Remove ${name}`}
+                    aria-label={`Remove ${name}`}
+                  >×</button>
+                </span>
+                {/* Which point of that service unblocks this one. Only
+                    offered where the service has a timeline to pick from —
+                    one sized from its Rollout Time has no steps to wait for. */}
+                {steps.length > 0 ? (
+                  <select
+                    className={styles.detailStepSelect}
+                    value={step}
+                    onChange={e => onCommit(setRefStep(value, name, e.target.value))}
+                    title={`When ${selfName} can start relative to ${name}`}
+                  >
+                    <option value="">after all of {name}</option>
+                    {steps.map(st => (
+                      <option key={st.id} value={st.id}>after {st.name}</option>
+                    ))}
+                    {missing && <option value={step}>after a step that no longer exists</option>}
+                  </select>
+                ) : (
+                  <span
+                    className={styles.detailDepNoSteps}
+                    title={`${name} has no timeline attached, so there are no steps to wait for — ${selfName} waits for all of it.`}
+                  >after all of it</span>
+                )}
+              </div>
             );
           })}
         </div>
@@ -1003,6 +1041,7 @@ export function ServiceDetailModal({
             value={meta?.dependsOn}
             options={options}
             selfName={name}
+            templates={templates}
             onCommit={save('dependsOn')}
           />
 
