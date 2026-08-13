@@ -148,6 +148,10 @@ check('anchored to the kickoff month', t.anchorMonth, '2026-08');
 // months after the last step of a four-month plan.
 check('with a window fitted to the plan, plus label headroom', t.monthCount, 5);
 check('carrying the client name', t.clientName, 'Acme');
+// The plan starts today, so no bar in the first month may be drawn as
+// already under way. Opt-in, because an ordinary timeline anchored to a
+// past month has bars that really did start before today.
+check('and asking the renderers not to draw work before today', t.clampBarsToToday, true);
 check('with one step per prerequisite plus the template steps', t.stages.length, 3);
 
 const install = t.stages.find(s => s.name === 'Install');
