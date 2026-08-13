@@ -6676,6 +6676,11 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }
   const [open, setOpen] = useState(false);
   const services = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
   const account = String(opp?.['Account'] ?? '').trim();
+  // Identity for the services the user has hidden on this deal's chart, so
+  // they stay hidden next time it's opened. The opp id is the stable one;
+  // account name is a fallback for a row that somehow has none. Namespaced so
+  // an id can't collide with an account called the same thing.
+  const planKey = opp?._id ? `opp:${opp._id}` : account ? `account:${account.toLowerCase()}` : '';
   return (
     <>
       <button
@@ -6699,6 +6704,7 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }
           scopeServices={services}
           settings={settings}
           serviceOverrides={serviceOverrides}
+          planKey={planKey}
           onClose={() => setOpen(false)}
         />,
         document.body,

@@ -10,12 +10,13 @@
 // are the Timelines page's own renderers, handed the composed template. So
 // a change to how a timeline draws lands here too, and the Excel that comes
 // out of this popup is the same Excel the Timelines page produces.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { buildDealTimeline } from '../../utils/dealTimeline';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { currentMonthAnchor, parseMonthAnchor } from '../../utils/timelineDates';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
+import { loadHiddenServices, saveHiddenServices } from '../../utils/dealTimelineHiddenStore';
 
 const btnStyle = {
   padding: '0.35rem 0.7rem', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit',
@@ -33,7 +34,7 @@ const SOURCE_NOTE = {
   unknown: () => 'No timeline and no Rollout Time — shown as one month as a placeholder',
 };
 
-export function DealTimelineModal({ account = '', scopeServices = [], settings, serviceOverrides, onClose }) {
+export function DealTimelineModal({ account = '', scopeServices = [], settings, serviceOverrides, planKey = '', onClose }) {
   const [format, setFormat] = useState('phased');
   // The deal's own services only, by default. A deal whose services depend
   // on half the catalog draws mostly bands nobody sold, and the question
@@ -48,7 +49,11 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
   // Services the user has clicked off the chart, by lowercased name. Purely a
   // presentation filter: the schedule is computed over every service first,
   // so taking a band out never lets the ones waiting on it start earlier.
-  const [excluded, setExcluded] = useState(() => new Set());
+  //
+  // Seeded from what this deal was left showing last time. The popup is
+  // mounted fresh on every open, so reading once at mount is the whole of it.
+  const [excluded, setExcluded] = useState(() => loadHiddenServices(planKey));
+  useEffect(() => { saveHiddenServices(planKey, excluded); }, [planKey, excluded]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
