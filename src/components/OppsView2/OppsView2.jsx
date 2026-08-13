@@ -51,7 +51,6 @@ import {
   NFAT_SETTINGS_KEY,
   anyNfatScheduleEnabled,
   defaultNfatSchedules,
-  easternWallToUtcMs,
   loadLegacyNfatSchedules,
   loadNfatShadow,
   mergeNfatShadow,
@@ -62,6 +61,15 @@ import {
   saveNfatShadow,
   stampNfatConfig,
 } from '../../utils/nfatSchedules';
+import {
+  SCHEDULED_OPP_DEFAULT_TIME,
+  formatScheduledOppWhen,
+  newScheduledOppId,
+  normalizeScheduledOpps,
+  pruneScheduledOpps,
+  scheduledOppDueMs,
+  scheduledOppPending,
+} from '../../utils/scheduledOpps';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
@@ -116,24 +124,6 @@ const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 // View company. Mirrors the option set the MyAccounts / PE Portfolio
 // cells use so regions stay consistent across views.
 const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
-
-// Scheduled opps. The New Opp modal can defer the create instead of
-// committing the row straight away: the whole payload is parked on user
-// settings (`settings.scheduledOpps`) with an Eastern due date + time,
-// and a minute tick on this tab materializes it once that time passes —
-// including catching up a time that went by while the app was closed.
-// Settings are Firestore-backed, so an opp scheduled on the laptop still
-// lands when the desktop is the tab that's open.
-//
-// Nothing is ever spliced out of the array. The cross-device settings
-// merge unions id-keyed arrays (see utils/settingsMerge.js), so an entry
-// removed here but still sitting in another device's copy would be
-// appended right back — and fire a second time. Firing and cancelling
-// stamp `firedAt` / `canceledAt` instead; a stamped entry is dropped only
-// once it's older than the retention window, by which point every device
-// has long since seen the stamp.
-const SCHEDULED_OPP_RETENTION_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
-const SCHEDULED_OPP_DEFAULT_TIME = '08:00';
 
 // Free-text SME box for one row of the Services tab. Local while typing so
 // a name isn't a settings write per keystroke; commits on blur or Enter,
@@ -795,7 +785,7 @@ function formatQuotedAmountLive(raw) {
   return `$${withCommas}${hasDot ? `.${decPart}` : ''}`;
 }
 
-function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverride) {
+function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverride, seeds = {}) {
   const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
@@ -807,12 +797,16 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverr
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
-  // Leave Scope blank so the cell renders "AEM" as a muted-italic
-  // placeholder (see MultiSelectCell) rather than an actual selected
-  // service — AEM stands in until the user picks real services. Seed the
-  // Next Steps column with the prompt the user always types first. Set
-  // unconditionally — even if a column was hidden via the columns toggle
-  // the value sticks around for when it's unhidden later.
+  // Scope and Notes come from the New Opp modal when it asked for them.
+  // Left blank otherwise: an empty Scope cell renders "AEM" as a
+  // muted-italic placeholder (see MultiSelectCell) rather than an actual
+  // selected service, and that placeholder is the right state for an opp
+  // whose services haven't been picked yet.
+  if (typeof seeds?.scope === 'string' && seeds.scope.trim()) row['Scope'] = seeds.scope.trim();
+  if (typeof seeds?.notes === 'string' && seeds.notes.trim()) row['Notes'] = seeds.notes.trim();
+  // Seed the Next Steps column with the prompt the user always types
+  // first. Set unconditionally — even if a column was hidden via the
+  // columns toggle the value sticks around for when it's unhidden later.
   row['Next Steps'] = 'Find out the Story';
   // Seed the BFO Opportunity Name (BFO Link) column with a dash so a
   // brand-new opp reads as "BFO opp still needs to be created" — the
@@ -1023,83 +1017,6 @@ function businessDaysSince(rawISO) {
     if (dow !== 0 && dow !== 6) count++;
   }
   return count;
-}
-
-// Convert "wall time in America/New_York" to a UTC ms timestamp. Used
-// by the No-Further-Action-Today auto-clear so the cutoff lands at
-// 2 PM Eastern regardless of the user's local timezone, and it stays
-// correct across DST flips. One pass is enough — we compute the
-// observed Eastern wall time of our initial UTC guess, take the
-// difference, and apply it.
-// ---- Scheduled opps ---------------------------------------------
-
-// A stored scheduled-opp list coerced into a complete, well-typed shape.
-// Anything without an id or a usable YYYY-MM-DD due date is dropped —
-// it can't be scheduled or shown, so keeping it would just be a row the
-// manager modal can't render.
-function normalizeScheduledOpps(stored) {
-  if (!Array.isArray(stored)) return [];
-  return stored
-    .filter(e => e && typeof e === 'object' && e.id && /^\d{4}-\d{2}-\d{2}$/.test(String(e.dueDate || '')))
-    .map(e => ({
-      id: String(e.id),
-      company: String(e.company || ''),
-      source: String(e.source || ''),
-      peOwner: String(e.peOwner || ''),
-      type: String(e.type || ''),
-      frameworks: Array.isArray(e.frameworks) ? e.frameworks : [],
-      frameworksEdited: !!e.frameworksEdited,
-      addToTableView: !!e.addToTableView,
-      hqRegion: String(e.hqRegion || ''),
-      dueDate: String(e.dueDate),
-      dueTime: /^\d{1,2}:\d{2}$/.test(String(e.dueTime || '')) ? String(e.dueTime) : SCHEDULED_OPP_DEFAULT_TIME,
-      createdAt: Number(e.createdAt) || null,
-      firedAt: Number(e.firedAt) || null,
-      canceledAt: Number(e.canceledAt) || null,
-    }));
-}
-
-// When a scheduled opp is due, as a UTC ms instant. The stored date +
-// time are Eastern wall time — same convention as the No-Further-Action
-// clear schedules — so an opp set for "Sep 1, 8:00" arrives at the same
-// moment no matter which machine's tab happens to be open.
-function scheduledOppDueMs(entry) {
-  const [y, m, d] = String(entry?.dueDate || '').split('-').map(n => parseInt(n, 10));
-  const [hh, mm] = String(entry?.dueTime || SCHEDULED_OPP_DEFAULT_TIME).split(':').map(n => parseInt(n, 10));
-  if (![y, m, d, hh, mm].every(Number.isFinite)) return null;
-  return easternWallToUtcMs(y, m, d, hh, mm);
-}
-
-// Still waiting to be created: neither fired nor cancelled.
-function scheduledOppPending(entry) {
-  return !!entry && !entry.firedAt && !entry.canceledAt;
-}
-
-// "Mon, Sep 1, 8:00 AM ET" — always rendered in Eastern, because that's
-// the timezone the stored wall time means.
-function formatScheduledOppWhen(entry) {
-  const ms = scheduledOppDueMs(entry);
-  if (ms == null) return '';
-  const s = new Date(ms).toLocaleString('en-US', {
-    timeZone: 'America/New_York',
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
-  return `${s} ET`;
-}
-
-// Drop fired / cancelled entries once they're past the retention window,
-// so the settings list doesn't grow without bound. Pending entries are
-// always kept, however far out they're scheduled.
-function pruneScheduledOpps(list, nowMs = Date.now()) {
-  return list.filter(e => {
-    const done = e.firedAt || e.canceledAt;
-    return !done || (nowMs - done) < SCHEDULED_OPP_RETENTION_MS;
-  });
-}
-
-function newScheduledOppId() {
-  return `so-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -3067,7 +2984,10 @@ function resolveColumnLink(columnName, userLinks) {
 // offers to add it there as a new company so the two views stay in
 // sync. Account may be pre-filled when the flow came from the Add
 // Company combobox.
-function NewOppModal({ account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [], prospects = [], onCreate, onCancel }) {
+function NewOppModal({
+  account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [],
+  prospects = [], scopeOptions = [], settings, oppRows = [], updateProspect, onCreate, onCancel,
+}) {
   const [company, setCompany] = useState(initialAccount || '');
   const [source, setSource] = useState('');
   // PE Owners as a chip list (a company can have several). Until the
@@ -3081,6 +3001,13 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   const [typeInput, setTypeInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
   const [addToTableView, setAddToTableView] = useState(true);
+  // Scope + Notes, in the same format the row's own cells store them, so
+  // committing is a copy rather than a translation. Scope is picked from
+  // the services board the Scope cell opens.
+  const [scope, setScope] = useState('');
+  const [notes, setNotes] = useState('');
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const scopeServices = useMemo(() => parseMulti(scope), [scope]);
   // Deferred create. Off by default — the modal still commits the row
   // straight away unless the user asks for a date. The date defaults to
   // tomorrow so switching it on is immediately meaningful; the time is
@@ -3200,6 +3127,8 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
       source,
       peOwner: joinPeOwners(owners),
       type: type.trim(),
+      scope,
+      notes: notes.trim(),
       frameworks,
       frameworksEdited,
       addToTableView: willAddCompany,
@@ -3223,6 +3152,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
   };
 
   return createPortal(
+    <>
     <div
       onClick={onCancel}
       style={{
@@ -3249,7 +3179,7 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
             New Opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Set the Company, Source, Type, and PE Owner for the new row. All are optional and editable later. Schedule it below to have the row created on a future date instead of now.
+            Set the Company, Source, Type, PE Owner, Services and Notes for the new row. All are optional and editable later. Schedule it below to have the row created on a future date instead of now — its services show on the company card as scheduled in the meantime.
           </div>
         </div>
 
@@ -3440,6 +3370,46 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
             </datalist>
           </div>
 
+          {/* Services and Notes. Both land on the row exactly as if they'd
+              been typed into its Scope and Notes cells — and on a scheduled
+              opp they're what the company card's services board reads to
+              show the service as already spoken for, before any row
+              exists. */}
+          <div>
+            <label style={labelStyle}>Services (Scope)</label>
+            <button
+              type="button"
+              onClick={() => setScopeOpen(true)}
+              title="Pick the services this opp is for, from the same board the Scope cell uses"
+              style={{
+                ...fieldStyle,
+                textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+                minHeight: 34,
+              }}
+            >
+              {scopeServices.length === 0
+                ? <span style={{ color: 'var(--color-text-muted)' }}>Pick services…</span>
+                : scopeServices.map(s => (
+                  <span key={s} style={{
+                    padding: '1px 7px', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600,
+                    background: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE',
+                  }}>{s}</span>
+                ))}
+            </button>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              value={notes}
+              rows={2}
+              placeholder="Anything worth remembering when this opp is picked up…"
+              onChange={(e) => setNotes(e.target.value)}
+              style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.4 }}
+            />
+          </div>
+
           <div style={{
             borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
           }}>
@@ -3519,7 +3489,29 @@ function NewOppModal({ account: initialAccount, sourceOptions = [], companySugge
           >{scheduleOn ? 'Schedule opp' : 'Create opp'}</button>
         </div>
       </div>
-    </div>,
+    </div>
+
+    {/* The Scope cell's own board, so services are picked here against the
+        same account history — what's already sold, quoted or lost — rather
+        than from a flat list. A sibling of the backdrop above, not a child:
+        it portals into document.body but React still bubbles its clicks up
+        the ELEMENT tree, so nested inside, every click on it would reach the
+        backdrop's onClick and cancel the whole New Opp modal. */}
+    {scopeOpen && (
+      <ScopeServicesModal
+        value={scope}
+        onChange={setScope}
+        onClose={() => setScopeOpen(false)}
+        options={scopeOptions}
+        account={trimmedCompany}
+        prospects={prospects}
+        updateProspect={updateProspect}
+        settings={settings}
+        oppRows={oppRows}
+        note="New opp: pick the service(s) it's for"
+      />
+    )}
+    </>,
     document.body,
   );
 }
@@ -3559,6 +3551,7 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
   // The extra context a queued opp carries beyond its company name —
   // shown as one muted line so the row stays scannable.
   const detailLine = (e) => [
+    e.scope && `Services: ${parseMulti(e.scope).join(', ')}`,
     e.source && `Source: ${e.source}`,
     e.peOwner && `PE Owner: ${e.peOwner}`,
     e.type && `Type: ${e.type}`,
@@ -3615,6 +3608,11 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
                 {detailLine(e) && (
                   <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
                     {detailLine(e)}
+                  </div>
+                )}
+                {e.notes && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2, whiteSpace: 'pre-wrap' }}>
+                    {e.notes}
                   </div>
                 )}
               </div>
@@ -8456,12 +8454,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     return () => window.removeEventListener('beforeunload', flush);
   }, [data, user?.uid]);
 
-  const addNewOpp = useCallback((accountName, source, peOwner) => {
+  const addNewOpp = useCallback((accountName, source, peOwner, seeds) => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source, peOwner), ...records] };
+      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source, peOwner, seeds), ...records] };
     });
   }, []);
 
@@ -8471,7 +8469,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // out of the modal's onCreate so a scheduled opp replays the identical
   // flow when its due time arrives — the deferred path isn't a
   // second, thinner version of the create.
-  const applyNewOpp = useCallback(({ company, source, peOwner, type, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
+  const applyNewOpp = useCallback(({ company, source, peOwner, type, scope, notes, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
     // Create the company on Table View first (when requested and
     // it isn't there yet) so the new opp's Account immediately
     // resolves to a real prospect record. addProspect is
@@ -8502,7 +8500,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         }
       }
     }
-    addNewOpp(company, source, peOwner);
+    addNewOpp(company, source, peOwner, { scope, notes });
   }, [addProspect, updateProspect, prospects, addNewOpp]);
 
   // ---- Scheduled opps ---------------------------------------------
@@ -8532,6 +8530,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       source: payload.source,
       peOwner: payload.peOwner,
       type: payload.type,
+      scope: payload.scope,
+      notes: payload.notes,
       frameworks: payload.frameworks,
       frameworksEdited: payload.frameworksEdited,
       addToTableView: payload.addToTableView,
@@ -10929,6 +10929,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           companySuggestions={companySuggestions}
           peOwnerSuggestions={peOwnerSuggestions}
           prospects={prospects}
+          scopeOptions={listRegistry.get('solutions')?.options || []}
+          settings={settings}
+          oppRows={records}
+          updateProspect={updateProspect}
           onCreate={(payload) => {
             // A scheduled payload is parked whole and replayed at its due
             // time — the Table View company and any Type / framework
