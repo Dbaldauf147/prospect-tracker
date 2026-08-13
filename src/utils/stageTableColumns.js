@@ -53,11 +53,18 @@ const COLUMNS = {
     { key: 'description', label: 'Description', width: 260 },
     { key: 'actions', label: '', width: 84, fixed: true },
   ],
+  // Duration and Side are on this format only, because this is the format
+  // they drive: the implementation chart sizes a bar from the duration and
+  // draws the signature rule the side is measured against. The Gantt places
+  // by real dates and has no signature line, so offering either there would
+  // be a control that changes nothing.
   phased: [
     { key: 'n', label: '#', width: 34, fixed: true },
     { key: 'name', label: 'Step', width: 220 },
     { key: 'owner', label: 'Workstream', width: 170 },
     { key: 'kind', label: 'Type', width: 130 },
+    { key: 'side', label: 'Signature', width: 128 },
+    { key: 'duration', label: 'Duration', width: 150 },
     { key: 'range', label: 'Start → End', width: 270 },
     { key: 'monthSpan', label: 'Month × Span', width: 130 },
     { key: 'depends', label: 'Depends on', width: 150 },

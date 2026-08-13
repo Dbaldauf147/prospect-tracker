@@ -8,6 +8,8 @@ import {
   getTimelineTemplates,
   makeTimelineId,
   makeTimelineStage,
+  setStagePreKickoff,
+  canSwapStages,
   summarizeStageOwners,
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
@@ -15,6 +17,7 @@ import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/tim
 import { PriorStepsPicker } from './PriorStepsPicker';
 import {
   getStageRange, getStageMonths, currentMonthAnchor, formatStepDuration,
+  STEP_DURATION_UNITS, STEP_DURATION_UNIT_LABELS, DEFAULT_DURATION_UNIT,
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
   timelineBaseMonth,
 } from '../../utils/timelineDates';
@@ -39,6 +42,8 @@ const COLUMN_TITLES = {
   range: 'Start and end dates. The standard way to place a step.',
   monthSpan: 'Start month from kickoff × how many months it spans',
   depends: 'The earlier steps this one waits on. A step can wait on several.',
+  side: 'Which side of contract signature this step happens on',
+  duration: 'How long the step lasts, in the unit it is counted in',
 };
 
 // Columns the implementation format greys out because the other positioning
@@ -128,7 +133,7 @@ function NumberCell({ value, onCommit, min = 1, placeholder, title }) {
 // and in the implementation format it's also the step numbering. Which
 // columns appear follows the timeline's format, so each layout shows only
 // the controls that drive it.
-function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, onMove, onRemove }) {
+function StageRow({ index, siblings, stage, mode, columns, priorSteps, onChange, onSetSide, onMove, onRemove }) {
   // Effective calendar range: the explicit dates when set, otherwise whatever
   // the Timing text parses to. `auto` means nothing was typed into the date
   // cells — they're mirroring the label.
@@ -142,6 +147,10 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
   // the Services popup; shown here so the Span cell can say what it's
   // deferring to.
   const durationLabel = formatStepDuration(stage?.duration, stage?.durationUnit);
+  // The arrows only ever swap within a side, so they go dim at the edges of
+  // one — `siblings` is the whole list, which StageRow needs for nothing else.
+  const canMoveUp = canSwapStages(siblings, index, index - 1);
+  const canMoveDown = canSwapStages(siblings, index, index + 1);
   // One entry per column key. The header, the <colgroup> and this map are all
   // driven by the same column list, so a hidden column drops out of every one
   // of them at once and they can't fall out of step.
@@ -193,6 +202,48 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
             >
               {TIMELINE_STAGE_KINDS.map(k => (
                 <option key={k} value={k}>{STAGE_KIND_LABELS[k]}</option>
+              ))}
+            </select>
+          </td>
+  );
+  cells.side = (
+          <td key="side">
+            {/* Changing this moves the step to the other side of the
+                signature, not just relabels it — the array's order is the
+                order the chart numbers and stacks in, so the run-up has to
+                physically precede the engagement. */}
+            <select
+              value={stage.preKickoff ? 'pre' : 'post'}
+              onChange={(e) => onSetSide(e.target.value === 'pre')}
+              title={stage.preKickoff
+                ? 'Happens before the contract is signed. Moves to the end of the run-up.'
+                : 'Happens after the contract is signed. Moves to the head of the engagement.'}
+              className={styles.ownerSelect}
+            >
+              <option value="pre">Before</option>
+              <option value="post">After</option>
+            </select>
+          </td>
+  );
+  cells.duration = (
+          <td key="duration" className={styles.stageDurationCell}>
+            <NumberCell
+              value={stage.duration}
+              min={0}
+              placeholder="—"
+              title={durationLabel
+                ? `This step lasts ${durationLabel} (${months.span} month${months.span === 1 ? '' : 's'} on the chart)`
+                : 'How long the step lasts. Blank leaves its length to the dates or the Span cell.'}
+              onCommit={(next) => onChange({ ...stage, duration: next })}
+            />
+            <select
+              value={stage.durationUnit || DEFAULT_DURATION_UNIT}
+              onChange={(e) => onChange({ ...stage, durationUnit: e.target.value })}
+              title="The unit the duration is counted in"
+              className={styles.durationUnitSelect}
+            >
+              {STEP_DURATION_UNITS.map(u => (
+                <option key={u} value={u}>{STEP_DURATION_UNIT_LABELS[u]}</option>
               ))}
             </select>
           </td>
@@ -319,16 +370,19 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
           type="button"
           className={styles.stageMoveBtn}
           onClick={() => onMove(-1)}
-          disabled={index === 0}
-          title="Move stage earlier"
+          // Off at the top of the list and at the top of a side: the arrows
+          // shuffle within the run-up or within the engagement, and a button
+          // that looks live but silently refuses is worse than a dim one.
+          disabled={!canMoveUp}
+          title={canMoveUp ? 'Move stage earlier' : 'First step on this side of signature — use the Signature cell to move it across'}
           aria-label="Move stage earlier"
         >↑</button>
         <button
           type="button"
           className={styles.stageMoveBtn}
           onClick={() => onMove(1)}
-          disabled={index === total - 1}
-          title="Move stage later"
+          disabled={!canMoveDown}
+          title={canMoveDown ? 'Move stage later' : 'Last step on this side of signature — use the Signature cell to move it across'}
           aria-label="Move stage later"
         >↓</button>
         <button
@@ -666,9 +720,17 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   function moveStage(idx, delta) {
     const target = idx + delta;
     if (target < 0 || target >= stages.length) return;
+    // The arrows shuffle within a side; crossing the signature is what the
+    // Signature cell is for, and it reorders as it goes.
+    if (!canSwapStages(stages, idx, target)) return;
     const next = [...stages];
     [next[idx], next[target]] = [next[target], next[idx]];
     onChange({ ...template, stages: next });
+  }
+  // Changing a step's side moves it, so this replaces the whole array rather
+  // than patching one row (see setStagePreKickoff).
+  function setStageSide(idx, preKickoff) {
+    onChange({ ...template, stages: setStagePreKickoff(stages, idx, preKickoff) });
   }
   function removeStage(idx) {
     onChange({ ...template, stages: stages.filter((_, i) => i !== idx) });
@@ -945,12 +1007,13 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                 <StageRow
                   key={stage.id}
                   index={idx}
-                  total={stages.length}
+                  siblings={stages}
                   stage={stage}
                   mode={mode}
                   columns={columns}
                   priorSteps={stages.slice(0, idx).map((st, i) => ({ id: st.id, number: i + 1, name: st.name }))}
                   onChange={(next) => updateStage(idx, next)}
+                  onSetSide={(pre) => setStageSide(idx, pre)}
                   onMove={(delta) => moveStage(idx, delta)}
                   onRemove={() => removeStage(idx)}
                 />
