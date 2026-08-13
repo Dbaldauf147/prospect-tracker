@@ -80,6 +80,9 @@ const colWidthPx = (chars) => Math.round(chars * 7 + 5);
 // Width of one week column on the Implementation grid, shared by the column
 // setup and the milestone placement so the two can't drift apart.
 const WEEK_COL_CHARS = 3.4;
+// The same, for the monthly axis, where one column is a whole month and has
+// to hold the month label that a week column never carries.
+const MONTH_COL_CHARS = 10;
 // Row heights are points.
 const rowHeightPx = (points) => Math.round((points * 4) / 3);
 
@@ -294,7 +297,11 @@ function writePhasedSheet(wb, ws, template) {
   // band over a week row — the same two-level axis the graphic draws. Steps
   // are still placed by month, so a bar fills every week column of the months
   // it spans.
-  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar);
+  // `axis: 'months'` collapses each month to a single grid column. The tick
+  // helper does the collapsing, so every placement calculation below still
+  // reads "which tick does this land in" and needs no second code path.
+  const weekly = template?.axis !== 'months';
+  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar, weekly);
   const weekCols = flattenWeekTicks(weekTicks);
   const NW = weekCols.length;
   const monthFirst = new Map();
@@ -336,7 +343,9 @@ function writePhasedSheet(wb, ws, template) {
   ws.getColumn(1).width = anyPhase ? 32 : 46;
   ws.getColumn(2).width = anyPhase ? 46 : 20;
   if (anyPhase) ws.getColumn(3).width = 20;
-  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = WEEK_COL_CHARS;
+  // A month column has to hold "Aug 2026", which a week column never does.
+  const gridColChars = weekly ? WEEK_COL_CHARS : MONTH_COL_CHARS;
+  for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = gridColChars;
   ws.getColumn(DESC).width = 64;
 
   writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - 16));
@@ -348,8 +357,8 @@ function writePhasedSheet(wb, ws, template) {
   (anyPhase ? ['Stages', 'Step', 'Workstream'] : ['Stages', 'Workstream']).forEach((label, i) => {
     // The lead columns span both header rows, except the last one — the
     // Workstream column keeps its second row free for the caption that names
-    // the week numbers.
-    if (i + 1 < LEAD) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
+    // the week numbers. With no week row there's no caption, so it spans too.
+    if (i + 1 < LEAD || !weekly) ws.mergeCells(headRow, i + 1, weekRow, i + 1);
     const cell = ws.getCell(headRow, i + 1);
     cell.value = label;
     cell.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -360,6 +369,9 @@ function writePhasedSheet(wb, ws, template) {
     const c0 = LEAD + monthFirst.get(m);
     const c1 = LEAD + monthLast.get(m);
     if (c1 > c0) ws.mergeCells(headRow, c0, headRow, c1);
+    // On a monthly axis a month owns one column, so it takes the week row's
+    // height instead of leaving an empty strip under the label.
+    else if (!weekly) ws.mergeCells(headRow, c0, weekRow, c0);
     const cell = ws.getCell(headRow, c0);
     const cal = calendar ? anchorPlus(anchor, m - 1) : null;
     cell.value = cal ? monthLabel(cal.y, cal.m, m === 1 || cal.m === 1) : m;
@@ -367,20 +379,22 @@ function writePhasedSheet(wb, ws, template) {
     cell.fill = fill(m === todayCol ? argb('#0E7C36') : argb(SE_GREEN));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
   }
-  weekCols.forEach((wcol, i) => {
-    const cell = ws.getCell(weekRow, LEAD + 1 + i);
-    cell.value = Number(wcol.label);
-    cell.font = { name: FONT, bold: true, size: 7.5, color: { argb: 'FFFFFFFF' } };
-    cell.fill = fill(LEAD + 1 + i === LEAD + todayWeekCol ? argb('#0E7C36') : argb(SE_GREEN));
-    cell.alignment = { vertical: 'middle', horizontal: 'center' };
-  });
-  // Names the week row, so a reader knows whether the numbers are days of the
-  // month or weeks counted from kickoff.
-  const weekCaption = ws.getCell(weekRow, LEAD);
-  weekCaption.value = calendar ? 'Week of' : 'Weeks';
-  weekCaption.font = { name: FONT, bold: true, size: 8, color: { argb: 'FFFFFFFF' } };
-  weekCaption.fill = fill(argb(SE_GREEN));
-  weekCaption.alignment = { vertical: 'middle', horizontal: 'right' };
+  if (weekly) {
+    weekCols.forEach((wcol, i) => {
+      const cell = ws.getCell(weekRow, LEAD + 1 + i);
+      cell.value = Number(wcol.label);
+      cell.font = { name: FONT, bold: true, size: 7.5, color: { argb: 'FFFFFFFF' } };
+      cell.fill = fill(LEAD + 1 + i === LEAD + todayWeekCol ? argb('#0E7C36') : argb(SE_GREEN));
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    // Names the week row, so a reader knows whether the numbers are days of
+    // the month or weeks counted from kickoff.
+    const weekCaption = ws.getCell(weekRow, LEAD);
+    weekCaption.value = calendar ? 'Week of' : 'Weeks';
+    weekCaption.font = { name: FONT, bold: true, size: 8, color: { argb: 'FFFFFFFF' } };
+    weekCaption.fill = fill(argb(SE_GREEN));
+    weekCaption.alignment = { vertical: 'middle', horizontal: 'right' };
+  }
   const descHead = ws.getCell(headRow, DESC);
   descHead.value = 'Description';
   descHead.font = { name: FONT, bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -452,7 +466,7 @@ function writePhasedSheet(wb, ws, template) {
       const first = monthFirst.get(from) ?? 1;
       const last = monthLast.get(from) ?? first;
       const spanCols = [];
-      for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: WEEK_COL_CHARS });
+      for (let g = first; g <= last; g += 1) spanCols.push({ col: LEAD + g, chars: gridColChars });
       milestoneDrawn = addMilestoneImage(wb, ws, {
         cols: spanCols, row: r, rowPoints: 20, frac, owner: stage.owner, label: i + 1,
       });

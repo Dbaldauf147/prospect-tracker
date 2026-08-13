@@ -186,6 +186,7 @@ const withAgreement = [{
 // Monitoring waits on Meters (1 month), so its band starts in month 2.
 const pinnedPlan = buildDealTimeline({
   scopeServices: ['Monitoring'], templates: withAgreement, serviceOverrides: overrides,
+  anchorMonth: '2026-08', kickoffDate: '2026-08-13',
 });
 const at = (n) => pinnedPlan.template.stages.find(s => s.name === n);
 check('the agreement sits at kickoff', at('Agreement signed').startMonth, 1);
@@ -199,6 +200,17 @@ check('a service with no agreement step says so',
 // contract step, not the service.
 check('the band itself has not moved', pinnedPlan.services.find(s => s.name === 'Monitoring').startMonth, 2);
 check('and the plan is still as long as the delivery takes', pinnedPlan.monthsNeeded, 4);
+
+// Carrying the kickoff DAY is what puts the marker on the today line: the
+// renderers place a milestone at monthDayFraction(start) across its column,
+// and a dateless one lands in the middle of the month instead.
+check('the pinned agreement carries the kickoff day', at('Agreement signed').start, '2026-08-13');
+check('and ends the same day', at('Agreement signed').end, '2026-08-13');
+check('while a work step still carries no date', at('Inputs due').start, '');
+// No kickoff date given: the pin still works, the marker just centres.
+check('a pin without a kickoff date is still pinned', buildDealTimeline({
+  scopeServices: ['Monitoring'], templates: withAgreement, serviceOverrides: overrides,
+}).template.stages.find(s => s.name === 'Agreement signed').startMonth, 1);
 
 // With nothing to wait on, the pin changes nothing.
 const noWait = buildDealTimeline({
