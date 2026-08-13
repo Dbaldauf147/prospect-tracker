@@ -14,7 +14,7 @@ import {
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { PriorStepsPicker } from './PriorStepsPicker';
 import {
-  getStageRange, getStageMonths, currentMonthAnchor,
+  getStageRange, getStageMonths, currentMonthAnchor, formatStepDuration,
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
   timelineBaseMonth,
 } from '../../utils/timelineDates';
@@ -138,6 +138,10 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
   // work out on its own, so a blank cell shows what it's actually doing.
   const months = getStageMonths(stage, null, mode);
   const byDates = mode === 'dates';
+  // "3 weeks" when the step carries a duration, '' when it doesn't. Set in
+  // the Services popup; shown here so the Span cell can say what it's
+  // deferring to.
+  const durationLabel = formatStepDuration(stage?.duration, stage?.durationUnit);
   // One entry per column key. The header, the <colgroup> and this map are all
   // driven by the same column list, so a hidden column drops out of every one
   // of them at once and they can't fall out of step.
@@ -236,9 +240,18 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
             <NumberCell
               value={stage.months}
               placeholder={String(months.span)}
+              // A step can carry a duration set in the Services popup ("3
+              // weeks"), which sizes it unless this cell is filled in. Named
+              // here, because typing a number over it is how that gets
+              // overridden and the cell would otherwise look empty rather
+              // than deferring to something.
               title={byDates
-                ? 'Not in use: the chart is positioned by dates'
-                : 'How many months the bar spans'}
+                ? (durationLabel
+                  ? `Not in use for placement: the chart is positioned by dates. This step lasts ${durationLabel}.`
+                  : 'Not in use: the chart is positioned by dates')
+                : (durationLabel
+                  ? `How many months the bar spans. Blank uses this step's ${durationLabel} duration (${months.span}). Type a number to override it.`
+                  : 'How many months the bar spans')}
               onCommit={(next) => onChange({ ...stage, months: next })}
             />
           </td>

@@ -9,6 +9,12 @@ import {
   parseDependsOn,
   formatDependsOn,
 } from '../../utils/timelineTemplatesStore';
+import {
+  STEP_DURATION_UNITS,
+  STEP_DURATION_UNIT_LABELS,
+  DEFAULT_DURATION_UNIT,
+  durationToMonths,
+} from '../../utils/timelineDates';
 import { PriorStepsPicker } from './PriorStepsPicker';
 import styles from './DropdownsView.module.css';
 
@@ -243,6 +249,76 @@ function DependsEditor({ value, options, selfName, onCommit }) {
   );
 }
 
+// How long one step lasts, in the unit that suits it: a survey is a
+// fortnight, a rollout is four months. Both halves are the step's own — the
+// number is stored as typed and the unit beside it says what it counts, so a
+// three-week step reads as three weeks rather than as the 0.75 months it
+// works out to.
+//
+// The chart's grid is months, so the conversion is spelled out next to the
+// control rather than left to be discovered from a bar that didn't move: two
+// weeks and three weeks both occupy the column they start in.
+function StepDuration({ stage, onChange }) {
+  const asText = stage.duration === '' || stage.duration == null ? '' : String(stage.duration);
+  const [draft, setDraft] = useState(asText);
+  const [seen, setSeen] = useState(asText);
+  if (asText !== seen) { setSeen(asText); setDraft(asText); }
+
+  function commit() {
+    const raw = draft.trim();
+    if (raw === asText) return;
+    if (raw === '') { onChange({ ...stage, duration: '' }); return; }
+    const n = Number(raw);
+    // Not a length: leave what's stored alone rather than writing a zero or a
+    // NaN the placement would then have to defend against.
+    if (!Number.isFinite(n) || n <= 0) { setDraft(asText); return; }
+    onChange({ ...stage, duration: n });
+  }
+
+  const months = durationToMonths(stage.duration, stage.durationUnit);
+  return (
+    <div className={styles.detailStepDuration}>
+      <span className={styles.detailStepDurationLabel}>Duration</span>
+      <input
+        type="number"
+        min="0"
+        step="any"
+        className={styles.detailStepDurationNum}
+        value={draft}
+        placeholder="—"
+        aria-label={`Duration of step: ${stage.name || 'untitled'}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); setDraft(asText); e.currentTarget.blur(); }
+        }}
+      />
+      <select
+        className={styles.detailStepDurationUnit}
+        value={stage.durationUnit || DEFAULT_DURATION_UNIT}
+        aria-label={`Time unit for step: ${stage.name || 'untitled'}`}
+        title="The unit the duration is counted in"
+        onChange={(e) => onChange({ ...stage, durationUnit: e.target.value })}
+      >
+        {STEP_DURATION_UNITS.map(u => (
+          <option key={u} value={u}>{STEP_DURATION_UNIT_LABELS[u]}</option>
+        ))}
+      </select>
+      {months != null && (
+        <span
+          className={styles.detailStepDurationHint}
+          title="The chart is drawn in month columns, so a step shorter than a month still fills the one it starts in."
+        >
+          {stage.durationUnit === 'months'
+            ? `${months} column${months === 1 ? '' : 's'} on the chart`
+            : `≈ ${months} month${months === 1 ? '' : 's'} on the chart`}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // The steps of this service's timeline, editable from the popup.
 //
 // These aren't a second copy of anything: they're the stages of a timeline
@@ -470,6 +546,10 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                       disabled={idx === 0}
                     />
                   </div>
+                  <StepDuration
+                    stage={stage}
+                    onChange={(next) => updateStep(idx, next)}
+                  />
                 </li>
               ))}
             </ol>

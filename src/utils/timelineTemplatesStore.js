@@ -29,6 +29,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates.js';
+import { STEP_DURATION_UNITS, DEFAULT_DURATION_UNIT } from './timelineDates.js';
 
 // The owners a stage can be assigned to. "Both" covers the joint working
 // sessions that neither side runs alone.
@@ -82,6 +83,8 @@ export function makeTimelineStage(overrides = {}) {
     icon: 'number',
     kind: DEFAULT_STAGE_KIND,
     dependsOn: '',
+    duration: '',
+    durationUnit: DEFAULT_DURATION_UNIT,
     ...overrides,
   };
 }
@@ -124,6 +127,15 @@ function normalizeStage(stage) {
     // is parsed out of `timing` instead — see utils/timelineDates.
     start: String(stage?.start ?? ''),
     end: String(stage?.end ?? ''),
+    // How long the step lasts, in the unit it was said in — 3 weeks, 2
+    // months, 10 days. Kept as the number and the unit the user picked rather
+    // than converted to months on save: "3 weeks" is what the step is, and
+    // rewriting it as "1 month" on the way in would lose that. The conversion
+    // to month columns happens at placement time, in getStageMonths.
+    duration: stage?.duration === '' || stage?.duration == null ? '' : Number(stage.duration),
+    durationUnit: STEP_DURATION_UNITS.includes(stage?.durationUnit)
+      ? stage.durationUnit
+      : DEFAULT_DURATION_UNIT,
     // Implementation format: the phase band this step sits in, and its
     // position in months from kickoff. Blank month/span fall back to the
     // stage's calendar position.
