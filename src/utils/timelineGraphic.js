@@ -460,8 +460,23 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
 
   const baseMonth = placementBaseMonth(template, stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
-  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
+  const raw = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
+  // The run-up to the contract sits before the engagement starts, so it needs
+  // months the axis doesn't have — everything here is numbered from 1, which
+  // is kickoff. Rather than renumber the axis into negatives (which would
+  // reach the Excel grid, the deal composer and the calendar anchor alike),
+  // the pre-signature steps take the first columns and everything after
+  // signature is pushed right by however many they occupy. The axis stays
+  // 1…n; where the contract is signed is drawn on it.
+  const preSpan = raw
+    .filter(p => p.stage?.preKickoff)
+    .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
+  const placed = raw.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
+  // The column the contract is signed at the head of. Null when nothing
+  // happens before it, which is every timeline that hasn't been given a
+  // run-up — and those draw exactly as they did.
+  const signatureCol = preSpan > 0 ? preSpan + 1 : null;
   // The window the whole chart is drawn against: the timeline's declared date
   // range when it has one, otherwise its anchor-month / month-count settings.
   const monthWindow = resolveMonthWindow(template, needed);
@@ -767,6 +782,24 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
         + ` fill="none" stroke="${stroke}" stroke-width="1.3" stroke-dasharray="4 3"`
         + ` marker-end="url(#${backwards ? 'depArrowBad' : 'depArrow'})" opacity="0.85"/>`;
     });
+  }
+
+  // Where the contract is signed: a rule the full height of the grid, with
+  // everything to its left the run-up to the deal and everything to its right
+  // the engagement. Drawn over the chips — it's the structural divide of the
+  // plan, not a decoration behind it — but under the today marker, which has
+  // to stay the most legible line on the chart.
+  if (signatureCol && signatureCol <= monthCount) {
+    const sx = colX(signatureCol);
+    const label = String(template?.signatureLabel || '').trim() || 'Contract signature';
+    s += `<line x1="${sx}" y1="${gridTop}" x2="${sx}" y2="${gridTop + gridH}" stroke="${SE_INK}" stroke-width="2" stroke-dasharray="6 4"/>`;
+    // The label sits to whichever side has room, so a signature near the
+    // right edge doesn't print its caption off the chart.
+    const w = Math.max(96, label.length * 6.2 + 16);
+    const right = sx + 6 + w <= x0 + gridW;
+    const lx = right ? sx + 6 : sx - 6 - w;
+    s += `<rect x="${lx}" y="${gridTop + 4}" width="${w}" height="18" rx="9" fill="${SE_INK}"/>`;
+    s += `<text x="${lx + w / 2}" y="${gridTop + 16.5}" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">${esc(label.toUpperCase())}</text>`;
   }
 
   // Today: one red rule from the month headings down through the grid, placed
