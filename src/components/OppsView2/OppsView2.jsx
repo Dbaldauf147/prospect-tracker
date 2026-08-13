@@ -220,6 +220,11 @@ const DEFAULT_HEADERS = [
   // Free-text note tracking where the deal sits with credit approval
   // (e.g. "Pending", "Approved 6/24"). Shown as a line in the Opp details.
   'Credit approval',
+  // The date the agreement is expected to be signed. Set on the rollout
+  // timeline, where it is month 1 of the whole delivery plan, and shown on
+  // the Notes and Update Status popups because it's a date being negotiated
+  // rather than a drawing preference.
+  'Target Signature Date',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -260,6 +265,8 @@ const DATE_COLUMNS = new Set([
   'Start Date', 'Last Client Heard From Us', 'Follow Up',
   // Quote-stage dates, filled from the QuotedFollowUpModal.
   'Quoted On', 'Margin Email Date - Sales Leader Review Date',
+  // When the agreement is expected to be signed — the rollout plan's month 1.
+  'Target Signature Date',
 ]);
 
 // Date columns that should be pre-seeded with today's date on a brand-new
@@ -370,7 +377,8 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
+  'Target Signature Date'];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -4874,7 +4882,11 @@ function followUpWhenLabel(days) {
 // they just picked and can correct it here instead of closing the popup and
 // re-dating the cell. `prevFollowUp` is the pre-edit date, surfaced in the
 // hint so it's clear what the date moved from.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onSave, onClose, onCancel }) {
+// `updateOppField` is for the one control here that isn't part of the form:
+// the Target Signature Date in the header, which saves as it's picked like
+// the same field does on the Notes popup and on the rollout chart this
+// header opens. Everything else still lands through onSave.
+function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onSave, onClose, onCancel, updateOppField }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
   const curFollowUp = toISODate(opp?.['Follow Up']);
@@ -4995,6 +5007,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
             solutionOptions={solutionOptions}
             serviceOverrides={serviceOverrides}
             settings={settings}
+            updateOppField={updateOppField}
           />
         </div>
 
@@ -6672,10 +6685,19 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
 // Portalled to the body rather than nested: the popups it opens from close
 // on Escape and on a backdrop click, and a nested modal's own Escape would
 // bubble up and close both.
-function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }) {
+function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings, updateOppField }) {
   const [open, setOpen] = useState(false);
   const services = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
   const account = String(opp?.['Account'] ?? '').trim();
+  // The date the plan hangs off, kept on the opp so it survives the popup
+  // closing and reads the same wherever it's shown. Editable here as well as
+  // on the chart: this is where the date gets talked about, and a date you
+  // can see but have to open another popup to correct is an annoyance.
+  const signDate = toISODate(opp?.['Target Signature Date']) || '';
+  const setSignDate = (next) => {
+    if (opp?._id == null || !updateOppField) return;
+    updateOppField(opp._id, 'Target Signature Date', next || '');
+  };
   // Identity for the services the user has hidden on this deal's chart, so
   // they stay hidden next time it's opened. The opp id is the stable one;
   // account name is a fallback for a row that somehow has none. Namespaced so
@@ -6683,11 +6705,30 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }
   const planKey = opp?._id ? `opp:${opp._id}` : account ? `account:${account.toLowerCase()}` : '';
   return (
     <>
+      <label
+        title="Target date the agreement is signed. Saved on the opp, and the date the rollout timeline plans from — every band moves with it. Blank plans from today."
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 6,
+          fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap',
+        }}
+      >
+        Target signature
+        <input
+          type="date"
+          value={signDate}
+          disabled={!updateOppField || opp?._id == null}
+          onChange={(e) => setSignDate(e.target.value)}
+          style={{
+            padding: '0.2rem 0.3rem', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.72rem',
+            border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+      </label>
       <button
         type="button"
         onClick={() => setOpen(true)}
         title={services.length
-          ? `Rollout timeline for ${services.join(', ')} — with the services they depend on, kicked off today`
+          ? `Rollout timeline for ${services.join(', ')} — with the services they depend on, from ${signDate ? 'the target signature date' : 'today'}`
           : 'Rollout timeline for this deal’s services. Nothing in Scope yet, so there’s nothing to plan.'}
         // Same pill the activity marks in the Notes header use, so the
         // header reads as one row of controls rather than two styles.
@@ -6705,6 +6746,8 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings }
           settings={settings}
           serviceOverrides={serviceOverrides}
           planKey={planKey}
+          signDate={signDate}
+          onChangeSignDate={setSignDate}
           onClose={() => setOpen(false)}
         />,
         document.body,
@@ -7120,6 +7163,7 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
               solutionOptions={solutionOptions}
               serviceOverrides={serviceOverrides}
               settings={settings}
+              updateOppField={updateOppField}
             />
             {markBtn('_calledOn', '📞', 'Called')}
             {markBtn('_metOn', '🤝', 'Meeting')}
@@ -11190,6 +11234,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             solutionOptions={listRegistry.get('solutions')?.options || []}
             serviceOverrides={settings?.serviceOverrides}
             settings={settings}
+            updateOppField={updateOppField}
             prevFollowUp={followUpStatusPrev?.hadFollowUp ? followUpStatusPrev.followUp : ''}
             onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
               // A Follow Up date corrected inside the popup. Written with
