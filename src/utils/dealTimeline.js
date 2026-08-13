@@ -29,7 +29,7 @@
 // Extensions included so these resolve under plain Node for the tests.
 import { getEffectiveServiceMetadata, rolloutWeeks, formatRolloutWeeks } from '../data/serviceCatalog.js';
 import { placeStages, placementBaseMonth, WEEKS_PER_RELATIVE_MONTH } from './timelineDates.js';
-import { parseDependsOn } from './timelineTemplatesStore.js';
+import { parseDependsOn, groupStagesByPhase } from './timelineTemplatesStore.js';
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
@@ -308,6 +308,17 @@ export function buildDealTimeline({
       // Ids are namespaced by service: two services can carry the same
       // template, and a step-level dependsOn must not point across bands.
       const stageId = (id) => `${norm(entry.name)}::${id}`;
+      // The step's own group inside its service's timeline. The band this
+      // plan puts it in is the SERVICE, so `phase` is spent on that — but a
+      // service's timeline has its own structure ("System Implementation",
+      // "Direct Payment Service Setup"), and flattening the whole service to
+      // one list threw it away. Carried across as a sub-group, with the
+      // colour it was given in its own timeline, so the plan shows both
+      // levels: which service, and which part of that service.
+      const subColor = new Map();
+      for (const g of groupStagesByPhase(tpl.stages, tpl.phaseColors)) {
+        for (const { stage } of g.steps) subColor.set(stage.id, g.color || '');
+      }
       tpl.stages.forEach((st, i) => {
         const pos = placements[i];
         // The agreement is signed at the start of the engagement, not after
@@ -321,6 +332,8 @@ export function buildDealTimeline({
           ...st,
           id: stageId(st.id),
           phase: band,
+          subPhase: String(st.phase || '').trim(),
+          subPhaseColor: subColor.get(st.id) || '',
           startMonth: pinned ? 1 : offset + pos.month,
           months: pos.span,
           // The step's own dates described where it sat in its template's
