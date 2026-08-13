@@ -958,6 +958,63 @@ export function DropdownsView({ settings, updateSettings }) {
     updateSettings?.({ hiddenServices: next });
   }, [settings?.hiddenServices, updateSettings]);
 
+  // Adding a service from this tab. The rows come from the Solutions list,
+  // so a new one is an option appended to that list — the same edit the
+  // Lists tab makes, which is why both tabs show it straight away. Only the
+  // name is asked for here; the twelve columns behind it start blank, and
+  // the row's popup opens on the new service so they can be filled in on
+  // one screen rather than hunted across a horizontal scrollbar.
+  const [addingService, setAddingService] = useState(false);
+  const [newServiceName, setNewServiceName] = useState('');
+  const [addServiceNote, setAddServiceNote] = useState('');
+  const newServiceRef = useRef(null);
+  // Focus the name box when the form opens, and again when the popup that
+  // opened over it closes — otherwise the next name in a batch has to be
+  // clicked into.
+  useEffect(() => {
+    if (addingService && !detailName) newServiceRef.current?.focus();
+  }, [addingService, detailName]);
+
+  function closeAddService() {
+    setAddingService(false);
+    setNewServiceName('');
+    setAddServiceNote('');
+  }
+
+  function commitNewService() {
+    const name = newServiceName.trim();
+    if (!name) return;
+    const options = solutionsList?.options || [];
+    const existing = options.find(o => String(o).toLowerCase() === name.toLowerCase());
+    setNewServiceName('');
+    // A name that's already in the list is almost always one the user
+    // can't see — hidden, or filtered out by the search box. Silently
+    // doing nothing reads as the button being broken, so clear whatever
+    // is hiding it and say where it went instead.
+    if (existing) {
+      if (hiddenServices.has(existing)) toggleHideService(existing);
+      setServiceSearch(existing);
+      setDetailName(existing);
+      setAddServiceNote(`“${existing}” is already in the list — here it is.`);
+      return;
+    }
+    const updates = {
+      dropdownLists: { ...(settings?.dropdownLists || {}), solutions: [...options, name] },
+    };
+    // Re-adding a name that was hidden earlier has to bring it back, or
+    // the new service lands straight in the hidden set and never appears.
+    if (hiddenServices.has(name)) {
+      updates.hiddenServices = (settings?.hiddenServices || []).filter(s => s !== name);
+    }
+    updateSettings?.(updates);
+    // New options append, which on a list this long drops the row off the
+    // bottom of the table. Search for what was just added so it's still on
+    // screen behind the popup — and still there when the popup closes.
+    setServiceSearch(name);
+    setDetailName(name);
+    setAddServiceNote(`Added “${name}” — clear the search box for the full list.`);
+  }
+
   const filteredServiceRows = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
     const visible = showHiddenServices
@@ -1319,7 +1376,46 @@ export function DropdownsView({ settings, updateSettings }) {
                   : 'List the hidden services so they can be restored'}
               >{showHiddenServices ? 'Hide them again' : `Show ${hiddenCount} hidden`}</button>
             )}
+            <button
+              type="button"
+              className={styles.addServiceBtn}
+              onClick={() => (addingService ? closeAddService() : setAddingService(true))}
+              title="Add a service to the Solutions list"
+            >{addingService ? 'Done adding' : '+ Add service'}</button>
           </div>
+
+          {/* The name is all this asks for — a service with no name can't be
+              identified, and the rest of the row is filled in from the popup
+              that opens on it. Stays open after each add, and behind the
+              popup, so a batch of new services is one visit. */}
+          {addingService && (
+            <div className={styles.addServiceRow}>
+              <input
+                ref={newServiceRef}
+                type="text"
+                className={styles.addServiceInput}
+                placeholder="New service name"
+                value={newServiceName}
+                onChange={e => { setNewServiceName(e.target.value); setAddServiceNote(''); }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitNewService(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeAddService(); }
+                }}
+              />
+              <button
+                type="button"
+                className={styles.addServiceSave}
+                onClick={commitNewService}
+                disabled={!newServiceName.trim()}
+              >Add</button>
+              <button
+                type="button"
+                className={styles.showHiddenBtn}
+                onClick={closeAddService}
+              >Cancel</button>
+              {addServiceNote && <span className={styles.addServiceNote}>{addServiceNote}</span>}
+            </div>
+          )}
 
           {/* The shared table: drag a header edge to resize, use its Columns
               menu to hide what you don't need. Both persist per user under
@@ -1341,7 +1437,7 @@ export function DropdownsView({ settings, updateSettings }) {
               settings={settings}
               updateSettings={updateSettings}
               emptyMessage={serviceRows.length === 0
-                ? 'The Solutions dropdown list is empty. Add services on the Lists tab.'
+                ? 'The Solutions dropdown list is empty. Use "+ Add service" above to start it off.'
                 : `No services match "${serviceSearch}".`}
             />
           </div>
