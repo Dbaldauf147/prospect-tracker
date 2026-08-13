@@ -28,7 +28,7 @@
 
 // Extensions included so these resolve under plain Node for the tests.
 import { getEffectiveServiceMetadata, rolloutWeeks, formatRolloutWeeks } from '../data/serviceCatalog.js';
-import { getStageMonths, placementBaseMonth, WEEKS_PER_RELATIVE_MONTH } from './timelineDates.js';
+import { placeStages, placementBaseMonth, WEEKS_PER_RELATIVE_MONTH } from './timelineDates.js';
 import { parseDependsOn } from './timelineTemplatesStore.js';
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
@@ -170,12 +170,20 @@ function templatesForService(templates, name) {
 function templateMonths(tpl) {
   const stages = Array.isArray(tpl?.stages) ? tpl.stages : [];
   if (!stages.length) return 0;
+  return Math.max(...templatePlacements(tpl).map(pos => pos.month + pos.span - 1), 1);
+}
+
+// Where a service's own template puts its steps, sequencing the ones it
+// never placed behind what they wait on — the same placement the renderers
+// use. Measured here as well as drawn, so a ten-step chain makes its
+// service's band ten months long instead of one, and the services waiting on
+// that one start after it really finishes.
+function templatePlacements(tpl) {
+  const stages = Array.isArray(tpl?.stages) ? tpl.stages : [];
+  if (!stages.length) return [];
   const base = placementBaseMonth(tpl, stages);
   const mode = tpl?.positionMode === 'months' ? 'months' : 'dates';
-  return Math.max(...stages.map((st) => {
-    const pos = getStageMonths(st, base, mode);
-    return pos.month + pos.span - 1;
-  }), 1);
+  return placeStages(stages, base, mode);
 }
 
 // A service with no timeline still takes time. Its Rollout Time is stored in
@@ -276,13 +284,12 @@ export function buildDealTimeline({
     const tplMonths = templateMonths(tpl);
 
     if (tpl && tplMonths > 0) {
-      const base = placementBaseMonth(tpl, tpl.stages);
-      const mode = tpl.positionMode === 'months' ? 'months' : 'dates';
+      const placements = templatePlacements(tpl);
       // Ids are namespaced by service: two services can carry the same
       // template, and a step-level dependsOn must not point across bands.
       const stageId = (id) => `${norm(entry.name)}::${id}`;
-      for (const st of tpl.stages) {
-        const pos = getStageMonths(st, base, mode);
+      tpl.stages.forEach((st, i) => {
+        const pos = placements[i];
         // The agreement is signed at the start of the engagement, not after
         // the services this one waits on have been delivered. Left to the
         // dependency offset, a deal signed today drew its own contract six
@@ -307,7 +314,7 @@ export function buildDealTimeline({
           // step waiting on two still points at both — inside this band.
           dependsOn: parseDependsOn(st.dependsOn).map(stageId).join(', '),
         });
-      }
+      });
     } else {
       const months = entry.months;
       const rollout = formatRolloutWeeks(

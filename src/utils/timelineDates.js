@@ -238,6 +238,19 @@ const MONTHS_PER_UNIT = {
   days: 1 / (WEEKS_PER_RELATIVE_MONTH * 7),
 };
 
+// The steps a stage waits on, as a list of stage ids.
+//
+// Stored as a comma-separated string rather than an array — the same shape
+// every other multi-value field in this app uses (see parseMulti), and the
+// shape a single id was already stored in, so a timeline authored when a step
+// could only wait on one thing reads back as a one-element list with no
+// migration. Ids can't contain a comma (makeTimelineId is base36), so
+// splitting on one is safe.
+export function parseDependsOn(value) {
+  if (Array.isArray(value)) return [...new Set(value.map(v => String(v ?? '').trim()).filter(Boolean))];
+  return [...new Set(String(value ?? '').split(',').map(s => s.trim()).filter(Boolean))];
+}
+
 // The whole months a { duration, durationUnit } occupies, or null when the
 // stage doesn't carry one.
 export function durationToMonths(duration, unit) {
@@ -297,8 +310,64 @@ export function getStageMonths(stage, baseMonth, mode = 'months') {
     month: Math.max(1, month ?? 1),
     span: isMilestone ? 1 : Math.max(1, span ?? 1),
     explicit: Number.isFinite(explicitStart) && explicitStart >= 1,
+    // Whether that month came from something the author actually stated — a
+    // typed Month, or a date the step carries — rather than from the "start
+    // at kickoff" fallback. placeStages needs the difference: a step nobody
+    // placed is one its dependencies are free to place.
+    anchored: month != null,
     milestone: isMilestone,
   };
+}
+
+// Where a timeline's steps actually sit, once the ones nobody placed are
+// sequenced behind the steps they wait on. Returns one position per stage,
+// in the order given, each the shape getStageMonths returns.
+//
+// A step can declare both a duration and the steps it waits on without ever
+// naming a month — that's exactly what the Services popup writes, and it's
+// the whole content of "this happens after that". Placing each step on its
+// own, every one of them fell back to month 1: a ten-step implementation
+// drew as ten bars all starting at kickoff, with every dependency arrow
+// running backwards out of a step that hadn't finished yet. The chart said
+// the plan was impossible when what was impossible was the placement.
+//
+// A step the author DID place keeps its month. Their word is the plan, and a
+// stated position that contradicts a dependency is a real conflict worth
+// seeing — the renderers draw that link in red, and re-sequencing it here
+// would hide it. Only the unplaced are moved.
+//
+// A dependency cycle settles nothing, so its members keep the fallback and
+// the red links say so. That's better than picking an arbitrary member to
+// break, which would draw a confident plan out of a contradiction.
+export function placeStages(stages, baseMonth, mode = 'months') {
+  const list = Array.isArray(stages) ? stages : [];
+  const pos = list.map(st => getStageMonths(st, baseMonth, mode));
+
+  const indexById = new Map();
+  list.forEach((st, i) => {
+    const id = String(st?.id ?? '');
+    if (id && !indexById.has(id)) indexById.set(id, i);
+  });
+  const deps = list.map((st, i) => parseDependsOn(st?.dependsOn)
+    .map(id => indexById.get(String(id)))
+    .filter(j => j != null && j !== i));
+
+  // Settled = this step's month is final. Anchored steps start settled, and
+  // so does anything waiting on nothing we can resolve.
+  const settled = pos.map((p, i) => p.anchored || deps[i].length === 0);
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (let i = 0; i < list.length; i++) {
+      if (settled[i] || !deps[i].every(j => settled[j])) continue;
+      // The month after the last of them ends: a predecessor at month m
+      // spanning s months occupies through m + s - 1.
+      pos[i] = { ...pos[i], month: Math.max(...deps[i].map(j => pos[j].month + pos[j].span)) };
+      settled[i] = true;
+      moved = true;
+    }
+  }
+  return pos;
 }
 
 // Where in its month a date falls, as 0…1 — the 1st lands near 0, the last

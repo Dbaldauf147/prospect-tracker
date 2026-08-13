@@ -16,10 +16,10 @@ import {
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { PriorStepsPicker } from './PriorStepsPicker';
 import {
-  getStageRange, getStageMonths, currentMonthAnchor, formatStepDuration,
+  getStageRange, currentMonthAnchor, formatStepDuration,
   STEP_DURATION_UNITS, STEP_DURATION_UNIT_LABELS, DEFAULT_DURATION_UNIT,
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
-  timelineBaseMonth,
+  timelineBaseMonth, placeStages, placementBaseMonth, parseDependsOn,
 } from '../../utils/timelineDates';
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
@@ -133,15 +133,17 @@ function NumberCell({ value, onCommit, min = 1, placeholder, title }) {
 // and in the implementation format it's also the step numbering. Which
 // columns appear follows the timeline's format, so each layout shows only
 // the controls that drive it.
-function StageRow({ index, siblings, stage, mode, columns, priorSteps, onChange, onSetSide, onMove, onRemove }) {
+function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, onChange, onSetSide, onMove, onRemove }) {
   // Effective calendar range: the explicit dates when set, otherwise whatever
   // the Timing text parses to. `auto` means nothing was typed into the date
   // cells — they're mirroring the label.
   const range = getStageRange(stage);
   const auto = !!range && range.derivedStart && range.derivedEnd;
-  // Placeholder values for the Month / Span cells: what the renderer would
-  // work out on its own, so a blank cell shows what it's actually doing.
-  const months = getStageMonths(stage, null, mode);
+  // Placeholder values for the Month / Span cells: where the CHART puts this
+  // step, so a blank cell shows what it's actually doing. Passed in rather
+  // than worked out here, because a step with no month of its own is placed
+  // by the steps it waits on — which this row can't see on its own.
+  const months = placed;
   const byDates = mode === 'dates';
   // "3 weeks" when the step carries a duration, '' when it doesn't. Set in
   // the Services popup; shown here so the Span cell can say what it's
@@ -273,7 +275,9 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, onChange,
               <span className={styles.autoTag} title="Read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
             )}
             {!range && (
-              <span className={styles.undatedTag} title="Without dates this step falls back to month 1. Give it dates, or position by months.">no date</span>
+              <span className={styles.undatedTag} title={stage.dependsOn
+                ? `Undated: placed after the step${parseDependsOn(stage.dependsOn).length === 1 ? '' : 's'} it waits on — month ${months.month}. Give it dates or a month to pin it instead.`
+                : 'Without dates this step falls back to month 1. Give it dates, position it by months, or say which step it waits on.'}>no date</span>
             )}
           </td>
   );
@@ -713,6 +717,10 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   const counts = summarizeStageOwners(stages);
   const format = template.format || 'gantt';
   const mode = template.positionMode === 'months' ? 'months' : 'dates';
+  // Where each step lands on the chart, dependencies included — the Month
+  // and Span cells show these as their placeholders, so the table says the
+  // same thing the visual below it draws.
+  const placedStages = placeStages(stages, placementBaseMonth(template, stages), mode);
 
   function updateStage(idx, next) {
     onChange({ ...template, stages: stages.map((s, i) => (i === idx ? next : s)) });
@@ -1012,6 +1020,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
                   mode={mode}
                   columns={columns}
                   priorSteps={stages.slice(0, idx).map((st, i) => ({ id: st.id, number: i + 1, name: st.name }))}
+                  placed={placedStages[idx]}
                   onChange={(next) => updateStage(idx, next)}
                   onSetSide={(pre) => setStageSide(idx, pre)}
                   onMove={(delta) => moveStage(idx, delta)}

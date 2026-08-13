@@ -17,7 +17,7 @@ import {
 } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
-  getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
+  placeStages, anchorPlus, todayMonthIndex, todayMonthOffset,
   stageMonthFraction, timelineWeekTicks, resolveMonthWindow, monthWindowBounds,
   stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates';
@@ -460,7 +460,10 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
 
   const baseMonth = placementBaseMonth(template, stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
-  const raw = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
+  // Positions come from placeStages rather than a per-stage read, so a step
+  // that only says what it waits on lands after that step instead of at
+  // kickoff — and the dependency links below draw forwards.
+  const raw = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
   // The run-up to the contract sits before the engagement starts, so it needs
   // months the axis doesn't have — everything here is numbered from 1, which
   // is kickoff. Rather than renumber the axis into negatives (which would
