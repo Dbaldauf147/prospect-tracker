@@ -152,7 +152,16 @@ Every question key must appear in both answers and notes.`;
     // the shape, and null ("couldn't establish it") is a legitimate answer the
     // card renders as an empty cell for the user to fill in.
     const num = (v) => {
-      const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+      if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : null;
+      // Everything below has to survive a round trip through Number(), which
+      // reads "" as 0 — so a null, an omitted field, or a string that strips
+      // down to nothing has to be caught before it gets there. It used to
+      // reach Number() and come back 0, which is the one wrong answer here:
+      // "couldn't establish it" would be stored as a researched zero, and
+      // CSRD Wave 3 would derive a definitive No from it.
+      const cleaned = String(v ?? '').replace(/[^0-9.-]/g, '').trim();
+      if (cleaned === '') return null;
+      const n = Number(cleaned);
       return Number.isFinite(n) && n >= 0 ? n : null;
     };
     const rawCsrd = parsed.csrd && typeof parsed.csrd === 'object' ? parsed.csrd : {};
