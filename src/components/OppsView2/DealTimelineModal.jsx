@@ -17,6 +17,7 @@ import { buildTimelineSvg, TIMELINE_FORMATS } from '../../utils/timelineGraphic'
 import { currentMonthAnchor, parseMonthAnchor } from '../../utils/timelineDates';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import { loadHiddenServices, saveHiddenServices } from '../../utils/dealTimelineHiddenStore';
+import { describeServiceRef } from '../../utils/serviceStepDeps';
 
 const btnStyle = {
   padding: '0.35rem 0.7rem', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit',
@@ -430,8 +431,22 @@ export function DealTimelineModal({
                       <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                         {s.startMonth === s.endMonth ? `${s.startMonth}` : `${s.startMonth}–${s.endMonth}`}
                       </td>
+                      {/* Naming the step, where the wait has been refined to
+                          one, is what explains a band that starts partway
+                          through the one above it rather than after it. */}
                       <td style={{ padding: '0.3rem 0.4rem', color: (off || !s.dependsOn.length) ? 'var(--color-text-muted)' : 'var(--color-text)' }}>
-                        {s.dependsOn.length ? s.dependsOn.join(', ') : '—'}
+                        {s.waitsOn.length ? s.waitsOn.map((w, i) => (
+                          <span key={`${w.service}-${i}`}>
+                            {i > 0 && ', '}
+                            {describeServiceRef(w.service, w.stepName)}
+                            {w.stale && (
+                              <span
+                                title={`This waits on a step of ${w.service} that no longer exists, so it is planned after the whole service. Re-pick the step on Dropdowns › Services.`}
+                                style={{ marginLeft: 4, color: '#92400E', fontWeight: 700 }}
+                              >(step missing)</span>
+                            )}
+                          </span>
+                        )) : '—'}
                       </td>
                       <td style={{ padding: '0.3rem 0.4rem', color: off ? 'inherit' : s.source === 'template' ? 'var(--color-text)' : '#92400E' }}>
                         {(SOURCE_NOTE[s.source] || SOURCE_NOTE.unknown)(s)}

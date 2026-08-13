@@ -1441,6 +1441,48 @@
   margin-bottom: 0.5rem;
 }
 
+/* One dependency per line: the service it waits on, and which point of that
+   service unblocks this one. A row rather than a chip strip because the step
+   picker beside each name is a control, and controls that wrap into a chip
+   flow stop reading as belonging to the chip on their left. */
+.detailDepRows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.detailDepRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* The picker sits beside its chip rather than stretching the row: alone on a
+   line it would otherwise take the full width and read as its own field. */
+.detailDepRow .detailStepSelect {
+  flex: 0 1 auto;
+  max-width: 22rem;
+}
+
+.detailDepRow .serviceDepChip,
+.detailDepRow .serviceDepChipStale {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  white-space: normal;
+}
+
+/* A prerequisite sized from its Rollout Time has no steps to offer, so the
+   fixed wording stands in for the picker rather than showing an empty one. */
+.detailDepNoSteps {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* Chips in the popup wrap onto as many lines as they need — unlike the
    table cell, where the row height is the constraint. */
 .detailChips .serviceDepChip,

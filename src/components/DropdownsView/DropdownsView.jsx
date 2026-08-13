@@ -9,6 +9,7 @@ import {
 import { QuestionsTab } from './QuestionsTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
+import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
 import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
@@ -249,7 +250,15 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
   const [rect, setRect] = useState(null);
   const cellRef = useRef(null);
 
-  const selected = useMemo(() => parseMulti(value), [value]);
+  // Dependencies as { service, step }. This picker chooses SERVICES; the step
+  // each one is refined to is chosen in the service's detail popup. Editing
+  // here therefore has to carry those steps through untouched — ticking one
+  // more service must not quietly re-plan every deal that was waiting on a
+  // step of another.
+  const refs = useMemo(() => parseServiceRefs(value), [value]);
+  const selected = useMemo(() => refs.map(r => r.service), [refs]);
+  const stepByService = useMemo(
+    () => new Map(refs.map(r => [r.service.trim().toLowerCase(), r.step])), [refs]);
   const selectedSet = useMemo(
     () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
   // Everything pickable: every other service, self excluded.
@@ -276,15 +285,25 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
   function toggle(name) {
     const key = name.trim().toLowerCase();
     const next = selectedSet.has(key)
-      ? selected.filter(s => s.trim().toLowerCase() !== key)
-      : [...selected, name];
-    const nextKeys = new Set(next.map(s => s.trim().toLowerCase()));
+      ? refs.filter(r => r.service.trim().toLowerCase() !== key)
+      : [...refs, { service: name, step: '' }];
+    const byName = new Map(next.map(r => [r.service.trim().toLowerCase(), r]));
     const ordered = [
-      ...pickable.filter(o => nextKeys.has(o.trim().toLowerCase())),
-      ...next.filter(s => !liveSet.has(s.trim().toLowerCase())),
+      ...pickable.filter(o => byName.has(o.trim().toLowerCase())).map(o => byName.get(o.trim().toLowerCase())),
+      ...next.filter(r => !liveSet.has(r.service.trim().toLowerCase())),
     ];
-    onCommit(ordered.join(', '));
+    onCommit(ordered.map(r => formatServiceRef(r.service, r.step)).join(', '));
   }
+
+  // This column lists SERVICES. Where one has been refined to a step, the
+  // chip carries a "›" and says so — resolving the stored step id to its name
+  // would mean handing all 139 cells the whole set of timelines, and the
+  // service's own popup is where the step is read and chosen anyway.
+  const refined = (name) => !!stepByService.get(name.trim().toLowerCase());
+  const label = (name) => (refined(name) ? `${name} ›` : name);
+  const depTitle = (name) => (refined(name)
+    ? `${name} — waits on one step of it, not all of it. Open ${selfName} to see or change which.`
+    : name);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -296,9 +315,9 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
   const chip = (name, stale) => (
     <span
       key={name}
-      title={stale ? `"${name}" isn't in the Solutions list any more` : name}
+      title={stale ? `"${name}" isn't in the Solutions list any more` : depTitle(name)}
       className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
-    >{name}</span>
+    >{label(name)}</span>
   );
 
   return (
@@ -307,7 +326,7 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
         ref={cellRef}
         onClick={(e) => { swallowClick(e); openPicker(); }}
         title={selected.length > 0
-          ? `Rolled out before ${selfName}: ${selected.join(', ')}. Click to change.`
+          ? `Rolled out before ${selfName}: ${selected.map(label).join(', ')}. Click to change which services; a "›" marks one this waits only part-way through — open ${selfName} to pick the step.`
           : `Click to pick the services that must be rolled out before ${selfName}`}
         style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em', overflow: 'hidden' }}
       >
@@ -322,7 +341,7 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
             {selected.length > 1 && (
               <span
                 className={styles.serviceDepChipMore}
-                title={`Also: ${selected.slice(1).join(', ')}`}
+                title={`Also: ${selected.slice(1).map(label).join(', ')}`}
               >+{selected.length - 1}</span>
             )}
           </>

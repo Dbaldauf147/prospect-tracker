@@ -30,21 +30,29 @@
 import { getEffectiveServiceMetadata, rolloutWeeks, formatRolloutWeeks } from '../data/serviceCatalog.js';
 import { placeStages, placementBaseMonth, WEEKS_PER_RELATIVE_MONTH } from './timelineDates.js';
 import { parseDependsOn, groupStagesByPhase } from './timelineTemplatesStore.js';
+// templatesForService is shared with the step pickers, so the timeline a step
+// reference resolves against is the same one the composer draws.
+import { parseServiceRefs, findTemplateStepIndex, templatesForService } from './serviceStepDeps.js';
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
-// Comma-separated Solutions names — the shape every multi-value column in
-// the app stores. Kept local rather than imported from the columnLinks JSX
-// module so this file stays resolvable under plain Node.
-function splitNames(value) {
-  if (Array.isArray(value)) return value.map(s => String(s).trim()).filter(Boolean);
-  return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
+/**
+ * The services that must be rolled out before `name` can start, as plain
+ * names — a step refinement ("Bill payment > st-12") reduces to its service.
+ */
+export function serviceDependencies(name, serviceOverrides) {
+  return serviceDependencyRefs(name, serviceOverrides).map(r => r.service);
 }
 
-/** The services that must be rolled out before `name` can start. */
-export function serviceDependencies(name, serviceOverrides) {
+/**
+ * The same list, keeping the step each entry waits for: [{ service, step }],
+ * `step` being '' for the usual wait-for-the-whole-service case. This is what
+ * the scheduler reads; `serviceDependencies` is the name-only view every
+ * other caller wants.
+ */
+export function serviceDependencyRefs(name, serviceOverrides) {
   const meta = getEffectiveServiceMetadata(String(name ?? '').trim(), serviceOverrides);
-  return splitNames(meta?.dependsOn);
+  return parseServiceRefs(meta?.dependsOn);
 }
 
 /**
@@ -57,7 +65,9 @@ export function serviceDependencies(name, serviceOverrides) {
  * Self-references are dropped: a service listed as its own dependency would
  * never become ready and would stall the scheduler.
  *
- * Returns [{ name, inScope, dependsOn }] in discovery order.
+ * Returns [{ name, inScope, dependsOn, waitFor }] in discovery order.
+ * `dependsOn` is the service names; `waitFor` is the same list keeping the
+ * step each entry waits for, which is what the scheduler reads.
  */
 export function expandDealServices(scopeNames, serviceOverrides) {
   const byKey = new Map();
@@ -70,7 +80,7 @@ export function expandDealServices(scopeNames, serviceOverrides) {
     if (!key) continue;
     // A service named twice in Scope is one service, and it's in scope.
     if (byKey.has(key)) { byKey.get(key).inScope = true; continue; }
-    const entry = { name, inScope: true, dependsOn: serviceDependencies(name, serviceOverrides) };
+    const entry = { name, inScope: true, waitFor: serviceDependencyRefs(name, serviceOverrides) };
     byKey.set(key, entry);
     out.push(entry);
     queue.push(entry);
@@ -78,10 +88,10 @@ export function expandDealServices(scopeNames, serviceOverrides) {
 
   while (queue.length) {
     const entry = queue.shift();
-    for (const dep of entry.dependsOn) {
-      const key = norm(dep);
+    for (const ref of entry.waitFor) {
+      const key = norm(ref.service);
       if (!key || byKey.has(key)) continue;
-      const added = { name: dep, inScope: false, dependsOn: serviceDependencies(dep, serviceOverrides) };
+      const added = { name: ref.service, inScope: false, waitFor: serviceDependencyRefs(ref.service, serviceOverrides) };
       byKey.set(key, added);
       out.push(added);
       queue.push(added);
@@ -89,7 +99,10 @@ export function expandDealServices(scopeNames, serviceOverrides) {
   }
 
   for (const entry of out) {
-    entry.dependsOn = entry.dependsOn.filter(d => norm(d) && norm(d) !== norm(entry.name));
+    entry.waitFor = entry.waitFor.filter(r => norm(r.service) && norm(r.service) !== norm(entry.name));
+    // The name-only view, which is what the schedule's readiness check, the
+    // caller's "Waits on" column and every existing test read.
+    entry.dependsOn = entry.waitFor.map(r => r.service);
   }
   return out;
 }
@@ -101,6 +114,14 @@ export function expandDealServices(scopeNames, serviceOverrides) {
  * chain of three one-month services runs 1, 2, 3 and two independent ones
  * both run in month 1.
  *
+ * A prerequisite refined to a step is waited for only as far as that step:
+ * Budgets waiting on "Bill payment > Bill Redirection & Go Live" starts the
+ * month after THAT step lands, not after the whole Bill payment programme.
+ * `stepEndOf(serviceName, step)` supplies where the step finishes inside its
+ * own service, 1-based, and returning null falls back to the whole service —
+ * which is what a renamed or deleted step does. Omit the argument entirely
+ * and every dependency is whole-service, exactly as before.
+ *
  * A dependency cycle can't be ordered, and refusing to draw anything would
  * be a worse answer than an imperfect plan. The cycle is broken at its
  * least-blocked member — that one starts as if unblocked, everything else
@@ -109,15 +130,25 @@ export function expandDealServices(scopeNames, serviceOverrides) {
  *
  * Returns { placed: [{ ...entry, startMonth, endMonth, months }], cycleBroken }.
  */
-export function scheduleDealServices(entries, spanOf) {
+export function scheduleDealServices(entries, spanOf, stepEndOf) {
   const list = Array.isArray(entries) ? entries : [];
   const byKey = new Map(list.map(e => [norm(e.name), e]));
-  // Only dependencies we actually have an entry for can be waited on.
-  const deps = new Map(list.map(e => [
+  // Only dependencies we actually have an entry for can be waited on. An
+  // entry with no `waitFor` (a caller building entries by hand, and every
+  // test that predates step refinement) reads as whole-service waits.
+  const waits = new Map(list.map(e => [
     norm(e.name),
-    (e.dependsOn || []).map(norm).filter(k => k && k !== norm(e.name) && byKey.has(k)),
+    (e.waitFor || (e.dependsOn || []).map(service => ({ service, step: '' })))
+      .filter(w => norm(w.service) && norm(w.service) !== norm(e.name) && byKey.has(norm(w.service))),
   ]));
+  // The name-only view the readiness check and the cycle break work on: a
+  // step refinement changes WHEN a service is free, never WHETHER it is
+  // ordered after the one it waits on.
+  const deps = new Map([...waits].map(([k, ws]) => [k, ws.map(w => norm(w.service))]));
 
+  // Starts as well as ends, because a step's absolute month is measured from
+  // the start of the service that carries it.
+  const start = new Map();
   const end = new Map();
   const placed = [];
   const remaining = new Set(byKey.keys());
@@ -139,9 +170,24 @@ export function scheduleDealServices(entries, spanOf) {
     }
     for (const key of batch) {
       const entry = byKey.get(key);
-      const ends = deps.get(key).map(d => end.get(d)).filter(v => v != null);
+      // The month each prerequisite stops blocking this one: its own end
+      // normally, or the end of the named step when it's been refined.
+      const ends = waits.get(key).map((w) => {
+        const dk = norm(w.service);
+        const depEnd = end.get(dk);
+        // Only reachable when the cycle break placed this one early; an
+        // unplaced prerequisite can't hold anything back.
+        if (depEnd == null) return null;
+        if (!w.step || typeof stepEndOf !== 'function') return depEnd;
+        const rel = stepEndOf(w.service, w.step);
+        if (rel == null) return depEnd;  // stale reference — wait for all of it
+        // Never past the service's own end: a step can't finish after the
+        // thing that contains it, and a bad number shouldn't push work out.
+        return Math.min(start.get(dk) + rel - 1, depEnd);
+      }).filter(v => v != null);
       const startMonth = ends.length ? Math.max(...ends) + 1 : 1;
       const months = Math.max(1, Math.floor(Number(spanOf(entry)) || 1));
+      start.set(key, startMonth);
       end.set(key, startMonth + months - 1);
       placed.push({ ...entry, startMonth, months, endMonth: startMonth + months - 1 });
     }
@@ -155,14 +201,6 @@ export function scheduleDealServices(entries, spanOf) {
   placed.sort((a, b) => a.startMonth - b.startMonth
     || discovery.get(norm(a.name)) - discovery.get(norm(b.name)));
   return { placed, cycleBroken };
-}
-
-// The template attached to a service, or null. A service with more than one
-// attached timeline uses the first; the caller is told so it can say which.
-function templatesForService(templates, name) {
-  const key = norm(name);
-  return (Array.isArray(templates) ? templates : [])
-    .filter(t => (t?.services || []).some(s => norm(s) === key));
 }
 
 // A template's own length in whole months, measured the same way every
@@ -291,7 +329,24 @@ export function buildDealTimeline({
     const tpl = attached.get(norm(entry.name))[0];
     return templateMonths(tpl) || rolloutMonths(entry.name, serviceOverrides) || 1;
   };
-  const { placed, cycleBroken } = scheduleDealServices(entries, spanOf);
+  // Where a named step finishes inside its own service, 1-based, so a
+  // dependency refined to a step waits only that far. Placements are memoized
+  // because the scheduler asks once per dependency and a template's layout
+  // costs the same every time.
+  const placementCache = new Map();
+  const placementsOf = (tpl) => {
+    if (!placementCache.has(tpl)) placementCache.set(tpl, templatePlacements(tpl));
+    return placementCache.get(tpl);
+  };
+  const stepEndOf = (serviceName, step) => {
+    const tpl = attached.get(norm(serviceName))?.[0];
+    if (!tpl) return null;  // sized from Rollout Time: it has no steps to wait for
+    const i = findTemplateStepIndex(tpl, step);
+    if (i < 0) return null;  // renamed or deleted — fall back to the whole service
+    const pos = placementsOf(tpl)[i];
+    return pos ? pos.month + pos.span - 1 : null;
+  };
+  const { placed, cycleBroken } = scheduleDealServices(entries, spanOf, stepEndOf);
 
   // Built per service so a hidden band takes its own steps with it.
   const built = placed.map((entry, order) => {
@@ -378,6 +433,18 @@ export function buildDealTimeline({
         name: entry.name,
         inScope: entry.inScope,
         dependsOn: entry.dependsOn,
+        // The same prerequisites, saying which step of each one this service
+        // actually waits for. `stepName` is the step's own name where it
+        // resolves; a refinement pointing at a step that no longer exists
+        // comes back with `stale: true` and was scheduled as whole-service,
+        // so the caller can say so rather than quietly planning something
+        // else than what was authored.
+        waitsOn: (entry.waitFor || []).map((w) => {
+          const tpl = attached.get(norm(w.service))?.[0];
+          const i = w.step ? findTemplateStepIndex(tpl, w.step) : -1;
+          const stepName = i >= 0 ? String(tpl.stages[i]?.name || '').trim() : '';
+          return { service: w.service, step: w.step, stepName, stale: !!w.step && !stepName };
+        }),
         startMonth: entry.startMonth,
         endMonth: entry.endMonth,
         months: entry.months,
