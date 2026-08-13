@@ -220,7 +220,9 @@ export const REGULATIONS_BY_JURISDICTION = {
 //
 // `source` says where a row's value comes from, which is what the user has
 // to know to trust it:
-//   'research' — derived from the revenue research already on the card
+//   'research' — filled by one of the research runs behind the card's button:
+//                the revenue run for the California thresholds, the
+//                compliance run for the EU's CSRD figures and CBAM imports
 //   'sites'    — counted from the uploaded site list
 //   'manual'   — nobody can look this up for you; answer it by hand
 export const CALIFORNIA_CRITERIA_GROUPS = [
@@ -321,24 +323,33 @@ export const EU_CRITERIA_GROUPS = [
       },
     ],
   },
-  // CBAM screens on what the company imports, which no figure the research
-  // run collects can answer — so both rows are manual by nature, not by
-  // omission. Kept as its own group, after the CSRD one: csrdValues() reads
+  // CBAM screens on what the company imports, so no turnover or headcount
+  // figure on this card can answer it — the research run searches for it
+  // separately and returns its verdicts on a `cbam` payload of their own,
+  // which is why these rows name one (`researchPayload`) and the CSRD rows
+  // above don't.
+  //
+  // Import tonnage is rarely public, so the second row often comes back
+  // Unknown and stays open for the account team. That's the point of asking:
+  // an Unknown is treated as nothing found, so the row reads as unanswered
+  // rather than as a No nobody checked.
+  //
+  // Kept as its own group, after the CSRD one: csrdValues() reads
   // EU_CRITERIA_GROUPS[0].rows, so the CSRD group has to stay first.
   {
     key: 'cbam-inputs',
     label: 'CBAM screening',
-    note: 'What the company imports into the EU — the only thing that decides CBAM, and nothing else on this card establishes it',
+    note: 'What the company imports into the EU — the only thing that decides CBAM, and the one thing no figure on this card implies',
     rows: [
       {
         key: 'cbam-goods',
         label: 'Imports cement, iron / steel, aluminium, fertilisers, hydrogen or electricity into the EU?',
-        source: 'manual',
+        source: 'research', fromResearch: 'importsCoveredGoods', researchPayload: 'cbam',
       },
       {
         key: 'cbam-over-de-minimis',
         label: 'More than 50 tonnes of covered goods a year? (hydrogen and electricity count however small)',
-        source: 'manual',
+        source: 'research', fromResearch: 'overFiftyTonnes', researchPayload: 'cbam',
       },
     ],
   },
@@ -583,14 +594,20 @@ export function deriveRegulationVerdict(regulation, {
 // For a numeric row `verdict` is the figure as a string, which is what the
 // input renders and what gets persisted if the user leaves it alone.
 export function deriveCriterion(row, {
-  revenueUsd, revenueLabel, revenueEntity, caSiteCount, employees, csrd, csrdNotes,
+  revenueUsd, revenueLabel, revenueEntity, caSiteCount, employees,
+  csrd, csrdNotes, cbam, cbamNotes,
 } = {}) {
   // The compliance research run is the first source for a row that names a
   // field on its payload. A researched "Unknown" is treated as nothing found,
   // so the row stays open rather than parroting a non-answer.
   if (row?.fromResearch) {
-    const value = csrd?.[row.fromResearch];
-    const note = String(csrdNotes?.[row.fromResearch] || '').trim();
+    // Which of the run's payloads holds it. CSRD is the default because it
+    // came first and its rows don't name one; CBAM's rows do, since the two
+    // are researched from different evidence and a company can have one
+    // established and the other not.
+    const fromCbam = row.researchPayload === 'cbam';
+    const value = (fromCbam ? cbam : csrd)?.[row.fromResearch];
+    const note = String((fromCbam ? cbamNotes : csrdNotes)?.[row.fromResearch] || '').trim();
     const ok = row.kind === 'number'
       ? Number.isFinite(Number(value)) && value !== null && value !== ''
       : value === 'Yes' || value === 'No';

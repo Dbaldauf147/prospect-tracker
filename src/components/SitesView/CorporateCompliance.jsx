@@ -768,7 +768,11 @@ function thresholdText(thresholds) {
 // value. Says where the number came from so a derived Yes isn't mistaken
 // for one somebody checked.
 const CRITERION_SOURCE = {
-  research: { label: 'from research', title: 'Derived from the revenue research on this card. Pick a value to override.' },
+  // Covers both runs behind the button: the revenue research fills the
+  // California thresholds, the compliance research fills the CSRD figures and
+  // the CBAM import verdicts. The row's own tooltip names which one and says
+  // what it found, so this only has to say it wasn't typed by hand.
+  research: { label: 'from research', title: 'Derived from the research on this card, not entered by hand. Hover the value for what it found; pick a value to override.' },
   sites: { label: 'from sites', title: 'Counted from the uploaded site list: the California sites matched to this company. Pick a value to override.' },
   manual: { label: 'manual', title: 'Nothing on this page settles this one: answer it by hand.' },
 };
@@ -914,10 +918,14 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
     revenueUsd, revenueLabel, revenueEntity, caSiteCount,
     employees: Number.isFinite(Number(employees)) && employees !== null && employees !== ''
       ? Number(employees) : null,
-    // The CSRD figures the compliance research run turned up, plus its
-    // per-field rationale for the tooltips.
+    // The CSRD figures and CBAM import verdicts the compliance research run
+    // turned up, plus its per-field rationale for the tooltips. Two payloads
+    // rather than one because they're established from different evidence:
+    // a run can settle the turnover and still not know what gets imported.
     csrd: research?.csrd || null,
     csrdNotes: research?.csrdNotes || null,
+    cbam: research?.cbam || null,
+    cbamNotes: research?.cbamNotes || null,
     // "Present in the EU" for Wave 2 — the jurisdiction question asks exactly
     // that, so the wave rules read it rather than a second copy of it.
     euAnswer: answers?.eu || '',
@@ -2206,16 +2214,20 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
         }
       }
       // Keep the rationale + sources alongside so the card can explain itself.
-      // `csrd` holds the researched CSRD inputs, which the EU criteria rows
-      // derive from — stored rather than written straight into the answers so
-      // a hand-entered value still wins and re-running research doesn't
-      // overwrite it.
+      // `csrd` holds the researched CSRD inputs and `cbam` the two import
+      // verdicts CBAM screens on, which the EU criteria rows derive from —
+      // stored rather than written straight into the answers so a
+      // hand-entered value still wins and re-running research doesn't
+      // overwrite it. A run from before CBAM was researched simply has no
+      // `cbam` key, and those rows stay open, which is what they were.
       updates[`companyComplianceResearch.${key}`] = {
         notes: data.notes || {},
         summary: String(data.summary || ''),
         sources: Array.isArray(data.sources) ? data.sources : [],
         csrd: data.csrd && typeof data.csrd === 'object' ? data.csrd : null,
         csrdNotes: data.csrdNotes && typeof data.csrdNotes === 'object' ? data.csrdNotes : null,
+        cbam: data.cbam && typeof data.cbam === 'object' ? data.cbam : null,
+        cbamNotes: data.cbamNotes && typeof data.cbamNotes === 'object' ? data.cbamNotes : null,
         savedAt: Date.now(),
       };
       setScreenState(s => ({ ...s, [key]: { loading: false, error: null } }));
@@ -2386,7 +2398,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       type="button"
                       onClick={() => { researchRevenue(c.name); researchCompliance(c.name, c.key); }}
                       disabled={!c.key || anyResearching}
-                      title="Research this company's annual revenue and answer all six jurisdiction questions in one go."
+                      title="Research this company's annual revenue, answer all six jurisdiction questions, and fill the EU screening rows below them — the CSRD turnover and headcount figures, and what it imports into the EU for CBAM — in one go."
                       style={{
                         flexShrink: 0, padding: '0.4rem 0.8rem', borderRadius: 6,
                         border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff',
