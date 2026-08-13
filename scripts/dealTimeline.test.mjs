@@ -269,6 +269,78 @@ same('a prerequisite the deal also sold keeps its band',
   alsoSold.services.map(s => s.name), ['Meters', 'Monitoring']);
 same('and nothing is hidden', alsoSold.hidden, []);
 
+// --- hiding a service by name --------------------------------------------
+// Clicked off the chart in the rollout popup. Exactly the same contract the
+// prerequisites switch has: the band comes out, the schedule does not move.
+// If hiding a service let the ones waiting on it slide forward, the popup
+// would quietly rewrite the delivery plan every time someone tidied the
+// chart for a screenshot — which is the one thing it must never do.
+const dropped = buildDealTimeline({
+  scopeServices: ['Monitoring', 'Reporting'],
+  templates,
+  serviceOverrides: overrides,
+  anchorMonth: '2026-08',
+  excludeServices: ['Monitoring'],
+});
+same('the hidden service loses its band',
+  dropped.services.map(s => s.name), ['Meters', 'Reporting']);
+same('and is reported back so the caller can list it',
+  dropped.excluded.map(s => s.name), ['Monitoring']);
+// Stated as "identical to the same plan with nothing hidden" rather than as
+// fixed month numbers: the invariant is that hiding changes no date at all,
+// and a hardcoded month would still pass if every band shifted together.
+const kept = buildDealTimeline({
+  scopeServices: ['Monitoring', 'Reporting'],
+  templates,
+  serviceOverrides: overrides,
+  anchorMonth: '2026-08',
+});
+const months = (plan) => plan.services.map(s => [s.name, s.startMonth, s.endMonth]);
+same('what waits on it does not move up',
+  months(dropped), months(kept).filter(([n]) => n !== 'Monitoring'));
+check('and the plan is still its full length', dropped.monthsNeeded, kept.monthsNeeded);
+
+// Matching is on the name, case- and space-insensitively, because the caller
+// is echoing back a name it read off a row.
+check('hiding is case-insensitive', buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides, excludeServices: ['  aUdItS '],
+}).services.length, 0);
+same('a name that is not in the plan is ignored', buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides, excludeServices: ['Nonexistent'],
+}).services.map(s => s.name), ['Audits']);
+same('and nothing is excluded by default', buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides,
+}).excluded, []);
+
+// Every service lands in exactly one bucket. A prerequisite hidden by hand
+// must not ALSO be counted among the ones the prerequisites switch would
+// bring back, or the "Show N prerequisites" button lies about what it does.
+const both = buildDealTimeline({
+  scopeServices: ['Monitoring'],
+  templates,
+  serviceOverrides: overrides,
+  showPrerequisites: false,
+  excludeServices: ['Meters'],
+});
+same('a prerequisite hidden by hand is reported once, as excluded', both.excluded.map(s => s.name), ['Meters']);
+same('and not also as toggled-off', both.hidden, []);
+
+// Hiding everything is allowed — the popup still has rows to click to undo it.
+const allOff = buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides, excludeServices: ['Audits'],
+});
+check('hiding every service draws nothing', allOff.template.stages.length, 0);
+same('but the service is still listed as excluded', allOff.excluded.map(s => s.name), ['Audits']);
+
+// `order` is what lets the popup interleave drawn and hidden rows back into
+// the chart's own top-to-bottom order.
+const ordered = buildDealTimeline({
+  scopeServices: ['Reporting'], templates, serviceOverrides: overrides, excludeServices: ['Monitoring'],
+});
+same('order spans the full plan, not just the drawn bands',
+  [...ordered.services, ...ordered.excluded].sort((a, b) => a.order - b.order).map(s => s.name),
+  ['Meters', 'Monitoring', 'Reporting']);
+
 // --- a service with nothing attached at all -------------------------------
 const bare = buildDealTimeline({ scopeServices: ['Mystery'], templates: [], serviceOverrides: overrides });
 check('an unplannable service still gets a band', bare.services.length, 1);
