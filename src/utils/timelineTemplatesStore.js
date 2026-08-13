@@ -196,10 +196,11 @@ export function makeTimelineStage(overrides = {}) {
 // tab's "+ New timeline" defaults to. That default is right for a timeline
 // nobody has filled in yet, but this one is created for a known shape: a
 // numbered sequence of steps that wait on each other. "Implementation" is the
-// layout that numbers the steps, and it's the only one that draws the
-// dependency connectors — a Gantt stores a step's dependsOn and shows nothing
-// for it, so a user who set one would see no difference. Changeable on the
-// Timelines tab like any other setting.
+// layout that numbers the steps, and the one that places a step by what it
+// waits on (see placeStages) — a Gantt goes by dates, so the steps this popup
+// writes, which carry a duration and a predecessor and no dates at all, would
+// have nothing to position them. Changeable on the Timelines tab like any
+// other setting.
 export function makeTimelineForService(serviceName) {
   const name = String(serviceName ?? '').trim();
   return {

@@ -45,8 +45,22 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
   // and reads a column per month. Long engagements don't need the day-level
   // scale, and past a dozen columns the week labels are too tight to print.
   const [axis, setAxis] = useState('weeks');
+  // Services the user has clicked off the chart, by lowercased name. Purely a
+  // presentation filter: the schedule is computed over every service first,
+  // so taking a band out never lets the ones waiting on it start earlier.
+  const [excluded, setExcluded] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  function toggleService(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return;
+    setExcluded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   // Kickoff is this month, so month 1 is the month we're in and the
   // renderers put their today marker in the first column.
@@ -67,7 +81,16 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     name: account || 'Timeline',
     clientName: account,
     showPrerequisites,
-  }), [scopeServices, templates, serviceOverrides, anchorMonth, kickoffDate, account, showPrerequisites]);
+    excludeServices: [...excluded],
+  }), [scopeServices, templates, serviceOverrides, anchorMonth, kickoffDate, account, showPrerequisites, excluded]);
+
+  // The chart's services and the ones clicked off it, back in one list in the
+  // chart's own order. Hidden services have to stay listed or there'd be
+  // nothing left to click to bring them back.
+  const rows = useMemo(
+    () => [...plan.services, ...plan.excluded].sort((a, b) => a.order - b.order),
+    [plan.services, plan.excluded],
+  );
 
   // The format switch only changes how the same plan is drawn, so it lives
   // here rather than in the composer.
@@ -141,6 +164,16 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* Clicking rows off one at a time needs one click to undo them
+                all, or a chart hidden down to nothing is a puzzle. */}
+            {plan.excluded.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setExcluded(new Set())}
+                title="Draw every service again"
+                style={{ ...btnStyle, background: '#EEF2FF', borderColor: '#C7D2FE', color: '#3730A3', fontWeight: 700 }}
+              >Show {plan.excluded.length} hidden</button>
+            )}
             {/* Shown whenever prerequisites exist, in either direction, so
                 the chart never quietly omits work. */}
             {(plan.hidden.length > 0 || prerequisites.length > 0) && (
@@ -244,14 +277,32 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             </div>
           )}
 
-          {plan.services.length === 0 ? (
+          {/* Same promise the prerequisites note makes: what's off the chart
+              is still in the dates, so a band starting in month 6 with
+              nothing visible before it isn't a mistake. */}
+          {plan.excluded.length > 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {plan.excluded.length} service{plan.excluded.length === 1 ? '' : 's'} hidden by hand and left out of the
+              chart and the Excel — still scheduled, so nothing waiting on {plan.excluded.length === 1 ? 'it' : 'them'} moved:
+              {' '}{plan.excluded.map(s => s.name).join(', ')}.
+            </div>
+          )}
+
+          {/* The table renders whenever the plan has any services at all —
+              including when every one of them is hidden, since its rows are
+              the only thing left to click to bring them back. */}
+          {rows.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
               This deal’s Scope doesn’t name any services yet. Fill in Scope and the rollout plan builds itself.
             </div>
           ) : (
             <>
               <div style={{ overflow: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 4, background: '#fff' }}>
-                {svg
+                {plan.services.length === 0
+                  ? <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                      Every service is hidden. Click one in the list below — or “Show {plan.excluded.length} hidden” above — to draw it again.
+                    </div>
+                  : svg
                   ? <div style={{ minWidth: 'min-content' }} dangerouslySetInnerHTML={{ __html: svg }} />
                   : <div style={{ padding: '1.5rem', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
                       This plan can’t be drawn in the {format} format. Try another.
@@ -260,7 +311,13 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
 
               {/* The order, in words. The chart shows when; this says why —
                   which service is waiting on what, and where each band's
-                  length came from. */}
+                  length came from. Rows are also the hide control: a chart
+                  with nothing to click can't say it's clickable, so the list
+                  that names the services is where that lives. */}
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                Click a service to hide its band from the chart and the Excel. The dates don’t move — a hidden
+                service still holds back everything that waits on it.
+              </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                 <thead>
                   <tr>
@@ -278,10 +335,34 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
                   </tr>
                 </thead>
                 <tbody>
-                  {plan.services.map(s => (
-                    <tr key={s.name} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
-                      <td style={{ padding: '0.3rem 0.4rem' }}>
+                  {rows.map(s => {
+                    const off = excluded.has(s.name.trim().toLowerCase());
+                    return (
+                    <tr
+                      key={s.name}
+                      onClick={() => toggleService(s.name)}
+                      title={off
+                        ? `Click to draw ${s.name} on the timeline again`
+                        : `Click to hide ${s.name} from the timeline. Its dates still hold everything that waits on it.`}
+                      style={{
+                        borderBottom: '1px solid var(--color-border-light)',
+                        cursor: 'pointer',
+                        background: off ? 'var(--color-bg)' : 'transparent',
+                        color: off ? 'var(--color-text-muted)' : 'inherit',
+                      }}
+                    >
+                      <td style={{ padding: '0.3rem 0.4rem', textDecoration: off ? 'line-through' : 'none' }}>
                         {s.name}
+                        {off && (
+                          <span
+                            title="Hidden from the chart and the Excel. Still scheduled — the services waiting on it didn’t move."
+                            style={{
+                              marginLeft: 6, padding: '1px 6px', borderRadius: 999, fontSize: '0.66rem',
+                              fontWeight: 700, background: 'var(--color-bg)', color: 'var(--color-text-muted)',
+                              border: '1px solid var(--color-border)', textDecoration: 'none', display: 'inline-block',
+                            }}
+                          >hidden</span>
+                        )}
                         {!s.inScope && (
                           <span
                             title="Not in this deal’s Scope — pulled in because something here depends on it"
@@ -295,14 +376,15 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
                       <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                         {s.startMonth === s.endMonth ? `${s.startMonth}` : `${s.startMonth}–${s.endMonth}`}
                       </td>
-                      <td style={{ padding: '0.3rem 0.4rem', color: s.dependsOn.length ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                      <td style={{ padding: '0.3rem 0.4rem', color: (off || !s.dependsOn.length) ? 'var(--color-text-muted)' : 'var(--color-text)' }}>
                         {s.dependsOn.length ? s.dependsOn.join(', ') : '—'}
                       </td>
-                      <td style={{ padding: '0.3rem 0.4rem', color: s.source === 'template' ? 'var(--color-text)' : '#92400E' }}>
+                      <td style={{ padding: '0.3rem 0.4rem', color: off ? 'inherit' : s.source === 'template' ? 'var(--color-text)' : '#92400E' }}>
                         {(SOURCE_NOTE[s.source] || SOURCE_NOTE.unknown)(s)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </>
