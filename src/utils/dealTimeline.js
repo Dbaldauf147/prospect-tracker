@@ -232,17 +232,28 @@ function bandLabel(entry) {
  * pulled in for still lists them under `dependsOn`, which is what explains
  * why it starts when it does.
  *
+ * `excludeServices` drops named services from the chart the same way and for
+ * the same reason: the schedule is computed over every service first, so
+ * hiding one never lets the services waiting on it start earlier. It is a
+ * presentation filter, not a change of plan. Matching is case-insensitive on
+ * the service name, and a name that isn't in the plan is simply ignored.
+ *
  * Returns:
  *   {
  *     template,      // feed straight to buildTimelineSvg / exportTimelineXlsx
  *     services,      // the ones with a band, in start order
  *     hidden,        // prerequisites left out, [] when they're shown
+ *     excluded,      // services dropped by excludeServices, in start order
  *     monthsNeeded,  // whole months of the FULL plan, hidden work included
  *     cycleBroken,   // a dependency loop had to be broken to order these
  *   }
  *
+ * Every service lands in exactly one of `services` / `hidden` / `excluded`.
+ *
  * A service entry is { name, inScope, dependsOn, startMonth, endMonth,
- * months, band, templateName, extraTemplates, source, pinnedAgreement }.
+ * months, band, order, templateName, extraTemplates, source, pinnedAgreement }.
+ * `order` is its position in the full plan, so a caller listing the drawn and
+ * the excluded together can restore the chart's own top-to-bottom order.
  * `source` is where the band's length came from: 'template' (a timeline is
  * attached), 'rollout' (no timeline, sized from Rollout Time), or 'unknown'
  * (neither — a one-month placeholder, which the caller should flag).
@@ -263,6 +274,7 @@ export function buildDealTimeline({
   name = 'Timeline',
   clientName = '',
   showPrerequisites = true,
+  excludeServices = [],
 } = {}) {
   const entries = expandDealServices(scopeServices, serviceOverrides);
 
@@ -274,7 +286,7 @@ export function buildDealTimeline({
   const { placed, cycleBroken } = scheduleDealServices(entries, spanOf);
 
   // Built per service so a hidden band takes its own steps with it.
-  const built = placed.map((entry) => {
+  const built = placed.map((entry, order) => {
     const stages = [];
     let pinnedAgreement = false;
     const found = attached.get(norm(entry.name));
@@ -349,6 +361,9 @@ export function buildDealTimeline({
         endMonth: entry.endMonth,
         months: entry.months,
         band,
+        // Position in the full plan, so a caller showing drawn and excluded
+        // services in one list can put them back in the chart's order.
+        order,
         templateName: tpl?.name || '',
         // Named so the caller can say which timeline it used when a service
         // has several attached, rather than silently picking one.
@@ -361,10 +376,19 @@ export function buildDealTimeline({
     };
   });
 
-  const shown = built.filter(b => showPrerequisites || b.service.inScope);
+  // Three buckets, and every service is in exactly one: drawn, dropped by the
+  // prerequisites toggle, or dropped by name. An explicit exclusion wins over
+  // the toggle so a prerequisite the caller hid by hand doesn't also get
+  // counted as one the toggle would bring back.
+  const excludedKeys = new Set(
+    (Array.isArray(excludeServices) ? excludeServices : []).map(norm).filter(Boolean),
+  );
+  const isExcluded = (b) => excludedKeys.has(norm(b.service.name));
+  const shown = built.filter(b => !isExcluded(b) && (showPrerequisites || b.service.inScope));
   const stages = shown.flatMap(b => b.stages);
   const services = shown.map(b => b.service);
-  const hidden = built.filter(b => !shown.includes(b)).map(b => b.service);
+  const hidden = built.filter(b => !isExcluded(b) && !showPrerequisites && !b.service.inScope).map(b => b.service);
+  const excluded = built.filter(isExcluded).map(b => b.service);
 
   // The plan's length, counted over every service — including any whose band
   // is hidden. Dropping the drawn work from the count would say the deal
@@ -415,6 +439,7 @@ export function buildDealTimeline({
     },
     services,
     hidden,
+    excluded,
     monthsNeeded,
     cycleBroken,
   };
