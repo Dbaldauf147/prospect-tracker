@@ -6,7 +6,10 @@ import {
   TIMELINE_STAGE_OWNERS,
   makeTimelineStage,
   makeTimelineForService,
+  parseDependsOn,
+  formatDependsOn,
 } from '../../utils/timelineTemplatesStore';
+import { PriorStepsPicker } from './PriorStepsPicker';
 import styles from './DropdownsView.module.css';
 
 // One service, all of it, on one screen. The Services table carries twelve
@@ -298,22 +301,29 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   }
 
   // Removing a step takes its id out of circulation, so anything waiting on
-  // it is pointed at nothing. Cleared here rather than left dangling: the
-  // renderer drops a link it can't resolve, which would leave the data
-  // claiming a dependency the chart doesn't draw.
+  // it is left pointing at nothing. Dropped from every list here rather than
+  // left dangling: the renderer skips a link it can't resolve, which would
+  // leave the data claiming a dependency the chart doesn't draw. A step
+  // waiting on two keeps the other one.
   function removeStep(idx) {
     const goneId = stages[idx]?.id;
     writeStages(
       stages
         .filter((_, i) => i !== idx)
-        .map(s => (s.dependsOn === goneId ? { ...s, dependsOn: '' } : s)),
+        .map(s => {
+          const kept = parseDependsOn(s.dependsOn).filter(id => id !== goneId);
+          return kept.length === parseDependsOn(s.dependsOn).length
+            ? s
+            : { ...s, dependsOn: formatDependsOn(kept) };
+        }),
     );
   }
 
   // Reordering can leave a dependency pointing at a step that's no longer
   // earlier. "Waits on" means "waits on something before it", so a link that
   // stops being backwards stops holding — dropped rather than drawn as an
-  // arrow running the wrong way through the plan.
+  // arrow running the wrong way through the plan. Only the links that stopped
+  // pointing backwards go; the rest of the step's list survives the move.
   function moveStep(idx, delta) {
     const target = idx + delta;
     if (target < 0 || target >= stages.length) return;
@@ -321,8 +331,12 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
     [next[idx], next[target]] = [next[target], next[idx]];
     const indexById = new Map(next.map((s, i) => [s.id, i]));
     writeStages(next.map((s, i) => {
-      const dep = s.dependsOn ? indexById.get(s.dependsOn) : undefined;
-      return dep != null && dep >= i ? { ...s, dependsOn: '' } : s;
+      const ids = parseDependsOn(s.dependsOn);
+      const kept = ids.filter(id => {
+        const at = indexById.get(id);
+        return at != null && at < i;
+      });
+      return kept.length === ids.length ? s : { ...s, dependsOn: formatDependsOn(kept) };
     }));
   }
 
@@ -449,20 +463,12 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                       placeholder="Timing — Aug 2026, Q3, 2 weeks"
                       onChange={(e) => updateStep(idx, { ...stage, timing: e.target.value })}
                     />
-                    <select
-                      className={styles.detailStepSelect}
-                      value={stage.dependsOn || ''}
-                      onChange={(e) => updateStep(idx, { ...stage, dependsOn: e.target.value })}
-                      title={idx === 0
-                        ? 'The first step has nothing before it to wait on'
-                        : 'The earlier step this one waits on'}
+                    <PriorStepsPicker
+                      priorSteps={stages.slice(0, idx).map((p, i) => ({ id: p.id, number: i + 1, name: p.name }))}
+                      value={stage.dependsOn}
+                      onChange={(next) => updateStep(idx, { ...stage, dependsOn: next })}
                       disabled={idx === 0}
-                    >
-                      <option value="">Waits on: nothing</option>
-                      {stages.slice(0, idx).map((p, i) => (
-                        <option key={p.id} value={p.id}>Waits on: {i + 1}. {p.name || 'Untitled step'}</option>
-                      ))}
-                    </select>
+                    />
                   </div>
                 </li>
               ))}

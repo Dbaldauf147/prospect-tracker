@@ -52,6 +52,23 @@ export function makeTimelineId(prefix = 'tl') {
   return `${prefix}-${Date.now().toString(36)}${rand}`;
 }
 
+// The steps a stage waits on, as a list of stage ids.
+//
+// Stored as a comma-separated string rather than an array — the same shape
+// every other multi-value field in this app uses (see parseMulti), and the
+// shape a single id was already stored in, so a timeline authored when a step
+// could only wait on one thing reads back as a one-element list with no
+// migration. Ids can't contain a comma (makeTimelineId is base36), so
+// splitting on one is safe.
+export function parseDependsOn(value) {
+  if (Array.isArray(value)) return [...new Set(value.map(v => String(v ?? '').trim()).filter(Boolean))];
+  return [...new Set(String(value ?? '').split(',').map(s => s.trim()).filter(Boolean))];
+}
+
+export function formatDependsOn(ids) {
+  return parseDependsOn(ids).join(', ');
+}
+
 // A blank stage, ready to append. Used by both editors — the Timelines tab's
 // stage table and the Services popup's step list — so the two can't drift on
 // what a new step starts life as.
@@ -113,9 +130,11 @@ function normalizeStage(stage) {
     phase: String(stage?.phase ?? ''),
     startMonth: stage?.startMonth === '' || stage?.startMonth == null ? '' : Number(stage.startMonth),
     months: stage?.months === '' || stage?.months == null ? '' : Number(stage.months),
-    // Id of an earlier step this one waits on. Stored as an id rather than a
-    // number so reordering the table can't silently repoint it.
-    dependsOn: String(stage?.dependsOn ?? ''),
+    // The earlier steps this one waits on, as a comma-separated list of stage
+    // ids. Ids rather than positions so reordering the table can't silently
+    // repoint one. Normalized on read, so a stored value that grew duplicates
+    // or stray whitespace comes back tidy.
+    dependsOn: formatDependsOn(stage?.dependsOn),
     description: String(stage?.description ?? ''),
     // 'number' draws the stage position in the marker; anything else selects
     // artwork from STAGE_ICONS in timelineGraphic.

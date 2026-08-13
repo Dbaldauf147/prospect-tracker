@@ -965,7 +965,11 @@
   color: var(--color-border) !important;
 }
 
-.dependsSelect {
+/* "Waits on" trigger. A step can wait on several earlier ones, so this opens
+   a checklist rather than being a single-choice select. Two skins: `compact`
+   for the stage table's narrow cell, the other for the Services popup's step
+   list where it shares a line with the owner and timing. */
+.dependsTriggerCompact {
   width: 100%;
   box-sizing: border-box;
   padding: 3px 4px;
@@ -974,13 +978,125 @@
   background: transparent;
   font-size: 0.72rem;
   font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dependsTriggerCompact:hover:not(:disabled) {
+  border-color: var(--color-border-light);
+}
+
+.dependsTrigger {
+  flex: 1 1 30%;
+  min-width: 120px;
+  box-sizing: border-box;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface, #fff);
+  color: var(--color-text);
+  font-size: 0.7rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dependsTrigger:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.dependsTrigger:disabled,
+.dependsTriggerCompact:disabled {
   color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* The checklist itself. Portalled to the body — the stage table scrolls both
+   ways inside its own wrapper, and the Services popup has its own overflow,
+   either of which would clip it. */
+.dependsPop {
+  position: fixed;
+  z-index: 9601;
+  width: 280px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+
+.dependsPopHead,
+.dependsPopFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.dependsPopHead {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.dependsPopFoot {
+  border-top: 1px solid var(--color-border-light);
+  font-weight: 400;
+}
+
+.dependsPopList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.2rem 0;
+}
+
+.dependsPopRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.74rem;
   cursor: pointer;
 }
 
-.dependsSelect:hover {
-  border-color: var(--color-border-light);
-  color: var(--color-text);
+.dependsPopRow:hover {
+  background: var(--color-accent-light);
+}
+
+/* The step's number — what the chart draws in its marker, so it's the part
+   that ties a row here to a bar over there. */
+.dependsPopNum {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--color-border-light);
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.dependsPopName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Stage table: column picker and drag-to-resize ------------------ */

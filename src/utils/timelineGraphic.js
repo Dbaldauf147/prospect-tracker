@@ -12,7 +12,7 @@
 // title, and the legend. A "Both" stage rings half green / half grey.
 
 import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
-import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER } from './timelineTemplatesStore';
+import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, parseDependsOn } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
@@ -505,11 +505,15 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const indexById = new Map(stages.map((st, i) => [st.id, i]));
   const deps = [];
   stages.forEach((stage, i) => {
-    const from = indexById.get(String(stage.dependsOn || ''));
-    if (from == null || from === i) return;
-    // A link to or from a step the window dropped has nothing to point at.
-    if (hidden.has(stage) || hidden.has(stages[from])) return;
-    deps.push({ from, to: i, backwards: placed[i].month < placed[from].month });
+    // A step can wait on several earlier ones — one elbow is drawn per
+    // predecessor, so a step gated on two shows both arrows arriving at it.
+    for (const id of parseDependsOn(stage.dependsOn)) {
+      const from = indexById.get(id);
+      if (from == null || from === i) continue;
+      // A link to or from a step the window dropped has nothing to point at.
+      if (hidden.has(stage) || hidden.has(stages[from])) continue;
+      deps.push({ from, to: i, backwards: placed[i].month < placed[from].month });
+    }
   });
 
   const clientName = String(template?.clientName || '').trim() || 'Client';
