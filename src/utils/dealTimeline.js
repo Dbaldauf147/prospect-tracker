@@ -188,6 +188,19 @@ function rolloutMonths(name, serviceOverrides) {
   return Math.max(1, Math.ceil(weeks / WEEKS_PER_RELATIVE_MONTH));
 }
 
+// A step that records the contract being signed rather than work being done.
+//
+// It has to be matched on the name — a template carries no other signal —
+// so the test is deliberately narrow. "Sign" on its own is not enough:
+// "Sign-off" is a project's end, not its start, and a looser test would
+// catch "Design" too.
+const AGREEMENT_STEP = /\b(agreement|contract|sow|statements? of work)\b/i;
+
+/** True when a stage is the engagement's paperwork rather than its work. */
+export function isAgreementStep(stage) {
+  return AGREEMENT_STEP.test(String(stage?.name ?? ''));
+}
+
 // What the phase band is called. A prerequisite says so on the band itself:
 // on the chart and in the Excel that label is the only place the distinction
 // can live, and a plan that shows unsold work as sold work is misleading.
@@ -220,17 +233,20 @@ function bandLabel(entry) {
  *   }
  *
  * A service entry is { name, inScope, dependsOn, startMonth, endMonth,
- * months, band, templateName, extraTemplates, source }. `source` is where
- * the band's length came from: 'template' (a timeline is attached),
- * 'rollout' (no timeline, sized from Rollout Time), or 'unknown' (neither —
- * a one-month placeholder, which the caller should flag).
+ * months, band, templateName, extraTemplates, source, pinnedAgreement }.
+ * `source` is where the band's length came from: 'template' (a timeline is
+ * attached), 'rollout' (no timeline, sized from Rollout Time), or 'unknown'
+ * (neither — a one-month placeholder, which the caller should flag).
+ * `pinnedAgreement` says the service carried a contract step, which sits at
+ * kickoff rather than behind the service's prerequisites — see
+ * isAgreementStep.
  */
 export function buildDealTimeline({
   scopeServices = [],
   templates = [],
   serviceOverrides = null,
   anchorMonth = '',
-  name = 'Deal rollout',
+  name = 'Timeline',
   clientName = '',
   showPrerequisites = true,
 } = {}) {
@@ -246,6 +262,7 @@ export function buildDealTimeline({
   // Built per service so a hidden band takes its own steps with it.
   const built = placed.map((entry) => {
     const stages = [];
+    let pinnedAgreement = false;
     const found = attached.get(norm(entry.name));
     const tpl = found[0] || null;
     const offset = entry.startMonth - 1;
@@ -260,11 +277,18 @@ export function buildDealTimeline({
       const stageId = (id) => `${norm(entry.name)}::${id}`;
       for (const st of tpl.stages) {
         const pos = getStageMonths(st, base, mode);
+        // The agreement is signed at the start of the engagement, not after
+        // the services this one waits on have been delivered. Left to the
+        // dependency offset, a deal signed today drew its own contract six
+        // months out. Pinning it to kickoff keeps the contract date honest;
+        // the delivery steps still sit behind their prerequisites.
+        const pinned = isAgreementStep(st);
+        if (pinned) pinnedAgreement = true;
         stages.push({
           ...st,
           id: stageId(st.id),
           phase: band,
-          startMonth: offset + pos.month,
+          startMonth: pinned ? 1 : offset + pos.month,
           months: pos.span,
           // The step's own dates described where it sat in its template's
           // calendar, which is not where it sits in this plan. Cleared so
@@ -313,6 +337,9 @@ export function buildDealTimeline({
         // has several attached, rather than silently picking one.
         extraTemplates: found.slice(1).map(t => t.name).filter(Boolean),
         source: tplMonths > 0 ? 'template' : (rolloutMonths(entry.name, serviceOverrides) ? 'rollout' : 'unknown'),
+        // This service's contract step was moved to kickoff rather than
+        // drawn behind its prerequisites, which is worth saying out loud.
+        pinnedAgreement,
       },
     };
   });

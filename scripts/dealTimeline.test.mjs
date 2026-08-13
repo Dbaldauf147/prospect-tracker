@@ -10,6 +10,7 @@
 // than not drawing it.
 import {
   expandDealServices, scheduleDealServices, serviceDependencies, buildDealTimeline,
+  isAgreementStep,
 } from '../src/utils/dealTimeline.js';
 
 let failures = 0;
@@ -159,6 +160,56 @@ check('step ids are namespaced by service', install.id, 'monitoring::st-1');
 same('so a step dependency still points inside its own band',
   [golive.dependsOn], ['monitoring::st-1']);
 check('authoring dates are cleared so months are the only placement', install.start, '');
+
+// --- the agreement is signed at kickoff, not after the prerequisites ------
+// The contract is what starts the engagement. Carried along by its service's
+// dependency offset, a deal signed today drew its own agreement six months
+// out — which is a false statement about a date the client will read.
+check('an agreement step is recognised', isAgreementStep({ name: 'Agreement signed' }), true);
+check('so is a contract', isAgreementStep({ name: 'Contract executed' }), true);
+check('and an SOW', isAgreementStep({ name: 'SOW countersigned' }), true);
+check('and a statement of work', isAgreementStep({ name: 'Statement of Work returned' }), true);
+// Deliberately narrow — these are work, not paperwork.
+check('a sign-off is not an agreement', isAgreementStep({ name: 'Sign-off' }), false);
+check('nor is a design review', isAgreementStep({ name: 'Design review' }), false);
+check('nor is an unnamed step', isAgreementStep({ name: '' }), false);
+
+const withAgreement = [{
+  id: 'tl-2', name: 'Budget timeline', services: ['Monitoring'],
+  positionMode: 'months', format: 'phased',
+  stages: [
+    { id: 'a1', name: 'Agreement signed', owner: 'Client', startMonth: 1, months: 1, kind: 'milestone' },
+    { id: 'a2', name: 'Inputs due', owner: 'Client', startMonth: 2, months: 1, kind: 'timeline', dependsOn: 'a1' },
+    { id: 'a3', name: 'Delivery', owner: 'Schneider Electric', startMonth: 3, months: 1, kind: 'milestone', dependsOn: 'a2' },
+  ],
+}];
+// Monitoring waits on Meters (1 month), so its band starts in month 2.
+const pinnedPlan = buildDealTimeline({
+  scopeServices: ['Monitoring'], templates: withAgreement, serviceOverrides: overrides,
+});
+const at = (n) => pinnedPlan.template.stages.find(s => s.name === n);
+check('the agreement sits at kickoff', at('Agreement signed').startMonth, 1);
+check('while the work still waits on the prerequisite', at('Inputs due').startMonth, 3);
+check('and so does everything after it', at('Delivery').startMonth, 4);
+check('the service reports that its agreement was pinned',
+  pinnedPlan.services.find(s => s.name === 'Monitoring').pinnedAgreement, true);
+check('a service with no agreement step says so',
+  pinnedPlan.services.find(s => s.name === 'Meters').pinnedAgreement, false);
+// The band still starts where its dependencies put it — pinning moves the
+// contract step, not the service.
+check('the band itself has not moved', pinnedPlan.services.find(s => s.name === 'Monitoring').startMonth, 2);
+check('and the plan is still as long as the delivery takes', pinnedPlan.monthsNeeded, 4);
+
+// With nothing to wait on, the pin changes nothing.
+const noWait = buildDealTimeline({
+  scopeServices: ['Audits'],
+  templates: [{ id: 'x', name: 'A', services: ['Audits'], positionMode: 'months',
+    stages: [{ id: 'x1', name: 'Agreement signed', startMonth: 1, months: 1 },
+             { id: 'x2', name: 'Work', startMonth: 2, months: 1 }] }],
+  serviceOverrides: overrides,
+});
+same('an unblocked service is unaffected',
+  noWait.template.stages.map(s => [s.name, s.startMonth]), [['Agreement signed', 1], ['Work', 2]]);
 
 // --- showing only what the opportunity sold -------------------------------
 // The bands come out; the dates must not move. A deal doesn't deliver
