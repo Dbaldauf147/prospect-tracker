@@ -26,6 +26,10 @@ const SE_DARK = argb(SE_GREEN_DARK);
 const INK = 'FF0F172A';
 const SLATE = 'FF475569';
 const MUTE = 'FF94A3B8';
+// The today rule, matching SE_RED in timelineGraphic — the chart's today
+// marker and the workbook's have to be the same colour or they read as two
+// different things.
+const TODAY_RED = 'FFE4002B';
 const LINE = 'FFE2E8F0';
 const ZEBRA = 'FFFAFBFC';
 const BAND = 'FFF1F5F9';
@@ -471,15 +475,42 @@ function writePhasedSheet(wb, ws, template) {
   const headingRows = [];
   const gridColOf = (month) => LEAD + (monthFirst.get(month) ?? 1);
 
-  // Where the contract is signed: a dashed rule down the whole body at the
-  // head of its column, labelled once above it. The chart draws the same
-  // divide; without it the sheet's run-up columns are just months.
-  if (signatureCol && signatureCol <= monthCount) {
-    const label = String(template?.signatureLabel || '').trim() || 'Contract signature';
-    const cell = ws.getCell(r, gridColOf(signatureCol));
-    cell.value = label.toUpperCase();
-    cell.font = { name: FONT, bold: true, size: 8, color: { argb: INK } };
-    cell.alignment = { vertical: 'middle', horizontal: 'left' };
+  // The two vertical rules the body carries, both drawn at the head of a
+  // column: where the contract is signed, and where today falls. The chart
+  // draws both; the workbook drew only the first, so an exported plan gave no
+  // clue how much of it has already gone by.
+  const signatureRuleCol = (signatureCol && signatureCol <= monthCount) ? gridColOf(signatureCol) : null;
+  // Placed on the WEEK today sits in, not just its month, so the rule lands on
+  // the date the way the chart's does. Null when the timeline isn't anchored
+  // to a calendar, or when today falls outside the window — a plan starting
+  // next March shouldn't grow a today line at its left edge.
+  let todayRuleCol = todayWeekCol ? LEAD + todayWeekCol : null;
+  // Both rules live on a cell's left border, so a shared column can only show
+  // one. The signature keeps it: the sheet's whole column layout is built
+  // around where the run-up ends, and that divide going missing is worse than
+  // today's being. Today's month and week headers are tinted green regardless.
+  if (todayRuleCol != null && todayRuleCol === signatureRuleCol) todayRuleCol = null;
+
+  if (signatureRuleCol != null || todayRuleCol != null) {
+    if (signatureRuleCol != null) {
+      const label = String(template?.signatureLabel || '').trim() || 'Contract signature';
+      const cell = ws.getCell(r, signatureRuleCol);
+      cell.value = label.toUpperCase();
+      cell.font = { name: FONT, bold: true, size: 8, color: { argb: INK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    }
+    // Excel spills a label rightwards across empty cells, so a TODAY sitting
+    // just left of the signature label would print through it. The rule reads
+    // well enough beside a labelled one, so the label is what gives way.
+    const clearOfSignature = signatureRuleCol == null
+      || todayRuleCol > signatureRuleCol
+      || signatureRuleCol - todayRuleCol >= 3;
+    if (todayRuleCol != null && clearOfSignature) {
+      const cell = ws.getCell(r, todayRuleCol);
+      cell.value = 'TODAY';
+      cell.font = { name: FONT, bold: true, size: 8, color: { argb: TODAY_RED } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    }
     ws.getRow(r).height = 13;
     r += 1;
   }
@@ -618,13 +649,23 @@ function writePhasedSheet(wb, ws, template) {
   const lastStageRow = r - 1;
   applyGridBorders(ws, headRow, 1, lastStageRow, NCOLS);
   for (const row of headingRows) clearRowRules(ws, row, LEAD + 1, NCOLS);
-  // The signature rule runs the height of the body, at the head of its
-  // column — drawn after the grid so the thin box doesn't overwrite it.
-  if (signatureCol && signatureCol <= monthCount) {
+  // Both rules run the height of the body, at the head of their column —
+  // drawn after the grid so the thin box doesn't overwrite them. Solid red
+  // for today against the signature's black dashes, so the two never read as
+  // the same kind of divide.
+  if (signatureRuleCol != null) {
     for (let row = headRow; row <= lastStageRow; row += 1) {
       marks.push({
-        row, col: gridColOf(signatureCol),
+        row, col: signatureRuleCol,
         border: { left: { style: 'mediumDashed', color: { argb: INK } } },
+      });
+    }
+  }
+  if (todayRuleCol != null) {
+    for (let row = headRow; row <= lastStageRow; row += 1) {
+      marks.push({
+        row, col: todayRuleCol,
+        border: { left: { style: 'medium', color: { argb: TODAY_RED } } },
       });
     }
   }
@@ -792,9 +833,7 @@ export async function exportTimelineXlsx(template) {
     cols.forEach((col, ci) => {
       const cell = ws.getCell(r, LEAD + 1 + ci);
       if (i % 2 === 1) cell.fill = fill(ZEBRA);
-      if (todayCol === LEAD + 1 + ci) {
-        cell.border = { ...(cell.border || {}), left: { style: 'thin', color: { argb: SE_DARK } } };
-      }
+      // Today's rule is NOT drawn here — see after applyGridBorders below.
       if (!range) return;
       const rs = isoToMs(range.start), re = isoToMs(range.end);
       if (re < col.startMs || rs > col.endMs) return;
@@ -818,12 +857,26 @@ export async function exportTimelineXlsx(template) {
     });
     r += 1;
   });
-  applyGridBorders(ws, groupRow, 1, r - 1, DESC_COL);
+  const lastBodyRow = r - 1;
+  applyGridBorders(ws, groupRow, 1, lastBodyRow, DESC_COL);
   // The owner accent on the stage name stays, over the light box.
   rows.forEach((row, i) => {
     const cell = ws.getCell(firstStageRow + i, 1);
     cell.border = { ...(cell.border || {}), left: { style: 'medium', color: { argb: argb(ownerColor(row.stage.owner)) } } };
   });
+  // Today, in the same red the implementation sheet and the chart use, down
+  // the head of its column. Applied after the grid pass for the same reason
+  // the owner accent is: applyGridBorders merges a thin box into every cell,
+  // and drawing this inline with the bars — where it used to be — meant the
+  // marker was overwritten before the file was ever written. It was a thin
+  // dark-green edge then, which on a sheet already full of Schneider green
+  // would have read as another grid line rather than as today anyway.
+  if (todayCol != null) {
+    for (let row = groupRow; row <= lastBodyRow; row += 1) {
+      const cell = ws.getCell(row, todayCol);
+      cell.border = { ...(cell.border || {}), left: { style: 'medium', color: { argb: TODAY_RED } } };
+    }
+  }
 
   // Freeze the stage labels and the axis so a wide chart stays navigable.
   ws.views = [{
