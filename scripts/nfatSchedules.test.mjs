@@ -18,17 +18,28 @@
 // the write cannot carry a sibling field whatever the writing tab believes.
 // The first block below is what guards that; the rest covers the Eastern
 // clock arithmetic that decides when a run is due at all.
+//
+// nfatConfigRepairPaths is the second half, for the writers this app does not
+// control: a tab on an older build, or one that slept through the night and
+// fires its catch-up run before its Firestore listener has reconnected. Both
+// still write the whole object from a stale copy. The configuration carries
+// the time it was set, so a cloud copy stamped OLDER than what this browser
+// has seen is a restatement rather than an edit, and goes back.
 import {
   NFAT_DEFAULT_TIME,
   NFAT_SCHEDULE_TYPES,
   defaultNfatSchedules,
   easternDayParts,
   easternWallToUtcMs,
+  mergeNfatShadow,
   mostRecentNfatScheduleMs,
+  nfatConfigRepairPaths,
   nfatRunStampPaths,
   nfatTypesDue,
   normalizeNfatSchedules,
   anyNfatScheduleEnabled,
+  sameNfatConfig,
+  stampNfatConfig,
 } from '../src/utils/nfatSchedules.js';
 
 let failures = 0;
@@ -122,6 +133,61 @@ const two = normalizeNfatSchedules({
   any: { enabled: true, days: WEEKDAYS, time: '09:00', lastRunAt: 0 },
 });
 check('both due types are returned', j(nfatTypesDue(two, WED_1000).map(d => d.type)), j(['check', 'any']));
+
+// --- a stale writer restating an older configuration ----------------------
+// The user sets ✓ to 08:30 on Monday. Overnight, a tab holding the 06:00 copy
+// writes the whole object back. Tuesday morning the cloud says 06:00 with
+// Monday's — older — edit stamp, and this browser knows better.
+const SET_AT = et(2026, 8, 10, 9, 0);
+const saved = stampNfatConfig(
+  normalizeNfatSchedules({ check: { enabled: true, days: WEEKDAYS, time: '08:30' } }), SET_AT);
+check('a save stamps every type', j(NFAT_SCHEDULE_TYPES.map(t => saved[t].updatedAt)), j([SET_AT, SET_AT, SET_AT]));
+check('and leaves the rest of the schedule alone', saved.check.time, '08:30');
+
+const shadow = mergeNfatShadow(null, saved);
+check('the shadow takes a stamped save', shadow.check.time, '08:30');
+check('and its stamp', shadow.check.updatedAt, SET_AT);
+check('but not the run stamp', shadow.check.lastRunAt, undefined);
+
+const clobbered = normalizeNfatSchedules({
+  check: { enabled: true, days: WEEKDAYS, time: '06:00', lastRunAt: et(2026, 8, 11, 6, 0) },
+});
+const repair = nfatConfigRepairPaths(clobbered, shadow);
+check('the time goes back', repair['nfatSchedules.check.time'], '08:30');
+check('with the days it was saved with', j(repair['nfatSchedules.check.days']), j(WEEKDAYS));
+check('and enabled as saved', repair['nfatSchedules.check.enabled'], true);
+check('carrying the stamp it was saved with', repair['nfatSchedules.check.updatedAt'], SET_AT);
+check('a repair never moves a run stamp',
+  Object.keys(repair).some(k => k.endsWith('.lastRunAt')), false);
+check('and only touches the type that was clobbered',
+  j([...new Set(Object.keys(repair).map(k => k.split('.')[1]))]), j(['check']));
+
+// Nothing to repair in the normal case, on every load.
+check('a cloud copy that agrees is left alone', j(nfatConfigRepairPaths(normalizeNfatSchedules(saved), shadow)), '{}');
+check('no shadow, no repair', j(nfatConfigRepairPaths(clobbered, null)), '{}');
+check('an unstamped shadow claims nothing',
+  j(nfatConfigRepairPaths(clobbered, { check: { enabled: true, time: '08:30' } })), '{}');
+
+// A newer edit — from this browser or another device — is adopted, not undone.
+const LATER = SET_AT + 60_000;
+const elsewhere = stampNfatConfig(normalizeNfatSchedules({ check: { enabled: true, days: [1], time: '13:00' } }), LATER);
+check('a newer edit is not repaired away', j(nfatConfigRepairPaths(elsewhere, shadow)), '{}');
+const adopted = mergeNfatShadow(shadow, elsewhere);
+check('the shadow follows it instead', adopted.check.time, '13:00');
+check('and takes its stamp', adopted.check.updatedAt, LATER);
+check('an older cloud copy is not adopted', mergeNfatShadow(adopted, saved).check.time, '13:00');
+check('an unchanged shadow is returned as-is', mergeNfatShadow(adopted, saved), adopted);
+check('nothing stamped in the cloud leaves the shadow untouched',
+  mergeNfatShadow(adopted, defaultNfatSchedules()), adopted);
+
+// A stale writer that restates the SAME configuration has taken nothing away.
+const restated = normalizeNfatSchedules({ check: { enabled: true, days: WEEKDAYS, time: '08:30' } });
+check('an unchanged restatement is not repaired', j(nfatConfigRepairPaths(restated, shadow)), '{}');
+check('sameNfatConfig ignores the run stamp',
+  sameNfatConfig({ enabled: true, days: [1], time: '08:30', lastRunAt: 1 }, { enabled: true, days: [1], time: '08:30' }), true);
+check('and day order', sameNfatConfig({ days: [5, 1] }, { days: [1, 5] }), true);
+check('but not a narrowed day set', sameNfatConfig({ days: [1] }, { days: [1, 5] }), false);
+check('nor a switched-off schedule', sameNfatConfig({ enabled: false }, { enabled: true }), false);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

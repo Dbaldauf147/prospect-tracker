@@ -14,7 +14,7 @@
 // stamp must never travel with a copy of the configuration (see
 // nfatRunStampPaths).
 
-import { userLsGet } from './userLs.js';
+import { userLsGet, userLsSet } from './userLs.js';
 
 // The pre-settings storage key. Read once, to promote a schedule left in a
 // browser from before these moved to Firestore-backed settings.
@@ -29,8 +29,12 @@ export const NFAT_TYPE_LABELS = { check: '✓ Check marks', x: '✗ X marks', an
 export const NFAT_SETTINGS_KEY = 'nfatSchedules';
 export const NFAT_DEFAULT_TIME = '06:00';
 
+// The per-browser copy of the newest configuration this browser has seen.
+// See nfatConfigRepairPaths for what it's for.
+export const NFAT_SHADOW_KEY = 'opps2-nfat-shadow';
+
 export function defaultNfatSchedules() {
-  const base = { enabled: false, days: [1, 2, 3, 4, 5], time: NFAT_DEFAULT_TIME, lastRunAt: 0 };
+  const base = { enabled: false, days: [1, 2, 3, 4, 5], time: NFAT_DEFAULT_TIME, lastRunAt: 0, updatedAt: 0 };
   return { check: { ...base }, x: { ...base }, any: { ...base } };
 }
 
@@ -157,4 +161,95 @@ export function nfatRunStampPaths(types, atMs) {
     out[`${NFAT_SETTINGS_KEY}.${t}.lastRunAt`] = atMs;
   }
   return out;
+}
+
+// ---- Surviving a stale writer -------------------------------------------
+//
+// Stopping the run stamp from restating the configuration (above) closed the
+// hole this app had. It cannot close the one another app has: a tab still
+// running an older build of this page keeps writing the WHOLE nfatSchedules
+// object from the copy it is holding, and a browser that slept through the
+// night wakes holding yesterday's copy — its schedule runner fires on the
+// first minute tick, before the Firestore listener has reconnected. Whatever
+// that write says wins, because the settings merge resolves scalar conflicts
+// ours-wins and the writing tab genuinely believes its copy. A schedule set
+// on Monday is back to 06:00 on Tuesday, and nothing in this app did it.
+//
+// So the configuration carries the time it was set. `updatedAt` is stamped on
+// each type when the user saves, the browser keeps a local shadow of the
+// newest configuration it has seen (from any device), and a cloud copy that
+// comes back with an OLDER stamp but DIFFERENT values is a restatement of
+// something stale rather than an edit — the shadow goes back, as leaf paths.
+//
+// The comparison is what keeps this from fighting the user: a real edit
+// always carries a newer stamp than the shadow, so it is adopted, never
+// undone. Only a write that says something older than what this browser
+// already knows gets repaired. A stale writer that restates a configuration
+// unchanged is left alone too — it has taken nothing away.
+
+// The user's part of a schedule. `lastRunAt` is the app's own bookkeeping and
+// is deliberately not here: a repair must never move a run stamp.
+export const NFAT_CONFIG_FIELDS = ['enabled', 'days', 'time'];
+
+function nfatConfigOf(s) {
+  return {
+    enabled: !!s?.enabled,
+    days: Array.isArray(s?.days) ? [...s.days].sort((a, b) => a - b) : [],
+    time: String(s?.time || NFAT_DEFAULT_TIME),
+  };
+}
+
+export function sameNfatConfig(a, b) {
+  const x = nfatConfigOf(a);
+  const y = nfatConfigOf(b);
+  return x.enabled === y.enabled && x.time === y.time && String(x.days) === String(y.days);
+}
+
+// The user's save, stamped as an edit made at `atMs`.
+export function stampNfatConfig(schedules, atMs) {
+  const out = {};
+  for (const t of NFAT_SCHEDULE_TYPES) out[t] = { ...(schedules?.[t] || {}), updatedAt: atMs };
+  return out;
+}
+
+// The shadow after seeing `cloud`: for each type, whichever copy carries the
+// newer edit stamp. Returns the same object when nothing is newer, so callers
+// can skip the write.
+export function mergeNfatShadow(shadow, cloud) {
+  let out = shadow;
+  for (const t of NFAT_SCHEDULE_TYPES) {
+    const at = Number(cloud?.[t]?.updatedAt || 0);
+    if (!at || at <= Number(shadow?.[t]?.updatedAt || 0)) continue;
+    if (out === shadow) out = { ...(shadow || {}) };
+    out[t] = { ...nfatConfigOf(cloud[t]), updatedAt: at };
+  }
+  return out;
+}
+
+// Dotted paths that put the shadow's configuration back for every type it
+// holds a newer edit for. Empty when the cloud copy is current — which is the
+// normal case, on every load.
+export function nfatConfigRepairPaths(cloud, shadow) {
+  const out = {};
+  for (const t of NFAT_SCHEDULE_TYPES) {
+    const mine = shadow?.[t];
+    const at = Number(mine?.updatedAt || 0);
+    if (!at || at <= Number(cloud?.[t]?.updatedAt || 0)) continue;
+    if (sameNfatConfig(mine, cloud?.[t])) continue;
+    const cfg = nfatConfigOf(mine);
+    for (const f of NFAT_CONFIG_FIELDS) out[`${NFAT_SETTINGS_KEY}.${t}.${f}`] = cfg[f];
+    out[`${NFAT_SETTINGS_KEY}.${t}.updatedAt`] = at;
+  }
+  return out;
+}
+
+export function loadNfatShadow() {
+  try {
+    const raw = userLsGet(NFAT_SHADOW_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+export function saveNfatShadow(shadow) {
+  try { userLsSet(NFAT_SHADOW_KEY, JSON.stringify(shadow || {})); } catch { /* quota — ignore */ }
 }

@@ -53,9 +53,14 @@ import {
   defaultNfatSchedules,
   easternWallToUtcMs,
   loadLegacyNfatSchedules,
+  loadNfatShadow,
+  mergeNfatShadow,
+  nfatConfigRepairPaths,
   nfatRunStampPaths,
   nfatTypesDue,
   normalizeNfatSchedules,
+  saveNfatShadow,
+  stampNfatConfig,
 } from '../../utils/nfatSchedules';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
@@ -8645,9 +8650,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const nfatSchedulesRef = useRef(nfatSchedules);
   nfatSchedulesRef.current = nfatSchedules;
   const [nfatScheduleOpen, setNfatScheduleOpen] = useState(false);
-  // The user's edit from the modal: the whole config, deliberately.
+  // The user's edit from the modal: the whole config, deliberately —
+  // stamped with the time it was made, and remembered in this browser's
+  // shadow copy so a stale writer restating an older configuration over it
+  // can be spotted and undone (see the repair effect below).
   const saveNfatSchedules = useCallback((next) => {
-    updateSettings?.({ [NFAT_SETTINGS_KEY]: next });
+    const stamped = stampNfatConfig(next, Date.now());
+    saveNfatShadow(mergeNfatShadow(loadNfatShadow(), stamped));
+    updateSettings?.({ [NFAT_SETTINGS_KEY]: stamped });
   }, [updateSettings]);
   // The runner's own bookkeeping: only the lastRunAt leaves, written as
   // dotted paths so the stamp can't carry a stale copy of the times the
@@ -8694,6 +8704,41 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     nfatMigratedRef.current = true;
     updateSettings?.({ nfatSchedules: normalizeNfatSchedules(legacy) });
   }, [settings?._lastWriteAt, settings?.nfatSchedules, updateSettings]);
+
+  // Put back a configuration that some other writer restated a stale copy
+  // of. The run stamp can't do that any more (nfatRunStampPaths), but a tab
+  // on an older build still writes the whole object, and so does one that
+  // slept through the night and fires its catch-up run before the Firestore
+  // listener has reconnected. Either way the times the user set are gone the
+  // next morning, and nothing in this build did it.
+  //
+  // `updatedAt` decides: the shadow is the newest configuration this browser
+  // has seen, so a cloud copy carrying an OLDER stamp with DIFFERENT values
+  // is a restatement of something stale, not an edit. A genuinely newer edit
+  // (made here or on another device) is adopted into the shadow instead —
+  // which is what keeps this from ever fighting the user.
+  //
+  // Gated on `settings._lastWriteAt` like the migration above, so it reads
+  // synced settings rather than the empty object every load starts with. The
+  // signature guard stops a repair whose write doesn't land from retrying on
+  // every settings change for the rest of the session.
+  const nfatRepairRef = useRef('');
+  useEffect(() => {
+    if (!settings?._lastWriteAt) return;
+    const cloud = normalizeNfatSchedules(settings?.nfatSchedules);
+    const shadow = loadNfatShadow();
+    const paths = nfatConfigRepairPaths(cloud, shadow);
+    if (Object.keys(paths).length) {
+      const sig = JSON.stringify(paths);
+      if (nfatRepairRef.current === sig) return;
+      nfatRepairRef.current = sig;
+      console.warn('Restoring a "No Further Action Today" schedule that was overwritten with an older copy', paths);
+      updateSettingsPath?.(paths);
+      return;
+    }
+    const next = mergeNfatShadow(shadow, cloud);
+    if (next !== shadow) saveNfatShadow(next);
+  }, [settings?._lastWriteAt, settings?.nfatSchedules, updateSettingsPath]);
 
   // Blank the matching "No Further Action Today" cells for a given clear
   // type ('check' → ✓, 'x' → ✗, 'any' → anything set). Shared by the
