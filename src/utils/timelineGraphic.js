@@ -13,7 +13,7 @@
 
 import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import {
-  TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, groupStagesByPhase,
+  TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, groupStagesByPhase, subRuns,
 } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
@@ -428,7 +428,7 @@ function workstreamColor(owner) {
 // group: the bar takes its group's colour, but at full strength a row of them
 // would fight the solid header above and swamp the grid, so the fill is the
 // pale version and the header keeps the strong one.
-function tint(hex, amount) {
+export function tint(hex, amount) {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
   if (!m) return hex;
   const up = (c) => {
@@ -459,25 +459,6 @@ const PHASED = {
 // Stages column is never blank — a timeline that hasn't been organised into
 // phases still reads as one row per stage. `borrowed` tells the renderer to
 // drop the label beside the chip, which would otherwise repeat it.
-// A band's steps split into their sub-groups: runs of consecutive steps
-// carrying the same `subPhase`.
-//
-// Only the deal rollout sets one. There a band is a SERVICE, so `phase` is
-// spent naming it, and the structure the service's own timeline had — its
-// phases — rides along as `subPhase` rather than being flattened away. An
-// ordinary timeline has none and comes back as a single unnamed run, which
-// draws exactly as it did.
-function subRuns(steps) {
-  const runs = [];
-  for (const step of steps) {
-    const sub = String(step.stage?.subPhase || '').trim();
-    const prev = runs[runs.length - 1];
-    if (prev && sub && prev.sub === sub) prev.steps.push(step);
-    else runs.push({ sub, color: step.stage?.subPhaseColor || '', steps: [step] });
-  }
-  return runs;
-}
-
 // How many sub-headings a band draws — each one costs a row of height.
 function subHeadCount(steps) {
   return subRuns(steps).filter(r => r.sub).length;

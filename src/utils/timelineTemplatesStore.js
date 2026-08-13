@@ -127,6 +127,29 @@ export function groupStagesByPhase(stages, phaseColors) {
   }));
 }
 
+// A band's steps split into their sub-groups: runs of consecutive steps
+// carrying the same `subPhase`.
+//
+// Only the deal rollout sets one. There a band is a SERVICE, so `phase` is
+// spent naming it, and the structure the service's own timeline had — its
+// phases — rides along as `subPhase` rather than being flattened away. An
+// ordinary timeline has none and comes back as a single unnamed run, which
+// draws exactly as it did.
+//
+// Takes the `{ stage, index }` steps groupStagesByPhase returns, and is
+// shared by the chart and the Excel sheet so the two split a band the same
+// way.
+export function subRuns(steps) {
+  const runs = [];
+  for (const step of (Array.isArray(steps) ? steps : [])) {
+    const sub = String(step.stage?.subPhase || '').trim();
+    const prev = runs[runs.length - 1];
+    if (prev && sub && prev.sub === sub) prev.steps.push(step);
+    else runs.push({ sub, color: step.stage?.subPhaseColor || '', steps: [step] });
+  }
+  return runs;
+}
+
 // Move a step to the other side of contract signature.
 //
 // The stages array IS the plan order — the chart numbers steps from it and
