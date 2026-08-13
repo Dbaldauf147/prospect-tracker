@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { parseMulti } from '../common/columnLinks';
 import { rolloutWeeks } from '../../data/serviceCatalog';
+import {
+  TIMELINE_STAGE_OWNERS,
+  makeTimelineStage,
+  makeTimelineForService,
+} from '../../utils/timelineTemplatesStore';
 import styles from './DropdownsView.module.css';
 
 // One service, all of it, on one screen. The Services table carries twelve
@@ -235,6 +240,240 @@ function DependsEditor({ value, options, selfName, onCommit }) {
   );
 }
 
+// The steps of this service's timeline, editable from the popup.
+//
+// These aren't a second copy of anything: they're the stages of a timeline
+// template attached to this service — the same records the Timelines tab
+// edits and the same ones getTimelineTemplatesForService hands to every
+// surface that draws "the timeline for this service". A step added here shows
+// up on the chart, and one added there shows up in this list.
+//
+// A service with no timeline yet gets one on the first step added, named
+// after the service and attached to it. From then on it's an ordinary
+// template: the Timelines tab can rename it, attach it to more services, set
+// its dates and format, and pick the marker artwork. This list stays
+// deliberately short — the four things a step needs to exist and sit in
+// order — because a popup is the wrong place to hold the whole stage table.
+//
+// "Waits on" offers only the steps ABOVE the one being edited. A timeline
+// step waits on something earlier by definition, and the renderer draws the
+// connector that way; letting a step point forward would draw an arrow
+// backwards through the plan.
+function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTimelines }) {
+  const key = String(serviceName ?? '').trim().toLowerCase();
+  const attached = useMemo(
+    () => templates.filter(t => t.services.some(s => s.trim().toLowerCase() === key)),
+    [templates, key],
+  );
+
+  // Which attached timeline the steps below belong to. A service usually has
+  // one; when it has several, editing them all at once in a popup would be
+  // noise, so one is in front of the user at a time.
+  const [pickedId, setPickedId] = useState('');
+  const active = attached.find(t => t.id === pickedId) || attached[0] || null;
+  const stages = active?.stages || [];
+
+  // Replace the active template in the full set — everything below writes
+  // through here, so the save path is the same one the Timelines tab uses.
+  function writeStages(next) {
+    onSaveTemplates(templates.map(t => (t.id === active.id ? { ...t, stages: next } : t)));
+  }
+
+  function addStep() {
+    if (!active) {
+      // First step on a service with no timeline: the timeline comes into
+      // existence with it, rather than making the user go build one on
+      // another tab first and come back.
+      const created = makeTimelineForService(serviceName);
+      created.stages = [makeTimelineStage()];
+      setPickedId(created.id);
+      onSaveTemplates([...templates, created]);
+      return;
+    }
+    writeStages([...stages, makeTimelineStage()]);
+  }
+
+  function updateStep(idx, next) {
+    writeStages(stages.map((s, i) => (i === idx ? next : s)));
+  }
+
+  // Removing a step takes its id out of circulation, so anything waiting on
+  // it is pointed at nothing. Cleared here rather than left dangling: the
+  // renderer drops a link it can't resolve, which would leave the data
+  // claiming a dependency the chart doesn't draw.
+  function removeStep(idx) {
+    const goneId = stages[idx]?.id;
+    writeStages(
+      stages
+        .filter((_, i) => i !== idx)
+        .map(s => (s.dependsOn === goneId ? { ...s, dependsOn: '' } : s)),
+    );
+  }
+
+  // Reordering can leave a dependency pointing at a step that's no longer
+  // earlier. "Waits on" means "waits on something before it", so a link that
+  // stops being backwards stops holding — dropped rather than drawn as an
+  // arrow running the wrong way through the plan.
+  function moveStep(idx, delta) {
+    const target = idx + delta;
+    if (target < 0 || target >= stages.length) return;
+    const next = [...stages];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    const indexById = new Map(next.map((s, i) => [s.id, i]));
+    writeStages(next.map((s, i) => {
+      const dep = s.dependsOn ? indexById.get(s.dependsOn) : undefined;
+      return dep != null && dep >= i ? { ...s, dependsOn: '' } : s;
+    }));
+  }
+
+  // Editing a template attached to more than one service edits it for all of
+  // them. Said out loud, because nothing else on this popup hints that the
+  // steps in front of the user are shared.
+  const alsoOn = (active?.services || []).filter(s => s.trim().toLowerCase() !== key);
+
+  // Only the implementation format draws the connectors between dependent
+  // steps. Timelines created here are that format, but one built earlier on
+  // the Timelines tab, or switched since, may not be — and a "waits on" that
+  // draws nothing looks like it didn't save. Only worth saying once a
+  // dependency actually exists to be drawn.
+  const dependencyDrawn = (active?.format || 'gantt') === 'phased';
+  const anyDependency = stages.some(s => s.dependsOn);
+
+  return (
+    <div className={styles.detailSection}>
+      <div className={styles.detailSectionHead}>
+        <span className={styles.detailSectionTitle}>Timeline steps</span>
+        <span className={styles.detailSectionCount}>{stages.length}</span>
+        <button type="button" className={styles.serviceLinkEditBtn} onClick={addStep}>+ Add step</button>
+        {active && onOpenTimelines && (
+          <button
+            type="button"
+            className={styles.serviceLinkEditBtn}
+            onClick={() => onOpenTimelines(active.id)}
+            title="Open this timeline on the Timelines tab for dates, months, format and marker artwork"
+          >Open timeline ↗</button>
+        )}
+      </div>
+
+      {attached.length > 1 && (
+        <label className={styles.detailStepPick}>
+          <span className={styles.detailLabel}>Timeline</span>
+          <select
+            className={styles.detailInput}
+            value={active?.id || ''}
+            onChange={(e) => setPickedId(e.target.value)}
+            title={`${serviceName} has ${attached.length} timelines attached — pick which one these steps belong to`}
+          >
+            {attached.map(t => (
+              <option key={t.id} value={t.id}>{t.name || 'Untitled timeline'} ({t.stages.length})</option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {!active ? (
+        <p className={styles.detailEmpty}>
+          No timeline is attached to {serviceName} yet. Adding a step creates one,
+          named after the service, and the steps you add here draw on its chart.
+        </p>
+      ) : (
+        <>
+          {alsoOn.length > 0 && (
+            <p className={styles.detailStepShared}>
+              These steps belong to “{active.name || 'Untitled timeline'}”, which is also
+              attached to {alsoOn.join(', ')} — editing them here changes it for those too.
+            </p>
+          )}
+          {anyDependency && !dependencyDrawn && (
+            <p className={styles.detailStepShared}>
+              “{active.name || 'Untitled timeline'}” is drawn in the {active.format === 'milestone' ? 'Milestone' : 'Gantt'} format,
+              which doesn’t draw the arrows between dependent steps. The order below is
+              still what it renders; switch it to Implementation on the Timelines tab to
+              see what waits on what.
+            </p>
+          )}
+          {stages.length === 0 ? (
+            <p className={styles.detailEmpty}>
+              “{active.name || 'Untitled timeline'}” has no steps yet.
+            </p>
+          ) : (
+            <ol className={styles.detailStepList}>
+              {stages.map((stage, idx) => (
+                <li key={stage.id} className={styles.detailStep}>
+                  <div className={styles.detailStepTop}>
+                    <span className={styles.detailStepNum}>{idx + 1}</span>
+                    <input
+                      type="text"
+                      className={styles.detailInput}
+                      value={stage.name}
+                      placeholder="Step name"
+                      onChange={(e) => updateStep(idx, { ...stage, name: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className={styles.serviceLinkEditBtn}
+                      onClick={() => moveStep(idx, -1)}
+                      disabled={idx === 0}
+                      title="Move this step earlier"
+                      aria-label={`Move step ${idx + 1} earlier`}
+                    >↑</button>
+                    <button
+                      type="button"
+                      className={styles.serviceLinkEditBtn}
+                      onClick={() => moveStep(idx, 1)}
+                      disabled={idx === stages.length - 1}
+                      title="Move this step later"
+                      aria-label={`Move step ${idx + 1} later`}
+                    >↓</button>
+                    <button
+                      type="button"
+                      className={styles.serviceLinkEditBtn}
+                      onClick={() => removeStep(idx)}
+                      title="Remove this step"
+                      aria-label={`Remove step ${idx + 1}`}
+                    >×</button>
+                  </div>
+                  <div className={styles.detailStepMeta}>
+                    <select
+                      className={styles.detailStepSelect}
+                      value={stage.owner}
+                      onChange={(e) => updateStep(idx, { ...stage, owner: e.target.value })}
+                      title="Who owns this step?"
+                    >
+                      {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <input
+                      type="text"
+                      className={styles.detailStepSelect}
+                      value={stage.timing}
+                      placeholder="Timing — Aug 2026, Q3, 2 weeks"
+                      onChange={(e) => updateStep(idx, { ...stage, timing: e.target.value })}
+                    />
+                    <select
+                      className={styles.detailStepSelect}
+                      value={stage.dependsOn || ''}
+                      onChange={(e) => updateStep(idx, { ...stage, dependsOn: e.target.value })}
+                      title={idx === 0
+                        ? 'The first step has nothing before it to wait on'
+                        : 'The earlier step this one waits on'}
+                      disabled={idx === 0}
+                    >
+                      <option value="">Waits on: nothing</option>
+                      {stages.slice(0, idx).map((p, i) => (
+                        <option key={p.id} value={p.id}>Waits on: {i + 1}. {p.name || 'Untitled step'}</option>
+                      ))}
+                    </select>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // The per-service link the Solutions column renders the name as. Editable
 // here too, so the popup is a complete view of the service rather than one
 // that sends the user back to the table for the one field it left out.
@@ -283,9 +522,14 @@ function LinkField({ name, url, onSaveUrl }) {
  *   hidden      - whether the service is retired from circulation
  *   dependents  - names of the services that depend on this one
  *   options     - every Solutions name, for the dependency picker
+ *   templates   - every timeline template, normalized; the ones attached to
+ *                 this service are what the step editor edits
  *   onSaveField - (name, field, value) => void, the table's own save path
  *   onSaveUrl   - (name, url) => void
  *   onToggleHide- (name) => void
+ *   onSaveTemplates - (next) => void, the Timelines tab's own save path
+ *   onOpenTimelines - (templateId) => void, optional; hands the user to the
+ *                 full stage table for dates, format and marker artwork
  *   onClose     - () => void
  */
 export function ServiceDetailModal({
@@ -294,9 +538,12 @@ export function ServiceDetailModal({
   hidden,
   dependents,
   options,
+  templates = [],
   onSaveField,
   onSaveUrl,
   onToggleHide,
+  onSaveTemplates,
+  onOpenTimelines,
   onClose,
 }) {
   const panelRef = useRef(null);
@@ -373,6 +620,19 @@ export function ServiceDetailModal({
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
             <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
           </div>
+
+          {/* The steps of this service's own timeline. Sits above the
+              service-level dependency sections because it's the finer grain:
+              what happens inside this service, before what has to happen
+              around it. */}
+          {onSaveTemplates && (
+            <TimelineStepsEditor
+              serviceName={name}
+              templates={templates}
+              onSaveTemplates={onSaveTemplates}
+              onOpenTimelines={onOpenTimelines}
+            />
+          )}
 
           <DependsEditor
             value={meta?.dependsOn}

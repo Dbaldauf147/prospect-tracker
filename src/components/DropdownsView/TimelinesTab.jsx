@@ -7,6 +7,7 @@ import {
   STAGE_KIND_LABELS,
   getTimelineTemplates,
   makeTimelineId,
+  makeTimelineStage,
   summarizeStageOwners,
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
@@ -665,7 +666,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   function addStage() {
     onChange({
       ...template,
-      stages: [...stages, { id: makeTimelineId('st'), name: '', owner: DEFAULT_STAGE_OWNER, timing: '', description: '', icon: 'number', kind: DEFAULT_STAGE_KIND }],
+      stages: [...stages, makeTimelineStage()],
     });
   }
   function addService(name) {
