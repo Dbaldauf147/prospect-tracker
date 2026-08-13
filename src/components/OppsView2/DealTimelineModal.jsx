@@ -53,7 +53,9 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     templates,
     serviceOverrides,
     anchorMonth,
-    name: account ? `${account} — rollout` : 'Deal rollout',
+    // The chart's own title, which is also the Excel's. Just the account —
+    // the chart is plainly a timeline without a word saying so.
+    name: account || 'Timeline',
     clientName: account,
     showPrerequisites,
   }), [scopeServices, templates, serviceOverrides, anchorMonth, account, showPrerequisites]);
@@ -71,6 +73,9 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
   const prerequisites = plan.services.filter(s => !s.inScope);
   const weak = plan.services.filter(s => s.source !== 'template');
   const multi = plan.services.filter(s => s.extraTemplates.length > 0);
+  // Only worth mentioning where the pin actually moved something — a
+  // service with no prerequisites has its agreement at kickoff anyway.
+  const pinned = plan.services.filter(s => s.pinnedAgreement && s.startMonth > 1);
 
   async function handleExcel() {
     setBusy(true);
@@ -194,6 +199,16 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
           {multi.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {multi.map(s => `${s.name} has ${s.extraTemplates.length + 1} timelines attached — using “${s.templateName}”`).join(' · ')}.
+            </div>
+          )}
+          {/* An agreement step sitting months ahead of the band it belongs
+              to needs explaining, or it reads as a stray bar. */}
+          {pinned.length > 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              Agreement signed today: the contract step
+              {pinned.length === 1 ? '' : 's'} on {pinned.map(s => s.name).join(', ')} sit
+              {pinned.length === 1 ? 's' : ''} at kickoff rather than behind the delivery
+              {pinned.length === 1 ? ' it waits' : ' they wait'} on.
             </div>
           )}
           {/* The hidden work is still in the dates. Saying so is what keeps a
