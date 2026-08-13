@@ -493,6 +493,10 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // gives nothing back.
   const weekly = template?.axis !== 'months';
   const gridTop = monthsBottom + (weekly ? PHASED.weeksRowH : 0);
+  // Opt-in, and only meaningful for a plan whose first column IS today: a
+  // timeline anchored to a past month has steps that genuinely ran before
+  // today, and clamping those would redate real history.
+  const clampBars = template?.clampBarsToToday === true;
   const gridH = bandH.reduce((a, b) => a + b, 0);
   const height = gridTop + gridH + PHASED.footH + 8;
 
@@ -636,9 +640,21 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     group.steps.forEach((step, si) => {
       const pos = placed[step.index];
       const rowY = y + PHASED.phasePad / 2 + si * PHASED.rowStep + 4;
-      const chipX = colX(Math.min(pos.month, monthCount)) + 3;
+      let chipX = colX(Math.min(pos.month, monthCount)) + 3;
       const spanCols = Math.min(pos.span, monthCount - Math.min(pos.month, monthCount) + 1);
-      const chipW = Math.max(30, spanCols * colW - 6);
+      let chipW = Math.max(30, spanCols * colW - 6);
+      // On a plan that kicks off today, work can't have started already. A
+      // bar opening in the current month otherwise draws from the month's
+      // left edge — a fortnight of delivery shown as done before the plan
+      // begins. Only bars: a milestone is placed by its own day, and moving
+      // its column would move the marker off the date it happened on.
+      if (clampBars && !pos.milestone && todayX != null && pos.month === todayCol && todayX > chipX) {
+        const right = chipX + chipW;
+        // Never clamp a bar out of existence — a month-long step starting
+        // on the 28th still has to be visible and clickable.
+        chipX = Math.min(todayX, right - 24);
+        chipW = right - chipX;
+      }
       const color = workstreamColor(step.stage.owner);
       // Remembered so the dependency links can be drawn over the top once
       // every chip has a position.

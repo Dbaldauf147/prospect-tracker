@@ -301,6 +301,10 @@ function writePhasedSheet(wb, ws, template) {
   // helper does the collapsing, so every placement calculation below still
   // reads "which tick does this land in" and needs no second code path.
   const weekly = template?.axis !== 'months';
+  // See buildPhasedSvg: opt-in, and only for a plan whose first column is
+  // today. A timeline anchored to a past month has steps that really did
+  // run before today.
+  const clampBars = template?.clampBarsToToday === true;
   const weekTicks = timelineWeekTicks(anchor, monthCount, calendar, weekly);
   const weekCols = flattenWeekTicks(weekTicks);
   const NW = weekCols.length;
@@ -454,8 +458,15 @@ function writePhasedSheet(wb, ws, template) {
 
     const from = Math.min(pos.month, monthCount);
     const to = Math.min(pos.month + pos.span - 1, monthCount);
-    const barFrom = monthFirst.get(from) ?? 1;
+    let barFrom = monthFirst.get(from) ?? 1;
     const barTo = monthLast.get(to) ?? NW;
+    // Same rule the chart follows: on a plan that kicks off today, a bar
+    // opening in the current month starts at today's column rather than at
+    // the month's first week. On a monthly axis the month is one column, so
+    // there is no finer place to start and this changes nothing.
+    if (clampBars && !pos.milestone && todayWeekCol && from === todayCol && todayWeekCol > barFrom) {
+      barFrom = Math.min(todayWeekCol, barTo);
+    }
     // A milestone is a moment: a diamond sitting on its day, exactly as the
     // chart draws it, rather than a filled block. It goes in as a floating
     // picture spanning its month's week columns, so it lands on the day

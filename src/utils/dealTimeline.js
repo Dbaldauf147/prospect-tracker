@@ -379,6 +379,12 @@ export function buildDealTimeline({
       // and the renderers draw the today marker in it.
       monthMode: 'calendar',
       anchorMonth: String(anchorMonth || ''),
+      // The plan kicks off today, so nothing in it has started yet. Without
+      // this, a bar in the first month draws from the 1st and shows work
+      // already under way before the plan begins. Opt-in on the renderers
+      // because a timeline anchored to a past month legitimately has bars
+      // that start before today.
+      clampBarsToToday: true,
       // Fitted to the plan rather than left on "auto", which floors at 12
       // months — right for a proposal chart that should read as a year,
       // wrong for a delivery plan, where five empty columns after the last
