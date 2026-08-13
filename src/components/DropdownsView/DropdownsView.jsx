@@ -10,6 +10,7 @@ import { QuestionsTab } from './QuestionsTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { DataTable } from '../common/DataTable';
+import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
 import styles from './DropdownsView.module.css';
 
@@ -48,6 +49,13 @@ const SERVICES_LATE_COLUMNS = [
   { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
 ];
 
+// Clicking a Services row opens its detail popup, so every editor inside a
+// cell has to keep its own clicks to itself — otherwise starting an edit
+// would open the popup over the top of it. One helper rather than a
+// hand-written stopPropagation per control, so a new editor can't quietly
+// forget it.
+const swallowClick = (e) => e.stopPropagation();
+
 // Inline cell editor for the Services subtab. Renders the current
 // value as plain text; clicking it swaps to an input that commits on
 // blur / Enter and cancels on Escape. Empty value clears the
@@ -70,7 +78,7 @@ function ServiceCell({ value, onCommit }) {
   if (!editing) {
     return (
       <span
-        onClick={startEdit}
+        onClick={(e) => { swallowClick(e); startEdit(); }}
         title="Click to edit"
         style={{ display: 'inline-block', width: '100%', cursor: 'text', minHeight: '1em' }}
       >
@@ -85,6 +93,7 @@ function ServiceCell({ value, onCommit }) {
       ref={inputRef}
       type="text"
       value={draft}
+      onClick={swallowClick}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -111,6 +120,7 @@ function ServiceYesNoCell({ value, onCommit }) {
   return (
     <select
       value={value || ''}
+      onClick={swallowClick}
       onChange={(e) => {
         const next = e.target.value;
         if (next === (value || '')) return;
@@ -178,7 +188,7 @@ function ServiceWeeksCell({ value, onCommit }) {
   if (!editing) {
     return (
       <span
-        onClick={startEdit}
+        onClick={(e) => { swallowClick(e); startEdit(); }}
         title={legacy
           ? `"${value}" isn't a number of weeks — click to replace it with one`
           : 'Click to edit: rollout time in weeks'}
@@ -201,6 +211,7 @@ function ServiceWeeksCell({ value, onCommit }) {
       inputMode="decimal"
       value={draft}
       placeholder={legacy ? value : 'weeks'}
+      onClick={swallowClick}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -294,7 +305,7 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
     <>
       <span
         ref={cellRef}
-        onClick={openPicker}
+        onClick={(e) => { swallowClick(e); openPicker(); }}
         title={selected.length > 0
           ? `Rolled out before ${selfName}: ${selected.join(', ')}. Click to change.`
           : `Click to pick the services that must be rolled out before ${selfName}`}
@@ -320,12 +331,18 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
       {open && rect && createPortal(
         <>
           {/* Click-away catcher, so the picker closes on any outside click
-              without each cell wiring up its own document listener. */}
+              without each cell wiring up its own document listener.
+
+              Both of these stop propagation as well as the cell does: a
+              portal renders into document.body but still bubbles its events
+              up the React tree, so without it dismissing the picker would
+              land as a click on the row underneath and open its popup. */}
           <div
-            onClick={close}
+            onClick={(e) => { swallowClick(e); close(); }}
             style={{ position: 'fixed', inset: 0, zIndex: 9000, background: 'transparent' }}
           />
           <div
+            onClick={swallowClick}
             style={{
               position: 'fixed', zIndex: 9001,
               left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
@@ -403,7 +420,13 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
 // The Solutions cell of the Services table. Renders as a hyperlink when the
 // user has saved a URL for that service; the pencil opens a tiny inline
 // editor so per-service URLs can be added, updated, or cleared.
-function ServiceNameCell({ name, url, onSaveUrl }) {
+//
+// It also carries the row's "open details" button. The whole row opens the
+// popup, but nearly every cell is covered edge to edge by a click-to-edit
+// editor that has to swallow its own clicks — leaving only the gaps between
+// them to click on. So the affordance is spelled out once, here, on the
+// column that names the row.
+function ServiceNameCell({ name, url, onSaveUrl, onOpenDetails }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -422,12 +445,13 @@ function ServiceNameCell({ name, url, onSaveUrl }) {
 
   if (editing) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div onClick={swallowClick} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <input
           ref={inputRef}
           type="url"
           value={draft}
           placeholder="https://example.com"
+          onClick={swallowClick}
           onChange={e => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={e => {
@@ -442,15 +466,36 @@ function ServiceNameCell({ name, url, onSaveUrl }) {
   }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      <button
+        type="button"
+        className={styles.serviceDetailsBtn}
+        onClick={(e) => { swallowClick(e); onOpenDetails(); }}
+        title={`Open ${name} — every field on one screen`}
+        aria-label={`Open details for ${name}`}
+      >⤢</button>
       {url ? (
-        <a href={url} target="_blank" rel="noreferrer" className={styles.serviceLink} title={url}>{name}</a>
+        // The name is the user's own hyperlink when they've set one, so it
+        // navigates rather than opening the popup; the ⤢ beside it is what
+        // opens details on every row alike.
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className={styles.serviceLink}
+          title={url}
+          onClick={swallowClick}
+        >{name}</a>
       ) : (
-        <span style={{ color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        <span
+          onClick={(e) => { swallowClick(e); onOpenDetails(); }}
+          title={`Open ${name} — every field on one screen`}
+          style={{ color: 'var(--color-text)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >{name}</span>
       )}
       <button
         type="button"
         className={styles.serviceLinkEditBtn}
-        onClick={startEdit}
+        onClick={(e) => { swallowClick(e); startEdit(); }}
         title={url ? 'Edit link' : 'Add link'}
         aria-label={url ? 'Edit link' : 'Add link'}
       >{url ? '✎' : '+ link'}</button>
@@ -458,7 +503,7 @@ function ServiceNameCell({ name, url, onSaveUrl }) {
         <button
           type="button"
           className={styles.serviceLinkEditBtn}
-          onClick={() => onSaveUrl(name, '')}
+          onClick={(e) => { swallowClick(e); onSaveUrl(name, ''); }}
           title="Remove link"
           aria-label="Remove link"
         >×</button>
@@ -873,6 +918,38 @@ export function DropdownsView({ settings, updateSettings }) {
   );
   const hiddenCount = hiddenServices.size;
   const [showHiddenServices, setShowHiddenServices] = useState(false);
+
+  // The service whose popup is open, held by name rather than by the row
+  // object the table handed over: every edit made in the popup rewrites
+  // settings and rebuilds the rows, so a captured row would go stale the
+  // moment the user typed in it. The name is the key everything else is
+  // stored under, so it survives.
+  const [detailName, setDetailName] = useState(null);
+  const detailService = useMemo(
+    () => (detailName ? serviceRows.find(r => r.name === detailName) || null : null),
+    [detailName, serviceRows],
+  );
+  // A service deleted from the Solutions list (on the Lists tab, in another
+  // tab, or on another device) while its popup is open leaves detailService
+  // null, which renders no popup — the stale name needs no clearing up,
+  // since nothing but that lookup ever reads it.
+
+  // Which services list each service as something they wait on — the reverse
+  // of the Dependent Rollout Services column. Nothing stores it, so it's
+  // derived from every row's dependency list; the popup is the only place it
+  // appears, since no single row can show it.
+  const dependentsByService = useMemo(() => {
+    const map = new Map();
+    for (const { name, meta } of serviceRows) {
+      for (const dep of parseMulti(meta?.dependsOn || '')) {
+        const key = dep.trim().toLowerCase();
+        if (!key) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(name);
+      }
+    }
+    return map;
+  }, [serviceRows]);
   const toggleHideService = useCallback((name) => {
     const current = settings?.hiddenServices || [];
     const next = current.includes(name)
@@ -968,7 +1045,7 @@ export function DropdownsView({ settings, updateSettings }) {
         <button
           type="button"
           className={styles.serviceLinkEditBtn}
-          onClick={() => toggleHideService(row.name)}
+          onClick={(e) => { swallowClick(e); toggleHideService(row.name); }}
           title={row._hidden
             ? `Show "${row.name}" again: here, on the company card's services board, and in the Opps Scope picker`
             : `Hide "${row.name}": takes it out of this list, the company card's services board, and the Opps Scope picker`}
@@ -977,7 +1054,12 @@ export function DropdownsView({ settings, updateSettings }) {
       )
       : col.key === 'name'
       ? (row) => (
-        <ServiceNameCell name={row.name} url={row._url} onSaveUrl={saveServiceLink} />
+        <ServiceNameCell
+          name={row.name}
+          url={row._url}
+          onSaveUrl={saveServiceLink}
+          onOpenDetails={() => setDetailName(row.name)}
+        />
       )
       : col.key === 'timelineDriven'
         ? (row) => (
@@ -1249,6 +1331,11 @@ export function DropdownsView({ settings, updateSettings }) {
               columns={serviceColumns}
               rows={serviceTableRows}
               alwaysVisible={['name', 'hide']}
+              // Anything in a cell that responds to a click swallows it
+              // first (see swallowClick), so this fires for the row itself
+              // — the padding around the cells, and any cell whose editor
+              // isn't where the user clicked.
+              onRowClick={(row) => setDetailName(row.name)}
               rowClassName={(row) => ((row._muted || row._hidden) ? styles.serviceRowMuted : undefined)}
               exportFileName="Services"
               settings={settings}
@@ -1258,6 +1345,20 @@ export function DropdownsView({ settings, updateSettings }) {
                 : `No services match "${serviceSearch}".`}
             />
           </div>
+
+          {detailService && (
+            <ServiceDetailModal
+              service={detailService}
+              url={serviceLinks[detailService.name] || ''}
+              hidden={hiddenServices.has(detailService.name)}
+              dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
+              options={solutionNames}
+              onSaveField={saveServiceField}
+              onSaveUrl={saveServiceLink}
+              onToggleHide={toggleHideService}
+              onClose={() => setDetailName(null)}
+            />
+          )}
         </>
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
