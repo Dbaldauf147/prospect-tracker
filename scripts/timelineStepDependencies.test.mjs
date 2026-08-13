@@ -10,6 +10,7 @@
 import {
   parseDependsOn, formatDependsOn, getTimelineTemplates,
 } from '../src/utils/timelineTemplatesStore.js';
+import { placeStages } from '../src/utils/timelineDates.js';
 import { buildDealTimeline } from '../src/utils/dealTimeline.js';
 
 let failures = 0;
@@ -108,6 +109,90 @@ check('a step waiting on itself is skipped',
   linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-c' }]), 0);
 check('and skipping itself does not lose its real predecessor',
   linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-c, st-b' }]), 1);
+
+// ---- a dependency places the step, when nothing else did -----------------
+//
+// The Services popup writes a step as a duration plus the steps it waits on,
+// and never a month. Placed one at a time, every such step fell back to
+// month 1: the whole implementation drew as bars stacked at kickoff with the
+// arrows running backwards out of steps that hadn't finished.
+const months = (stages, mode = 'dates') => placeStages(stages, 1, mode).map(p => p.month);
+const spans = (stages, mode = 'dates') => placeStages(stages, 1, mode).map(p => p.span);
+
+const chain = [
+  { id: 'a', duration: 2, durationUnit: 'months' },
+  { id: 'b', duration: 1, durationUnit: 'months', dependsOn: 'a' },
+  { id: 'c', duration: 1, durationUnit: 'months', dependsOn: 'b' },
+];
+same('a chain runs one after another', months(chain), [1, 3, 4]);
+same('and each keeps the length it was given', spans(chain), [2, 1, 1]);
+same('a step waiting on two starts after the later one',
+  months([chain[0], { id: 'b', duration: 3, durationUnit: 'months' },
+    { id: 'c', duration: 1, durationUnit: 'months', dependsOn: 'a, b' }]), [1, 1, 4]);
+same('independent steps all start at kickoff',
+  months([{ id: 'a', duration: 1 }, { id: 'b', duration: 1 }]), [1, 1]);
+same('order in the list does not matter, the dependency does',
+  months([{ id: 'b', duration: 1, durationUnit: 'months', dependsOn: 'a' },
+    { id: 'a', duration: 2, durationUnit: 'months' }]), [3, 1]);
+
+// A month the author typed is the plan. Re-sequencing it would hide a
+// conflict the renderers deliberately draw in red.
+same('a typed month is left where it was put',
+  months([{ id: 'a', startMonth: 1, months: 4 },
+    { id: 'b', startMonth: 2, months: 1, dependsOn: 'a' }], 'months'), [1, 2]);
+// Dated stages are measured against the timeline's earliest dated month, the
+// same base the renderers pass in (placementBaseMonth).
+const JAN_2026 = 2026 * 12 + 0;
+const datedMonths = (stages) => placeStages(stages, JAN_2026, 'dates').map(p => p.month);
+same('a dated step is left where its dates put it',
+  datedMonths([{ id: 'a', start: '2026-01-01', end: '2026-02-28' },
+    { id: 'b', start: '2026-01-01', end: '2026-01-31', dependsOn: 'a' }]), [1, 1]);
+same('but an undated step still sequences behind a dated one',
+  datedMonths([{ id: 'a', start: '2026-01-01', end: '2026-02-28' },
+    { id: 'b', duration: 1, durationUnit: 'months', dependsOn: 'a' }]), [1, 3]);
+
+same('an id naming no step places nothing',
+  months([{ id: 'a', duration: 1, durationUnit: 'months', dependsOn: 'gone' }]), [1]);
+same('a step waiting on itself stays at kickoff',
+  months([{ id: 'a', duration: 1, durationUnit: 'months', dependsOn: 'a' }]), [1]);
+same('a cycle settles nothing rather than inventing an order',
+  months([{ id: 'a', duration: 1, durationUnit: 'months', dependsOn: 'b' },
+    { id: 'b', duration: 1, durationUnit: 'months', dependsOn: 'a' }]), [1, 1]);
+same('and the steps behind a cycle are not dragged into it',
+  months([{ id: 'a', duration: 1, durationUnit: 'months', dependsOn: 'b' },
+    { id: 'b', duration: 1, durationUnit: 'months', dependsOn: 'a' },
+    { id: 'c', duration: 1, durationUnit: 'months' }]), [1, 1, 1]);
+same('nothing to place is not an error', months([]), []);
+
+// ---- and the deal plan draws the same sequence ---------------------------
+//
+// The composer measures each service's band with the same placement, so a
+// chain of steps makes the band as long as the chain — and a service waiting
+// on that one starts after it really finishes, not after its first step.
+const seqTemplates = [{
+  id: 'tl-4', name: 'Bill payment timeline', services: ['Bill payment'], format: 'phased',
+  positionMode: 'dates',
+  stages: [
+    { id: 'k', name: 'Kickoff', owner: 'Schneider Electric', duration: 1, durationUnit: 'months' },
+    { id: 'setup', name: 'ERP System Setup', owner: 'Client', duration: 2, durationUnit: 'months', dependsOn: 'k' },
+    { id: 'live', name: 'Go Live', owner: 'Schneider Electric', duration: 1, durationUnit: 'months', dependsOn: 'setup' },
+  ],
+}];
+const seqPlan = buildDealTimeline({
+  scopeServices: ['Bill payment', 'Reporting'],
+  templates: seqTemplates,
+  serviceOverrides: { 'Reporting': { dependsOn: 'Bill payment', rolloutTime: '4' } },
+  anchorMonth: '2026-08',
+});
+const monthOf = (name) => seqPlan.template.stages.find(s => s.name === name)?.startMonth;
+check('the first step is at kickoff', monthOf('Kickoff'), 1);
+check('the step waiting on it follows it', monthOf('ERP System Setup'), 2);
+check('and the one after that follows in turn', monthOf('Go Live'), 4);
+check('the band is as long as the chain it draws',
+  seqPlan.services.find(s => s.name === 'Bill payment').months, 4);
+check('so a service waiting on it starts after the whole chain',
+  seqPlan.services.find(s => s.name === 'Reporting').startMonth, 5);
+check('and the plan is as long as the two together', seqPlan.monthsNeeded, 5);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

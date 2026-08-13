@@ -29,7 +29,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates.js';
-import { STEP_DURATION_UNITS, DEFAULT_DURATION_UNIT } from './timelineDates.js';
+import { STEP_DURATION_UNITS, DEFAULT_DURATION_UNIT, parseDependsOn } from './timelineDates.js';
 
 // The owners a stage can be assigned to. "Both" covers the joint working
 // sessions that neither side runs alone.
@@ -53,18 +53,11 @@ export function makeTimelineId(prefix = 'tl') {
   return `${prefix}-${Date.now().toString(36)}${rand}`;
 }
 
-// The steps a stage waits on, as a list of stage ids.
-//
-// Stored as a comma-separated string rather than an array — the same shape
-// every other multi-value field in this app uses (see parseMulti), and the
-// shape a single id was already stored in, so a timeline authored when a step
-// could only wait on one thing reads back as a one-element list with no
-// migration. Ids can't contain a comma (makeTimelineId is base36), so
-// splitting on one is safe.
-export function parseDependsOn(value) {
-  if (Array.isArray(value)) return [...new Set(value.map(v => String(v ?? '').trim()).filter(Boolean))];
-  return [...new Set(String(value ?? '').split(',').map(s => s.trim()).filter(Boolean))];
-}
+// The steps a stage waits on. Lives in timelineDates because placeStages —
+// which sequences unplaced steps behind the ones they wait on — has to read
+// the same list, and the dependency direction between these two modules runs
+// this way. Re-exported so every existing caller keeps its import.
+export { parseDependsOn } from './timelineDates.js';
 
 export function formatDependsOn(ids) {
   return parseDependsOn(ids).join(', ');

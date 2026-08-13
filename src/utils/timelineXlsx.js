@@ -15,7 +15,7 @@ import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLog
 import { ownerColor, WORKSTREAM_COLOR } from './timelineGraphic.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
-  getStageMonths, anchorPlus, todayMonthIndex, stageMonthFraction,
+  placeStages, anchorPlus, todayMonthIndex, stageMonthFraction,
   timelineWeekTicks, flattenWeekTicks, resolveMonthWindow, monthWindowBounds,
   stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates.js';
@@ -283,7 +283,10 @@ function writePhasedSheet(wb, ws, template) {
   const stages = template.stages;
   const baseMonth = placementBaseMonth(template, stages);
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
-  const placed = stages.map(stage => ({ stage, ...getStageMonths(stage, baseMonth, mode) }));
+  // Same placement the visual uses — including sequencing the steps nobody
+  // gave a month to behind what they wait on — so the sheet's grid is the
+  // chart's grid.
+  const placed = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // Same resolver the on-screen visual uses, so the sheet's columns are the
   // visual's columns — a declared date range drives both.
