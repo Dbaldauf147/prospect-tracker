@@ -443,11 +443,81 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   // The runs of consecutive steps sharing a group name, with their colours.
   // The same grouper the chart bands with, so what's bracketed here is what
   // gets a band there.
-  const groups = useMemo(
-    () => groupStagesByPhase(stages, active?.phaseColors),
+  // Grouped separately either side of the signature, so a group never spans
+  // the divide — the chart can't draw a band that starts before the contract
+  // and finishes after it, and a heading that claimed to would be a lie.
+  const preGroups = useMemo(
+    () => groupStagesByPhase(stages.filter(s => s.preKickoff), active?.phaseColors),
     [stages, active?.phaseColors],
   );
+  const postGroups = useMemo(
+    () => groupStagesByPhase(stages.filter(s => !s.preKickoff), active?.phaseColors),
+    [stages, active?.phaseColors],
+  );
+  // groupStagesByPhase numbers within the list it was handed, so the indexes
+  // above are into the filtered arrays. Map them back to the real positions in
+  // `stages`, which is what every edit addresses.
+  const indexOfStage = useMemo(() => {
+    const m = new Map();
+    stages.forEach((s, i) => m.set(s.id, i));
+    return m;
+  }, [stages]);
   const groupNames = useMemo(() => phaseNames(stages), [stages]);
+  const preCount = useMemo(() => stages.filter(s => s.preKickoff).length, [stages]);
+  // The run-up section only appears once there's something in it, or once the
+  // user has asked for it — a timeline with no pre-signature work shouldn't
+  // carry an empty half.
+  const [addingPre, setAddingPre] = useState(false);
+
+  const signatureLabel = active?.signatureLabel || 'Contract signature';
+  const [signatureDraft, setSignatureDraft] = useState(signatureLabel);
+  const [seenSignature, setSeenSignature] = useState(signatureLabel);
+  if (signatureLabel !== seenSignature) {
+    setSeenSignature(signatureLabel);
+    setSignatureDraft(signatureLabel);
+  }
+  function commitSignature() {
+    const next = signatureDraft.trim();
+    if (!next) { setSignatureDraft(signatureLabel); return; }
+    if (next === signatureLabel) return;
+    writeTemplate({ signatureLabel: next });
+  }
+
+  // The stages array IS the plan order — the chart numbers the steps from it
+  // and stacks its rows in it — so the run-up has to physically precede the
+  // engagement in the array, not just be flagged. Changing a step's side
+  // moves it to the end of the run-up or the head of the engagement
+  // accordingly; without that, a step added to the run-up drew first on the
+  // chart but numbered last, and sat below every delivery row.
+  function setStepSide(idx, preKickoff) {
+    const moving = { ...stages[idx], preKickoff };
+    const rest = stages.filter((_, i) => i !== idx);
+    // The boundary index is both the end of the run-up and the head of the
+    // engagement, so it's where the step goes whichever way it's moving.
+    const boundary = rest.findIndex(s => !s.preKickoff);
+    const at = boundary === -1 ? rest.length : boundary;
+    writeStages([...rest.slice(0, at), moving, ...rest.slice(at)]);
+  }
+  // Adding to either side. On a service with no timeline the timeline comes
+  // into existence with the step, rather than making the user go build one on
+  // another tab first and come back.
+  function addStep(preKickoff) {
+    if (!active) {
+      const created = makeTimelineForService(serviceName);
+      created.stages = [makeTimelineStage({ preKickoff })];
+      setPickedId(created.id);
+      onSaveTemplates([...templates, created]);
+      return;
+    }
+    // A run-up step lands at the end of the run-up, not the end of the plan,
+    // for the same reason: the array's order is the order the chart draws and
+    // numbers in.
+    const step = makeTimelineStage({ preKickoff });
+    if (!preKickoff) { writeStages([...stages, step]); return; }
+    const boundary = stages.findIndex(s => !s.preKickoff);
+    const at = boundary === -1 ? stages.length : boundary;
+    writeStages([...stages.slice(0, at), step, ...stages.slice(at)]);
+  }
 
   function setStepGroup(idx, phase) {
     writeStages(stages.map((s, i) => (i === idx ? { ...s, phase } : s)));
@@ -481,20 +551,6 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
     });
   }
 
-  function addStep() {
-    if (!active) {
-      // First step on a service with no timeline: the timeline comes into
-      // existence with it, rather than making the user go build one on
-      // another tab first and come back.
-      const created = makeTimelineForService(serviceName);
-      created.stages = [makeTimelineStage()];
-      setPickedId(created.id);
-      onSaveTemplates([...templates, created]);
-      return;
-    }
-    writeStages([...stages, makeTimelineStage()]);
-  }
-
   function updateStep(idx, next) {
     writeStages(stages.map((s, i) => (i === idx ? next : s)));
   }
@@ -526,6 +582,10 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   function moveStep(idx, delta) {
     const target = idx + delta;
     if (target < 0 || target >= stages.length) return;
+    // The arrows reorder within a side; crossing the signature is what the
+    // step's own before/after button is for. Without this, nudging the first
+    // delivery step up would drop it into the run-up without saying so.
+    if (!!stages[target].preKickoff !== !!stages[idx].preKickoff) return;
     const next = [...stages];
     [next[idx], next[target]] = [next[target], next[idx]];
     const indexById = new Map(next.map((s, i) => [s.id, i]));
@@ -537,6 +597,117 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
       });
       return kept.length === ids.length ? s : { ...s, dependsOn: formatDependsOn(kept) };
     }));
+  }
+
+  // One section's worth of steps: the group headings and the runs under them.
+  // Used for the run-up and the engagement alike, so the two read identically
+  // and a group behaves the same whichever side of signature it's on.
+  function renderRuns(runs) {
+    return (
+                <div className={styles.detailStepList}>
+                  {runs.map((group, gi) => (
+                    <Fragment key={group.phase || `ungrouped-${gi}`}>
+                      {group.phase && (
+                        <GroupHeader
+                          group={group}
+                          onRename={(to) => renameGroup(group.phase, to)}
+                          onRecolor={(color) => recolorGroup(group.phase, color)}
+                          onUngroup={() => ungroup(group.phase)}
+                        />
+                      )}
+                      {/* The run itself, ruled in the group's colour so the steps
+                          under a heading read as belonging to it — the same thing
+                          the band's left edge does on the chart. */}
+                      <ol
+                        className={group.phase ? styles.detailStepGroup : styles.detailStepRun}
+                        style={group.phase ? { borderLeftColor: group.color } : undefined}
+                      >
+                      {group.steps.map(({ stage }) => {
+                        const idx = indexOfStage.get(stage.id);
+                        return (
+                    <li key={stage.id} className={styles.detailStep}>
+                      <div className={styles.detailStepTop}>
+                        <span className={styles.detailStepNum}>{idx + 1}</span>
+                        <input
+                          type="text"
+                          className={styles.detailInput}
+                          value={stage.name}
+                          placeholder="Step name"
+                          onChange={(e) => updateStep(idx, { ...stage, name: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          className={styles.serviceLinkEditBtn}
+                          onClick={() => moveStep(idx, -1)}
+                          disabled={idx === 0}
+                          title="Move this step earlier"
+                          aria-label={`Move step ${idx + 1} earlier`}
+                        >↑</button>
+                        <button
+                          type="button"
+                          className={styles.serviceLinkEditBtn}
+                          onClick={() => moveStep(idx, 1)}
+                          disabled={idx === stages.length - 1}
+                          title="Move this step later"
+                          aria-label={`Move step ${idx + 1} later`}
+                        >↓</button>
+                        <button
+                          type="button"
+                          className={styles.serviceLinkEditBtn}
+                          onClick={() => removeStep(idx)}
+                          title="Remove this step"
+                          aria-label={`Remove step ${idx + 1}`}
+                        >×</button>
+                      </div>
+                      <div className={styles.detailStepMeta}>
+                        <select
+                          className={styles.detailStepSelect}
+                          value={stage.owner}
+                          onChange={(e) => updateStep(idx, { ...stage, owner: e.target.value })}
+                          title="Who owns this step?"
+                        >
+                          {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                        <input
+                          type="text"
+                          className={styles.detailStepSelect}
+                          value={stage.timing}
+                          placeholder="Timing — Aug 2026, Q3, 2 weeks"
+                          onChange={(e) => updateStep(idx, { ...stage, timing: e.target.value })}
+                        />
+                        <PriorStepsPicker
+                          priorSteps={stages.slice(0, idx).map((p, i) => ({ id: p.id, number: i + 1, name: p.name }))}
+                          value={stage.dependsOn}
+                          onChange={(next) => updateStep(idx, { ...stage, dependsOn: next })}
+                          disabled={idx === 0}
+                        />
+                        {/* Which side of signature the step is on. A button
+                            rather than a checkbox: it moves the step between
+                            the two sections, which is an action, not a
+                            property to tick and then go hunting for. */}
+                        <button
+                          type="button"
+                          className={styles.serviceLinkEditBtn}
+                          onClick={() => setStepSide(idx, !stage.preKickoff)}
+                          title={stage.preKickoff
+                            ? `Move this into the engagement — after ${signatureLabel.toLowerCase()}`
+                            : `Move this into the run-up — before ${signatureLabel.toLowerCase()}`}
+                        >{stage.preKickoff ? '↓ After signature' : '↑ Before signature'}</button>
+                      </div>
+                      <StepDuration
+                        stage={stage}
+                        onChange={(next) => updateStep(idx, next)}
+                        groupNames={groupNames}
+                        onSetGroup={(phase) => setStepGroup(idx, phase)}
+                      />
+                    </li>
+                        );
+                      })}
+                      </ol>
+                    </Fragment>
+                  ))}
+                </div>
+    );
   }
 
   // Editing a template attached to more than one service edits it for all of
@@ -557,7 +728,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
       <div className={styles.detailSectionHead}>
         <span className={styles.detailSectionTitle}>Timeline steps</span>
         <span className={styles.detailSectionCount}>{stages.length}</span>
-        <button type="button" className={styles.serviceLinkEditBtn} onClick={addStep}>+ Add step</button>
+        <button type="button" className={styles.serviceLinkEditBtn} onClick={() => addStep(false)}>+ Add step</button>
         {active && onOpenTimelines && (
           <button
             type="button"
@@ -605,100 +776,58 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
               see what waits on what.
             </p>
           )}
+          {/* The run-up: everything that has to happen before the contract
+              is signed. Empty on every timeline that predates this, and it
+              stays out of the way until there's something in it. */}
+          {(preCount > 0 || addingPre) && (
+            <div className={styles.detailPreSection}>
+              <div className={styles.detailSectionHead}>
+                <span className={styles.detailSectionTitle}>Before contract signature</span>
+                <span className={styles.detailSectionCount}>{preCount}</span>
+                <button type="button" className={styles.serviceLinkEditBtn} onClick={() => addStep(true)}>+ Add step</button>
+              </div>
+              {preCount === 0
+                ? <p className={styles.detailEmpty}>Nothing yet — add the work that leads up to signature.</p>
+                : renderRuns(preGroups)}
+            </div>
+          )}
+
+          {/* The signature itself: the point the plan is built around, and
+              the divide the chart draws. Named here because a deck doesn't
+              always call it the same thing. */}
+          <div className={styles.detailSignature}>
+            <span className={styles.detailSignatureRule} />
+            <input
+              type="text"
+              className={styles.detailSignatureName}
+              value={signatureDraft}
+              aria-label="What the contract signature point is called"
+              title="The label drawn on the chart where the run-up ends and the engagement begins"
+              onChange={(e) => setSignatureDraft(e.target.value)}
+              onBlur={commitSignature}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setSignatureDraft(active.signatureLabel); e.currentTarget.blur(); }
+              }}
+            />
+            <span className={styles.detailSignatureRule} />
+            {preCount === 0 && !addingPre && (
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={() => setAddingPre(true)}
+                title="Add the work that happens before the contract is signed"
+              >+ Add run-up</button>
+            )}
+          </div>
+
           {stages.length === 0 ? (
             <p className={styles.detailEmpty}>
               “{active.name || 'Untitled timeline'}” has no steps yet.
             </p>
-          ) : (
-            <div className={styles.detailStepList}>
-              {groups.map((group, gi) => (
-                <Fragment key={group.phase || `ungrouped-${gi}`}>
-                  {group.phase && (
-                    <GroupHeader
-                      group={group}
-                      onRename={(to) => renameGroup(group.phase, to)}
-                      onRecolor={(color) => recolorGroup(group.phase, color)}
-                      onUngroup={() => ungroup(group.phase)}
-                    />
-                  )}
-                  {/* The run itself, ruled in the group's colour so the steps
-                      under a heading read as belonging to it — the same thing
-                      the band's left edge does on the chart. */}
-                  <ol
-                    className={group.phase ? styles.detailStepGroup : styles.detailStepRun}
-                    style={group.phase ? { borderLeftColor: group.color } : undefined}
-                  >
-                  {group.steps.map(({ stage, index: idx }) => (
-                <li key={stage.id} className={styles.detailStep}>
-                  <div className={styles.detailStepTop}>
-                    <span className={styles.detailStepNum}>{idx + 1}</span>
-                    <input
-                      type="text"
-                      className={styles.detailInput}
-                      value={stage.name}
-                      placeholder="Step name"
-                      onChange={(e) => updateStep(idx, { ...stage, name: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      className={styles.serviceLinkEditBtn}
-                      onClick={() => moveStep(idx, -1)}
-                      disabled={idx === 0}
-                      title="Move this step earlier"
-                      aria-label={`Move step ${idx + 1} earlier`}
-                    >↑</button>
-                    <button
-                      type="button"
-                      className={styles.serviceLinkEditBtn}
-                      onClick={() => moveStep(idx, 1)}
-                      disabled={idx === stages.length - 1}
-                      title="Move this step later"
-                      aria-label={`Move step ${idx + 1} later`}
-                    >↓</button>
-                    <button
-                      type="button"
-                      className={styles.serviceLinkEditBtn}
-                      onClick={() => removeStep(idx)}
-                      title="Remove this step"
-                      aria-label={`Remove step ${idx + 1}`}
-                    >×</button>
-                  </div>
-                  <div className={styles.detailStepMeta}>
-                    <select
-                      className={styles.detailStepSelect}
-                      value={stage.owner}
-                      onChange={(e) => updateStep(idx, { ...stage, owner: e.target.value })}
-                      title="Who owns this step?"
-                    >
-                      {TIMELINE_STAGE_OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                    <input
-                      type="text"
-                      className={styles.detailStepSelect}
-                      value={stage.timing}
-                      placeholder="Timing — Aug 2026, Q3, 2 weeks"
-                      onChange={(e) => updateStep(idx, { ...stage, timing: e.target.value })}
-                    />
-                    <PriorStepsPicker
-                      priorSteps={stages.slice(0, idx).map((p, i) => ({ id: p.id, number: i + 1, name: p.name }))}
-                      value={stage.dependsOn}
-                      onChange={(next) => updateStep(idx, { ...stage, dependsOn: next })}
-                      disabled={idx === 0}
-                    />
-                  </div>
-                  <StepDuration
-                    stage={stage}
-                    onChange={(next) => updateStep(idx, next)}
-                    groupNames={groupNames}
-                    onSetGroup={(phase) => setStepGroup(idx, phase)}
-                  />
-                </li>
-                  ))}
-                  </ol>
-                </Fragment>
-              ))}
-            </div>
-          )}
+          ) : postGroups.length === 0 ? (
+            <p className={styles.detailEmpty}>Nothing after signature yet.</p>
+          ) : renderRuns(postGroups)}
         </>
       )}
     </div>

@@ -157,6 +157,7 @@ export function makeTimelineStage(overrides = {}) {
     icon: 'number',
     kind: DEFAULT_STAGE_KIND,
     dependsOn: '',
+    preKickoff: false,
     duration: '',
     durationUnit: DEFAULT_DURATION_UNIT,
     ...overrides,
@@ -210,6 +211,15 @@ function normalizeStage(stage) {
     durationUnit: STEP_DURATION_UNITS.includes(stage?.durationUnit)
       ? stage.durationUnit
       : DEFAULT_DURATION_UNIT,
+    // Does this step happen BEFORE the contract is signed? The run-up to a
+    // deal — the proposal, the site walk, legal review — is planning nobody
+    // could record here, because every step sat after kickoff by definition.
+    //
+    // A flag rather than a negative month: whether a step is pre-signature is
+    // a fact about the work, not about where it lands on an axis, and tying
+    // it to a month would flip it whenever a duration pushed the step across
+    // the boundary.
+    preKickoff: stage?.preKickoff === true,
     // Implementation format: the phase band this step sits in, and its
     // position in months from kickoff. Blank month/span fall back to the
     // stage's calendar position.
@@ -262,6 +272,9 @@ function normalizeTemplate(tpl) {
     // blank, the chart fits whichever stages carry dates.
     rangeStart: String(tpl?.rangeStart ?? ''),
     rangeEnd: String(tpl?.rangeEnd ?? ''),
+    // What the line between the run-up and the delivery is called on the
+    // chart. Every engagement has one; not every one calls it the same thing.
+    signatureLabel: String(tpl?.signatureLabel ?? '').trim() || 'Contract signature',
     // Per-group colour overrides, keyed by group (phase) name. Only the ones
     // the user has actually picked — every other group falls back to its
     // palette entry, so this stays empty on a timeline nobody has recoloured.
