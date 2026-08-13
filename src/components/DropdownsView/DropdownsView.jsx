@@ -1215,12 +1215,21 @@ export function DropdownsView({ settings, updateSettings }) {
   const visibleNamed = namedLists.filter(cardMatches);
   const solutionsVisible = solutions && cardMatches(solutions);
 
-  // Badge on the Timelines subtab — counts the saved templates (or the
-  // built-in seeds while the user hasn't edited any).
+  // Every timeline template, normalized once: the Timelines subtab's count
+  // badge reads its length, and the Services popup edits the steps of
+  // whichever ones are attached to the service it's showing.
   const savedTimelines = settings?.timelineTemplates;
-  const timelineCount = useMemo(
-    () => getTimelineTemplates({ timelineTemplates: savedTimelines }).length,
+  const timelineTemplates = useMemo(
+    () => getTimelineTemplates({ timelineTemplates: savedTimelines }),
     [savedTimelines]
+  );
+  const timelineCount = timelineTemplates.length;
+  // Same write the Timelines tab makes. Normalizing on read means the first
+  // save from the popup persists the built-in seeds alongside the edit, which
+  // is exactly what "+ New timeline" over there does on its first save too.
+  const saveTimelineTemplates = useCallback(
+    (next) => updateSettings?.({ timelineTemplates: next }),
+    [updateSettings],
   );
 
   const totalOptions = useMemo(
@@ -1449,9 +1458,15 @@ export function DropdownsView({ settings, updateSettings }) {
               hidden={hiddenServices.has(detailService.name)}
               dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
               options={solutionNames}
+              templates={timelineTemplates}
               onSaveField={saveServiceField}
               onSaveUrl={saveServiceLink}
               onToggleHide={toggleHideService}
+              onSaveTemplates={saveTimelineTemplates}
+              // The popup edits the four things a step needs; dates, format
+              // and marker artwork live on the full stage table. Hand the
+              // user over rather than growing a second copy of it in here.
+              onOpenTimelines={() => { setDetailName(null); setActiveTab('timelines'); }}
               onClose={() => setDetailName(null)}
             />
           )}

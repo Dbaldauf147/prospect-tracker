@@ -52,6 +52,48 @@ export function makeTimelineId(prefix = 'tl') {
   return `${prefix}-${Date.now().toString(36)}${rand}`;
 }
 
+// A blank stage, ready to append. Used by both editors — the Timelines tab's
+// stage table and the Services popup's step list — so the two can't drift on
+// what a new step starts life as.
+export function makeTimelineStage(overrides = {}) {
+  return {
+    id: makeTimelineId('st'),
+    name: '',
+    owner: DEFAULT_STAGE_OWNER,
+    timing: '',
+    description: '',
+    icon: 'number',
+    kind: DEFAULT_STAGE_KIND,
+    dependsOn: '',
+    ...overrides,
+  };
+}
+
+// A new timeline for one service, attached to it. The Services popup creates
+// this the first time somebody adds a step to a service that has no timeline
+// yet; from then on it's an ordinary template, editable on the Timelines tab
+// like any other and attachable to further services there.
+//
+// Drawn in the implementation format rather than the Gantt the Timelines
+// tab's "+ New timeline" defaults to. That default is right for a timeline
+// nobody has filled in yet, but this one is created for a known shape: a
+// numbered sequence of steps that wait on each other. "Implementation" is the
+// layout that numbers the steps, and it's the only one that draws the
+// dependency connectors — a Gantt stores a step's dependsOn and shows nothing
+// for it, so a user who set one would see no difference. Changeable on the
+// Timelines tab like any other setting.
+export function makeTimelineForService(serviceName) {
+  const name = String(serviceName ?? '').trim();
+  return {
+    id: makeTimelineId('tl'),
+    name: name ? `${name} timeline` : 'Untitled timeline',
+    services: name ? [name] : [],
+    stages: [],
+    positionMode: 'dates',
+    format: 'phased',
+  };
+}
+
 // Coerce a stored stage into the full shape, filling in an id and a valid
 // owner so callers never have to defend against half-written records.
 function normalizeStage(stage) {
