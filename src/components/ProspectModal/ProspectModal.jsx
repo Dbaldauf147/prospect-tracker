@@ -19,6 +19,13 @@ import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
+import {
+  SCHEDULED_OPP_COLORS,
+  formatScheduledOppDay,
+  normalizeScheduledOpps,
+  scheduledOppChipTitle,
+  scheduledServicesForCompany,
+} from '../../utils/scheduledOpps';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
@@ -4648,6 +4655,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return matched;
   }, [oppsRecords]);
 
+  // Every service the board can show, in the user's own category layout —
+  // the universe the scheduled-opp match below runs against.
+  const allServiceItems = useMemo(() => {
+    const cats = settings.customServiceCategories
+      || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+    return [...new Set(cats.flatMap(c => c.items || []))];
+  }, [settings.customServiceCategories]);
+
+  // Services this company has an opp QUEUED for — a New Opp scheduled for
+  // a future date, which has no row on the Opps table yet and so matches
+  // nothing above. Without this the board reads as untouched right up
+  // until the opp fires, and the service looks free to book when someone
+  // has already booked it.
+  const scheduledServices = useMemo(() => {
+    if (isNew || !fields.company) return new Map();
+    return scheduledServicesForCompany(
+      fields.company,
+      normalizeScheduledOpps(settings.scheduledOpps),
+      allServiceItems,
+    );
+  }, [isNew, fields.company, settings.scheduledOpps, allServiceItems]);
+
   // Pin a contact to this company so it always shows on the popup,
   // regardless of whether its HubSpot Company text matches. Persisted in
   // settings (Firestore) so the association survives reloads / syncs
@@ -7254,9 +7283,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                   const pct = totalItems > 0 ? Math.round((exploredItems.size / totalItems) * 100) : 0;
                   return (
-                    <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                      {exploredItems.size}/{totalItems} ({pct}%)
-                    </span>
+                    <>
+                      <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
+                        {exploredItems.size}/{totalItems} ({pct}%)
+                      </span>
+                      {/* Queued opps aren't explored yet, so they stay out
+                          of the count above and get their own badge. */}
+                      {scheduledServices.size > 0 && (
+                        <span
+                          title="Services with a New Opp already scheduled for this company. Nothing exists on the Opps table until it fires."
+                          style={{
+                            fontSize: '0.6rem', fontWeight: 700, padding: '1px 5px', borderRadius: '3px',
+                            background: SCHEDULED_OPP_COLORS.bg, color: SCHEDULED_OPP_COLORS.color,
+                            border: `1px solid ${SCHEDULED_OPP_COLORS.border}`,
+                          }}
+                        >{scheduledServices.size} scheduled</span>
+                      )}
+                    </>
                   );
                 })()}
                 <button
@@ -7506,6 +7549,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             // is untouched.
                             const retry = isTryingAgain(manualStatus, oppStage);
                             const colors = serviceStatusColor(effectiveStatus);
+                            // An opp for this service is queued but not
+                            // created yet: no row exists to give it a
+                            // status, so it's a chip rather than a state.
+                            const scheduledOpp = scheduledServices.get(item);
 
                             if (servicesEditMode) {
                               return (
@@ -7642,6 +7689,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         border: `1px solid ${TRYING_AGAIN_COLORS.border}`,
                                       }}
                                     >{TRYING_AGAIN}</span>
+                                  )}
+                                  {scheduledOpp && (
+                                    <span
+                                      title={scheduledOppChipTitle(scheduledOpp, getDisplayName(item))}
+                                      style={{
+                                        flexShrink: 0, fontSize: '0.55rem', fontWeight: 700,
+                                        padding: '1px 3px', borderRadius: '3px', lineHeight: 1.4,
+                                        whiteSpace: 'nowrap',
+                                        background: SCHEDULED_OPP_COLORS.bg, color: SCHEDULED_OPP_COLORS.color,
+                                        border: `1px solid ${SCHEDULED_OPP_COLORS.border}`,
+                                      }}
+                                    >Opp {formatScheduledOppDay(scheduledOpp)}</span>
                                   )}
                                 </div>
                                 {isSMEOpen && (
