@@ -419,5 +419,35 @@ check('the first attached timeline is used', twoTpls.services[0].templateName, '
 same('and the others are named so the caller can say so', twoTpls.services[0].extraTemplates, ['Audit plan B']);
 check('only one timeline is drawn', twoTpls.template.stages.length, 1);
 
+
+// --- a service's own groups survive into the plan -------------------------
+// The band a step lands in is its SERVICE, so `phase` is spent naming that.
+// The structure the service's timeline had is carried alongside as
+// `subPhase`, with the colour it was given there, so the plan can show both
+// levels instead of flattening a service to one undifferentiated list.
+const grouped = [{
+  id: 'tl-g', name: 'Grouped', services: ['Monitoring'], positionMode: 'months', format: 'phased',
+  phaseColors: { 'Setup': '#0B7A3B' },
+  stages: [
+    { id: 'g1', name: 'Install', owner: 'Schneider Electric', phase: 'Setup', startMonth: 1, months: 1 },
+    { id: 'g2', name: 'Verify', owner: 'Schneider Electric', phase: 'Setup', startMonth: 2, months: 1 },
+    { id: 'g3', name: 'Loose', owner: 'Schneider Electric', phase: '', startMonth: 3, months: 1 },
+  ],
+}];
+const withSubs = buildDealTimeline({
+  scopeServices: ['Monitoring'], templates: grouped, serviceOverrides: overrides,
+  anchorMonth: '2026-08',
+});
+const subOf = (n) => withSubs.template.stages.find(s => s.name === n);
+check('the band is still the service', subOf('Install').phase, 'Monitoring');
+check('and the step keeps its own group beside it', subOf('Install').subPhase, 'Setup');
+check('with the colour that group had', subOf('Install').subPhaseColor, '#0B7A3B');
+check('a step in no group carries no sub-group', subOf('Loose').subPhase, '');
+check('and no colour for one', subOf('Loose').subPhaseColor, '');
+// A prerequisite pulled in without a timeline is a single rollout bar, and has
+// no group of its own to carry.
+check('a service sized from rollout has no sub-group',
+  withSubs.template.stages.find(s => s.id.endsWith('::rollout'))?.subPhase ?? '', '');
+
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -447,6 +447,7 @@ const PHASED = {
   gridW: 1000,      // the grid width the columns are always fitted to
   rowStep: 30,      // one step line
   groupHeadH: 26,   // the full-width bar naming a group
+  subHeadH: 20,     // the lighter bar naming a group WITHIN a band
   phasePad: 18,
   footH: 26,
 };
@@ -458,6 +459,30 @@ const PHASED = {
 // Stages column is never blank — a timeline that hasn't been organised into
 // phases still reads as one row per stage. `borrowed` tells the renderer to
 // drop the label beside the chip, which would otherwise repeat it.
+// A band's steps split into their sub-groups: runs of consecutive steps
+// carrying the same `subPhase`.
+//
+// Only the deal rollout sets one. There a band is a SERVICE, so `phase` is
+// spent naming it, and the structure the service's own timeline had — its
+// phases — rides along as `subPhase` rather than being flattened away. An
+// ordinary timeline has none and comes back as a single unnamed run, which
+// draws exactly as it did.
+function subRuns(steps) {
+  const runs = [];
+  for (const step of steps) {
+    const sub = String(step.stage?.subPhase || '').trim();
+    const prev = runs[runs.length - 1];
+    if (prev && sub && prev.sub === sub) prev.steps.push(step);
+    else runs.push({ sub, color: step.stage?.subPhaseColor || '', steps: [step] });
+  }
+  return runs;
+}
+
+// How many sub-headings a band draws — each one costs a row of height.
+function subHeadCount(steps) {
+  return subRuns(steps).filter(r => r.sub).length;
+}
+
 // The runs and their colours come from the shared grouper, so the bands drawn
 // here are the ones the Services popup's step list shows. This adds only what
 // the drawing needs on top: the label to print beside the band.
@@ -523,6 +548,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // to sit centred beside the steps — it has its own bar now, and the step
   // names moved into the left column, so the body only has to fit its rows.
   const bandH = groups.map(g => (g.phase ? PHASED.groupHeadH : 0)
+    + subHeadCount(g.steps) * PHASED.subHeadH
     + Math.max(44, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const monthsBottom = PHASED.headH + PHASED.monthsRowH;
   // `axis: 'months'` drops the week ticks and reads month by month. A long
@@ -680,10 +706,25 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     }
     s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
 
-    const bodyY = y + (group.phase ? PHASED.groupHeadH : 0);
-    group.steps.forEach((step, si) => {
+    // Rows and sub-headings interleave, so the vertical position walks rather
+    // than being computed from the step's index.
+    let rowTop = y + (group.phase ? PHASED.groupHeadH : 0) + PHASED.phasePad / 2;
+    subRuns(group.steps).forEach((run) => {
+      // A sub-heading is subordinate to the band's own header: shorter, and
+      // written in its colour on a wash of it rather than white on solid, so
+      // the two levels don't compete for the same weight.
+      if (run.sub) {
+        const c = run.color || SE_SLATE;
+        s += `<rect x="0" y="${rowTop}" width="${width}" height="${PHASED.subHeadH}" fill="${tint(c, 0.84)}"/>`;
+        s += `<rect x="0" y="${rowTop}" width="4" height="${PHASED.subHeadH}" fill="${c}"/>`;
+        const sub = wrapText(run.sub, width - 60, 11.5, 1);
+        s += `<text x="24" y="${rowTop + 14}" font-size="11.5" font-weight="800" fill="${c}">${esc(sub[0] || '')}</text>`;
+        rowTop += PHASED.subHeadH;
+      }
+      run.steps.forEach((step) => {
       const pos = placed[step.index];
-      const rowY = bodyY + PHASED.phasePad / 2 + si * PHASED.rowStep + 4;
+      const rowY = rowTop + 4;
+      rowTop += PHASED.rowStep;
       // Every step names itself in the left column now, grouped or not. It
       // used to sit beside its bar, which put it inside the grid and pushed it
       // around whenever the bar was wide or ran to the last month.
@@ -760,7 +801,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
         }
         s += `<text x="${chipX + (chipW > 60 ? 12 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="${numberFill}">${step.index + 1}</text>`;
       }
-
+      });
     });
     y += h;
   });
