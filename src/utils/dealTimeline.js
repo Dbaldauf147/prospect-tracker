@@ -246,6 +246,11 @@ export function buildDealTimeline({
   templates = [],
   serviceOverrides = null,
   anchorMonth = '',
+  // The kickoff day itself, ISO. A pinned agreement is stamped with it so
+  // the renderers place its marker on the day rather than in the middle of
+  // the month — which is what puts it on the today line instead of a
+  // fortnight away from it.
+  kickoffDate = '',
   name = 'Timeline',
   clientName = '',
   showPrerequisites = true,
@@ -291,10 +296,12 @@ export function buildDealTimeline({
           startMonth: pinned ? 1 : offset + pos.month,
           months: pos.span,
           // The step's own dates described where it sat in its template's
-          // calendar, which is not where it sits in this plan. Cleared so
-          // nothing reads them back and contradicts the month position.
-          start: '',
-          end: '',
+          // calendar, which is not where it sits in this plan, so they go.
+          // A pinned agreement is the exception: it happens on a day we
+          // know, and carrying that day is what lets the renderers draw its
+          // marker on the today line rather than mid-month.
+          start: pinned ? String(kickoffDate || '') : '',
+          end: pinned ? String(kickoffDate || '') : '',
           dependsOn: st.dependsOn ? stageId(st.dependsOn) : '',
         });
       }

@@ -41,28 +41,37 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
   // the dates — hiding them takes the bands out, not the wait — and the
   // toggle brings them back when the sequencing is what's being checked.
   const [showPrerequisites, setShowPrerequisites] = useState(false);
+  // 'weeks' keeps the week ticks under the month band; 'months' drops them
+  // and reads a column per month. Long engagements don't need the day-level
+  // scale, and past a dozen columns the week labels are too tight to print.
+  const [axis, setAxis] = useState('weeks');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   // Kickoff is this month, so month 1 is the month we're in and the
   // renderers put their today marker in the first column.
   const anchorMonth = useMemo(() => currentMonthAnchor(), []);
+  const kickoffDate = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
   const templates = useMemo(() => getTimelineTemplates(settings), [settings]);
   const plan = useMemo(() => buildDealTimeline({
     scopeServices,
     templates,
     serviceOverrides,
     anchorMonth,
+    kickoffDate,
     // The chart's own title, which is also the Excel's. Just the account —
     // the chart is plainly a timeline without a word saying so.
     name: account || 'Timeline',
     clientName: account,
     showPrerequisites,
-  }), [scopeServices, templates, serviceOverrides, anchorMonth, account, showPrerequisites]);
+  }), [scopeServices, templates, serviceOverrides, anchorMonth, kickoffDate, account, showPrerequisites]);
 
   // The format switch only changes how the same plan is drawn, so it lives
   // here rather than in the composer.
-  const template = useMemo(() => ({ ...plan.template, format }), [plan.template, format]);
+  const template = useMemo(() => ({ ...plan.template, format, axis }), [plan.template, format, axis]);
   const svg = useMemo(() => {
     try { return buildTimelineSvg(template, { branded: true }); }
     catch (err) { console.error('Deal timeline render failed', err); return ''; }
@@ -162,6 +171,19 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             >
               {TIMELINE_FORMATS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
+            {/* Only the implementation format carries a week row, so this is
+                the only format the choice can change anything in. */}
+            {format === 'phased' && (
+              <select
+                value={axis}
+                onChange={(e) => setAxis(e.target.value)}
+                title="Weekly keeps the week ticks under each month; monthly reads one column per month. The Excel follows the same choice."
+                style={{ ...btnStyle, padding: '0.35rem 0.4rem' }}
+              >
+                <option value="weeks">Weekly</option>
+                <option value="months">Monthly</option>
+              </select>
+            )}
             <button
               type="button"
               onClick={handleExcel}

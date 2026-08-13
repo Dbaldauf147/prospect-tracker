@@ -487,7 +487,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     .filter(g => g.steps.length > 0);
   const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const monthsBottom = PHASED.headH + PHASED.monthsRowH;
-  const gridTop = monthsBottom + PHASED.weeksRowH;
+  // `axis: 'months'` drops the week ticks and reads month by month. A long
+  // engagement doesn't need day-of-week precision, and at 12+ columns the
+  // week labels are too tight to print anyway — so the row costs height and
+  // gives nothing back.
+  const weekly = template?.axis !== 'months';
+  const gridTop = monthsBottom + (weekly ? PHASED.weeksRowH : 0);
   const gridH = bandH.reduce((a, b) => a + b, 0);
   const height = gridTop + gridH + PHASED.footH + 8;
 
@@ -574,25 +579,27 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // label — the day the week begins on a calendar timeline, the running week
   // number on a relative one. Steps are still placed by month, so this is a
   // scale to read against rather than a finer grid to snap to.
-  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar);
+  const weekTicks = timelineWeekTicks(anchor, monthCount, calendar, weekly);
   const weekX = (m, frac) => colX(m) + frac * colW;
-  s += `<line x1="${x0}" y1="${monthsBottom}" x2="${x0 + gridW}" y2="${monthsBottom}" stroke="#FFFFFF" stroke-width="1" opacity="0.55"/>`;
-  s += `<text x="${x0 - 10}" y="${gridTop - 5}" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF" opacity="0.9">${calendar ? 'Week of' : 'Weeks'}</text>`;
-  weekTicks.forEach(({ month, weeks }) => {
-    weeks.forEach((week, i) => {
-      const wx = weekX(month, week.from);
-      const wWidth = (week.to - week.from) * colW;
-      // The month's own rule already sits at its first week's edge.
-      if (i > 0) {
-        s += `<line x1="${wx.toFixed(1)}" y1="${monthsBottom}" x2="${wx.toFixed(1)}" y2="${gridTop}" stroke="#FFFFFF" stroke-width="1" opacity="0.4"/>`;
-      }
-      // Below ~11px a two-digit label collides with its neighbour, so the
-      // tick stays and the number drops rather than printing over itself.
-      if (wWidth >= 11) {
-        s += `<text x="${(wx + wWidth / 2).toFixed(1)}" y="${gridTop - 5}" text-anchor="middle" font-size="9" font-weight="700" fill="#FFFFFF" opacity="0.92">${esc(week.label)}</text>`;
-      }
+  if (weekly) {
+    s += `<line x1="${x0}" y1="${monthsBottom}" x2="${x0 + gridW}" y2="${monthsBottom}" stroke="#FFFFFF" stroke-width="1" opacity="0.55"/>`;
+    s += `<text x="${x0 - 10}" y="${gridTop - 5}" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF" opacity="0.9">${calendar ? 'Week of' : 'Weeks'}</text>`;
+    weekTicks.forEach(({ month, weeks }) => {
+      weeks.forEach((week, i) => {
+        const wx = weekX(month, week.from);
+        const wWidth = (week.to - week.from) * colW;
+        // The month's own rule already sits at its first week's edge.
+        if (i > 0) {
+          s += `<line x1="${wx.toFixed(1)}" y1="${monthsBottom}" x2="${wx.toFixed(1)}" y2="${gridTop}" stroke="#FFFFFF" stroke-width="1" opacity="0.4"/>`;
+        }
+        // Below ~11px a two-digit label collides with its neighbour, so the
+        // tick stays and the number drops rather than printing over itself.
+        if (wWidth >= 11) {
+          s += `<text x="${(wx + wWidth / 2).toFixed(1)}" y="${gridTop - 5}" text-anchor="middle" font-size="9" font-weight="700" fill="#FFFFFF" opacity="0.92">${esc(week.label)}</text>`;
+        }
+      });
     });
-  });
+  }
 
   // Grid: column rules the full height, then a rule under each phase band.
   let y = gridTop;

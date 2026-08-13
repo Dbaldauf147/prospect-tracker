@@ -472,10 +472,18 @@ export function describeMonthWindow(anchor, monthCount) {
 // 12-month plan reads off the axis without counting.
 export const WEEKS_PER_RELATIVE_MONTH = 4;
 
-export function timelineWeekTicks(anchor, monthCount, calendar) {
+export function timelineWeekTicks(anchor, monthCount, calendar, weekly = true) {
   const out = [];
   const count = Math.max(1, Math.floor(monthCount) || 1);
   for (let m = 1; m <= count; m += 1) {
+    // Monthly axis: the month IS the tick. Returning one unlabelled span
+    // covering the whole column keeps every caller's "which tick does this
+    // fraction land in" arithmetic working — the grid just has one tick per
+    // month to land in, so it comes out month-wide.
+    if (!weekly) {
+      out.push({ month: m, weeks: [{ label: '', from: 0, to: 1 }] });
+      continue;
+    }
     const cal = calendar ? anchorPlus(anchor, m - 1) : null;
     if (!cal) {
       const weeks = [];
