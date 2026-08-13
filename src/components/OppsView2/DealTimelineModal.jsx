@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react';
 import { buildDealTimeline } from '../../utils/dealTimeline';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
-import { currentMonthAnchor } from '../../utils/timelineDates';
+import { currentMonthAnchor, parseMonthAnchor } from '../../utils/timelineDates';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 
 const btnStyle = {
@@ -62,13 +62,30 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     });
   }
 
-  // Kickoff is this month, so month 1 is the month we're in and the
-  // renderers put their today marker in the first column.
-  const anchorMonth = useMemo(() => currentMonthAnchor(), []);
-  const kickoffDate = useMemo(() => {
+  // The agreement is what starts the engagement, so the date it's signed is
+  // the plan's month 1. Defaults to today — "if we signed this now" is the
+  // question the popup opened with — and moving it forward re-dates the whole
+  // plan against a signature target you're actually negotiating towards.
+  const todayISO = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
+  const [signDate, setSignDate] = useState(todayISO);
+  // A cleared date box falls back to today rather than drawing nothing.
+  const kickoffDate = signDate || todayISO;
+  const anchorMonth = useMemo(() => {
+    const anchor = kickoffDate.slice(0, 7);
+    return parseMonthAnchor(anchor) ? anchor : currentMonthAnchor();
+  }, [kickoffDate]);
+  // Trimming first-month bars back to today is right for a plan starting now
+  // and wrong for one back-dated, where the early work really did happen.
+  const clampBarsToToday = kickoffDate >= todayISO;
+  const signLabel = useMemo(() => {
+    const d = new Date(`${kickoffDate}T00:00:00`);
+    return Number.isNaN(d.getTime())
+      ? kickoffDate
+      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  }, [kickoffDate]);
   const templates = useMemo(() => getTimelineTemplates(settings), [settings]);
   const plan = useMemo(() => buildDealTimeline({
     scopeServices,
@@ -82,7 +99,8 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
     clientName: account,
     showPrerequisites,
     excludeServices: [...excluded],
-  }), [scopeServices, templates, serviceOverrides, anchorMonth, kickoffDate, account, showPrerequisites, excluded]);
+    clampBarsToToday,
+  }), [scopeServices, templates, serviceOverrides, anchorMonth, kickoffDate, account, showPrerequisites, excluded, clampBarsToToday]);
 
   // The chart's services and the ones clicked off it, back in one list in the
   // chart's own order. Hidden services have to stay listed or there'd be
@@ -153,7 +171,7 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
               {plan.services.length === 0 && plan.hidden.length === 0
                 ? 'Nothing in this deal’s Scope to plan.'
                 : <>
-                    Kickoff this month · {plan.services.length} service{plan.services.length === 1 ? '' : 's'}
+                    Kickoff {signLabel}{kickoffDate === todayISO ? ' (today)' : ''} · {plan.services.length} service{plan.services.length === 1 ? '' : 's'}
                     {prerequisites.length > 0 && <> ({prerequisites.length} pulled in as prerequisite{prerequisites.length === 1 ? '' : 's'})</>}
                     {/* The plan's own length, not the chart's — the window
                         carries an extra column so trailing step labels have
@@ -164,6 +182,28 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* First control in the row because it re-dates everything to its
+                right: the whole plan hangs off when the paperwork lands. */}
+            <label
+              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it. Defaults to today."
+              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}
+            >
+              Signed
+              <input
+                type="date"
+                value={signDate}
+                onChange={(e) => setSignDate(e.target.value)}
+                style={{ ...btnStyle, padding: '0.3rem 0.4rem', color: 'var(--color-text)' }}
+              />
+            </label>
+            {kickoffDate !== todayISO && (
+              <button
+                type="button"
+                onClick={() => setSignDate(todayISO)}
+                title="Back to planning from today"
+                style={{ ...btnStyle, padding: '0.35rem 0.5rem' }}
+              >Today</button>
+            )}
             {/* Clicking rows off one at a time needs one click to undo them
                 all, or a chart hidden down to nothing is a puzzle. */}
             {plan.excluded.length > 0 && (
@@ -260,7 +300,7 @@ export function DealTimelineModal({ account = '', scopeServices = [], settings, 
               to needs explaining, or it reads as a stray bar. */}
           {pinned.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-              Agreement signed today: the contract step
+              Agreement signed {signLabel}: the contract step
               {pinned.length === 1 ? '' : 's'} on {pinned.map(s => s.name).join(', ')} sit
               {pinned.length === 1 ? 's' : ''} at kickoff rather than behind the delivery
               {pinned.length === 1 ? ' it waits' : ' they wait'} on.
