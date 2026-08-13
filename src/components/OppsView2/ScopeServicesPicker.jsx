@@ -37,6 +37,10 @@ const STAGE_PRIORITY = {
 
 const UNGROUPED = 'Other services';
 
+// Bucket in the selection summary for anything in Scope that the board
+// doesn't offer — a hidden service, or free text typed straight into the cell.
+const OFF_BOARD = 'Not on the board';
+
 // Scope → service matching lives in src/utils/scopeMatch.js, shared with
 // the company card and the Pipeline coverage table so all three boards
 // agree on which services a Scope names.
@@ -150,7 +154,9 @@ export function ScopeServicesModal({
 
   const categories = useMemo(() => buildCategories(settings, options), [settings, options]);
   const allItems = useMemo(() => categories.flatMap(c => c.items), [categories]);
-  const renames = settings?.serviceRenames || {};
+  // Memoized because the selection summary depends on it: a fresh {} literal
+  // every render would rebuild that list on every keystroke in the filter box.
+  const renames = useMemo(() => settings?.serviceRenames || {}, [settings?.serviceRenames]);
   const displayName = (item) => renames[item] || item;
 
   // The company record behind this opp's account — the same record the
@@ -234,11 +240,36 @@ export function ScopeServicesModal({
     .filter(cat => cat.items.length > 0);
   const matchCount = visible.reduce((sum, c) => sum + c.items.length, 0);
 
-  // Anything already in Scope that isn't on the board — a hidden service, or
-  // free text typed straight into the cell. Listed so it can still be
-  // removed here instead of being invisible but saved.
-  const boardKeys = new Set(allItems.map(i => i.toLowerCase()));
-  const offBoard = selected.filter(s => !boardKeys.has(s.toLowerCase()));
+  // What's in Scope right now, grouped the way the board is grouped, for the
+  // summary strip under the header. Deliberately NOT filtered by the search
+  // box: it answers "what has this opp got?", which is the one question the
+  // board itself can't answer once you start typing or scrolling past a card.
+  //
+  // Services the board doesn't offer (hidden, or free text typed straight into
+  // the cell) collect in a trailing OFF_BOARD group, so they can still be
+  // removed here rather than being invisible but saved.
+  const selectedGroups = useMemo(() => {
+    const placement = new Map();
+    for (const cat of categories) {
+      for (const item of cat.items) placement.set(item.toLowerCase(), { item, category: cat.name });
+    }
+    const byCategory = new Map();
+    for (const raw of selected) {
+      const hit = placement.get(String(raw).toLowerCase());
+      const category = hit ? hit.category : OFF_BOARD;
+      // Prefer the board's spelling over whatever the cell happened to store,
+      // so the chip matches the row it ticks.
+      const value = hit ? hit.item : raw;
+      if (!byCategory.has(category)) byCategory.set(category, []);
+      byCategory.get(category).push({ value, label: hit ? (renames[hit.item] || hit.item) : raw });
+    }
+    // Board order, with the off-board stragglers last.
+    const ordered = categories
+      .map(cat => ({ category: cat.name, items: byCategory.get(cat.name) || [] }))
+      .filter(g => g.items.length > 0);
+    if (byCategory.has(OFF_BOARD)) ordered.push({ category: OFF_BOARD, items: byCategory.get(OFF_BOARD) });
+    return ordered;
+  }, [selected, categories, renames]);
 
   return createPortal(
     <div
@@ -332,6 +363,59 @@ export function ScopeServicesModal({
               color: '#fff', cursor: 'pointer',
             }}
           >Done</button>
+        </div>
+
+        {/* Selection summary. Sits outside the scrolling board so it stays
+            put while you hunt through categories, and capped at a few rows of
+            chips so a 40-service Scope can't push the board off screen. */}
+        <div style={{
+          flex: '0 0 auto', maxHeight: 96, overflowY: 'auto',
+          padding: '0.4rem 0.8rem', borderBottom: '1px solid var(--color-border)',
+          background: 'var(--color-surface)',
+        }}>
+          {selected.length === 0 ? (
+            <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+              Nothing in Scope yet — tick a service below to add it.
+            </div>
+          ) : (
+            // Wider gap between groups than within one (0.75 vs 0.25), so the
+            // category labels read as headings rather than as another chip.
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-text-muted)', flex: '0 0 auto' }}>
+                In Scope:
+              </span>
+              {selectedGroups.map(group => (
+                <span key={group.category} style={{ display: 'flex', alignItems: 'baseline', gap: '0.25rem', flexWrap: 'wrap' }}>
+                  <span
+                    title={group.category === OFF_BOARD
+                      ? 'In Scope but not offered by the board — a hidden service, or text typed straight into the cell.'
+                      : group.category}
+                    style={{
+                      fontSize: '0.58rem', fontWeight: 700, whiteSpace: 'nowrap',
+                      color: group.category === OFF_BOARD ? '#92400E' : '#1E40AF',
+                      textTransform: 'uppercase', letterSpacing: '0.02em',
+                    }}
+                  >{group.category}</span>
+                  {group.items.map(it => (
+                    <button
+                      key={it.value}
+                      type="button"
+                      onClick={() => toggle(it.value)}
+                      title={`Remove “${it.label}” from Scope`}
+                      style={{
+                        padding: '0.1rem 0.4rem', borderRadius: 3,
+                        border: `1px solid ${group.category === OFF_BOARD ? '#FDE68A' : '#BBF7D0'}`,
+                        background: group.category === OFF_BOARD ? '#FEF3C7' : '#DCFCE7',
+                        color: group.category === OFF_BOARD ? '#92400E' : '#166534',
+                        fontSize: '0.65rem', fontWeight: 600,
+                        fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >{it.label} ×</button>
+                  ))}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.6rem' }}>
@@ -442,31 +526,6 @@ export function ScopeServicesModal({
             </div>
           )}
 
-          {offBoard.length > 0 && (
-            <div style={{
-              marginTop: '0.6rem', paddingTop: '0.5rem',
-              borderTop: '1px solid var(--color-border-light)',
-              display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap',
-            }}>
-              <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
-                Also in Scope (not on the board):
-              </span>
-              {offBoard.map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => toggle(s)}
-                  title="Remove from Scope"
-                  style={{
-                    padding: '0.1rem 0.4rem', borderRadius: 3,
-                    border: '1px solid #BBF7D0', background: '#DCFCE7',
-                    color: '#166534', fontSize: '0.65rem', fontWeight: 600,
-                    fontFamily: 'inherit', cursor: 'pointer',
-                  }}
-                >{s} ×</button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div style={{
