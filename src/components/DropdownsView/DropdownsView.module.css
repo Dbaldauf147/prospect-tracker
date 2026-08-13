@@ -1911,3 +1911,29 @@
   outline: none;
   border-color: var(--color-accent);
 }
+
+/* Duration cell on the stage table: the number and the unit it counts,
+   sharing one cell the way the Month × Span pair does. */
+.stageDurationCell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.durationUnitSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.durationUnitSelect:hover {
+  border-color: var(--color-border-light);
+}

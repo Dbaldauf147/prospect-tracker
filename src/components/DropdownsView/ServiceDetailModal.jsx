@@ -10,6 +10,8 @@ import {
   formatDependsOn,
   groupStagesByPhase,
   phaseNames,
+  setStagePreKickoff,
+  canSwapStages,
 } from '../../utils/timelineTemplatesStore';
 import {
   STEP_DURATION_UNITS,
@@ -490,13 +492,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   // accordingly; without that, a step added to the run-up drew first on the
   // chart but numbered last, and sat below every delivery row.
   function setStepSide(idx, preKickoff) {
-    const moving = { ...stages[idx], preKickoff };
-    const rest = stages.filter((_, i) => i !== idx);
-    // The boundary index is both the end of the run-up and the head of the
-    // engagement, so it's where the step goes whichever way it's moving.
-    const boundary = rest.findIndex(s => !s.preKickoff);
-    const at = boundary === -1 ? rest.length : boundary;
-    writeStages([...rest.slice(0, at), moving, ...rest.slice(at)]);
+    writeStages(setStagePreKickoff(stages, idx, preKickoff));
   }
   // Adding to either side. On a service with no timeline the timeline comes
   // into existence with the step, rather than making the user go build one on
@@ -582,10 +578,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   function moveStep(idx, delta) {
     const target = idx + delta;
     if (target < 0 || target >= stages.length) return;
-    // The arrows reorder within a side; crossing the signature is what the
-    // step's own before/after button is for. Without this, nudging the first
-    // delivery step up would drop it into the run-up without saying so.
-    if (!!stages[target].preKickoff !== !!stages[idx].preKickoff) return;
+    if (!canSwapStages(stages, idx, target)) return;
     const next = [...stages];
     [next[idx], next[target]] = [next[target], next[idx]];
     const indexById = new Map(next.map((s, i) => [s.id, i]));
@@ -639,16 +632,20 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                           type="button"
                           className={styles.serviceLinkEditBtn}
                           onClick={() => moveStep(idx, -1)}
-                          disabled={idx === 0}
-                          title="Move this step earlier"
+                          disabled={!canSwapStages(stages, idx, idx - 1)}
+                          title={canSwapStages(stages, idx, idx - 1)
+                            ? 'Move this step earlier'
+                            : 'First step on this side of signature — use the button below to move it across'}
                           aria-label={`Move step ${idx + 1} earlier`}
                         >↑</button>
                         <button
                           type="button"
                           className={styles.serviceLinkEditBtn}
                           onClick={() => moveStep(idx, 1)}
-                          disabled={idx === stages.length - 1}
-                          title="Move this step later"
+                          disabled={!canSwapStages(stages, idx, idx + 1)}
+                          title={canSwapStages(stages, idx, idx + 1)
+                            ? 'Move this step later'
+                            : 'Last step on this side of signature — use the button below to move it across'}
                           aria-label={`Move step ${idx + 1} later`}
                         >↓</button>
                         <button
@@ -715,13 +712,19 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   // steps in front of the user are shared.
   const alsoOn = (active?.services || []).filter(s => s.trim().toLowerCase() !== key);
 
-  // Only the implementation format draws the connectors between dependent
-  // steps. Timelines created here are that format, but one built earlier on
-  // the Timelines tab, or switched since, may not be — and a "waits on" that
-  // draws nothing looks like it didn't save. Only worth saying once a
-  // dependency actually exists to be drawn.
-  const dependencyDrawn = (active?.format || 'gantt') === 'phased';
-  const anyDependency = stages.some(s => s.dependsOn);
+  // Three of the things this editor sets are drawn by the implementation
+  // format alone: the arrows between dependent steps, the bar length a
+  // duration gives a step, and the signature rule the run-up sits before.
+  // Timelines created here are that format, but one built earlier on the
+  // Timelines tab, or switched since, may not be — and a control that draws
+  // nothing looks like it didn't save. Only worth saying once the user has
+  // actually set one of them.
+  const implementationFormat = (active?.format || 'gantt') === 'phased';
+  const unusedHere = implementationFormat ? [] : [
+    stages.some(s => s.dependsOn) && 'the arrows between dependent steps',
+    stages.some(s => s.duration !== '' && s.duration != null) && 'the length a duration gives a step',
+    preCount > 0 && 'the contract signature line',
+  ].filter(Boolean);
 
   return (
     <div className={styles.detailSection}>
@@ -768,12 +771,14 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
               attached to {alsoOn.join(', ')} — editing them here changes it for those too.
             </p>
           )}
-          {anyDependency && !dependencyDrawn && (
+          {unusedHere.length > 0 && (
             <p className={styles.detailStepShared}>
               “{active.name || 'Untitled timeline'}” is drawn in the {active.format === 'milestone' ? 'Milestone' : 'Gantt'} format,
-              which doesn’t draw the arrows between dependent steps. The order below is
-              still what it renders; switch it to Implementation on the Timelines tab to
-              see what waits on what.
+              which doesn’t draw {unusedHere.length === 1
+                ? unusedHere[0]
+                : `${unusedHere.slice(0, -1).join(', ')} or ${unusedHere[unusedHere.length - 1]}`}.
+              What you set here is saved either way; switch it to Implementation on the
+              Timelines tab to see it drawn.
             </p>
           )}
           {/* The run-up: everything that has to happen before the contract

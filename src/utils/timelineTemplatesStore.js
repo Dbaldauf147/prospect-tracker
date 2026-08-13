@@ -134,6 +134,36 @@ export function groupStagesByPhase(stages, phaseColors) {
   }));
 }
 
+// Move a step to the other side of contract signature.
+//
+// The stages array IS the plan order — the chart numbers steps from it and
+// stacks its rows in it — so a step changing sides has to physically move,
+// not just change a flag. The boundary index is both the end of the run-up
+// and the head of the engagement, so it's where the step goes whichever way
+// it's travelling.
+//
+// Shared by both editors: without it, setting "Before" in one of them left
+// the step where it was, and the chart drew it first while numbering it last.
+export function setStagePreKickoff(stages, index, preKickoff) {
+  const list = Array.isArray(stages) ? stages : [];
+  if (index < 0 || index >= list.length) return list;
+  const moving = { ...list[index], preKickoff: !!preKickoff };
+  const rest = list.filter((_, i) => i !== index);
+  const boundary = rest.findIndex(s => !s?.preKickoff);
+  const at = boundary === -1 ? rest.length : boundary;
+  return [...rest.slice(0, at), moving, ...rest.slice(at)];
+}
+
+// Can these two positions swap? Only within a side: the reorder arrows shuffle
+// steps inside the run-up or inside the engagement, and crossing the signature
+// is what the side control is for. Without this, nudging the first delivery
+// step up would drop it into the run-up without saying so.
+export function canSwapStages(stages, a, b) {
+  const list = Array.isArray(stages) ? stages : [];
+  if (a < 0 || b < 0 || a >= list.length || b >= list.length) return false;
+  return !!list[a]?.preKickoff === !!list[b]?.preKickoff;
+}
+
 // Every distinct group name on a timeline, in the order they first appear.
 export function phaseNames(stages) {
   const out = [];
