@@ -4,6 +4,13 @@
 // verdict per jurisdiction question, a short rationale for each, and
 // citation links. The client fills the screening dropdowns from these
 // verdicts (the user can still override any answer by hand).
+//
+// Two extra payloads ride alongside, for the EU criteria rows the card
+// screens on beneath the jurisdiction answer: `csrd` (the turnover, headcount
+// and incorporation figures the CSRD waves test) and `cbam` (whether the
+// company imports covered goods into the EU, and whether it clears the
+// 50-tonne de-minimis). Both are advisory — the card stores them separately
+// from the answers so a hand-entered value always wins.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { researchBudgetMs } from './_lib/researchBudget.js';
@@ -43,7 +50,7 @@ async function handler(req, res, auth) {
   // incorporated, and where its securities are listed, rather than relying
   // on training-time knowledge. The structured output is a per-question
   // verdict so the card can fill each dropdown and show why.
-  const systemPrompt = `You are a corporate-disclosure compliance analyst. For the requested company, use web search to determine the answer to each screening question below. These questions gate which corporate sustainability/financial disclosure regimes may apply (California SB 253/261, EU CSRD, UK, Australia, Mexico CNBV, Brazil CVM).
+  const systemPrompt = `You are a corporate-disclosure compliance analyst. For the requested company, use web search to determine the answer to each screening question below. These questions gate which corporate sustainability/financial disclosure regimes may apply (California SB 253/261, EU CSRD, EU CBAM, UK, Australia, Mexico CNBV, Brazil CVM).
 
 Questions (answer each by its key):
 ${questionList}
@@ -63,6 +70,10 @@ Return ONLY a single JSON object (no prose, no markdown fences) with these field
   - topEuSubsidiaryTurnoverEurM: number | null: the highest net turnover of any single EU subsidiary or branch, in MILLIONS OF EUR. This is rarely public; null is the expected answer unless you find subsidiary accounts.
   - employees: number | null: total employee headcount (group-wide).
 - csrdNotes: object mapping each csrd field name to a one-sentence rationale naming the source, the period, and any conversion or proxy you applied. Keep each under ~200 characters. Use an empty string for a field you returned as null with nothing to say.
+- cbam: object with the two inputs EU CBAM screening turns on. CBAM is the odd one out here: it is decided by what the company IMPORTS INTO THE EU, not by how big it is, so answer these from trade, customs, supply-chain and procurement evidence — never from turnover or headcount. Fields:
+  - importsCoveredGoods: "Yes" | "No" | "Unknown": does the company, or any entity in its group, import cement, iron or steel, aluminium, fertilisers, hydrogen or electricity into the EU? What matters is the covered good crossing the EU border as an import — an EU producer buying the same material from an EU supplier is not an importer, and a company sourcing covered goods entirely outside the EU is not either. Answer "No" only where the record positively indicates it does not import covered goods into the EU; where you simply cannot tell, answer "Unknown".
+  - overFiftyTonnes: "Yes" | "No" | "Unknown": does it import more than 50 tonnes of covered goods into the EU a year? The 50-tonne de-minimis does NOT apply to hydrogen or electricity, so answer "Yes" whenever the company imports hydrogen or electricity into the EU at all, however small the volume, and say so in the note. Otherwise: import tonnage is rarely public, so "Unknown" is the expected answer for most companies and is far better than a guess. Do not infer tonnage from revenue or company size.
+- cbamNotes: object mapping each cbam field name to a one-sentence rationale naming the source and the specific evidence (e.g. "Operates EU rolling mills fed by imported Turkish billet per 2024 annual report p.42"). Keep each under ~200 characters. Use an empty string for a field you returned as "Unknown" with nothing to say.
 
 Every question key must appear in both answers and notes.`;
 
@@ -83,7 +94,13 @@ Every question key must appear in both answers and notes.`;
         model: 'claude-sonnet-4-5',
         max_tokens: 4096,
         system: systemPrompt,
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+        // CBAM asks about something none of the other questions touch — what
+        // crosses the EU border — so it needs searches of its own rather
+        // than a share of the ones already spent on incorporation, listings
+        // and turnover. Two more, not more than that: the whole loop has to
+        // finish inside researchBudgetMs(), and a timeout loses the CSRD
+        // figures along with the CBAM ones.
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
         messages: [
           { role: 'user', content: `Screen "${company}" against the six questions. Return the JSON object as specified.` },
         ],
@@ -153,6 +170,22 @@ Every question key must appear in both answers and notes.`;
       csrdNotes[field] = String(rawCsrdNotes[field] || '').trim().slice(0, 300);
     }
 
+    // CBAM inputs. Both are verdicts rather than figures: the card asks
+    // whether covered goods are imported at all, and whether the volume
+    // clears the 50-tonne de-minimis — not how many tonnes. An "Unknown"
+    // leaves the row open for the account team, which is the honest outcome
+    // for most companies since import tonnage is rarely public.
+    const rawCbam = parsed.cbam && typeof parsed.cbam === 'object' ? parsed.cbam : {};
+    const cbam = {
+      importsCoveredGoods: normVerdict(rawCbam.importsCoveredGoods),
+      overFiftyTonnes: normVerdict(rawCbam.overFiftyTonnes),
+    };
+    const rawCbamNotes = parsed.cbamNotes && typeof parsed.cbamNotes === 'object' ? parsed.cbamNotes : {};
+    const cbamNotes = {};
+    for (const field of Object.keys(cbam)) {
+      cbamNotes[field] = String(rawCbamNotes[field] || '').trim().slice(0, 300);
+    }
+
     return res.status(200).json({
       answers,
       notes,
@@ -160,6 +193,8 @@ Every question key must appear in both answers and notes.`;
       sources,
       csrd,
       csrdNotes,
+      cbam,
+      cbamNotes,
     });
   } catch (err) {
     if (err?.name === 'AbortError') {

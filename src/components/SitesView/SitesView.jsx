@@ -5483,8 +5483,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // The same context the card's JurisdictionScreening builds, so every
       // derived verdict in the workbook is the one the card is showing —
-      // including the CSRD figures the compliance research run turned up and
-      // the EU answer Wave 2 reads.
+      // including the CSRD figures and CBAM import verdicts the compliance
+      // research run turned up and the EU answer Wave 2 reads.
       const criterionContext = {
         revenueUsd,
         revenueLabel,
@@ -5493,6 +5493,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         employees,
         csrd: research?.csrd || null,
         csrdNotes: research?.csrdNotes || null,
+        cbam: research?.cbam || null,
+        cbamNotes: research?.cbamNotes || null,
         euAnswer: answers.eu || '',
       };
       // California turns on revenue AND doing business there. Under the
