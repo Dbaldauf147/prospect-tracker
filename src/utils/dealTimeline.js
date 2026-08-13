@@ -29,6 +29,7 @@
 // Extensions included so these resolve under plain Node for the tests.
 import { getEffectiveServiceMetadata, rolloutWeeks, formatRolloutWeeks } from '../data/serviceCatalog.js';
 import { getStageMonths, placementBaseMonth, WEEKS_PER_RELATIVE_MONTH } from './timelineDates.js';
+import { parseDependsOn } from './timelineTemplatesStore.js';
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
@@ -302,7 +303,9 @@ export function buildDealTimeline({
           // marker on the today line rather than mid-month.
           start: pinned ? String(kickoffDate || '') : '',
           end: pinned ? String(kickoffDate || '') : '',
-          dependsOn: st.dependsOn ? stageId(st.dependsOn) : '',
+          // Every predecessor gets the same per-service namespacing, so a
+          // step waiting on two still points at both — inside this band.
+          dependsOn: parseDependsOn(st.dependsOn).map(stageId).join(', '),
         });
       }
     } else {

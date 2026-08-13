@@ -12,6 +12,7 @@ import {
   shortOwnerLabel,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
+import { PriorStepsPicker } from './PriorStepsPicker';
 import {
   getStageRange, getStageMonths, currentMonthAnchor,
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
@@ -37,7 +38,7 @@ const MONTH_COUNT_OPTIONS = [3, 6, 9, 12, 18, 24, 36];
 const COLUMN_TITLES = {
   range: 'Start and end dates. The standard way to place a step.',
   monthSpan: 'Start month from kickoff × how many months it spans',
-  depends: 'The earlier step this one waits on',
+  depends: 'The earlier steps this one waits on. A step can wait on several.',
 };
 
 // Columns the implementation format greys out because the other positioning
@@ -244,17 +245,13 @@ function StageRow({ index, total, stage, mode, columns, priorSteps, onChange, on
   );
   cells.depends = (
           <td key="depends">
-            <select
-              value={stage.dependsOn || ''}
-              onChange={(e) => onChange({ ...stage, dependsOn: e.target.value })}
-              title="The earlier step this one waits on"
-              className={styles.dependsSelect}
-            >
-              <option value="">-</option>
-              {priorSteps.map(p => (
-                <option key={p.id} value={p.id}>{p.number}. {p.name || 'Untitled step'}</option>
-              ))}
-            </select>
+            <PriorStepsPicker
+              priorSteps={priorSteps}
+              value={stage.dependsOn}
+              onChange={(next) => onChange({ ...stage, dependsOn: next })}
+              disabled={index === 0}
+              compact
+            />
           </td>
   );
   cells.timing = (
