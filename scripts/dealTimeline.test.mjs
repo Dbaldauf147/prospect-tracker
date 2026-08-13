@@ -269,6 +269,50 @@ same('a prerequisite the deal also sold keeps its band',
   alsoSold.services.map(s => s.name), ['Meters', 'Monitoring']);
 same('and nothing is hidden', alsoSold.hidden, []);
 
+// --- planning from a target signature date --------------------------------
+// The agreement starts the engagement, so its date is the plan's month 1.
+// Moving it re-anchors the calendar; it must NOT re-shuffle the sequencing,
+// which is measured in months from kickoff and knows nothing about dates.
+const signedLater = buildDealTimeline({
+  scopeServices: ['Monitoring'],
+  templates,
+  serviceOverrides: overrides,
+  anchorMonth: '2027-03',
+  kickoffDate: '2027-03-15',
+});
+const signedNow = buildDealTimeline({
+  scopeServices: ['Monitoring'], templates, serviceOverrides: overrides,
+  anchorMonth: '2026-08', kickoffDate: '2026-08-13',
+});
+check('a later signature date re-anchors the calendar', signedLater.template.anchorMonth, '2027-03');
+same('but the month numbers are unchanged',
+  signedLater.services.map(s => [s.name, s.startMonth, s.endMonth]),
+  signedNow.services.map(s => [s.name, s.startMonth, s.endMonth]));
+check('and the plan is the same length', signedLater.monthsNeeded, signedNow.monthsNeeded);
+
+// The pinned contract step carries the signature date, which is what puts its
+// marker on the day rather than in the middle of the month.
+const signedPin = buildDealTimeline({
+  scopeServices: ['Monitoring'],
+  templates: [{ name: 'Sign then work', services: ['Monitoring'], positionMode: 'months',
+    stages: [{ id: 'a', name: 'Agreement signed', startMonth: 1, months: 1 },
+             { id: 'b', name: 'Work', startMonth: 2, months: 1, dependsOn: 'a' }] }],
+  serviceOverrides: overrides,
+  anchorMonth: '2027-03',
+  kickoffDate: '2027-03-15',
+});
+const agreement = signedPin.template.stages.find(s => s.name === 'Agreement signed');
+check('the contract step is stamped with the signature date', agreement.start, '2027-03-15');
+check('and still sits at kickoff', agreement.startMonth, 1);
+
+// Clamping first-month bars to today is right for a plan starting now and
+// wrong for a back-dated one, where the early work really did happen.
+check('bars are clamped to today by default', signedNow.template.clampBarsToToday, true);
+check('and the caller can turn that off for a back-dated plan', buildDealTimeline({
+  scopeServices: ['Audits'], templates: [], serviceOverrides: overrides,
+  anchorMonth: '2024-01', kickoffDate: '2024-01-10', clampBarsToToday: false,
+}).template.clampBarsToToday, false);
+
 // --- hiding a service by name --------------------------------------------
 // Clicked off the chart in the rollout popup. Exactly the same contract the
 // prerequisites switch has: the band comes out, the schedule does not move.

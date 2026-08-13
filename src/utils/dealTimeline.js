@@ -220,9 +220,11 @@ function bandLabel(entry) {
 /**
  * The deal's services as one timeline template, kicked off this month.
  *
- * `anchorMonth` pins month 1 to a real calendar month ('YYYY-MM'); it
- * defaults to the current month, which is what makes the chart read as
- * "starting today" and puts the today marker in the first column.
+ * `anchorMonth` pins month 1 to a real calendar month ('YYYY-MM'). Pass the
+ * current month and the chart reads as "starting today", with the today
+ * marker in the first column; pass a later one and the whole plan is drawn
+ * from that month, which is how a deal planned around a target signature
+ * date is laid out.
  *
  * `showPrerequisites` decides whether the services the Scope never named get
  * a band of their own. They ALWAYS drive the schedule either way — a deal
@@ -275,6 +277,12 @@ export function buildDealTimeline({
   clientName = '',
   showPrerequisites = true,
   excludeServices = [],
+  // Whether bars in the current month are trimmed back to today. Right for a
+  // plan kicking off now — nothing in it has started — and wrong for one
+  // dated into the past, where work legitimately began before today. The
+  // caller knows which, because it knows the kickoff date; this file stays
+  // free of `new Date()` so the tests can pin every date they use.
+  clampBarsToToday = true,
 } = {}) {
   const entries = expandDealServices(scopeServices, serviceOverrides);
 
@@ -413,12 +421,12 @@ export function buildDealTimeline({
       // and the renderers draw the today marker in it.
       monthMode: 'calendar',
       anchorMonth: String(anchorMonth || ''),
-      // The plan kicks off today, so nothing in it has started yet. Without
-      // this, a bar in the first month draws from the 1st and shows work
-      // already under way before the plan begins. Opt-in on the renderers
-      // because a timeline anchored to a past month legitimately has bars
-      // that start before today.
-      clampBarsToToday: true,
+      // A plan kicking off today has nothing under way yet. Without this, a
+      // bar in the first month draws from the 1st and shows work already
+      // done before the plan begins. Opt-in on the renderers because a
+      // timeline anchored to a past month legitimately has bars that start
+      // before today — see the option above.
+      clampBarsToToday: clampBarsToToday !== false,
       // Fitted to the plan rather than left on "auto", which floors at 12
       // months — right for a proposal chart that should read as a year,
       // wrong for a delivery plan, where five empty columns after the last
