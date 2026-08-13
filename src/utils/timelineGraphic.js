@@ -424,6 +424,20 @@ function workstreamColor(owner) {
   return WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR[DEFAULT_STAGE_OWNER];
 }
 
+// Lighten a hex toward white. Used for the fill of a step that belongs to a
+// group: the bar takes its group's colour, but at full strength a row of them
+// would fight the solid header above and swamp the grid, so the fill is the
+// pale version and the header keeps the strong one.
+function tint(hex, amount) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+  if (!m) return hex;
+  const up = (c) => {
+    const n = parseInt(c, 16);
+    return Math.round(n + (255 - n) * amount).toString(16).padStart(2, '0');
+  };
+  return `#${up(m[1])}${up(m[2])}${up(m[3])}`;
+}
+
 const PHASED = {
   headH: 152,       // green band: note box, title, legend
   monthsRowH: 34,   // the "1 2 3 …" row, still inside the band
@@ -432,6 +446,7 @@ const PHASED = {
   minColW: 62,
   gridW: 1000,      // the grid width the columns are always fitted to
   rowStep: 30,      // one step line
+  groupHeadH: 26,   // the full-width bar naming a group
   phasePad: 18,
   footH: 26,
 };
@@ -502,7 +517,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const groups = groupPhases(stages, template?.phaseColors)
     .map(g => ({ ...g, steps: g.steps.filter(s => !hidden.has(s.stage)) }))
     .filter(g => g.steps.length > 0);
-  const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
+  // A named group carries a header bar above its steps; an ungrouped step is
+  // just its own row. The old 62px floor existed to give the group name room
+  // to sit centred beside the steps — it has its own bar now, and the step
+  // names moved into the left column, so the body only has to fit its rows.
+  const bandH = groups.map(g => (g.phase ? PHASED.groupHeadH : 0)
+    + Math.max(44, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const monthsBottom = PHASED.headH + PHASED.monthsRowH;
   // `axis: 'months'` drops the week ticks and reads month by month. A long
   // engagement doesn't need day-of-week precision, and at 12+ columns the
@@ -664,22 +684,29 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const chipGeom = [];
   groups.forEach((group, gi) => {
     const h = bandH[gi];
-    // The solid edge that names the group, over the wash laid down above.
+    // A group is announced by a bar of its own colour running the full width,
+    // with its name in white — the heading over the rows beneath it. Its steps
+    // then read as ordinary rows with their names in the left column, the same
+    // as an ungrouped step, so the only thing marking them out as a group is
+    // the header and the colour they're filled in.
     if (group.phase) {
-      s += `<rect x="0" y="${y}" width="6" height="${h}" fill="${group.color}"/>`;
+      s += `<rect x="0" y="${y}" width="${width}" height="${PHASED.groupHeadH}" fill="${group.color}"/>`;
+      const head = wrapText(group.label, width - 40, 14, 1);
+      s += `<text x="14" y="${y + 18}" font-size="14" font-weight="800" fill="#FFFFFF">${esc(head[0] || '')}</text>`;
     }
     s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
 
-    // Phase name, vertically centred in its band.
-    const labelLines = wrapText(group.label, PHASED.labelW - 56, 15.5, 3);
-    const labelTop = y + h / 2 - ((labelLines.length - 1) * 19) / 2 + 5;
-    labelLines.forEach((ln, i) => {
-      s += `<text x="38" y="${labelTop + i * 19}" font-size="15.5" font-weight="800" fill="${group.color || SE_INK}">${esc(ln)}</text>`;
-    });
-
+    const bodyY = y + (group.phase ? PHASED.groupHeadH : 0);
     group.steps.forEach((step, si) => {
       const pos = placed[step.index];
-      const rowY = y + PHASED.phasePad / 2 + si * PHASED.rowStep + 4;
+      const rowY = bodyY + PHASED.phasePad / 2 + si * PHASED.rowStep + 4;
+      // Every step names itself in the left column now, grouped or not. It
+      // used to sit beside its bar, which put it inside the grid and pushed it
+      // around whenever the bar was wide or ran to the last month.
+      const nameLines = wrapText(step.stage.name || '', PHASED.labelW - 28, 12.5, 2);
+      nameLines.forEach((ln, li) => {
+        s += `<text x="14" y="${rowY + 16 - (nameLines.length - 1) * 7 + li * 14}" font-size="12.5" fill="${SE_INK}">${esc(ln)}</text>`;
+      });
       let chipX = colX(Math.min(pos.month, monthCount)) + 3;
       const spanCols = Math.min(pos.span, monthCount - Math.min(pos.month, monthCount) + 1);
       let chipW = Math.max(30, spanCols * colW - 6);
@@ -695,7 +722,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
         chipX = Math.min(todayX, right - 24);
         chipW = right - chipX;
       }
-      const color = workstreamColor(step.stage.owner);
+      // In a group the bar is the group's colour, washed out so the header
+      // above stays the strong one; ungrouped, it keeps the workstream colour
+      // it always had. Either way the owner is still on the bar — see the cap
+      // drawn at its leading edge — so the legend stays true.
+      const color = group.color ? tint(group.color, 0.78) : workstreamColor(step.stage.owner);
+      const numberFill = group.color ? group.color : '#FFFFFF';
       // Remembered so the dependency links can be drawn over the top once
       // every chip has a position.
       chipGeom[step.index] = { x: chipX, y: rowY, w: chipW };
@@ -731,34 +763,23 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
           s += diamond(color);
         }
         s += `<text x="${cx}" y="${cy + 4.5}" text-anchor="middle" font-size="12" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
-      } else if (step.stage.owner === 'Both') {
+      } else if (!group.color && step.stage.owner === 'Both') {
         // Split chip: both workstreams own the step.
         s += `<rect x="${chipX}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Client')}"/>`;
         s += `<rect x="${chipX + chipW / 2}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Schneider Electric')}"/>`;
         s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
       } else {
         s += `<rect x="${chipX}" y="${rowY}" width="${chipW}" height="24" fill="${color}"/>`;
-        s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
+        // Who owns the step, kept on a group-coloured bar as a cap at its
+        // leading edge. Without it the workstream would be readable only on
+        // ungrouped rows, and the legend would be naming a distinction the
+        // chart had stopped drawing.
+        if (group.color) {
+          s += `<rect x="${chipX}" y="${rowY}" width="5" height="24" fill="${workstreamColor(step.stage.owner)}"/>`;
+        }
+        s += `<text x="${chipX + (chipW > 60 ? 12 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="${numberFill}">${step.index + 1}</text>`;
       }
 
-      // Label placement, in order of preference: beside the chip, inside it
-      // when it's a wide bar with no room to the right, and failing that to
-      // the left. A step that runs to the last month otherwise loses its text
-      // off the edge of the canvas.
-      // Suppressed when the band already borrowed this step's name.
-      const label = group.borrowed ? '' : (step.stage.name || '');
-      if (label) {
-        const textW = label.length * 6.3;
-        const roomRight = width - 8 - (chipX + chipW + 8);
-        if (textW <= roomRight) {
-          s += `<text x="${chipX + chipW + 8}" y="${rowY + 17}" font-size="12" fill="${SE_SLATE}">${esc(label)}</text>`;
-        } else if (chipW > 110) {
-          const inner = wrapText(label, chipW - 44, 12, 1);
-          s += `<text x="${chipX + 32}" y="${rowY + 17}" font-size="12" font-weight="600" fill="#FFFFFF">${esc(inner[0] || '')}</text>`;
-        } else {
-          s += `<text x="${chipX - 8}" y="${rowY + 17}" text-anchor="end" font-size="12" fill="${SE_SLATE}">${esc(label)}</text>`;
-        }
-      }
     });
     y += h;
   });
