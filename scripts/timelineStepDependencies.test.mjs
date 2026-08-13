@@ -5,8 +5,8 @@
 // A step can wait on more than one earlier step. The list is stored as a
 // comma-separated string of stage ids, which is also the shape a single id
 // was stored in before — so the thing most worth pinning down is that a
-// timeline authored back then still reads, and that every consumer draws one
-// link per predecessor rather than only the first.
+// timeline authored back then still reads, and that every predecessor counts
+// rather than only the first.
 import {
   parseDependsOn, formatDependsOn, getTimelineTemplates,
 } from '../src/utils/timelineTemplatesStore.js';
@@ -79,36 +79,12 @@ same('both predecessors are carried into the deal plan',
 check('and each is namespaced to its service band',
   parseDependsOn(install.dependsOn).every(id => id.startsWith('rollout::')), true);
 
-// ---- the chart draws one connector per predecessor ------------------------
+// ---- the chart shows a dependency by WHERE the step is, not by a line ----
 //
-// buildTimelineSvg pulls in the Schneider lockup, which imports without a
-// file extension and so can't be loaded by plain Node. The connector pass is
-// the part under test and it's driven entirely by parseDependsOn against the
-// stage ids, so it's asserted here in the same terms the renderer uses.
-function linksDrawn(stages) {
-  const indexById = new Map(stages.map((st, i) => [st.id, i]));
-  let n = 0;
-  stages.forEach((stage, i) => {
-    for (const id of parseDependsOn(stage.dependsOn)) {
-      const from = indexById.get(id);
-      if (from == null || from === i) continue;
-      n += 1;
-    }
-  });
-  return n;
-}
-const three = [{ id: 'st-a' }, { id: 'st-b' }, { id: 'st-c' }];
-check('no dependency draws nothing', linksDrawn(three.map(s => ({ ...s, dependsOn: '' }))), 0);
-check('one predecessor draws one link',
-  linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-a' }]), 1);
-check('two predecessors draw two links',
-  linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-a, st-b' }]), 2);
-check('an id naming no step is skipped, the real one still drawn',
-  linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-a, st-gone' }]), 1);
-check('a step waiting on itself is skipped',
-  linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-c' }]), 0);
-check('and skipping itself does not lose its real predecessor',
-  linksDrawn([three[0], three[1], { ...three[2], dependsOn: 'st-c, st-b' }]), 1);
+// The connectors are gone: they said the same thing the placement says, in
+// dashed elbows that crossed half the grid on a plan of any length. So what
+// has to hold is that the placement really does carry the sequence — which
+// is what the block below pins down.
 
 // ---- a dependency places the step, when nothing else did -----------------
 //

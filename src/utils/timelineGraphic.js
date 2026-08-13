@@ -13,7 +13,7 @@
 
 import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
 import {
-  TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, parseDependsOn, groupStagesByPhase,
+  TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, groupStagesByPhase,
 } from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
@@ -462,7 +462,8 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const mode = template?.positionMode === 'months' ? 'months' : 'dates';
   // Positions come from placeStages rather than a per-stage read, so a step
   // that only says what it waits on lands after that step instead of at
-  // kickoff — and the dependency links below draw forwards.
+  // kickoff. That sequencing is the only place a dependency shows on this
+  // chart — nothing is drawn between the steps.
   const raw = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
   // The run-up to the contract sits before the engagement starts, so it needs
   // months the axis doesn't have — everything here is numbered from 1, which
@@ -516,22 +517,6 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const clampBars = template?.clampBarsToToday === true;
   const gridH = bandH.reduce((a, b) => a + b, 0);
   const height = gridTop + gridH + PHASED.footH + 8;
-
-  // Declared dependencies, resolved to row indexes. A link pointing at a
-  // missing or self-referencing step is dropped rather than drawn nowhere.
-  const indexById = new Map(stages.map((st, i) => [st.id, i]));
-  const deps = [];
-  stages.forEach((stage, i) => {
-    // A step can wait on several earlier ones — one elbow is drawn per
-    // predecessor, so a step gated on two shows both arrows arriving at it.
-    for (const id of parseDependsOn(stage.dependsOn)) {
-      const from = indexById.get(id);
-      if (from == null || from === i) continue;
-      // A link to or from a step the window dropped has nothing to point at.
-      if (hidden.has(stage) || hidden.has(stages[from])) continue;
-      deps.push({ from, to: i, backwards: placed[i].month < placed[from].month });
-    }
-  });
 
   const clientName = String(template?.clientName || '').trim() || 'Client';
   const x0 = PHASED.labelW;
@@ -661,7 +646,6 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   if (todayCol) {
     s += `<rect x="${colX(todayCol)}" y="${gridTop}" width="${colW}" height="${gridH}" fill="${SE_GREEN}" opacity="0.09"/>`;
   }
-  const chipGeom = [];
   groups.forEach((group, gi) => {
     const h = bandH[gi];
     // The solid edge that names the group, over the wash laid down above.
@@ -696,9 +680,6 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
         chipW = right - chipX;
       }
       const color = workstreamColor(step.stage.owner);
-      // Remembered so the dependency links can be drawn over the top once
-      // every chip has a position.
-      chipGeom[step.index] = { x: chipX, y: rowY, w: chipW };
 
       // A milestone is a moment, not a duration: draw it as a diamond
       // centred in its month rather than a bar across months, so the two
@@ -763,29 +744,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     y += h;
   });
 
-  // Dependency links, drawn over the chips: an elbow from the end of the step
-  // being waited on to the start of the one waiting. A link that runs
-  // backwards — the dependent starting earlier than its predecessor — is drawn
-  // in red, because that's a plan that can't happen in that order.
-  if (deps.length) {
-    s += `<defs><marker id="depArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">`
-      + `<path d="M0 0.6L6 3.5L0 6.4z" fill="${SE_SLATE}"/></marker>`
-      + `<marker id="depArrowBad" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">`
-      + `<path d="M0 0.6L6 3.5L0 6.4z" fill="${SE_RED}"/></marker></defs>`;
-    deps.forEach(({ from, to, backwards }) => {
-      const a = chipGeom[from], b = chipGeom[to];
-      if (!a || !b) return;
-      const stroke = backwards ? SE_RED : SE_SLATE;
-      const ay = a.y + 12, by = b.y + 12;
-      const ax = a.x + a.w;
-      const bx = b.x - 5;
-      // Route around the right of the source when the target sits to its left.
-      const midX = bx > ax + 12 ? (ax + bx) / 2 : ax + 10;
-      s += `<path d="M${ax.toFixed(1)} ${ay} H${midX.toFixed(1)} V${by} H${bx.toFixed(1)}"`
-        + ` fill="none" stroke="${stroke}" stroke-width="1.3" stroke-dasharray="4 3"`
-        + ` marker-end="url(#${backwards ? 'depArrowBad' : 'depArrow'})" opacity="0.85"/>`;
-    });
-  }
+  // No dependency connectors. What a step waits on is what PLACES it — see
+  // placeStages — so the sequence is already in the chart: each step starts
+  // where the last one it waits on finished. Drawing the elbows on top of
+  // that said the same thing a second time, in dashed lines that crossed
+  // half the grid on a plan of any length. The order is the picture; the
+  // list of what each step waits on is in the Timelines table.
 
   // Where the contract is signed: a rule the full height of the grid, with
   // everything to its left the run-up to the deal and everything to its right
