@@ -70,6 +70,80 @@ export function formatDependsOn(ids) {
   return parseDependsOn(ids).join(', ');
 }
 
+// Colours for the step groups — the phase bands the implementation chart
+// draws down its left edge.
+//
+// Deliberately none of the workstream colours (see WORKSTREAM_COLOR: green for
+// Schneider Electric, blue for the client, teal for both). A step's chip is
+// coloured by who owns it and the legend says so; the group is a different
+// question about the same step, so it gets a different set of hues and a
+// different piece of the drawing — the band, not the chip.
+//
+// Ordered so neighbouring groups don't land on neighbouring hues.
+export const PHASE_COLORS = [
+  '#4338CA', // indigo
+  '#B45309', // amber
+  '#0F766E', // teal
+  '#9D174D', // magenta
+  '#4D7C0F', // olive
+  '#6D28D9', // violet
+  '#B91C1C', // brick
+  '#0369A1', // ocean
+];
+
+// The colour for one group. A stored override wins; otherwise the group takes
+// the palette entry for its position, so a timeline is legible the moment it
+// has groups and nobody has picked anything.
+//
+// Overrides are keyed by group name rather than position, so inserting a
+// group above another doesn't repaint it — the name is what the user attached
+// the colour to.
+export function phaseColorFor(name, index, overrides) {
+  const key = String(name ?? '').trim();
+  const stored = key && overrides && typeof overrides === 'object' ? overrides[key] : null;
+  if (typeof stored === 'string' && /^#[0-9a-f]{6}$/i.test(stored.trim())) return stored.trim();
+  return PHASE_COLORS[Math.abs(Number(index) || 0) % PHASE_COLORS.length];
+}
+
+// Steps gathered into their groups, in plan order.
+//
+// A group is a run of CONSECUTIVE steps carrying the same `phase` name — the
+// bands the implementation chart draws down its left edge. Order is never
+// re-sorted, so the same name used twice down a timeline is two runs, and
+// because the colour is keyed by name they read as the same group both times.
+//
+// Shared by the chart and the Services popup's step list so the two can't
+// disagree about where one group ends and the next begins.
+// Returns [{ phase, color, steps: [{ stage, index }] }]; `phase` is '' and
+// `color` null for the steps that aren't in a group.
+export function groupStagesByPhase(stages, phaseColors) {
+  const groups = [];
+  (Array.isArray(stages) ? stages : []).forEach((stage, index) => {
+    const phase = String(stage?.phase || '').trim();
+    const prev = groups[groups.length - 1];
+    if (prev && phase && prev.phase === phase) prev.steps.push({ stage, index });
+    else groups.push({ phase, steps: [{ stage, index }] });
+  });
+  const order = [];
+  for (const g of groups) {
+    if (g.phase && !order.includes(g.phase)) order.push(g.phase);
+  }
+  return groups.map(g => ({
+    ...g,
+    color: g.phase ? phaseColorFor(g.phase, order.indexOf(g.phase), phaseColors) : null,
+  }));
+}
+
+// Every distinct group name on a timeline, in the order they first appear.
+export function phaseNames(stages) {
+  const out = [];
+  for (const stage of (Array.isArray(stages) ? stages : [])) {
+    const phase = String(stage?.phase || '').trim();
+    if (phase && !out.includes(phase)) out.push(phase);
+  }
+  return out;
+}
+
 // A blank stage, ready to append. Used by both editors — the Timelines tab's
 // stage table and the Services popup's step list — so the two can't drift on
 // what a new step starts life as.
@@ -188,6 +262,16 @@ function normalizeTemplate(tpl) {
     // blank, the chart fits whichever stages carry dates.
     rangeStart: String(tpl?.rangeStart ?? ''),
     rangeEnd: String(tpl?.rangeEnd ?? ''),
+    // Per-group colour overrides, keyed by group (phase) name. Only the ones
+    // the user has actually picked — every other group falls back to its
+    // palette entry, so this stays empty on a timeline nobody has recoloured.
+    phaseColors: (tpl?.phaseColors && typeof tpl.phaseColors === 'object')
+      ? Object.fromEntries(
+        Object.entries(tpl.phaseColors)
+          .filter(([k, v]) => String(k).trim() && typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v.trim()))
+          .map(([k, v]) => [String(k).trim(), v.trim()]),
+      )
+      : {},
     services: Array.isArray(tpl?.services)
       ? tpl.services.map(s => String(s ?? '').trim()).filter(Boolean)
       : [],

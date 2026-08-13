@@ -12,7 +12,9 @@
 // title, and the legend. A "Both" stage rings half green / half grey.
 
 import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
-import { TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, parseDependsOn } from './timelineTemplatesStore';
+import {
+  TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, parseDependsOn, groupStagesByPhase,
+} from './timelineTemplatesStore';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   getStageMonths, anchorPlus, todayMonthIndex, todayMonthOffset,
@@ -441,17 +443,14 @@ const PHASED = {
 // Stages column is never blank — a timeline that hasn't been organised into
 // phases still reads as one row per stage. `borrowed` tells the renderer to
 // drop the label beside the chip, which would otherwise repeat it.
-function groupPhases(stages) {
-  const groups = [];
-  stages.forEach((stage, index) => {
-    const phase = String(stage.phase || '').trim();
-    const prev = groups[groups.length - 1];
-    if (prev && phase && prev.phase === phase) prev.steps.push({ stage, index });
-    else groups.push({ phase, steps: [{ stage, index }], borrowed: !phase });
-  });
-  return groups.map(g => ({
+// The runs and their colours come from the shared grouper, so the bands drawn
+// here are the ones the Services popup's step list shows. This adds only what
+// the drawing needs on top: the label to print beside the band.
+function groupPhases(stages, phaseColors) {
+  return groupStagesByPhase(stages, phaseColors).map(g => ({
     ...g,
-    label: g.phase || (g.borrowed ? (g.steps[0].stage.name || '') : ''),
+    borrowed: !g.phase,
+    label: g.phase || (g.steps[0]?.stage?.name || ''),
   }));
 }
 
@@ -482,7 +481,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // warns about what it left out; the graphic just doesn't carry it. A band
   // whose every step is out goes with them.
   const hidden = new Set(stagesOutsideWindow(template, { baseMonth, mode, monthCount }));
-  const groups = groupPhases(stages)
+  const groups = groupPhases(stages, template?.phaseColors)
     .map(g => ({ ...g, steps: g.steps.filter(s => !hidden.has(s.stage)) }))
     .filter(g => g.steps.length > 0);
   const bandH = groups.map(g => Math.max(62, g.steps.length * PHASED.rowStep + PHASED.phasePad));
@@ -609,8 +608,23 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     });
   }
 
-  // Grid: column rules the full height, then a rule under each phase band.
+  // Group washes go down first, under the grid: a named group is a heading
+  // over a run of steps, so its colour has to read across the whole band
+  // rather than only beside the title. Faint, because the month rules are
+  // drawn over it and the step chips sit on top — and a chip's colour answers
+  // a different question (who owns the step), which this must not compete
+  // with. Drawn here rather than in the band loop below so the column rules
+  // land on top of it instead of underneath.
   let y = gridTop;
+  groups.forEach((group, gi) => {
+    if (group.phase) {
+      s += `<rect x="0" y="${y}" width="${width}" height="${bandH[gi]}" fill="${group.color}" opacity="0.07"/>`;
+    }
+    y += bandH[gi];
+  });
+
+  // Grid: column rules the full height, then a rule under each phase band.
+  y = gridTop;
   for (let m = 1; m <= monthCount + 1; m += 1) {
     s += `<line x1="${colX(m)}" y1="${gridTop}" x2="${colX(m)}" y2="${gridTop + gridH}" stroke="${SE_LINE}" stroke-width="1"/>`;
   }
@@ -632,13 +646,17 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const chipGeom = [];
   groups.forEach((group, gi) => {
     const h = bandH[gi];
+    // The solid edge that names the group, over the wash laid down above.
+    if (group.phase) {
+      s += `<rect x="0" y="${y}" width="6" height="${h}" fill="${group.color}"/>`;
+    }
     s += `<line x1="0" y1="${y + h}" x2="${width}" y2="${y + h}" stroke="#9AA5B1" stroke-width="1"/>`;
 
     // Phase name, vertically centred in its band.
     const labelLines = wrapText(group.label, PHASED.labelW - 56, 15.5, 3);
     const labelTop = y + h / 2 - ((labelLines.length - 1) * 19) / 2 + 5;
     labelLines.forEach((ln, i) => {
-      s += `<text x="38" y="${labelTop + i * 19}" font-size="15.5" font-weight="800" fill="${SE_INK}">${esc(ln)}</text>`;
+      s += `<text x="38" y="${labelTop + i * 19}" font-size="15.5" font-weight="800" fill="${group.color || SE_INK}">${esc(ln)}</text>`;
     });
 
     group.steps.forEach((step, si) => {

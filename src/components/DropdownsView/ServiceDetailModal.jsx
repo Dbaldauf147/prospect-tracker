@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { parseMulti } from '../common/columnLinks';
 import { rolloutWeeks } from '../../data/serviceCatalog';
@@ -8,6 +8,8 @@ import {
   makeTimelineForService,
   parseDependsOn,
   formatDependsOn,
+  groupStagesByPhase,
+  phaseNames,
 } from '../../utils/timelineTemplatesStore';
 import {
   STEP_DURATION_UNITS,
@@ -258,7 +260,7 @@ function DependsEditor({ value, options, selfName, onCommit }) {
 // The chart's grid is months, so the conversion is spelled out next to the
 // control rather than left to be discovered from a bar that didn't move: two
 // weeks and three weeks both occupy the column they start in.
-function StepDuration({ stage, onChange }) {
+function StepDuration({ stage, onChange, groupNames, onSetGroup }) {
   const asText = stage.duration === '' || stage.duration == null ? '' : String(stage.duration);
   const [draft, setDraft] = useState(asText);
   const [seen, setSeen] = useState(asText);
@@ -315,6 +317,81 @@ function StepDuration({ stage, onChange }) {
             : `≈ ${months} month${months === 1 ? '' : 's'} on the chart`}
         </span>
       )}
+      {/* Which group heading this step sits under. A group is a run of
+          consecutive steps sharing a name, so putting a step in one that
+          isn't next to its other steps starts a second run of the same name
+          — same heading, same colour, two bands. Moving the step with the
+          arrows is what merges them. */}
+      <select
+        className={styles.detailStepGroupPick}
+        value={String(stage.phase || '').trim()}
+        aria-label={`Group for step: ${stage.name || 'untitled'}`}
+        title="The group heading this step sits under"
+        onChange={(e) => {
+          const picked = e.target.value;
+          if (picked !== '__new') { onSetGroup(picked); return; }
+          const name = window.prompt('Name for the new group:', '');
+          const trimmed = (name || '').trim();
+          if (trimmed) onSetGroup(trimmed);
+        }}
+      >
+        <option value="">No group</option>
+        {groupNames.map(n => <option key={n} value={n}>{n}</option>)}
+        <option value="__new">+ New group…</option>
+      </select>
+    </div>
+  );
+}
+
+// The heading over a run of steps: the group's name, its colour, and how many
+// steps are under it.
+//
+// Renaming rewrites the phase on every step in the run rather than editing a
+// record of its own — a group IS the name its steps share, so there's nothing
+// else to rename. The colour override travels with it, since overrides are
+// keyed by name and leaving the old key behind would strand the colour.
+function GroupHeader({ group, onRename, onRecolor, onUngroup }) {
+  const [draft, setDraft] = useState(group.phase);
+  const [seen, setSeen] = useState(group.phase);
+  if (group.phase !== seen) { setSeen(group.phase); setDraft(group.phase); }
+
+  function commit() {
+    const next = draft.trim();
+    if (!next) { setDraft(group.phase); return; }
+    if (next === group.phase) return;
+    onRename(next);
+  }
+
+  return (
+    <div className={styles.detailGroupHead} style={{ borderLeftColor: group.color }}>
+      <input
+        type="color"
+        className={styles.detailGroupSwatch}
+        value={group.color}
+        title={`Colour for “${group.phase}” — used for this heading and its band on the timeline`}
+        aria-label={`Colour for group ${group.phase}`}
+        onChange={(e) => onRecolor(e.target.value)}
+      />
+      <input
+        type="text"
+        className={styles.detailGroupName}
+        style={{ color: group.color }}
+        value={draft}
+        aria-label={`Name of group ${group.phase}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); setDraft(group.phase); e.currentTarget.blur(); }
+        }}
+      />
+      <span className={styles.detailSectionCount}>{group.steps.length}</span>
+      <button
+        type="button"
+        className={styles.serviceLinkEditBtn}
+        onClick={onUngroup}
+        title={`Take these ${group.steps.length} step${group.steps.length === 1 ? '' : 's'} out of “${group.phase}”. The steps stay; only the grouping goes.`}
+      >Ungroup</button>
     </div>
   );
 }
@@ -356,6 +433,52 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
   // through here, so the save path is the same one the Timelines tab uses.
   function writeStages(next) {
     onSaveTemplates(templates.map(t => (t.id === active.id ? { ...t, stages: next } : t)));
+  }
+  // Stages and the group colours change together often enough — renaming a
+  // group moves its override — that they need to land in one write.
+  function writeTemplate(patch) {
+    onSaveTemplates(templates.map(t => (t.id === active.id ? { ...t, ...patch } : t)));
+  }
+
+  // The runs of consecutive steps sharing a group name, with their colours.
+  // The same grouper the chart bands with, so what's bracketed here is what
+  // gets a band there.
+  const groups = useMemo(
+    () => groupStagesByPhase(stages, active?.phaseColors),
+    [stages, active?.phaseColors],
+  );
+  const groupNames = useMemo(() => phaseNames(stages), [stages]);
+
+  function setStepGroup(idx, phase) {
+    writeStages(stages.map((s, i) => (i === idx ? { ...s, phase } : s)));
+  }
+
+  // A group is the name its steps share, so renaming it is a rewrite across
+  // that run — and the colour override, which is keyed by name, has to move
+  // with it or the group silently reverts to its palette colour.
+  function renameGroup(from, to) {
+    const colors = { ...(active.phaseColors || {}) };
+    if (colors[from]) { colors[to] = colors[from]; delete colors[from]; }
+    writeTemplate({
+      phaseColors: colors,
+      stages: stages.map(s => (String(s.phase || '').trim() === from ? { ...s, phase: to } : s)),
+    });
+  }
+
+  function recolorGroup(name, color) {
+    writeTemplate({ phaseColors: { ...(active.phaseColors || {}), [name]: color } });
+  }
+
+  // Drops the grouping, keeps the steps. The colour override goes too — it
+  // belongs to a group that no longer exists, and leaving it would silently
+  // reapply itself to any later group that reused the name.
+  function ungroup(name) {
+    const colors = { ...(active.phaseColors || {}) };
+    delete colors[name];
+    writeTemplate({
+      phaseColors: colors,
+      stages: stages.map(s => (String(s.phase || '').trim() === name ? { ...s, phase: '' } : s)),
+    });
   }
 
   function addStep() {
@@ -487,8 +610,25 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
               “{active.name || 'Untitled timeline'}” has no steps yet.
             </p>
           ) : (
-            <ol className={styles.detailStepList}>
-              {stages.map((stage, idx) => (
+            <div className={styles.detailStepList}>
+              {groups.map((group, gi) => (
+                <Fragment key={group.phase || `ungrouped-${gi}`}>
+                  {group.phase && (
+                    <GroupHeader
+                      group={group}
+                      onRename={(to) => renameGroup(group.phase, to)}
+                      onRecolor={(color) => recolorGroup(group.phase, color)}
+                      onUngroup={() => ungroup(group.phase)}
+                    />
+                  )}
+                  {/* The run itself, ruled in the group's colour so the steps
+                      under a heading read as belonging to it — the same thing
+                      the band's left edge does on the chart. */}
+                  <ol
+                    className={group.phase ? styles.detailStepGroup : styles.detailStepRun}
+                    style={group.phase ? { borderLeftColor: group.color } : undefined}
+                  >
+                  {group.steps.map(({ stage, index: idx }) => (
                 <li key={stage.id} className={styles.detailStep}>
                   <div className={styles.detailStepTop}>
                     <span className={styles.detailStepNum}>{idx + 1}</span>
@@ -549,10 +689,15 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                   <StepDuration
                     stage={stage}
                     onChange={(next) => updateStep(idx, next)}
+                    groupNames={groupNames}
+                    onSetGroup={(phase) => setStepGroup(idx, phase)}
                   />
                 </li>
+                  ))}
+                  </ol>
+                </Fragment>
               ))}
-            </ol>
+            </div>
           )}
         </>
       )}

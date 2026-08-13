@@ -1637,12 +1637,8 @@
 }
 
 .detailStepList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
 }
 
 .detailStep {
@@ -1770,4 +1766,93 @@
   font-size: 0.65rem;
   color: var(--color-text-muted);
   cursor: help;
+}
+
+/* ── Step groups ────────────────────────────────────────────────────────
+   A group is a heading over a run of consecutive steps — the phase bands
+   the implementation chart draws down its left edge. Each carries its own
+   colour, used here for the heading and the rule beside its steps, and
+   there for the band's edge and wash. */
+
+.detailGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.55rem 0 0.3rem;
+  padding: 0.25rem 0.4rem;
+  border-left: 4px solid var(--color-border);
+  border-radius: 0 var(--radius-md, 6px) var(--radius-md, 6px) 0;
+  background: var(--color-bg);
+}
+
+/* Native colour well, trimmed down to a swatch. */
+.detailGroupSwatch {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.detailGroupName {
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.detailGroupName:focus {
+  outline: none;
+  border-color: var(--color-border);
+  background: var(--color-surface, #fff);
+}
+
+/* The steps under a heading, ruled in the group's colour. */
+.detailStepGroup,
+.detailStepRun {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.detailStepGroup {
+  padding-left: 0.5rem;
+  border-left: 4px solid var(--color-border);
+}
+
+/* Steps in no group at all: no rule, so an ungrouped timeline looks exactly
+   as it did before groups existed. */
+.detailStepRun + .detailGroupHead,
+.detailStepGroup + .detailStepRun {
+  margin-top: 0.4rem;
+}
+
+.detailStepGroupPick {
+  min-width: 110px;
+  max-width: 180px;
+  box-sizing: border-box;
+  padding: 0.2rem 0.3rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface, #fff);
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.detailStepGroupPick:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
