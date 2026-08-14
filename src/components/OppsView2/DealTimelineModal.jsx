@@ -372,6 +372,12 @@ export function DealTimelineModal({
               <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
                 Click a service to hide its band from the chart and the Excel. The dates don’t move — a hidden
                 service still holds back everything that waits on it.
+                {/* Only worth explaining where something actually waits on
+                    more than one thing, which is where the distinction bites. */}
+                {rows.some(s => s.waitsOn.length > 1) && (
+                  <> Under <strong>Waits on</strong>, the <strong>bold</strong> prerequisite is the one setting that
+                  service’s start — shortening any of the others won’t move it.</>
+                )}
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                 <thead>
@@ -433,11 +439,29 @@ export function DealTimelineModal({
                       </td>
                       {/* Naming the step, where the wait has been refined to
                           one, is what explains a band that starts partway
-                          through the one above it rather than after it. */}
+                          through the one above it rather than after it.
+
+                          A service starts after the LAST of its
+                          prerequisites, so on a service waiting for five of
+                          them only one is actually setting the date — and
+                          shortening any of the others moves nothing. That one
+                          is carried in bold with the month it frees this
+                          service; the rest are muted. Without it, refining a
+                          prerequisite that wasn't the constraint reads as the
+                          refinement having been ignored. */}
                       <td style={{ padding: '0.3rem 0.4rem', color: (off || !s.dependsOn.length) ? 'var(--color-text-muted)' : 'var(--color-text)' }}>
                         {s.waitsOn.length ? s.waitsOn.map((w, i) => (
-                          <span key={`${w.service}-${i}`}>
-                            {i > 0 && ', '}
+                          <span
+                            key={`${w.service}-${i}`}
+                            title={w.until == null ? undefined : w.governs
+                              ? `Free from month ${w.until + 1} — this is what sets the start of ${s.name}. Shortening any other prerequisite won't move it.`
+                              : `Free from month ${w.until + 1}, which is earlier than ${s.name} can start, so this one isn't the constraint.`}
+                            style={{
+                              fontWeight: !off && w.governs && s.waitsOn.length > 1 ? 700 : 400,
+                              color: off || w.governs ? 'inherit' : 'var(--color-text-muted)',
+                            }}
+                          >
+                            {i > 0 && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>, </span>}
                             {describeServiceRef(w.service, w.stepName)}
                             {w.stale && (
                               <span

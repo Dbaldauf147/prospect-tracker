@@ -172,24 +172,39 @@ export function scheduleDealServices(entries, spanOf, stepEndOf) {
       const entry = byKey.get(key);
       // The month each prerequisite stops blocking this one: its own end
       // normally, or the end of the named step when it's been refined.
-      const ends = waits.get(key).map((w) => {
+      // The month each prerequisite stops blocking this one, kept per
+      // prerequisite rather than reduced on the spot. Only the latest of them
+      // decides the start, and with five prerequisites on a service that is
+      // not something a reader can work out from a list of names — so which
+      // one it was travels back out with the plan.
+      const readyFrom = waits.get(key).map((w) => {
         const dk = norm(w.service);
         const depEnd = end.get(dk);
         // Only reachable when the cycle break placed this one early; an
         // unplaced prerequisite can't hold anything back.
-        if (depEnd == null) return null;
-        if (!w.step || typeof stepEndOf !== 'function') return depEnd;
+        if (depEnd == null) return { ...w, until: null };
+        if (!w.step || typeof stepEndOf !== 'function') return { ...w, until: depEnd };
         const rel = stepEndOf(w.service, w.step);
-        if (rel == null) return depEnd;  // stale reference — wait for all of it
+        if (rel == null) return { ...w, until: depEnd };  // stale — wait for all of it
         // Never past the service's own end: a step can't finish after the
         // thing that contains it, and a bad number shouldn't push work out.
-        return Math.min(start.get(dk) + rel - 1, depEnd);
-      }).filter(v => v != null);
-      const startMonth = ends.length ? Math.max(...ends) + 1 : 1;
+        return { ...w, until: Math.min(start.get(dk) + rel - 1, depEnd) };
+      });
+      const ends = readyFrom.map(w => w.until).filter(v => v != null);
+      const blockedUntil = ends.length ? Math.max(...ends) : null;
+      const startMonth = blockedUntil == null ? 1 : blockedUntil + 1;
       const months = Math.max(1, Math.floor(Number(spanOf(entry)) || 1));
       start.set(key, startMonth);
       end.set(key, startMonth + months - 1);
-      placed.push({ ...entry, startMonth, months, endMonth: startMonth + months - 1 });
+      placed.push({
+        ...entry,
+        startMonth,
+        months,
+        endMonth: startMonth + months - 1,
+        // `governs` marks the prerequisite(s) that actually set this start.
+        // Several can tie, and then they all do.
+        readyFrom: readyFrom.map(w => ({ ...w, governs: w.until != null && w.until === blockedUntil })),
+      });
     }
     for (const key of batch) remaining.delete(key);
   }
@@ -439,11 +454,22 @@ export function buildDealTimeline({
         // comes back with `stale: true` and was scheduled as whole-service,
         // so the caller can say so rather than quietly planning something
         // else than what was authored.
-        waitsOn: (entry.waitFor || []).map((w) => {
+        waitsOn: (entry.readyFrom || entry.waitFor || []).map((w) => {
           const tpl = attached.get(norm(w.service))?.[0];
           const i = w.step ? findTemplateStepIndex(tpl, w.step) : -1;
           const stepName = i >= 0 ? String(tpl.stages[i]?.name || '').trim() : '';
-          return { service: w.service, step: w.step, stepName, stale: !!w.step && !stepName };
+          return {
+            service: w.service,
+            step: w.step,
+            stepName,
+            stale: !!w.step && !stepName,
+            // The month this one stops blocking, and whether it's the one
+            // that actually set the start. Refining a prerequisite that
+            // ISN'T the governing one moves nothing, and that is invisible
+            // from a list of names — the caller says which is which.
+            until: w.until ?? null,
+            governs: !!w.governs,
+          };
         }),
         startMonth: entry.startMonth,
         endMonth: entry.endMonth,
