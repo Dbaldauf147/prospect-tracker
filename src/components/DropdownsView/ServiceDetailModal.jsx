@@ -20,7 +20,7 @@ import {
 } from '../../utils/timelineDates';
 import { PriorStepsPicker } from './PriorStepsPicker';
 import {
-  parseServiceRefs, formatServiceRef, setRefStep,
+  parseServiceRefs, formatServiceRef, setRefStep, setRefLocalStep,
   findTemplateStepIndex, templatesForService,
 } from '../../utils/serviceStepDeps';
 import styles from './DropdownsView.module.css';
@@ -161,6 +161,12 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
   // Each dependency is { service, step }: the step is which point of that
   // service unblocks this one, '' meaning wait for all of it.
   const refs = useMemo(() => parseServiceRefs(value), [value]);
+  // This service's own timeline, for picking the step on the waiting side.
+  const ownTemplate = useMemo(
+    () => templatesForService(templates, selfName)[0] || null,
+    [templates, selfName],
+  );
+  const ownSteps = ownTemplate?.stages || [];
   const selected = useMemo(() => refs.map(r => r.service), [refs]);
   const selectedSet = useMemo(
     () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
@@ -187,7 +193,9 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
       ...pickable.filter(o => byName.has(o.trim().toLowerCase())).map(o => byName.get(o.trim().toLowerCase())),
       ...next.filter(r => !liveSet.has(r.service.trim().toLowerCase())),
     ];
-    onCommit(ordered.map(r => formatServiceRef(r.service, r.step)).join(', '));
+    // r.localStep travels with r.step: toggling one dependency must not
+    // quietly drop the step another one is anchored to.
+    onCommit(ordered.map(r => formatServiceRef(r.service, r.step, r.localStep)).join(', '));
   }
 
   return (
@@ -212,7 +220,7 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
         </p>
       ) : (
         <div className={styles.detailDepRows}>
-          {refs.map(({ service: name, step }) => {
+          {refs.map(({ service: name, step, localStep }) => {
             const stale = !liveSet.has(name.trim().toLowerCase());
             const tpl = templatesForService(templates, name)[0] || null;
             const steps = tpl?.stages || [];
@@ -220,6 +228,7 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
             // the control would silently read as "after all of it" while the
             // stored value still said otherwise.
             const missing = !!step && findTemplateStepIndex(tpl, step) < 0;
+            const localMissing = !!localStep && findTemplateStepIndex(ownTemplate, localStep) < 0;
             return (
               <div key={name} className={styles.detailDepRow}>
                 <span
@@ -256,6 +265,26 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
                     className={styles.detailDepNoSteps}
                     title={`${name} has no timeline attached, so there are no steps to wait for — ${selfName} waits for all of it.`}
                   >after all of it</span>
+                )}
+                {/* And which step of THIS service is the one that waits.
+                    Without it the whole band sits behind the prerequisite,
+                    which drags the preparation with it — the inputs and the
+                    kickoff don't need the other service's go-live, only the
+                    work that follows them does. Naming that step anchors it
+                    and lets everything before it overlap. */}
+                {ownSteps.length > 0 && (
+                  <select
+                    className={styles.detailStepSelect}
+                    value={localStep}
+                    onChange={e => onCommit(setRefLocalStep(value, name, e.target.value))}
+                    title={`Which step of ${selfName} is waiting. Anything before it can run alongside ${name}.`}
+                  >
+                    <option value="">— and all of {selfName} waits</option>
+                    {ownSteps.map(st => (
+                      <option key={st.id} value={st.id}>— and {st.name} is what waits</option>
+                    ))}
+                    {localMissing && <option value={localStep}>— and a step that no longer exists waits</option>}
+                  </select>
                 )}
               </div>
             );

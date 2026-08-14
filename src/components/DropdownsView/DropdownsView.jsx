@@ -292,7 +292,9 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
       ...pickable.filter(o => byName.has(o.trim().toLowerCase())).map(o => byName.get(o.trim().toLowerCase())),
       ...next.filter(r => !liveSet.has(r.service.trim().toLowerCase())),
     ];
-    onCommit(ordered.map(r => formatServiceRef(r.service, r.step)).join(', '));
+    // r.localStep travels with r.step: toggling one dependency must not
+    // quietly drop the step another one is anchored to.
+    onCommit(ordered.map(r => formatServiceRef(r.service, r.step, r.localStep)).join(', '));
   }
 
   // This column lists SERVICES. Where one has been refined to a step, the
