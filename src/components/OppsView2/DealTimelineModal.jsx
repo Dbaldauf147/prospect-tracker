@@ -164,6 +164,10 @@ export function DealTimelineModal({
       anchorMonth: a ? `${a.y}-${String(a.m).padStart(2, '0')}` : base.anchorMonth,
       // Blank means "fit the steps", which still fits them once they've moved.
       monthCount: Number(base.monthCount) > 0 ? Number(base.monthCount) + lead : '',
+      // The signature moves with the work it dates. Left behind it would
+      // mark the first run-in column, which is a week before today, not the
+      // day the contract is signed.
+      signatureMonth: Number(base.signatureMonth) > 0 ? Number(base.signatureMonth) + lead : base.signatureMonth,
       stages: base.stages.map(st => ({ ...st, startMonth: (Number(st.startMonth) || 1) + lead })),
     };
   }, [plan.template, format, axis, lead]);

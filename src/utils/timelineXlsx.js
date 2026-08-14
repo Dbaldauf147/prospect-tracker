@@ -353,7 +353,13 @@ function writePhasedSheet(wb, ws, template) {
     .filter(p => p.stage?.preKickoff)
     .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
   const placed = raw.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan }));
-  const signatureCol = preSpan > 0 ? preSpan + 1 : null;
+  // Where the contract is signed. A timeline with a run-up derives it — the
+  // signature is wherever the pre-signature work ends — but a plan can also
+  // state it outright, and the deal rollout does: every band on it is
+  // scheduled from the signature date, so the column is known without any
+  // step having to imply it. Stated wins; it's the more direct claim.
+  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
+  const signatureCol = statedSignature > 0 ? statedSignature : (preSpan > 0 ? preSpan + 1 : null);
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // Same resolver the on-screen visual uses, so the sheet's columns are the
   // visual's columns — a declared date range drives both.
