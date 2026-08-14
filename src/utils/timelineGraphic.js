@@ -18,6 +18,7 @@ import {
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   placeStages, anchorPlus, todayMonthIndex, todayMonthOffset,
+  applyRunUpShift,
   stageMonthFraction, timelineWeekTicks, resolveMonthWindow, monthWindowBounds,
   stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates';
@@ -493,10 +494,12 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // the pre-signature steps take the first columns and everything after
   // signature is pushed right by however many they occupy. The axis stays
   // 1…n; where the contract is signed is drawn on it.
-  const preSpan = raw
-    .filter(p => p.stage?.preKickoff)
-    .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
-  const placed = raw.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan }));
+  //
+  // Skipped entirely for a plan that states its own signature month — see
+  // applyRunUpShift. That plan has already placed every step where it means
+  // them, so shifting would invent a gap rather than make room for one.
+  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
+  const { preSpan, placed } = applyRunUpShift(raw, statedSignature);
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // The column the contract is signed at the head of. Null when nothing
   // happens before it, which is every timeline that hasn't been given a
@@ -506,7 +509,6 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // state it outright, and the deal rollout does: every band on it is
   // scheduled from the signature date, so the column is known without any
   // step having to imply it. Stated wins; it's the more direct claim.
-  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
   const signatureCol = statedSignature > 0 ? statedSignature : (preSpan > 0 ? preSpan + 1 : null);
   // The window the whole chart is drawn against: the timeline's declared date
   // range when it has one, otherwise its anchor-month / month-count settings.
