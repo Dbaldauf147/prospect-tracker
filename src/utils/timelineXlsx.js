@@ -262,9 +262,28 @@ function buildColumns(ranges, bounds) {
   return { cols, unit: 'quarter' };
 }
 
+// Where the logo starts so that it ENDS at the right edge of the sheet
+// block: the top-right corner of the band, over the last column — which on
+// the implementation sheet is Description, so the lockup sits above that
+// header rather than somewhere out in the month grid.
+//
+// Returned as a fractional 0-based column index, which is what an ExcelJS
+// image anchor takes: walk the columns from the right until they cover the
+// logo's width, then keep the leftover as the fraction into the column the
+// logo starts in.
+function logoAnchorCol(ws, ncols, widthPx, marginPx = 8) {
+  let need = widthPx + marginPx;
+  for (let c = ncols; c >= 1; c -= 1) {
+    const w = colWidthPx(ws.getColumn(c).width || 8);
+    if (w >= need) return (c - 1) + (w - need) / w;
+    need -= w;
+  }
+  return 0;
+}
+
 // Shared brand band across the top of the Timeline sheet: the title on green,
 // then a blank spacer row before the table starts on row 3.
-function writeBandHeader(wb, ws, template, ncols, logoCol) {
+function writeBandHeader(wb, ws, template, ncols) {
   ws.mergeCells(1, 1, 1, Math.max(ncols, 6));
   const title = ws.getCell(1, 1);
   title.value = template?.name?.trim() || 'Timeline';
@@ -275,7 +294,10 @@ function writeBandHeader(wb, ws, template, ncols, logoCol) {
   try {
     const logo = schneiderLogoPngDataUrl({ onDark: true, width: 175 });
     const id = wb.addImage({ base64: logo.dataUrl, extension: 'png' });
-    ws.addImage(id, { tl: { col: logoCol, row: 0.14 }, ext: { width: logo.width, height: logo.height } });
+    ws.addImage(id, {
+      tl: { col: logoAnchorCol(ws, Math.max(ncols, 6), logo.width), row: 0.14 },
+      ext: { width: logo.width, height: logo.height },
+    });
   } catch { /* canvas unavailable — skip the logo */ }
 
   ws.getRow(2).height = 14;
@@ -398,7 +420,7 @@ function writePhasedSheet(wb, ws, template) {
   for (let i = 0; i < NW; i += 1) ws.getColumn(LEAD + 1 + i).width = gridColChars;
   ws.getColumn(DESC).width = 64;
 
-  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - 16));
+  writeBandHeader(wb, ws, template, NCOLS);
 
   // Axis header — row 3, straight under the title band and its spacer: the
   // month band, with the week ticks on the row below it.
@@ -564,13 +586,18 @@ function writePhasedSheet(wb, ws, template) {
         const nameCell = ws.getCell(r, 1);
         nameCell.value = stage.name || 'Untitled stage';
         nameCell.font = { name: FONT, size: 10, color: { argb: INK } };
-        nameCell.alignment = { vertical: 'middle', indent: 1, wrapText: true };
+        // Top, not middle, for every cell on a step's row. A name long
+        // enough to wrap is centred against a row sized for one line, which
+        // put half of it above the row's own bar and half below — reading as
+        // text belonging to the step above. Anchored at the top, the first
+        // line always sits beside its own bar.
+        nameCell.alignment = { vertical: 'top', indent: 1, wrapText: true };
 
         const color = argb(WORKSTREAM_COLOR[stage.owner] || WORKSTREAM_COLOR['Schneider Electric']);
         const wsCell = ws.getCell(r, LEAD);
         wsCell.value = stage.owner || '';
         wsCell.font = { name: FONT, bold: true, size: 9.5, color: { argb: color } };
-        wsCell.alignment = { vertical: 'middle', indent: 1 };
+        wsCell.alignment = { vertical: 'top', indent: 1 };
 
         const from = Math.min(pos.month, monthCount);
         const to = Math.min(pos.month + pos.span - 1, monthCount);
@@ -619,14 +646,14 @@ function writePhasedSheet(wb, ws, template) {
             if (gridCol !== milestoneCol) return;
             cell.value = `◆${i + 1}`;
             cell.font = { name: FONT, bold: true, size: 10, color: { argb: color } };
-            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            cell.alignment = { vertical: 'top', horizontal: 'center' };
             return;
           }
           cell.fill = fill(barFill);
           if (gridCol === barFrom) {
             cell.value = i + 1;
             cell.font = { name: FONT, bold: true, size: 10, color: { argb: numberColor } };
-            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            cell.alignment = { vertical: 'top', horizontal: 'center' };
             // Who owns the step, kept on a group-coloured bar as a rule at its
             // leading edge — the chart's cap. Without it the workstream would
             // be readable only on ungrouped rows, and the legend would name a
@@ -639,7 +666,7 @@ function writePhasedSheet(wb, ws, template) {
         const descCell = ws.getCell(r, DESC);
         descCell.value = stage.description || '';
         descCell.font = { name: FONT, size: 10, color: { argb: SLATE } };
-        descCell.alignment = { vertical: 'middle', indent: 1 };
+        descCell.alignment = { vertical: 'top', indent: 1 };
 
         ws.getRow(r).height = 20;
         r += 1;
@@ -746,7 +773,7 @@ export async function exportTimelineXlsx(template) {
   cols.forEach((_, i) => { ws.getColumn(LEAD + 1 + i).width = timeWidth; });
   ws.getColumn(DESC_COL).width = 64;
 
-  writeBandHeader(wb, ws, template, NCOLS, Math.max(3.2, NCOLS - (unit === 'week' ? 9 : 5)));
+  writeBandHeader(wb, ws, template, NCOLS);
   let r = 3;
 
   // --- axis header: group band over unit labels ---
