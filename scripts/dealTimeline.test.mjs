@@ -315,15 +315,15 @@ check('a step named in full resolves the same way', startOf(planFor('Budgets nam
 check('a stale step reference waits for the whole service', startOf(planFor('Budgets stale'), 'Budgets stale'), 7);
 const staleSvc = planFor('Budgets stale').services.find(s => s.name === 'Budgets stale');
 same('and is reported as stale so the caller can flag it',
-  staleSvc.waitsOn, [{ service: 'Bill payment', step: 'st-99', stepName: '', stale: true }]);
+  staleSvc.waitsOn, [{ service: 'Bill payment', step: 'st-99', stepName: '', stale: true, until: 6, governs: true }]);
 
 // What the caller shows in its "Waits on" column.
 same('a refined dependency names the step it waits for',
   planFor('Budgets step').services.find(s => s.name === 'Budgets step').waitsOn,
-  [{ service: 'Bill payment', step: 'st-3', stepName: 'Bill Redirection & Go Live', stale: false }]);
+  [{ service: 'Bill payment', step: 'st-3', stepName: 'Bill Redirection & Go Live', stale: false, until: 4, governs: true }]);
 same('a whole-service dependency carries no step',
   planFor('Budgets whole').services.find(s => s.name === 'Budgets whole').waitsOn,
-  [{ service: 'Bill payment', step: '', stepName: '', stale: false }]);
+  [{ service: 'Bill payment', step: '', stepName: '', stale: false, until: 6, governs: true }]);
 // The name-only view every other consumer reads is unchanged either way.
 same('dependsOn stays the plain service names',
   planFor('Budgets step').services.find(s => s.name === 'Budgets step').dependsOn, ['Bill payment']);
@@ -340,6 +340,59 @@ check('a refinement against a rollout-sized service waits for all of it', buildD
 // pulls its service into the plan and still orders behind it.
 same('a step-refined prerequisite is still pulled in',
   planFor('Budgets step').services.map(s => s.name), ['Bill payment', 'Budgets step']);
+
+// --- which prerequisite actually sets the start ---------------------------
+// A service with five prerequisites starts after the LAST of them, so refining
+// one that isn't the latest moves nothing at all. From a list of names that is
+// invisible, and it reads as the refinement having been ignored — which is
+// exactly how it was first reported. Every prerequisite now carries the month
+// it stops blocking and whether it was the one that decided.
+const crowded = {
+  'Bill payment': {},
+  'Slow prerequisite': { rolloutTime: '24' },   // 6 months, same as Bill payment
+  'Quick prerequisite': { rolloutTime: '4' },   // 1 month
+  Budgets: {
+    dependsOn: 'Bill payment > st-3, Slow prerequisite, Quick prerequisite',
+    rolloutTime: '4',
+  },
+};
+const crowdedPlan = buildDealTimeline({
+  scopeServices: ['Budgets'], templates: billing, serviceOverrides: crowded, anchorMonth: '2026-08',
+});
+const budgets = crowdedPlan.services.find(s => s.name === 'Budgets');
+// Bill payment's step frees it in month 4, but the 6-month prerequisite
+// doesn't until month 6 — so the refinement is applied and still not the
+// constraint. This is the case that looked like a bug.
+check('the refined step still frees it early', budgets.waitsOn.find(w => w.service === 'Bill payment').until, 4);
+check('but a longer prerequisite decides the start', budgets.startMonth, 7);
+same('and only that one is marked as governing',
+  budgets.waitsOn.filter(w => w.governs).map(w => w.service), ['Slow prerequisite']);
+same('every prerequisite reports the month it frees this one',
+  budgets.waitsOn.map(w => [w.service, w.until]),
+  [['Bill payment', 4], ['Slow prerequisite', 6], ['Quick prerequisite', 1]]);
+
+// Refining the one that DOES govern is what moves the plan.
+const fixed = buildDealTimeline({
+  scopeServices: ['Budgets'], templates: billing, anchorMonth: '2026-08',
+  serviceOverrides: { ...crowded, 'Slow prerequisite': { rolloutTime: '4' } },
+});
+check('shortening the governing prerequisite moves the start', fixed.services.find(s => s.name === 'Budgets').startMonth, 5);
+
+// A tie marks both: neither alone is "the" reason.
+const tied = buildDealTimeline({
+  scopeServices: ['Budgets'], templates: [], anchorMonth: '2026-08',
+  serviceOverrides: {
+    A: { rolloutTime: '8' }, B: { rolloutTime: '8' },
+    Budgets: { dependsOn: 'A, B', rolloutTime: '4' },
+  },
+});
+same('two prerequisites ending together both govern',
+  tied.services.find(s => s.name === 'Budgets').waitsOn.filter(w => w.governs).map(w => w.service), ['A', 'B']);
+
+// Nothing to wait for: no governing prerequisite, and it starts at kickoff.
+const free = buildDealTimeline({ scopeServices: ['Audits'], templates: [], serviceOverrides: overrides });
+same('a service with no prerequisites has none governing', free.services[0].waitsOn, []);
+check('and starts at kickoff', free.services[0].startMonth, 1);
 
 // A mutual step refinement is still a cycle — both sides need the other
 // placed before their step's month can be known.
