@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { buildDealTimeline } from '../../utils/dealTimeline';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
-import { currentMonthAnchor, parseMonthAnchor } from '../../utils/timelineDates';
+import { currentMonthAnchor, parseMonthAnchor, anchorPlus } from '../../utils/timelineDates';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import { loadHiddenServices, saveHiddenServices } from '../../utils/dealTimelineHiddenStore';
 import { describeServiceRef } from '../../utils/serviceStepDeps';
@@ -56,6 +56,10 @@ export function DealTimelineModal({
   // and reads a column per month. Long engagements don't need the day-level
   // scale, and past a dozen columns the week labels are too tight to print.
   const [axis, setAxis] = useState('weeks');
+  // Draw the months between today and kickoff, so the today line is on the
+  // chart rather than off its left edge. Off by default: the plan is the
+  // engagement, and most of the time nobody wants dead months in front of it.
+  const [showRunIn, setShowRunIn] = useState(false);
   // Services the user has clicked off the chart, by lowercased name. Purely a
   // presentation filter: the schedule is computed over every service first,
   // so taking a band out never lets the ones waiting on it start earlier.
@@ -125,9 +129,44 @@ export function DealTimelineModal({
     [plan.services, plan.excluded],
   );
 
+  // Months between the chart's first month and the one a week before today.
+  // A week of margin so the today line lands inside its column rather than
+  // hard against the left edge, which is the whole point of showing it.
+  //
+  // Zero when today is already inside the window — a plan that kicked off in
+  // the past draws today already, and there's nothing to run in from.
+  const runInMonths = useMemo(() => {
+    const ord = (ym) => {
+      const parsed = parseMonthAnchor(ym);
+      return parsed ? parsed.y * 12 + (parsed.m - 1) : null;
+    };
+    const back = new Date(`${todayISO}T00:00:00`);
+    if (Number.isNaN(back.getTime())) return 0;
+    back.setDate(back.getDate() - 7);
+    const from = ord(`${back.getFullYear()}-${String(back.getMonth() + 1).padStart(2, '0')}`);
+    const at = ord(anchorMonth);
+    if (from == null || at == null) return 0;
+    return Math.max(0, at - from);
+  }, [todayISO, anchorMonth]);
+
   // The format switch only changes how the same plan is drawn, so it lives
-  // here rather than in the composer.
-  const template = useMemo(() => ({ ...plan.template, format, axis }), [plan.template, format, axis]);
+  // here rather than in the composer — and so does the run-in, which moves
+  // the window the plan is drawn against without changing the plan. Every
+  // step shifts by the months added at the front, so the work keeps the dates
+  // it had; only the axis starts earlier.
+  const lead = showRunIn ? runInMonths : 0;
+  const template = useMemo(() => {
+    const base = { ...plan.template, format, axis };
+    if (!lead) return base;
+    const a = anchorPlus(base.anchorMonth, -lead);
+    return {
+      ...base,
+      anchorMonth: a ? `${a.y}-${String(a.m).padStart(2, '0')}` : base.anchorMonth,
+      // Blank means "fit the steps", which still fits them once they've moved.
+      monthCount: Number(base.monthCount) > 0 ? Number(base.monthCount) + lead : '',
+      stages: base.stages.map(st => ({ ...st, startMonth: (Number(st.startMonth) || 1) + lead })),
+    };
+  }, [plan.template, format, axis, lead]);
   const svg = useMemo(() => {
     try { return buildTimelineSvg(template, { branded: true }); }
     catch (err) { console.error('Deal timeline render failed', err); return ''; }
@@ -218,6 +257,23 @@ export function DealTimelineModal({
                 title="Clear the target date and plan from today again"
                 style={{ ...btnStyle, padding: '0.35rem 0.5rem' }}
               >Today</button>
+            )}
+            {/* Only worth offering when there are months to show: a plan that
+                kicked off in the past already has today on it. */}
+            {runInMonths > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowRunIn(v => !v)}
+                title={showRunIn
+                  ? 'Start the chart at kickoff again'
+                  : `Start the chart a week before today instead of at kickoff, so the today line is on it (${runInMonths} month${runInMonths === 1 ? '' : 's'} of run-in)`}
+                // Full `border` rather than borderColor: btnStyle sets the
+                // shorthand, and React warns when a rerender changes one of
+                // the two forms while the other is also set.
+                style={{ ...btnStyle, padding: '0.35rem 0.5rem', ...(showRunIn
+                  ? { background: '#EEF2FF', border: '1px solid #C7D2FE', color: '#3730A3', fontWeight: 700 }
+                  : null) }}
+              >{showRunIn ? 'Start at kickoff' : 'Show today'}</button>
             )}
             {/* Clicking rows off one at a time needs one click to undo them
                 all, or a chart hidden down to nothing is a puzzle. */}
