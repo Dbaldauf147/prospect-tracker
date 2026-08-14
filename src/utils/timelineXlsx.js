@@ -17,6 +17,7 @@ import { groupStagesByPhase, subRuns } from './timelineTemplatesStore.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
   placeStages, anchorPlus, todayMonthIndex, stageMonthFraction,
+  applyRunUpShift,
   timelineWeekTicks, flattenWeekTicks, resolveMonthWindow, monthWindowBounds,
   stagesOutsideWindow, placementBaseMonth,
 } from './timelineDates.js';
@@ -349,16 +350,16 @@ function writePhasedSheet(wb, ws, template) {
   // signature shifts right by however many they occupy — the same trick the
   // chart plays to keep an axis that starts at 1. Without it the sheet drew
   // the run-up on top of the engagement.
-  const preSpan = raw
-    .filter(p => p.stage?.preKickoff)
-    .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
-  const placed = raw.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan }));
+  // Skipped for a plan that states its own signature month — see
+  // applyRunUpShift. The sheet and the chart have to agree on this or the
+  // Excel would carry a gap the screen doesn't.
+  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
+  const { preSpan, placed } = applyRunUpShift(raw, statedSignature);
   // Where the contract is signed. A timeline with a run-up derives it — the
   // signature is wherever the pre-signature work ends — but a plan can also
   // state it outright, and the deal rollout does: every band on it is
   // scheduled from the signature date, so the column is known without any
   // step having to imply it. Stated wins; it's the more direct claim.
-  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
   const signatureCol = statedSignature > 0 ? statedSignature : (preSpan > 0 ? preSpan + 1 : null);
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // Same resolver the on-screen visual uses, so the sheet's columns are the

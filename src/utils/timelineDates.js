@@ -339,6 +339,36 @@ export function getStageMonths(stage, baseMonth, mode = 'months') {
 // A dependency cycle settles nothing, so its members keep the fallback and
 // the red links say so. That's better than picking an arbitrary member to
 // break, which would draw a confident plan out of a contradiction.
+/**
+ * The run-up shift: pre-signature steps take the first columns and everything
+ * after the signature is pushed right by however many they occupy.
+ *
+ * That's how an authored timeline gets a run-up without renumbering its axis
+ * into negatives — its months are relative, kickoff is month 1, so a
+ * pre-kickoff step's END month IS the length of the run-up.
+ *
+ * A plan that STATES where its signature is has already placed every step on
+ * the axis it means, pre-signature ones included, so there is nothing to
+ * shift — and shifting anyway is actively wrong, because the end month it
+ * measures is then an absolute position rather than a length. The deal
+ * rollout is the case: it schedules every band from the signature date, and
+ * the popup can move the whole plan right to start the window before kickoff.
+ * Under the shift, a two-month run-in made preSpan 3 instead of 1 and shoved
+ * every step after the signature three months out — a phantom gap that grew
+ * the earlier the window started.
+ *
+ * `raw` is [{ stage, month, span, ... }]; returns { preSpan, placed }.
+ */
+export function applyRunUpShift(raw, statedSignature = 0) {
+  const list = Array.isArray(raw) ? raw : [];
+  if (Math.floor(Number(statedSignature) || 0) > 0) return { preSpan: 0, placed: list };
+  const preSpan = list
+    .filter(p => p.stage?.preKickoff)
+    .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
+  if (!preSpan) return { preSpan: 0, placed: list };
+  return { preSpan, placed: list.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan })) };
+}
+
 export function placeStages(stages, baseMonth, mode = 'months') {
   const list = Array.isArray(stages) ? stages : [];
   const pos = list.map(st => getStageMonths(st, baseMonth, mode));
