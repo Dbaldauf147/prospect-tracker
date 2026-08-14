@@ -315,15 +315,15 @@ check('a step named in full resolves the same way', startOf(planFor('Budgets nam
 check('a stale step reference waits for the whole service', startOf(planFor('Budgets stale'), 'Budgets stale'), 7);
 const staleSvc = planFor('Budgets stale').services.find(s => s.name === 'Budgets stale');
 same('and is reported as stale so the caller can flag it',
-  staleSvc.waitsOn, [{ service: 'Bill payment', step: 'st-99', stepName: '', stale: true, until: 6, governs: true }]);
+  staleSvc.waitsOn, [{ service: 'Bill payment', step: 'st-99', stepName: '', localStep: '', localStepName: '', localStale: false, stale: true, until: 6, governs: true }]);
 
 // What the caller shows in its "Waits on" column.
 same('a refined dependency names the step it waits for',
   planFor('Budgets step').services.find(s => s.name === 'Budgets step').waitsOn,
-  [{ service: 'Bill payment', step: 'st-3', stepName: 'Bill Redirection & Go Live', stale: false, until: 4, governs: true }]);
+  [{ service: 'Bill payment', step: 'st-3', stepName: 'Bill Redirection & Go Live', localStep: '', localStepName: '', localStale: false, stale: false, until: 4, governs: true }]);
 same('a whole-service dependency carries no step',
   planFor('Budgets whole').services.find(s => s.name === 'Budgets whole').waitsOn,
-  [{ service: 'Bill payment', step: '', stepName: '', stale: false, until: 6, governs: true }]);
+  [{ service: 'Bill payment', step: '', stepName: '', localStep: '', localStepName: '', localStale: false, stale: false, until: 6, governs: true }]);
 // The name-only view every other consumer reads is unchanged either way.
 same('dependsOn stays the plain service names',
   planFor('Budgets step').services.find(s => s.name === 'Budgets step').dependsOn, ['Bill payment']);
@@ -608,6 +608,66 @@ check('and names the day', stated.template.signatureLabel, 'Contract signed 1 Oc
 check('a plan with no kickoff date still marks the column',
   buildDealTimeline({ scopeServices: ['Monitoring'], templates: noAgreement, serviceOverrides: overrides, anchorMonth: '2026-10' })
     .template.signatureLabel, 'Contract signature');
+
+
+// --- anchoring the waiting side ------------------------------------------
+// A dependency gates a STEP, not necessarily the whole band. Naming the step
+// on the waiting side anchors it to the prerequisite and lets everything
+// before it overlap the tail of the service above — Budgets' kickoff and
+// inputs don't need Bill payment's go-live, only its build does.
+const anchorTemplates = [
+  { id: 'a-bp', name: 'Bill payment timeline', services: ['Bill payment'],
+    positionMode: 'months', format: 'phased', stages: [
+      { id: 'p1', name: 'Kickoff', owner: 'Schneider Electric', startMonth: 1, months: 1 },
+      { id: 'p2', name: 'Build', owner: 'Schneider Electric', startMonth: 2, months: 3 },
+      { id: 'p3', name: 'Go Live', owner: 'Schneider Electric', startMonth: 4, months: 1 },
+      { id: 'p4', name: 'Report carding', owner: 'Schneider Electric', startMonth: 5, months: 2 },
+    ] },
+  { id: 'a-bg', name: 'Budget timeline', services: ['Budgets'],
+    positionMode: 'months', format: 'phased', stages: [
+      { id: 'q1', name: 'Project kickoff', owner: 'Schneider Electric', startMonth: 1, months: 1 },
+      { id: 'q2', name: 'Inputs due', owner: 'Client', startMonth: 2, months: 1 },
+      { id: 'q3', name: 'Budget build', owner: 'Schneider Electric', startMonth: 3, months: 2 },
+    ] },
+];
+const anchored = (dependsOn) => {
+  const plan = buildDealTimeline({
+    scopeServices: ['Bill payment', 'Budgets'], templates: anchorTemplates,
+    serviceOverrides: { Budgets: { dependsOn } },
+    anchorMonth: '2026-10', kickoffDate: '2026-10-01',
+  });
+  const at = (n) => plan.template.stages.find(s => s.name === n);
+  return {
+    band: plan.services.find(s => s.name === 'Budgets').startMonth,
+    kickoff: at('Project kickoff').startMonth,
+    build: at('Budget build').startMonth,
+    goLiveEnd: at('Go Live').startMonth + at('Go Live').months - 1,
+    waitsOn: plan.services.find(s => s.name === 'Budgets').waitsOn[0],
+  };
+};
+
+const whole = anchored('Bill payment > p3');
+check('without an anchor the band waits, as before', whole.band, whole.goLiveEnd + 1);
+check('so the build lands two months into it', whole.build, 7);
+
+const anchor = anchored('Bill payment > p3 > q3');
+check('with an anchor the named step lands the month the prerequisite ends',
+  anchor.build, anchor.goLiveEnd + 1);
+check('the band therefore starts earlier', anchor.band, 3);
+check('and the preparation overlaps the service above', anchor.kickoff, 3);
+check('the anchored step is named back to the caller', anchor.waitsOn.localStepName, 'Budget build');
+
+// Anchoring the FIRST step is the same as not anchoring: it sits at the band's
+// own start either way.
+check('an anchor on the first step changes nothing',
+  anchored('Bill payment > p3 > q1').band, whole.band);
+// A renamed or deleted anchor must not silently re-plan the deal.
+const staleAnchor = anchored('Bill payment > p3 > gone');
+check('a stale anchor falls back to the whole band', staleAnchor.band, whole.band);
+check('and says so', staleAnchor.waitsOn.localStale, true);
+// The plan can't start before the contract is signed.
+check('an anchor that would need a start before kickoff clamps to month 1',
+  anchored('Bill payment > p1 > q3').band, 1);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

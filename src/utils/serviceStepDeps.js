@@ -12,6 +12,14 @@
 //
 //   Bill payment                      → after the whole service
 //   Bill payment > st-12              → after that step of its timeline
+//   Bill payment > st-12 > st-40      → …and st-40 is MY step that waits
+//
+// The third segment is the step on the WAITING side — the one the dependency
+// actually gates. Without it the whole service starts after the prerequisite,
+// which pushes the run-up work with it: Budgets' kickoff and inputs don't
+// need Bill payment's go-live, only its build does. Naming the local step
+// anchors THAT step to the prerequisite and lets everything before it overlap
+// the tail of the service above.
 //
 // The step is stored by ID, not by name, and that is not incidental: the list
 // is comma-separated and real step names contain commas ("Provision of
@@ -37,25 +45,40 @@ export function templatesForService(templates, service) {
 }
 
 /**
- * Split one dependency entry into the service and the step it names.
- * `step` is '' when the entry waits for the whole service.
+ * Split one dependency entry into its three parts:
+ *   service   — what is waited on
+ *   step      — which step of it stops blocking ('' = all of it)
+ *   localStep — which step of MINE waits ('' = the whole service does)
  *
- * Only the FIRST ">" separates: a service name can't contain one, and a step
- * ID can't either, so anything further right belongs to the step.
+ * ">" is the separator throughout, because neither a service name nor a
+ * generated step ID can contain one. Segments past the third are folded back
+ * into the second — a malformed value loses nothing it could have meant.
  */
 export function parseServiceRef(raw) {
   const s = String(raw ?? '').trim();
-  if (!s) return { service: '', step: '' };
-  const i = s.indexOf('>');
-  if (i < 0) return { service: s, step: '' };
-  return { service: s.slice(0, i).trim(), step: s.slice(i + 1).trim() };
+  if (!s) return { service: '', step: '', localStep: '' };
+  const parts = s.split('>').map(p => p.trim());
+  const service = parts[0] || '';
+  if (parts.length <= 1) return { service, step: '', localStep: '' };
+  if (parts.length === 2) return { service, step: parts[1], localStep: '' };
+  return {
+    service,
+    step: parts.slice(1, -1).join(' > ').trim(),
+    localStep: parts[parts.length - 1],
+  };
 }
 
-/** The stored form of a reference. A blank step gives the plain service name. */
-export function formatServiceRef(service, step) {
+/**
+ * The stored form of a reference. A blank step gives the plain service name;
+ * a local step needs the prerequisite step to sit between them, so an entry
+ * naming only a local step waits on the whole service at that step.
+ */
+export function formatServiceRef(service, step, localStep = '') {
   const svc = String(service ?? '').trim();
   const st = String(step ?? '').trim();
+  const local = String(localStep ?? '').trim();
   if (!svc) return '';
+  if (local) return `${svc} > ${st} > ${local}`;
   return st ? `${svc} > ${st}` : svc;
 }
 
@@ -114,7 +137,23 @@ export function setRefStep(value, service, step) {
   const key = norm(service);
   if (!key) return String(value || '');
   return parseServiceRefs(value)
-    .map(r => (norm(r.service) === key ? formatServiceRef(r.service, step) : formatServiceRef(r.service, r.step)))
+    .map(r => (norm(r.service) === key
+      ? formatServiceRef(r.service, step, r.localStep)
+      : formatServiceRef(r.service, r.step, r.localStep)))
+    .join(', ');
+}
+
+/**
+ * The same, for the step on the waiting side. Separate from setRefStep so the
+ * two selects on a dependency row can't overwrite each other's choice.
+ */
+export function setRefLocalStep(value, service, localStep) {
+  const key = norm(service);
+  if (!key) return String(value || '');
+  return parseServiceRefs(value)
+    .map(r => (norm(r.service) === key
+      ? formatServiceRef(r.service, r.step, localStep)
+      : formatServiceRef(r.service, r.step, r.localStep)))
     .join(', ');
 }
 

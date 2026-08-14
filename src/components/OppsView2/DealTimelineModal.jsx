@@ -523,11 +523,27 @@ export function DealTimelineModal({
                           >
                             {i > 0 && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>, </span>}
                             {describeServiceRef(w.service, w.stepName)}
+                            {/* Which step of THIS service is the one waiting.
+                                Without saying so the row reads as though the
+                                whole band waits, when the point of an anchor
+                                is that only part of it does. */}
+                            {w.localStepName && (
+                              <span
+                                title={`Only ${w.localStepName} waits on this. Everything before it in ${s.name} runs alongside ${w.service}.`}
+                                style={{ color: 'var(--color-text-muted)' }}
+                              > → {w.localStepName}</span>
+                            )}
                             {w.stale && (
                               <span
                                 title={`This waits on a step of ${w.service} that no longer exists, so it is planned after the whole service. Re-pick the step on Dropdowns › Services.`}
                                 style={{ marginLeft: 4, color: '#92400E', fontWeight: 700 }}
                               >(step missing)</span>
+                            )}
+                            {w.localStale && (
+                              <span
+                                title={`This is anchored to a step of ${s.name} that no longer exists, so the whole band waits. Re-pick the step on Dropdowns › Services.`}
+                                style={{ marginLeft: 4, color: '#92400E', fontWeight: 700 }}
+                              >(anchor missing)</span>
                             )}
                           </span>
                         )) : '—'}

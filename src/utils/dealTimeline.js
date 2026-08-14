@@ -142,7 +142,7 @@ export function expandDealServices(scopeNames, serviceOverrides) {
  *
  * Returns { placed: [{ ...entry, startMonth, endMonth, months }], cycleBroken }.
  */
-export function scheduleDealServices(entries, spanOf, stepEndOf) {
+export function scheduleDealServices(entries, spanOf, stepEndOf, stepStartOf) {
   const list = Array.isArray(entries) ? entries : [];
   const byKey = new Map(list.map(e => [norm(e.name), e]));
   // Only dependencies we actually have an entry for can be waited on. An
@@ -192,19 +192,37 @@ export function scheduleDealServices(entries, spanOf, stepEndOf) {
       const readyFrom = waits.get(key).map((w) => {
         const dk = norm(w.service);
         const depEnd = end.get(dk);
-        // Only reachable when the cycle break placed this one early; an
-        // unplaced prerequisite can't hold anything back.
-        if (depEnd == null) return { ...w, until: null };
-        if (!w.step || typeof stepEndOf !== 'function') return { ...w, until: depEnd };
-        const rel = stepEndOf(w.service, w.step);
-        if (rel == null) return { ...w, until: depEnd };  // stale — wait for all of it
-        // Never past the service's own end: a step can't finish after the
-        // thing that contains it, and a bad number shouldn't push work out.
-        return { ...w, until: Math.min(start.get(dk) + rel - 1, depEnd) };
+        // How far into THIS service the step that actually waits sits. The
+        // dependency gates that step, not the whole band, so everything
+        // before it may overlap the tail of the service above: Budgets'
+        // kickoff and inputs don't need Bill payment's go-live, only its
+        // build does. Zero — the band itself waits — without a local step, or
+        // when the one named has since been renamed away.
+        const localMonth = w.localStep && typeof stepStartOf === 'function'
+          ? stepStartOf(entry.name, w.localStep)
+          : null;
+        const anchorOffset = localMonth == null ? 0 : Math.max(0, localMonth - 1);
+        // The month this prerequisite stops blocking.
+        let until;
+        if (depEnd == null) until = null;  // cycle-broken: can't hold anything back
+        else if (!w.step || typeof stepEndOf !== 'function') until = depEnd;
+        else {
+          const rel = stepEndOf(w.service, w.step);
+          // Stale step — wait for all of it. Otherwise never past the
+          // service's own end: a step can't finish after the thing that
+          // contains it, and a bad number shouldn't push work out.
+          until = rel == null ? depEnd : Math.min(start.get(dk) + rel - 1, depEnd);
+        }
+        // What this wait therefore requires of the band's start, which is the
+        // anchored step's required month less how far into the band it sits.
+        return { ...w, until, anchorOffset, requires: until == null ? null : until + 1 - anchorOffset };
       });
-      const ends = readyFrom.map(w => w.until).filter(v => v != null);
-      const blockedUntil = ends.length ? Math.max(...ends) : null;
-      const startMonth = blockedUntil == null ? 1 : blockedUntil + 1;
+      const required = readyFrom.map(w => w.requires).filter(v => v != null);
+      const wanted = required.length ? Math.max(...required) : null;
+      // Never before kickoff. An anchor that would need the band to start
+      // earlier than the plan does slips later instead — the alternative is
+      // drawing work before the contract is signed.
+      const startMonth = wanted == null ? 1 : Math.max(1, wanted);
       const months = Math.max(1, Math.floor(Number(spanOf(entry)) || 1));
       start.set(key, startMonth);
       end.set(key, startMonth + months - 1);
@@ -214,8 +232,10 @@ export function scheduleDealServices(entries, spanOf, stepEndOf) {
         months,
         endMonth: startMonth + months - 1,
         // `governs` marks the prerequisite(s) that actually set this start.
-        // Several can tie, and then they all do.
-        readyFrom: readyFrom.map(w => ({ ...w, governs: w.until != null && w.until === blockedUntil })),
+        // Several can tie, and then they all do. Compared on what each wait
+        // REQUIRED rather than on when it ended: with anchored steps two
+        // prerequisites ending in different months can demand the same start.
+        readyFrom: readyFrom.map(w => ({ ...w, governs: w.requires != null && w.requires === wanted })),
       });
     }
     for (const key of batch) remaining.delete(key);
@@ -365,15 +385,25 @@ export function buildDealTimeline({
     if (!placementCache.has(tpl)) placementCache.set(tpl, templatePlacements(tpl));
     return placementCache.get(tpl);
   };
-  const stepEndOf = (serviceName, step) => {
+  // Where a step sits inside its own service's timeline, 1-based. `stepEndOf`
+  // answers "when does the thing I'm waiting on finish"; `stepStartOf`
+  // answers "how far into my own band is the step that's waiting".
+  const stepPosOf = (serviceName, step) => {
     const tpl = attached.get(norm(serviceName))?.[0];
     if (!tpl) return null;  // sized from Rollout Time: it has no steps to wait for
     const i = findTemplateStepIndex(tpl, step);
     if (i < 0) return null;  // renamed or deleted — fall back to the whole service
-    const pos = placementsOf(tpl)[i];
+    return placementsOf(tpl)[i] || null;
+  };
+  const stepEndOf = (serviceName, step) => {
+    const pos = stepPosOf(serviceName, step);
     return pos ? pos.month + pos.span - 1 : null;
   };
-  const { placed, cycleBroken } = scheduleDealServices(entries, spanOf, stepEndOf);
+  const stepStartOf = (serviceName, step) => {
+    const pos = stepPosOf(serviceName, step);
+    return pos ? pos.month : null;
+  };
+  const { placed, cycleBroken } = scheduleDealServices(entries, spanOf, stepEndOf, stepStartOf);
 
   // Built per service so a hidden band takes its own steps with it.
   const built = placed.map((entry, order) => {
@@ -470,10 +500,20 @@ export function buildDealTimeline({
           const tpl = attached.get(norm(w.service))?.[0];
           const i = w.step ? findTemplateStepIndex(tpl, w.step) : -1;
           const stepName = i >= 0 ? String(tpl.stages[i]?.name || '').trim() : '';
+          // The step on THIS side that the dependency anchors, where one is
+          // named. Reported so the caller can say "Budget build starts when
+          // Go Live ends" rather than only naming the prerequisite — with an
+          // anchor the band's own start is no longer the interesting date.
+          const own = attached.get(norm(entry.name))?.[0];
+          const li = w.localStep ? findTemplateStepIndex(own, w.localStep) : -1;
+          const localStepName = li >= 0 ? String(own.stages[li]?.name || '').trim() : '';
           return {
             service: w.service,
             step: w.step,
             stepName,
+            localStep: w.localStep || '',
+            localStepName,
+            localStale: !!w.localStep && !localStepName,
             stale: !!w.step && !stepName,
             // The month this one stops blocking, and whether it's the one
             // that actually set the start. Refining a prerequisite that
