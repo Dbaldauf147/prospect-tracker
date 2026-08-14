@@ -501,7 +501,13 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // The column the contract is signed at the head of. Null when nothing
   // happens before it, which is every timeline that hasn't been given a
   // run-up — and those draw exactly as they did.
-  const signatureCol = preSpan > 0 ? preSpan + 1 : null;
+  // Where the contract is signed. A timeline with a run-up derives it — the
+  // signature is wherever the pre-signature work ends — but a plan can also
+  // state it outright, and the deal rollout does: every band on it is
+  // scheduled from the signature date, so the column is known without any
+  // step having to imply it. Stated wins; it's the more direct claim.
+  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
+  const signatureCol = statedSignature > 0 ? statedSignature : (preSpan > 0 ? preSpan + 1 : null);
   // The window the whole chart is drawn against: the timeline's declared date
   // range when it has one, otherwise its anchor-month / month-count settings.
   const monthWindow = resolveMonthWindow(template, needed);

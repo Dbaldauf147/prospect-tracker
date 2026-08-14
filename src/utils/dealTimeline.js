@@ -36,6 +36,18 @@ import { parseServiceRefs, findTemplateStepIndex, templatesForService } from './
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "1 Oct 2026" from an ISO date. Formatted by hand rather than through
+// toLocaleDateString: this module is kept free of the clock and the locale so
+// its tests can pin every date they use.
+function readableDate(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate ?? '').trim());
+  if (!m) return '';
+  const mo = MONTH_ABBR[Number(m[2]) - 1];
+  return mo ? `${Number(m[3])} ${mo} ${m[1]}` : '';
+}
+
 /**
  * The services that must be rolled out before `name` can start, as plain
  * names — a step refinement ("Bill payment > st-12") reduces to its service.
@@ -527,6 +539,19 @@ export function buildDealTimeline({
       // and the renderers draw the today marker in it.
       monthMode: 'calendar',
       anchorMonth: String(anchorMonth || ''),
+      // Month 1 IS the signature: every band on this plan is scheduled from
+      // the date the contract is signed, so the chart says where that is
+      // rather than leaving it to be inferred.
+      //
+      // Stated outright because it used to depend on a step happening to be
+      // called something — isAgreementStep matches names, so a service whose
+      // contract step was renamed ("Project kickoff") took the signature off
+      // the chart with it. The plan knows its own kickoff; it shouldn't need
+      // a step to tell it.
+      signatureMonth: 1,
+      signatureLabel: readableDate(kickoffDate)
+        ? `Contract signed ${readableDate(kickoffDate)}`
+        : 'Contract signature',
       // A plan kicking off today has nothing under way yet. Without this, a
       // bar in the first month draws from the 1st and shows work already
       // done before the plan begins. Opt-in on the renderers because a

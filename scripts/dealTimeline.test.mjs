@@ -585,5 +585,29 @@ check('and no colour for one', subOf('Loose').subPhaseColor, '');
 check('a service sized from rollout has no sub-group',
   withSubs.template.stages.find(s => s.id.endsWith('::rollout'))?.subPhase ?? '', '');
 
+
+// --- the signature is stated, not inferred from a step's name -------------
+// It used to depend on isAgreementStep matching a step called something like
+// "Agreement Executed". Rename that step and the marker vanished, which is
+// how a plan lost the one date every band on it is scheduled from.
+const noAgreement = [{
+  id: 'tl-na', name: 'No agreement step', services: ['Monitoring'],
+  positionMode: 'months', format: 'phased',
+  stages: [
+    { id: 'n1', name: 'Project kickoff', owner: 'Schneider Electric', startMonth: 1, months: 1 },
+    { id: 'n2', name: 'Delivery', owner: 'Schneider Electric', startMonth: 2, months: 1 },
+  ],
+}];
+const stated = buildDealTimeline({
+  scopeServices: ['Monitoring'], templates: noAgreement, serviceOverrides: overrides,
+  anchorMonth: '2026-10', kickoffDate: '2026-10-01',
+});
+check('no step is taken for the contract', stated.template.stages.some(isAgreementStep), false);
+check('but the plan still states where the signature is', stated.template.signatureMonth, 1);
+check('and names the day', stated.template.signatureLabel, 'Contract signed 1 Oct 2026');
+check('a plan with no kickoff date still marks the column',
+  buildDealTimeline({ scopeServices: ['Monitoring'], templates: noAgreement, serviceOverrides: overrides, anchorMonth: '2026-10' })
+    .template.signatureLabel, 'Contract signature');
+
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);
