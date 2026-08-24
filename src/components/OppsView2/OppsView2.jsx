@@ -5189,7 +5189,6 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
               opp={opp}
               solutionOptions={solutionOptions}
               serviceOverrides={serviceOverrides}
-              settings={settings}
             />
           </div>
         </div>
@@ -7162,19 +7161,24 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings, 
   );
 }
 
-// The "KTM Mapping" button in the Notes popup header, and the reference
-// table it opens: every service alongside the KTM recorded against it in
-// the KTM column of Dropdowns › Services.
+// The "KTM Mapping" button both the Notes and Update Status popup headers
+// carry, and the table it opens: the services this deal is scoped to,
+// each alongside the KTM recorded against it in the KTM column of
+// Dropdowns › Services.
 //
-// Read-only on purpose. The KTM belongs to the service, not to this deal
-// — editing it here would quietly rewrite it for every other opp that
-// names the same service — so this is a lookup and the Services tab
-// stays the one place it's set.
+// Scoped to the deal on purpose. The whole Solutions list is 130-odd
+// services and the question being asked here is "who do I talk to about
+// what I'm selling this account" — the rest is noise the user has to
+// scroll past. Dropdowns › Services is where the full mapping lives.
+//
+// Read-only, too: the KTM belongs to the service, not to this deal, so
+// editing it here would quietly rewrite it for every other opp that names
+// the same service.
 //
 // Portalled to the body for the same reason the Timelines popup is: the
-// Notes popup closes on Escape and on a backdrop click, and a nested
-// modal's Escape would bubble up and close both.
-function KtmMappingButton({ opp, solutionOptions, serviceOverrides, settings }) {
+// popups it opens from close on Escape and on a backdrop click, and a
+// nested modal's Escape would bubble up and close both.
+function KtmMappingButton({ opp, solutionOptions, serviceOverrides }) {
   const [open, setOpen] = useState(false);
   const account = String(opp?.['Account'] ?? '').trim();
   const inScope = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
@@ -7189,7 +7193,7 @@ function KtmMappingButton({ opp, solutionOptions, serviceOverrides, settings }) 
         onClick={() => setOpen(true)}
         title={inScope.length
           ? `KTM mapping — ${mappedCount} of this deal's ${inScope.length} service${inScope.length === 1 ? '' : 's'} ${mappedCount === 1 ? 'has' : 'have'} a KTM named on Dropdowns › Services`
-          : 'KTM mapping — which KTM is named against each service on Dropdowns › Services'}
+          : 'KTM mapping for this deal\u2019s services. Nothing in Scope yet, so there\u2019s nothing to map.'}
         // Same pill as Timelines / Called / Meeting so the header reads as
         // one row of controls.
         style={{
@@ -7203,9 +7207,7 @@ function KtmMappingButton({ opp, solutionOptions, serviceOverrides, settings }) 
         <KtmMappingModal
           account={account}
           inScope={inScope}
-          solutionOptions={solutionOptions}
           serviceOverrides={serviceOverrides}
-          settings={settings}
           onClose={() => setOpen(false)}
         />,
         document.body,
@@ -7221,44 +7223,14 @@ function ktmFor(name, serviceOverrides) {
   return raw === '-' ? '' : raw;
 }
 
-// { name, ktm } rows for a list of service names. Module-level so the
-// memos below can depend on it without the compiler having to prove a
-// closure stable.
-function ktmRows(names, serviceOverrides) {
-  return (names || []).map(name => ({ name, ktm: ktmFor(name, serviceOverrides) }));
-}
-
-function KtmMappingModal({ account, inScope, solutionOptions, serviceOverrides, settings, onClose }) {
-  const [search, setSearch] = useState('');
-  const [mappedOnly, setMappedOnly] = useState(false);
-  // Retired services are out of circulation everywhere else, so they'd
-  // only pad the list here — unless this deal actually names one, in
-  // which case its KTM is exactly what the user came to look up.
-  const hiddenServices = useMemo(
-    () => new Set(settings?.hiddenServices || []),
-    [settings?.hiddenServices],
+function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
+  // One row per service in Scope, in Scope order — the order the user
+  // put them in, which is the order they think about them in.
+  const rows = useMemo(
+    () => (inScope || []).map(name => ({ name, ktm: ktmFor(name, serviceOverrides) })),
+    [inScope, serviceOverrides],
   );
-  const scopeKeys = useMemo(
-    () => new Set(inScope.map(n => String(n).trim().toLowerCase())),
-    [inScope],
-  );
-  const scopeRows = useMemo(() => ktmRows(inScope, serviceOverrides), [inScope, serviceOverrides]);
-  // Everything else in the Solutions list — the same list the Services
-  // subtab draws its rows from, so the two can't show different services.
-  const otherRows = useMemo(() => ktmRows(
-    (solutionOptions || []).filter(n =>
-      !scopeKeys.has(String(n).trim().toLowerCase()) && !hiddenServices.has(n)),
-    serviceOverrides,
-  ), [solutionOptions, scopeKeys, hiddenServices, serviceOverrides]);
-
-  const term = search.trim().toLowerCase();
-  const visible = (rows) => rows.filter(r => {
-    if (mappedOnly && !r.ktm) return false;
-    if (!term) return true;
-    return r.name.toLowerCase().includes(term) || r.ktm.toLowerCase().includes(term);
-  });
-  const scopeVisible = visible(scopeRows);
-  const otherVisible = visible(otherRows);
+  const unmapped = rows.filter(r => !r.ktm).length;
 
   const backdropMouseDown = useRef(false);
   const th = {
@@ -7268,36 +7240,6 @@ function KtmMappingModal({ account, inScope, solutionOptions, serviceOverrides, 
     position: 'sticky', top: 0, background: '#fff',
   };
   const td = { padding: '0.35rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', verticalAlign: 'top' };
-
-  const section = (title, rows, emptyNote) => (
-    <div>
-      <div style={{
-        fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text)',
-        textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4,
-      }}>
-        {title} <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({rows.length})</span>
-      </div>
-      {rows.length === 0 ? (
-        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', padding: '0.3rem 0' }}>{emptyNote}</div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-          <thead>
-            <tr><th style={{ ...th, width: '55%' }}>Service</th><th style={th}>KTM</th></tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.name}>
-                <td style={td}>{r.name}</td>
-                <td style={{ ...td, color: r.ktm ? 'var(--color-text)' : 'var(--color-text-muted)', fontWeight: r.ktm ? 600 : 400 }}>
-                  {r.ktm || 'Not set'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
 
   return (
     <div
@@ -7312,7 +7254,7 @@ function KtmMappingModal({ account, inScope, solutionOptions, serviceOverrides, 
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
         style={{
-          width: 'min(720px, 94vw)', maxHeight: '88vh',
+          width: 'min(680px, 94vw)', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -7322,10 +7264,12 @@ function KtmMappingModal({ account, inScope, solutionOptions, serviceOverrides, 
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem',
         }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>KTM Mapping</div>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              KTM Mapping{account ? <>: {account}</> : null}
+            </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              The KTM named against each service in the KTM column of Dropdowns › Services.
-              {account ? <> Read-only here — it belongs to the service, not to {account}.</> : null}
+              The KTM named against each service in this deal’s Scope, from the KTM column of
+              Dropdowns › Services. Read-only — the KTM belongs to the service, not to this deal.
             </div>
           </div>
           <button
@@ -7339,44 +7283,38 @@ function KtmMappingModal({ account, inScope, solutionOptions, serviceOverrides, 
           >×</button>
         </div>
 
-        <div style={{
-          padding: '0.6rem 1rem', borderBottom: '1px solid var(--color-border-light)',
-          display: 'flex', alignItems: 'center', gap: '0.7rem', flexWrap: 'wrap',
-        }}>
-          <input
-            autoFocus
-            type="text"
-            value={search}
-            placeholder="Filter by service or KTM…"
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              flex: '1 1 220px', minWidth: 0, padding: '0.4rem 0.55rem',
-              border: '1px solid var(--color-border)', borderRadius: 4,
-              fontSize: '0.82rem', fontFamily: 'inherit',
-            }}
-          />
-          <label style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)',
-            cursor: 'pointer', whiteSpace: 'nowrap',
-          }}>
-            <input type="checkbox" checked={mappedOnly} onChange={(e) => setMappedOnly(e.target.checked)} />
-            Only services with a KTM
-          </label>
-        </div>
-
-        <div style={{ padding: '0.85rem 1rem', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {section(
-            "In this deal's Scope",
-            scopeVisible,
-            scopeRows.length === 0
-              ? 'Nothing in Scope yet.'
-              : 'No Scope service matches the filter.',
-          )}
-          {section(
-            'All other services',
-            otherVisible,
-            'Nothing matches the filter.',
+        <div style={{ padding: '0.85rem 1rem', overflow: 'auto' }}>
+          {rows.length === 0 ? (
+            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+              Nothing in Scope yet — pick the deal’s services and their KTMs show up here.
+            </div>
+          ) : (
+            <>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr><th style={{ ...th, width: '45%' }}>Service</th><th style={th}>KTM</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.name}>
+                      <td style={td}>{r.name}</td>
+                      <td style={{
+                        ...td,
+                        color: r.ktm ? 'var(--color-text)' : 'var(--color-text-muted)',
+                        fontWeight: r.ktm ? 600 : 400,
+                        wordBreak: 'break-word',
+                      }}>{r.ktm || 'Not set'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {unmapped > 0 && (
+                <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.6rem', lineHeight: 1.4 }}>
+                  {unmapped} of {rows.length} {unmapped === 1 ? 'has' : 'have'} no KTM named yet.
+                  Set them in the KTM column on Dropdowns › Services and they’ll show here.
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -7797,7 +7735,6 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
               opp={opp}
               solutionOptions={solutionOptions}
               serviceOverrides={serviceOverrides}
-              settings={settings}
             />
             {markBtn('_calledOn', '📞', 'Called')}
             {markBtn('_metOn', '🤝', 'Meeting')}
