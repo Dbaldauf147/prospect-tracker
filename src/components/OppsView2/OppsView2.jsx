@@ -5136,6 +5136,102 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
   );
 }
 
+// Subtabs for the Opp details popup. The record carries 30+ columns, so a
+// single flat list forces the user to scroll past everything to reach the
+// one field they came for. Each known column is bucketed into one of these
+// groups; anything the map doesn't recognise (a user-added column, an
+// imported header) lands in "Other" so nothing ever disappears from the
+// popup. Fields keep the table's column order inside their tab.
+const OPP_DETAIL_TAB_KEY = 'opp-detail-active-tab';
+
+const OPP_DETAIL_TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'scope', label: 'Scope & Quote' },
+  { key: 'activity', label: 'Activity' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'close', label: 'Close' },
+  { key: 'other', label: 'Other' },
+];
+
+const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
+  // Who / what / where the deal lives
+  'Account': 'overview',
+  'Open Year': 'overview',
+  'Contact': 'overview',
+  'PE Owner': 'overview',
+  'Sales Partner': 'overview',
+  'Stage': 'overview',
+  'Status': 'overview',
+  'Source': 'overview',
+  'Type': 'overview',
+  'Review': 'overview',
+  'BFO Link': 'overview',
+  'BFO Company Name': 'overview',
+  'BFO Address': 'overview',
+  // What's being sold and for how much, plus everything the quote has to
+  // clear on the way out the door.
+  'Scope': 'scope',
+  'Sites': 'scope',
+  'Quoted Amount': 'scope',
+  'USD?': 'scope',
+  'Pricing Option': 'scope',
+  'Quoted On': 'scope',
+  'Quoted Date': 'scope',
+  'Chance?': 'scope',
+  'Chance': 'scope',
+  'Margin Email Date - Sales Leader Review Date': 'scope',
+  'Margin Email Date': 'scope',
+  'Sales Leader Review Date': 'scope',
+  'Final Margin': 'scope',
+  'Credit approval': 'scope',
+  'COA Approval': 'scope',
+  'Entity Outside the US Approval': 'scope',
+  'Multiple Invoices?': 'scope',
+  // Dates + nudges that drive the day-to-day working of the opp
+  'Start Date': 'activity',
+  'Age': 'activity',
+  'Last Client Heard From Us': 'activity',
+  'Last Spoke': 'activity',
+  'Call In': 'activity',
+  'Follow Up': 'activity',
+  'No Further Action Today': 'activity',
+  'Waiting On': 'activity',
+  // Free text
+  'Next Steps': 'notes',
+  'Notes': 'notes',
+  // How and when it ends
+  'Close Date': 'close',
+  'Target Signature Date': 'close',
+  'Verbal': 'close',
+  'Competition': 'close',
+  'Reason Not Sold': 'close',
+}));
+
+// Which subtab a column belongs in. Falls back to "Other" so user-added
+// and imported columns still show up somewhere.
+function oppDetailTabFor(header) {
+  const known = OPP_DETAIL_TAB_BY_FIELD.get(header);
+  if (known) return known;
+  // "Close Year" / "Close Month" are derived from the Close Date and can
+  // carry a few different labels depending on the import, so match them
+  // the same loose way the auto-fill does.
+  const norm = String(header || '').trim().toLowerCase();
+  if (CLOSE_YEAR_RE.test(norm) || CLOSE_MONTH_RE.test(norm)) return 'close';
+  return 'other';
+}
+
+function loadOppDetailTab() {
+  try {
+    const raw = userLsGet(OPP_DETAIL_TAB_KEY);
+    return OPP_DETAIL_TABS.some(t => t.key === raw) ? raw : 'overview';
+  } catch { return 'overview'; }
+}
+
+function saveOppDetailTab(key) {
+  try { userLsSet(OPP_DETAIL_TAB_KEY, key); }
+  catch (err) { console.warn('opps2: save detail tab failed', err); }
+}
+
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
@@ -5169,6 +5265,14 @@ export function OppInfoModal({
   // toggling a row here hides/shows it on every opp's detail popup.
   const [hiddenFields, setHiddenFields] = useState(() => loadHiddenDetailFields());
   const [showHiddenRows, setShowHiddenRows] = useState(false);
+  // Which subtab the field list is showing. Sticky across opps (and
+  // sessions) so working a list of records field-by-field doesn't mean
+  // re-picking the tab on every popup.
+  const [activeTab, setActiveTab] = useState(() => loadOppDetailTab());
+  const selectTab = useCallback((key) => {
+    setActiveTab(key);
+    saveOppDetailTab(key);
+  }, []);
   const toggleDetailField = useCallback((field) => {
     setHiddenFields(prev => {
       const next = new Set(prev);
@@ -5193,9 +5297,32 @@ export function OppInfoModal({
     if (idx >= 0) orderedFields.splice(idx + 1, 0, 'BFO Company Name');
     else orderedFields.push('BFO Company Name');
   }
-  // Count of currently-hidden rows among the fields this opp actually
-  // shows, so the "Show N hidden" toggle reflects what's collapsed here.
-  const hiddenCount = orderedFields.filter(h => hiddenFields.has(h)).length;
+  // Bucket the columns into subtabs, keeping the table's column order
+  // within each one.
+  const fieldsByTab = new Map(OPP_DETAIL_TABS.map(t => [t.key, []]));
+  for (const h of orderedFields) fieldsByTab.get(oppDetailTabFor(h)).push(h);
+  // A saved Pricing Option snapshot (or a dangling link to one) is part of
+  // the quote, so it rides along in that tab — and keeps the tab available
+  // even on a record whose headers carry no quote columns.
+  const hasPricingSection = Boolean(opp._pricingOption || pricingOptionLinkName);
+  const visibleTabs = OPP_DETAIL_TABS.filter(t => (
+    fieldsByTab.get(t.key).length > 0 || (t.key === 'scope' && hasPricingSection)
+  ));
+  // Fall back to the first available tab when the sticky choice has no
+  // fields on this record (e.g. "Other" with no user-added columns).
+  const currentTab = visibleTabs.some(t => t.key === activeTab)
+    ? activeTab
+    : (visibleTabs[0]?.key || 'overview');
+  const tabFields = fieldsByTab.get(currentTab) || [];
+  // Linked call recordings sit with the rest of the day-to-day activity;
+  // if this record somehow has no activity columns, they ride on whatever
+  // tab is showing first so they're never stranded.
+  const callsTab = visibleTabs.some(t => t.key === 'activity')
+    ? 'activity'
+    : (visibleTabs[0]?.key || 'overview');
+  // Count of currently-hidden rows among the fields the open tab shows,
+  // so the "Show N hidden" toggle reflects what's collapsed right here.
+  const hiddenCount = tabFields.filter(h => hiddenFields.has(h)).length;
   const formatValue = (key, raw) => {
     if (raw == null || raw === '') return '-';
     if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
@@ -5351,6 +5478,41 @@ export function OppInfoModal({
           >Close</button>
         </div>
 
+        <div style={{
+          display: 'flex', gap: '0.15rem', flexWrap: 'wrap',
+          padding: '0 1rem', borderBottom: '1px solid var(--color-border-light)',
+        }}>
+          {visibleTabs.map(t => {
+            const isActive = t.key === currentTab;
+            const count = fieldsByTab.get(t.key).length;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => selectTab(t.key)}
+                aria-pressed={isActive}
+                style={{
+                  padding: '0.45rem 0.75rem', background: 'transparent',
+                  border: 'none', borderBottom: '2px solid transparent',
+                  borderBottomColor: isActive ? 'var(--color-accent)' : 'transparent',
+                  marginBottom: -1,
+                  fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                {t.label}
+                {count > 0 && (
+                  <span style={{
+                    marginLeft: 5, fontSize: '0.68rem', fontWeight: 600,
+                    color: 'var(--color-text-muted)', opacity: isActive ? 0.9 : 0.7,
+                  }}>{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
           {needsUsdFlag(opp) && (
             // Same rule as the Flags-column 🚩: deal is Qualifying or
@@ -5431,7 +5593,7 @@ export function OppInfoModal({
               >Restore</button>
             </div>
           )}
-          {opp._pricingOption ? (
+          {currentTab === 'scope' && (opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
                 display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
@@ -5471,7 +5633,7 @@ export function OppInfoModal({
                 will appear here.
               </div>
             </div>
-          ) : null}
+          ) : null)}
           {hiddenCount > 0 && (
             <div style={{
               display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
@@ -5493,7 +5655,7 @@ export function OppInfoModal({
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <tbody>
-              {orderedFields.map(h => {
+              {tabFields.map(h => {
                 const isHidden = hiddenFields.has(h);
                 if (isHidden && !showHiddenRows) return null;
                 const label = headerLabel(h);
@@ -5543,7 +5705,7 @@ export function OppInfoModal({
 
           {/* Call recordings tagged to this opp on the Call Recordings
               page. Renders nothing when there are none. */}
-          <LinkedCalls oppId={opp._id} />
+          {currentTab === callsTab && <LinkedCalls oppId={opp._id} />}
         </div>
 
         <div style={{
