@@ -5172,13 +5172,26 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             Update Status{opp?.['Account'] ? <>: {opp['Account']}</> : null}
           </div>
-          <DealTimelineButton
-            opp={opp}
-            solutionOptions={solutionOptions}
-            serviceOverrides={serviceOverrides}
-            settings={settings}
-            updateOppField={updateOppField}
-          />
+          {/* Same control row the Notes popup header carries, in the same
+              order, so the two popups don't drift apart. Its own flex box
+              rather than direct children of the header: DealTimelineButton
+              renders a label and a button as siblings, and the header's
+              1rem gap would space them like separate controls. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <DealTimelineButton
+              opp={opp}
+              solutionOptions={solutionOptions}
+              serviceOverrides={serviceOverrides}
+              settings={settings}
+              updateOppField={updateOppField}
+            />
+            <KtmMappingButton
+              opp={opp}
+              solutionOptions={solutionOptions}
+              serviceOverrides={serviceOverrides}
+              settings={settings}
+            />
+          </div>
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
