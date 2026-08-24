@@ -18,7 +18,7 @@ import {
   saveOpps2Cache,
   saveOpps2ToFirestore,
 } from './opps2Store';
-import { fmtMoneyWhole } from './pricingOptionCalc';
+import { fmtMarginPct, fmtMoneyWhole } from './pricingOptionCalc';
 
 export const OPPS_PRICING_SNAPSHOT_EVENT = 'opps2:pricingSnapshotUpdated';
 
@@ -80,13 +80,21 @@ async function updateOpp2Record(uid, oppId, mutator) {
 // Attach a frozen snapshot of a Pricing → Options tab option to the
 // Opp identified by `oppId`. Also writes the snapshot's Year 1 total
 // into the opp's "Quoted Amount" cell so the user can see the number
-// at a glance in the table without opening the detail popup.
+// at a glance in the table without opening the detail popup — and,
+// when the option carries a computed Deal margin (the SIA path does),
+// the term margin into "Final Margin" alongside it. Saving an option
+// to an opp is an explicit "this is the quote" action, so both cells
+// track the option the same way; a snapshot with no margin (the
+// hand-built Options subtab has no cost side) leaves the existing
+// Final Margin alone rather than blanking it.
 export async function setOppPricingSnapshot(uid, oppId, snapshot) {
   if (!snapshot) throw new Error('setOppPricingSnapshot: missing snapshot');
+  const marginCell = fmtMarginPct(snapshot.finalMargin);
   return updateOpp2Record(uid, oppId, (record) => ({
     ...record,
     _pricingOption: snapshot,
     'Quoted Amount': fmtMoneyWhole(snapshot.year1Total || 0),
+    ...(marginCell ? { 'Final Margin': marginCell } : {}),
   }));
 }
 
