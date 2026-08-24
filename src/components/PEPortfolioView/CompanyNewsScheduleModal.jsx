@@ -45,6 +45,11 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Kept apart from `error` (save / send failures) so the list can say it
+  // failed to load rather than showing the empty state: "No news
+  // schedules yet" over a failed request reads as "you have none", which
+  // is how a broken load gets mistaken for an empty one.
+  const [loadError, setLoadError] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(false);
@@ -61,8 +66,9 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
   const reload = async () => {
     if (!uid) { setSchedules([]); return; }
     setLoading(true);
+    setLoadError('');
     try { setSchedules(await listSchedules()); }
-    catch (err) { setError(String(err.message || err)); }
+    catch (err) { setLoadError(String(err.message || err)); }
     finally { setLoading(false); }
   };
 
@@ -85,6 +91,7 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const startNew = () => { setForm(emptyForm()); setEditing(true); setError(''); };
+
   const startEdit = (s) => {
     setForm({
       id: s.id,
@@ -188,8 +195,11 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
           {!editing && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
-                <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                  {loading ? 'Loading…' : schedules.length === 0 ? 'No news schedules yet.' : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'}`}
+                <div style={{ fontSize: '0.78rem', color: loadError ? '#B91C1C' : '#64748B' }}>
+                  {loading ? 'Loading…'
+                    : loadError ? 'Couldn’t load your schedules.'
+                      : schedules.length === 0 ? 'No news schedules yet.'
+                        : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'}`}
                 </div>
                 <button type="button" onClick={startNew} style={btnPrimary}>+ New schedule</button>
               </div>
@@ -224,6 +234,15 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
                   </div>
                 </div>
               ))}
+
+              {loadError && (
+                <div style={errBox}>
+                  <div>{loadError}</div>
+                  <button type="button" onClick={reload} disabled={loading} style={{ ...btnGhost, marginTop: '0.45rem' }}>
+                    {loading ? 'Retrying…' : 'Try again'}
+                  </button>
+                </div>
+              )}
 
               {error && <div style={errBox}>{error}</div>}
             </>

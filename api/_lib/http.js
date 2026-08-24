@@ -106,8 +106,35 @@ export function isAdminEmail(email) {
 }
 
 /**
+ * Answer a thrown error as JSON.
+ *
+ * Anything a handler throws — a Firestore call that can't reach the
+ * database, a missing module, a typo — otherwise unwinds into the
+ * platform's own 500, whose body is not JSON. The client reads no
+ * `error` field there and can only report the bare status, so every
+ * distinct server-side fault arrives on screen as the same useless
+ * "Request failed (500)". Say what actually broke instead; these routes
+ * are behind a verified-identity allowlist, so the detail goes to
+ * someone entitled to it.
+ */
+export function failWith(res, err, label) {
+  const detail = String(err?.message || err || 'Unknown error');
+  const code = err?.code ? String(err.code) : null;
+  console.error(`${label || 'handler'} failed:`, code || '', detail, err?.stack || '');
+  // A response already on the wire is the handler's own answer: replacing
+  // it would throw again, on top of a reply the client has.
+  if (res.headersSent || res.writableEnded) return undefined;
+  // A step that ran out of time is not a broken server, and 504 lets the
+  // client say "try again" rather than "this is broken".
+  const status = isDeadline(err) ? 504 : 500;
+  return res.status(status).json({ error: detail, code });
+}
+
+/**
  * Wrap a handler with CORS + preflight + auth. The wrapped handler is
- * called as (req, res, auth) where auth is the decoded token.
+ * called as (req, res, auth) where auth is the decoded token. A throw
+ * from the handler is answered as JSON rather than crashing the
+ * invocation (see failWith).
  */
 export function withAuth(handler) {
   return async function wrapped(req, res) {
@@ -115,6 +142,10 @@ export function withAuth(handler) {
     if (req.method === 'OPTIONS') return res.status(204).end();
     const auth = await requireAuth(req, res);
     if (!auth) return undefined;
-    return handler(req, res, auth);
+    try {
+      return await handler(req, res, auth);
+    } catch (err) {
+      return failWith(res, err, String(req.url || '').split('?')[0]);
+    }
   };
 }
