@@ -1051,6 +1051,7 @@ export function ServiceDetailModal({
             <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
             <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
+            <TextField label="KTM" value={meta?.ktm} onCommit={save('ktm')} />
           </div>
 
           {/* The steps of this service's own timeline. Sits above the
