@@ -3,7 +3,7 @@
 // Password setup as the PE Opps digest (peOpps.sendPeOppsEmail), but
 // without forcing a PE-specific body or attachment.
 
-export async function sendEmail({ to, subject, html, attachments }) {
+export async function sendEmail({ to, subject, html, attachments, replyTo }) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) throw new Error('Email not configured (set GMAIL_USER and GMAIL_APP_PASSWORD)');
@@ -26,6 +26,9 @@ export async function sendEmail({ to, subject, html, attachments }) {
   const result = await transporter.sendMail({
     from: `${fromName} <${user}>`,
     to: recipients,
+    // Digests are sent from the shared mailbox, so replies should land
+    // with whoever scheduled them rather than in the app's inbox.
+    ...(replyTo ? { replyTo } : {}),
     subject: subject || 'Prospect Tracker',
     html,
     ...(attachments ? { attachments } : {}),

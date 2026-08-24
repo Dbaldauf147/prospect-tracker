@@ -13,6 +13,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, siteCountNumber, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { pickTopPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
@@ -3577,6 +3578,9 @@ function EditableCell({ value, align, onCommit }) {
 // exists so the user can jump into the company popup.
 function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  // Acquisition-news digest: covers every company ticked "Track acquisition
+  // news" on its company popup, not just the PE opps on this tab.
+  const [newsScheduleOpen, setNewsScheduleOpen] = useState(false);
   const firmLabel = firm.trim();
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
@@ -3796,7 +3800,20 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
           title="Schedule a recurring email that sends this PE Opps Excel file to a list of recipients"
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: '#fff', color: '#009530', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Schedule email</button>
+        <button
+          type="button"
+          onClick={() => setNewsScheduleOpen(true)}
+          title="Schedule a recurring email of acquisitions made by the companies you've ticked &quot;Track acquisition news&quot; on"
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#fff', color: '#7C3AED', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Acquisition news</button>
       </div>
+
+      <CompanyNewsScheduleModal
+        open={newsScheduleOpen}
+        onClose={() => setNewsScheduleOpen(false)}
+        uid={user?.uid}
+        prospects={prospects}
+      />
 
       <PEOppsScheduleModal
         open={scheduleOpen}
