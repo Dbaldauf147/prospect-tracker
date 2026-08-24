@@ -17,8 +17,22 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
+import { withDeadline } from './_lib/deadline.js';
 
 const COLLECTION = 'companyNewsEmailSchedules';
+
+// Firestore from a serverless function can stall rather than fail — the
+// SDK retries an unreachable backend behind the scenes for far longer
+// than anyone waits on a modal that is only listing a handful of rows.
+// Past this the route answers 504 naming the step, instead of holding the
+// invocation open until the platform's own ceiling with nothing on screen.
+const DB_TIMEOUT_MS = 12000;
+
+// Every Firestore await in this route goes through here, so a failure
+// arrives labelled with the step the user was actually waiting on.
+function timed(promise, label) {
+  return withDeadline(promise, DB_TIMEOUT_MS, label);
+}
 
 function clampInt(n, lo, hi, dflt) {
   const v = Number(n);
@@ -65,7 +79,7 @@ function buildScheduleDoc(input, auth) {
 async function ownedDoc(db, id, auth, res) {
   if (!id) { res.status(400).json({ error: 'id is required' }); return null; }
   const ref = db.collection(COLLECTION).doc(String(id));
-  const snap = await ref.get();
+  const snap = await timed(ref.get(), 'Loading the schedule');
   if (!snap.exists || snap.data().ownerUid !== auth.uid) {
     res.status(403).json({ error: 'Schedule not found or not yours' });
     return null;
@@ -81,7 +95,7 @@ async function handler(req, res, auth) {
   const { action, id, schedule, enabled } = req.body || {};
 
   if (action === 'list') {
-    const snap = await col.where('ownerUid', '==', auth.uid).get();
+    const snap = await timed(col.where('ownerUid', '==', auth.uid).get(), 'Loading your schedules');
     const items = [];
     snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
     items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -99,7 +113,7 @@ async function handler(req, res, auth) {
     doc.updatedAt = now;
     doc.lastStatus = null;
     doc.lastSentAt = null;
-    const ref = await col.add(doc);
+    const ref = await timed(col.add(doc), 'Saving the schedule');
     return res.json({ id: ref.id });
   }
 
@@ -109,21 +123,21 @@ async function handler(req, res, auth) {
     const patch = buildScheduleDoc(schedule, auth);
     if (patch.recipients.length === 0) return res.status(400).json({ error: 'At least one recipient is required' });
     patch.updatedAt = Date.now();
-    await ref.update(patch);
+    await timed(ref.update(patch), 'Saving the schedule');
     return res.json({ ok: true });
   }
 
   if (action === 'setEnabled') {
     const ref = await ownedDoc(db, id, auth, res);
     if (!ref) return undefined;
-    await ref.update({ enabled: !!enabled, updatedAt: Date.now() });
+    await timed(ref.update({ enabled: !!enabled, updatedAt: Date.now() }), 'Updating the schedule');
     return res.json({ ok: true });
   }
 
   if (action === 'delete') {
     const ref = await ownedDoc(db, id, auth, res);
     if (!ref) return undefined;
-    await ref.delete();
+    await timed(ref.delete(), 'Deleting the schedule');
     return res.json({ ok: true });
   }
 
