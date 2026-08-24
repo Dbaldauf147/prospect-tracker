@@ -1792,10 +1792,10 @@ function PricingOptionCell({ value, onClear }) {
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {isEmpty ? '-' : value}
       </span>
-      {!isEmpty && (
+      {!isEmpty && onClear && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onClear?.(); }}
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
           title="Clear pricing-option link"
           style={{
             border: 'none', background: 'transparent', cursor: 'pointer',
@@ -5402,6 +5402,24 @@ export function OppInfoModal({
         <span style={{ color: 'var(--color-text-muted)' }}>
           {value == null || value === '' ? '-' : String(value)}
         </span>
+      );
+    }
+    // The linked Pricing Option is never stored on the opp record — the
+    // table column reads it from the Pricing tab's link map, so the
+    // generic editable-cell path below would render this row blank even
+    // with an SIA tied to the opp. Mirror the column here (read-only),
+    // falling back to the saved snapshot's own name so the row still
+    // fills in on a device whose local link map hasn't caught up: the
+    // snapshot rides on the record through Firestore, the link map is
+    // per-browser IndexedDB.
+    if (h === 'Pricing Option') {
+      const linkedName = String(pricingOptionLinkName || '').trim();
+      const snapName = String(opp._pricingOption?.name || '').trim();
+      return (
+        <PricingOptionCell
+          value={linkedName || snapName}
+          onClear={linkedName ? () => setOppOptionLink(opp._id, '') : undefined}
+        />
       );
     }
     // Sourced from the matching Table View company, independent of the
