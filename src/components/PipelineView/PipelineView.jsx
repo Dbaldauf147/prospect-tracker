@@ -11,6 +11,7 @@ import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { bfoStageMetrics, matchStage } from '../../utils/bfoStageMetrics';
 import { parseMoney } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { isPullThroughOpp } from '../../utils/pullThrough';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 import { loadDealsList } from '../../utils/dealsStore';
 import { fmtDate } from '../../utils/dealsFormat';
@@ -101,10 +102,11 @@ function renderDaysToGoal(soldRaw) {
 // Pipeline Metrics and the month-by-month close-rate table under it, so
 // the two views of the same number can never drift apart.
 //
-// Opps whose Scope mentions "pull through" are excluded from every close
-// rate — they ride along with another deal rather than being won on their
-// own merits.
-const CLOSE_RATE_PULL_THROUGH = /pull[\s-]?through/i;
+// Pull-through opps are excluded from every close rate — they ride along
+// with another deal rather than being won on their own merits. The test
+// lives in utils/pullThrough so this and the Days-in-Stage board answer
+// the same question the same way: the opp's explicit "Pull Through"
+// column when it's set, its Scope text otherwise.
 
 // A value that's present and isn't one of the spreadsheet's null markers.
 const filledCell = (v) => {
@@ -157,7 +159,7 @@ function closedOppEntry(r) {
   if (!closeDate) return null;
   const ts = Date.parse(closeDate);
   if (Number.isNaN(ts)) return null;
-  if (CLOSE_RATE_PULL_THROUGH.test(String(r.Scope || ''))) return null;
+  if (isPullThroughOpp(r)) return null;
   return {
     account: String(r.Account || '').trim(),
     bfoName: bfoOppNameOf(r),
@@ -1460,7 +1462,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     const cutoffFor = (days) => now - days * 86400000;
     const longest = NOT_QUOTED_WINDOWS[NOT_QUOTED_WINDOWS.length - 1].days;
     const oldest = cutoffFor(longest);
-    const PULL_THROUGH = /pull[\s-]?through/i;
     const closed = [];
     for (const r of oppsRecords) {
       const stage = (r.Stage || '').trim();
@@ -1470,7 +1471,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       const ts = Date.parse(cd);
       if (Number.isNaN(ts)) continue;
       if (ts < oldest) continue;
-      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
+      if (isPullThroughOpp(r)) continue;
       const quotedDays = quotedStageDays(r);
       closed.push({
         account: String(r.Account || '').trim() || '(no account)',
