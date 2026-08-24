@@ -1182,6 +1182,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
+              : subtab === 'blueOwlServices'
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>Local Project Name</strong> (set per service on the Dropdowns › Services tab). Every PE Overview column is here too, and this tab keeps its own column layout.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -1206,6 +1208,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'stages', label: 'PE Stages' },
           { key: 'companies', label: 'All PCs' },
           { key: 'blueOwl', label: 'PE Overview' },
+          { key: 'blueOwlServices', label: 'PE Overview - Services' },
           { key: 'opps', label: 'PE Opps' },
           { key: 'stageDays', label: 'Days in Stage' },
           { key: 'strategies', label: 'Strategies' },
@@ -1283,7 +1286,33 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
         />
       ) : subtab === 'blueOwl' ? (
+        // Keyed per tab: the two tabs render the same component at the
+        // same spot in this chain, so without distinct keys React would
+        // reuse one instance and only swap props — and the Services tab
+        // would inherit PE Overview's saved column visibility, hiding
+        // the very project columns it exists to show (plus its search,
+        // sort and row selection).
         <PEBlueOwlTab
+          key="pe-overview"
+          companies={peFirmCompanies}
+          selectedFirm={peFirm}
+          firmOptions={peFirmOptions}
+          onSelectFirm={setPeFirm}
+          prospects={prospects}
+          oppsRecords={oppsRecords}
+          portfolioByPe={portfolioByPe}
+          dmNamesByCompanyId={blueOwlDmByCompanyId}
+          onSelectProspect={onSelectProspect}
+          onUpdateProspect={onUpdateProspect}
+          onAddProspect={onAddProspect}
+          onDownloadPortfolio={exportPortfolioCompanies}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'blueOwlServices' ? (
+        <PEBlueOwlTab
+          key="pe-overview-services"
+          variant="services"
           companies={peFirmCompanies}
           selectedFirm={peFirm}
           firmOptions={peFirmOptions}
@@ -2448,7 +2477,17 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
   );
 }
 
-function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
+// `variant` picks which of the two tabs this instance is rendering:
+//   'overview' — the PE Overview tab: every company column.
+//   'services' — the PE Overview - Services tab: the same columns plus
+//                the Services Sold breakdown, one column per Local
+//                Project Name. Same rows, same editing, its own saved
+//                column layout (own tableId) so widening the Services
+//                tab out to the project columns doesn't disturb the
+//                layout the user keeps on PE Overview.
+function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
+  const isServicesVariant = variant === 'services';
+  const tabLabel = isServicesVariant ? 'PE Overview - Services' : 'PE Overview';
   const firmLabel = selectedFirm.trim() || 'PE firm';
   // Strategy-tag vocabulary shared with the company popup, so a tag added
   // in either surface shows up in the other.
@@ -2650,10 +2689,10 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   // Column key per family. Prefixed and slugged so a project name with
   // punctuation (they all start with "#") can't collide with a real
   // column key or break the saved-prefs maps.
-  const projectColumns = useMemo(() => projectNames.map(name => ({
+  const projectColumns = useMemo(() => (isServicesVariant ? projectNames.map(name => ({
     name,
     key: `svcProject:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
-  })), [projectNames]);
+  })) : []), [projectNames, isServicesVariant]);
 
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
@@ -2790,14 +2829,14 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       // Sold services whose service has no Local Project Name — kept so
       // the per-project columns account for everything in Services Sold
       // rather than quietly losing the unmapped ones.
-      { key: 'svcProjectNone', label: 'No Project Name', defaultWidth: 180,
+      ...(isServicesVariant ? [{ key: 'svcProjectNone', label: 'No Project Name', defaultWidth: 180,
         renderHeader: (label) => (
           <span title="Services sold whose service has no Local Project Name set on the Dropdowns › Services tab">{label}</span>
         ),
         getSortValue: (r) => r._soldNoProject.length,
         getFilterValue: (r) => r._soldNoProject.join(', '),
         exportValue: (r) => r._soldNoProject.join(', '),
-        render: (r) => <NameListCell items={r._soldNoProject} empty="No unmapped services sold" /> },
+        render: (r) => <NameListCell items={r._soldNoProject} empty="No unmapped services sold" /> }] : []),
       { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
         getSortValue: (r) => r.servicesNotSold.length,
         getFilterValue: (r) => r.servicesNotSold.join(', '),
@@ -2994,7 +3033,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       ) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, projectColumns]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, projectColumns, isServicesVariant]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -3084,7 +3123,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
-    const ws = wb.addWorksheet(`${firmLabel} Companies`.slice(0, 31), {
+    const ws = wb.addWorksheet(`${firmLabel} ${isServicesVariant ? 'Services' : 'Companies'}`.slice(0, 31), {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ state: 'frozen', ySplit: 3 }],
     });
@@ -3100,7 +3139,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
 
     ws.mergeCells(2, 1, 2, cols.length);
     const sub = ws.getCell(2, 1);
-    sub.value = `PE Overview · ${firmLabel} · ${exportRows.length} compan${exportRows.length === 1 ? 'y' : 'ies'}`;
+    sub.value = `${tabLabel} · ${firmLabel} · ${exportRows.length} compan${exportRows.length === 1 ? 'y' : 'ies'}`;
     sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
     sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(2).height = 20;
@@ -3245,15 +3284,19 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           </div>
         ) : (
           <DataTable
-            // -10: fresh prefs key so columns added after the original
-            // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
-            // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
-            // Companies / Contacts + Decision Makers columns at -6, the
-            // PC Download + Strategies columns at -7, the Asset Types
-            // column at -9, the per-Local-Project-Name Services Sold
-            // columns at -10) aren't hidden by a saved visible-set from
-            // an older one.
-            tableId="pe-blue-owl-companies-10"
+            // Each tab keeps its own saved column layout. PE Overview
+            // stays on its existing key — the numeric suffix is bumped
+            // whenever columns are added, so a saved visible-set from an
+            // older layout can't hide them (HQ Region / Website / PE AUM
+            // at -2, Opps at -3, PC Opps at -4, the bulk-edit checkbox at
+            // -5, the PC Opp Companies / Contacts + Decision Makers
+            // columns at -6, the PC Download + Strategies columns at -7,
+            // the Asset Types column at -9, the per-Local-Project-Name
+            // Services Sold columns at -10, which then moved to the
+            // Services tab). The Services tab starts on its own key so
+            // widening it out to the project columns never disturbs the
+            // layout the user keeps on PE Overview.
+            tableId={isServicesVariant ? 'pe-overview-services-1' : 'pe-blue-owl-companies-10'}
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
@@ -3262,8 +3305,8 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
             defaultSort={{ key: 'company', direction: 'asc' }}
             enableColumnFilters
             emptyMessage={`No ${firmLabel} companies match your filters`}
-            exportFileName={`${(selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}_companies`}
-            exportPrimarySheetName={`${firmLabel} Companies`.slice(0, 31)}
+            exportFileName={`${(selectedFirm.trim() || 'pe_firm').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}_companies${isServicesVariant ? '_services' : ''}`}
+            exportPrimarySheetName={`${firmLabel} ${isServicesVariant ? 'Services' : 'Companies'}`.slice(0, 31)}
             onExport={exportSchneider}
           />
         )}
