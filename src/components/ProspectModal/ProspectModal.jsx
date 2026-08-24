@@ -3105,7 +3105,66 @@ function DivisionNode({ node, ownerId, editing, adding, picking, contacts, conta
 // No "+" control: a division added under the parent would be a SIBLING of
 // this company, and this chart doesn't draw siblings — a control whose
 // result you can't see is worse than no control.
-function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, contactsByBox, contactBook, actions }) {
+// The parent's OTHER divisions — this company's siblings. The chart is
+// drawn around this company, so they're not boxes in it (that would be the
+// parent's chart, not this one); they're listed under the parent box so a
+// division of the parent can be added, renamed or removed from here rather
+// than by opening the parent's own popup. The edits write the same
+// divisionsMap entry that popup would, so the two can't drift.
+function DivisionParentSiblings({ parent, adding, editing, actions }) {
+  const isAdding = adding === parent.id;
+  const siblings = parent.siblings || [];
+  if (!siblings.length && !isAdding) return null;
+  const btn = {
+    border: 'none', background: 'transparent', cursor: 'pointer',
+    fontFamily: 'inherit', lineHeight: 1.3, padding: 0,
+  };
+  return (
+    <div style={{
+      margin: '0.3rem auto 0', maxWidth: '13rem',
+      display: 'flex', flexDirection: 'column', gap: 2,
+      fontSize: '0.66rem', color: '#64748B', textAlign: 'left',
+    }}>
+      <div style={{ color: '#A8B2C1', fontWeight: 700 }}>
+        Also under {parent.company || 'the parent'}
+      </div>
+      {siblings.map(sib => (editing === sib.id ? (
+        <DivisionInlineInput
+          key={sib.id}
+          value={sib.company}
+          placeholder="Division name…"
+          onCommit={(text) => actions.rename(parent.id, sib.id, text)}
+          onCancel={actions.cancel}
+        />
+      ) : (
+        <div key={sib.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => actions.startEdit(sib.id)}
+            title={`Rename ${sib.company}`}
+            style={{ ...btn, color: '#475569', textAlign: 'left', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.66rem' }}
+          >{sib.company || '-'}</button>
+          <button
+            type="button"
+            onClick={() => actions.remove(parent.id, sib.id)}
+            aria-label={`Remove ${sib.company}`}
+            title={`Remove ${sib.company} from ${parent.company || 'the parent'}'s divisions`}
+            style={{ ...btn, color: '#94A3B8', fontSize: '0.7rem' }}
+          >&times;</button>
+        </div>
+      )))}
+      {isAdding && (
+        <DivisionInlineInput
+          placeholder="New division…"
+          onCommit={(text) => actions.addChild(parent.id, text)}
+          onCancel={actions.cancel}
+        />
+      )}
+    </div>
+  );
+}
+
+function DivisionParentBox({ parent, rootCompany, editing, editingId, adding, picking, contacts, contactsByBox, contactBook, actions }) {
   const btn = {
     border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer',
     fontSize: '0.8rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
@@ -3154,6 +3213,13 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
             >&times;</button>
             <button
               type="button"
+              onClick={() => actions.startAdd(parent.id)}
+              aria-label={`Add a division under ${parent.company}`}
+              title={`Add a division under ${parent.company}: another company alongside ${rootCompany}.`}
+              style={{ ...btn, position: 'absolute', top: 1, left: 2 }}
+            >+</button>
+            <button
+              type="button"
               onClick={() => actions.startPick(parent.id)}
               aria-label={`Add a contact to ${parent.company}`}
               title={`Add a contact to ${parent.company}`}
@@ -3171,6 +3237,12 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
         picking={picking === parent.id}
         actions={actions}
       />
+      <DivisionParentSiblings
+        parent={parent}
+        adding={adding}
+        editing={editingId}
+        actions={actions}
+      />
     </div>
   );
 }
@@ -3180,7 +3252,7 @@ function DivisionParentBox({ parent, rootCompany, editing, picking, contacts, co
 // Normally there's a single parent and the bus collapses to that stem;
 // more than one only happens when the mapping has it, and drawing them
 // all beats hiding an edge the user can't otherwise find to undo.
-function DivisionParents({ parents, addingParent, rootCompany, editing, picking, contacts, contactsByBox, contactBook, actions }) {
+function DivisionParents({ parents, addingParent, rootCompany, editing, adding, picking, contacts, contactsByBox, contactBook, actions }) {
   if (!parents.length && !addingParent) return null;
   return (
     <>
@@ -3191,6 +3263,8 @@ function DivisionParents({ parents, addingParent, rootCompany, editing, picking,
               parent={parent}
               rootCompany={rootCompany}
               editing={editing === parent.id}
+              editingId={editing}
+              adding={adding}
               picking={picking}
               contacts={contacts}
               contactsByBox={contactsByBox}
@@ -3231,6 +3305,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
           addingParent={addingParent}
           rootCompany={tree.company}
           editing={editing}
+          adding={adding}
           picking={picking}
           contacts={contacts}
           contactsByBox={contactsByBox}
@@ -3444,10 +3519,17 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   // saying in the tooltip so the single box doesn't read as "the parent has
   // one division".
   const parents = useMemo(
-    () => divisionParentsFor(settings, parentId, nameById).map(p => ({
-      ...p,
-      otherDivisions: Math.max(0, divisionsFor(settings, p.id).length - 1),
-    })),
+    () => divisionParentsFor(settings, parentId, nameById).map(p => {
+      // The parent's divisions other than this company. Listed under the
+      // parent box (see DivisionParentSiblings) so they can be added and
+      // maintained here; excluded by id rather than counted off the total,
+      // so the tally stays right even if this company somehow isn't in
+      // the parent's list.
+      const siblings = divisionsFor(settings, p.id)
+        .filter(d => d?.id && d.id !== parentId)
+        .map(d => ({ id: d.id, company: nameById.get(d.id) || d.company || '' }));
+      return { ...p, siblings, otherDivisions: siblings.length };
+    }),
     [settings, parentId, nameById],
   );
 
@@ -3588,7 +3670,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Click a box or ✎ to rename it · + adds a division beneath it · 👤 adds a contact ·
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
-                {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions'}
+                {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions, and its + adds another division alongside this one'}
               </p>
               {/* Says where the buckets and the nesting come from — both
                   are read off the contacts themselves (their Team Name and
