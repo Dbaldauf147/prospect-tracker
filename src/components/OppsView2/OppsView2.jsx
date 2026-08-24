@@ -5153,6 +5153,15 @@ const OPP_DETAIL_TABS = [
   { key: 'other', label: 'Other' },
 ];
 
+// Stage is the deal's headline field, so it belongs in Overview and
+// nowhere else. Matched on the normalised header rather than one exact
+// string so every label a layout might carry for it — "Stage", "Deal
+// Stage", "Sales Stage", "Opportunity Stage", "Stage Name", "Current
+// Stage", "Days in Stage" — lands in the same place instead of scattering
+// across Scope & Quote or Other. Checked ahead of the field map, so a
+// stage column can never be claimed by another tab.
+const OPP_DETAIL_STAGE_RE = /(^|\b)stage(\b|$)/;
+
 const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // Who / what / where the deal lives
   'Account': 'overview',
@@ -5207,15 +5216,24 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Reason Not Sold': 'close',
 }));
 
+// Same map keyed by the normalised header, so a saved or imported label
+// that differs only by casing or stray whitespace still finds its tab.
+const OPP_DETAIL_TAB_BY_NORM_FIELD = new Map(
+  [...OPP_DETAIL_TAB_BY_FIELD].map(([k, v]) => [k.trim().toLowerCase(), v]),
+);
+
 // Which subtab a column belongs in. Falls back to "Other" so user-added
 // and imported columns still show up somewhere.
 function oppDetailTabFor(header) {
-  const known = OPP_DETAIL_TAB_BY_FIELD.get(header);
+  const norm = String(header || '').trim().toLowerCase();
+  // Stage first: it owns the Overview slot no matter what the column is
+  // labelled, so no other bucket can pick it up.
+  if (OPP_DETAIL_STAGE_RE.test(norm)) return 'overview';
+  const known = OPP_DETAIL_TAB_BY_FIELD.get(header) || OPP_DETAIL_TAB_BY_NORM_FIELD.get(norm);
   if (known) return known;
   // "Close Year" / "Close Month" are derived from the Close Date and can
   // carry a few different labels depending on the import, so match them
   // the same loose way the auto-fill does.
-  const norm = String(header || '').trim().toLowerCase();
   if (CLOSE_YEAR_RE.test(norm) || CLOSE_MONTH_RE.test(norm)) return 'close';
   return 'other';
 }
