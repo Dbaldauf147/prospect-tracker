@@ -249,3 +249,29 @@ export function getEffectiveServiceMetadata(name, overrides) {
     graveyard: seed?.graveyard || false,
   };
 }
+
+// A service's Local Project Name (the "#SUECO" / "#DATA" family it bills
+// under), or '' when it has none. The dash is the app's blank sentinel
+// and reads as unset here, same as an empty cell.
+export function localProjectNameFor(name, overrides) {
+  const raw = String(getEffectiveServiceMetadata(name, overrides)?.localProjectName || '').trim();
+  return raw === '-' ? '' : raw;
+}
+
+// Every distinct Local Project Name in the effective catalog, sorted.
+// Drawn from the seed catalog plus any service the user has overridden
+// (which is also where a service they added themselves shows up), so a
+// project family invented on the Dropdowns tab is included. Callers use
+// this to build one column / bucket per project family.
+export function getLocalProjectNames(overrides) {
+  const names = new Set(SERVICE_CATALOG.map(s => s.name));
+  if (overrides && typeof overrides === 'object') {
+    for (const k of Object.keys(overrides)) names.add(k);
+  }
+  const projects = new Set();
+  for (const n of names) {
+    const p = localProjectNameFor(n, overrides);
+    if (p) projects.add(p);
+  }
+  return [...projects].sort((a, b) => a.localeCompare(b));
+}

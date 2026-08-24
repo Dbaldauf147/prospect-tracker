@@ -21,6 +21,7 @@ import { splitPeOwners } from '../../utils/peOwners';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
+import { getLocalProjectNames, localProjectNameFor } from '../../data/serviceCatalog';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -2633,6 +2634,27 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
   // them (the workbook the Utility Lookup page saves), and when.
   const savedAnalyses = useSavedAnalyses(companies);
 
+  // Services Sold, broken out by the service's Local Project Name — the
+  // "#SUECO" / "#DATA" family set on the Dropdowns › Services tab. One
+  // column per family (below), so a row shows which project each sold
+  // service bills under instead of one run-on list.
+  //
+  // The family list comes from the whole catalog rather than from what's
+  // on screen, so the columns don't appear and vanish as the user
+  // switches PE firm (which would churn their saved column layout).
+  const serviceOverrides = settings?.serviceOverrides;
+  const projectNames = useMemo(
+    () => getLocalProjectNames(serviceOverrides),
+    [serviceOverrides],
+  );
+  // Column key per family. Prefixed and slugged so a project name with
+  // punctuation (they all start with "#") can't collide with a real
+  // column key or break the saved-prefs maps.
+  const projectColumns = useMemo(() => projectNames.map(name => ({
+    name,
+    key: `svcProject:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+  })), [projectNames]);
+
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
     const pcCounts = pcOppCountsByCompanyId.get(p.id);
@@ -2651,9 +2673,22 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       else if (s === 'Not Sold') servicesNotSold.push(name);
       else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
     }
+    // Sold services bucketed by project family, plus a catch-all for the
+    // ones whose service has no Local Project Name set (a service the
+    // user added themselves, or a catalog row that never got one). The
+    // buckets always sum back to Services Sold — nothing is dropped.
+    const soldByProject = {};
+    const soldNoProject = [];
+    for (const name of servicesSold) {
+      const project = localProjectNameFor(name, serviceOverrides);
+      if (!project) { soldNoProject.push(name); continue; }
+      (soldByProject[project] ||= []).push(name);
+    }
     return {
       id: p.id,
       _prospect: p,
+      _soldByProject: soldByProject,
+      _soldNoProject: soldNoProject,
       _oppsTip: counts?.tip || [],
       _oppRecords: counts?.records || [],
       _pcOppsTip: pcCounts?.tip || [],
@@ -2690,7 +2725,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       _analysis: analysis,
       analysisSavedAt: analysis?.savedAt ? new Date(analysis.savedAt).getTime() || 0 : (analysis ? 1 : 0),
     };
-  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap, savedAnalyses]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap, savedAnalyses, serviceOverrides]);
 
   // Same dropdown vocabularies as Table View's inline editors, built
   // from the full prospect list so the options match exactly.
@@ -2736,6 +2771,33 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
         getFilterValue: (r) => r.servicesSold.join(', '),
         exportValue: (r) => r.servicesSold.join(', '),
         render: (r) => <NameListCell items={r.servicesSold} empty="No services sold" /> },
+      // One column per Local Project Name: the sold services that bill
+      // under that project family. Sits between Services Sold (the full
+      // list) and Services Not Sold, so the breakdown reads left to
+      // right off the roll-up it came from.
+      ...projectColumns.map(({ name, key }) => ({
+        key,
+        label: name,
+        defaultWidth: 180,
+        renderHeader: (label) => (
+          <span title={`Services sold that bill under the "${name}" Local Project Name (set per service on the Dropdowns › Services tab)`}>{label}</span>
+        ),
+        getSortValue: (r) => (r._soldByProject[name]?.length || 0),
+        getFilterValue: (r) => (r._soldByProject[name] || []).join(', '),
+        exportValue: (r) => (r._soldByProject[name] || []).join(', '),
+        render: (r) => <NameListCell items={r._soldByProject[name] || []} empty={`No ${name} services sold`} />,
+      })),
+      // Sold services whose service has no Local Project Name — kept so
+      // the per-project columns account for everything in Services Sold
+      // rather than quietly losing the unmapped ones.
+      { key: 'svcProjectNone', label: 'No Project Name', defaultWidth: 180,
+        renderHeader: (label) => (
+          <span title="Services sold whose service has no Local Project Name set on the Dropdowns › Services tab">{label}</span>
+        ),
+        getSortValue: (r) => r._soldNoProject.length,
+        getFilterValue: (r) => r._soldNoProject.join(', '),
+        exportValue: (r) => r._soldNoProject.join(', '),
+        render: (r) => <NameListCell items={r._soldNoProject} empty="No unmapped services sold" /> },
       { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
         getSortValue: (r) => r.servicesNotSold.length,
         getFilterValue: (r) => r.servicesNotSold.join(', '),
@@ -2932,7 +2994,7 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
       ) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, projectColumns]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -3183,14 +3245,15 @@ function PEBlueOwlTab({ companies, selectedFirm = '', firmOptions = [], onSelect
           </div>
         ) : (
           <DataTable
-            // -9: fresh prefs key so columns added after the original
+            // -10: fresh prefs key so columns added after the original
             // layout (HQ Region / Website / PE AUM at -2, Opps at -3,
             // PC Opps at -4, the bulk-edit checkbox at -5, the PC Opp
             // Companies / Contacts + Decision Makers columns at -6, the
             // PC Download + Strategies columns at -7, the Asset Types
-            // column at -9) aren't hidden by a saved visible-set from an
-            // older one.
-            tableId="pe-blue-owl-companies-9"
+            // column at -9, the per-Local-Project-Name Services Sold
+            // columns at -10) aren't hidden by a saved visible-set from
+            // an older one.
+            tableId="pe-blue-owl-companies-10"
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
