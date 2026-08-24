@@ -14,7 +14,7 @@ import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
 import { CalculatorTab } from './CalculatorTab';
-import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
+import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
@@ -503,19 +503,13 @@ Type a value to override.`
         // fee keeps lifting the blended margin in later years. Accumulate
         // fee / cost (and the pass-through carve-outs) year over year, then
         // apply the same pass-through-excluded formula to the running totals.
-        let cumFee = 0;
-        let cumCost = 0;
-        let cumCtsPass = 0;
-        let cumAltPass = 0;
-        const margins = grand.map((fee, i) => {
-          cumFee += fee;
-          cumCost += costs[i] || 0;
-          cumCtsPass += ctsPasses[i] || 0;
-          cumAltPass += altPasses[i] || 0;
-          const adjFee = cumFee - cumCtsPass - cumAltPass;
-          if (adjFee <= 0) return null;
-          const adjCost = cumCost - cumCtsPass;
-          return (adjFee - adjCost) / adjFee;
+        // Shared with the snapshot saved onto an Opp (see
+        // dealMarginForOption) so the two can never disagree.
+        const { marginByYear: margins } = cumulativeDealMargins({
+          feeByYear: grand,
+          costByYear: costs,
+          ctsPassByYear: ctsPasses,
+          altPassByYear: altPasses,
         });
         const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
         const hasCost = Array.isArray(costByYear);
@@ -2909,6 +2903,99 @@ export function PricingView({ settings } = {}) {
     return linkedToPassThroughDefaults[key] === true;
   }
 
+  // Linked-CTS cost for one option, split per year and with the
+  // pass-through subset carved out — the numbers behind the Alt Fee
+  // table's "Deal margin" / "Linked CTS cost" rows.
+  //
+  // Only CTS rows whose resolved Linked To matches an alt-fee tag count:
+  // an unlinked cost line has no fee to be a margin against (the table
+  // warns about those separately).
+  //
+  //   costByYear               — all linked CTS cost in that year
+  //   passThroughByYear        — the pass-through slice of it (cost side)
+  //   passThroughRevenueByYear — the same rows' revenue side, using the
+  //                              per-unit-rounded cost that actually
+  //                              lands in Total fee, so revenue less
+  //                              pass-through carries no rounding ghost
+  function optionCostBreakdown(opt) {
+    const numYears = Math.max(1, Math.ceil(termMonths / 12));
+    const zeros = () => Array.from({ length: numYears }, () => 0);
+    const passThroughByYear = zeros();
+    const passThroughRevenueByYear = zeros();
+    if (!opt) return { numYears, costByYear: zeros(), passThroughByYear, passThroughRevenueByYear };
+
+    const altRowsForOpt = altFees[opt.optionNumber] || [];
+    const altTagSet = new Set(
+      altRowsForOpt.map(r => (r.altItem || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const altRowByTag = new Map();
+    for (const r of altRowsForOpt) {
+      const k = (r.altItem || '').trim().toLowerCase();
+      if (k && !altRowByTag.has(k)) altRowByTag.set(k, r);
+    }
+    // Round the per-unit cost the same way auto-fee rounds (see
+    // autoFeePerUnitFor) and run it back through ctsItemYearCost via a
+    // shim object so the year / startMonth / escalator logic stays in
+    // one place.
+    function ctsItemPassThroughRevenue(it, yearIndex) {
+      const tag = mappingNameFor(it).trim().toLowerCase();
+      const altRow = tag ? altRowByTag.get(tag) : null;
+      const uc = altRow ? Number(altRow.unitCount) : NaN;
+      if (!altRow || !Number.isFinite(uc) || uc <= 0) {
+        return ctsItemYearCost(it, yearIndex);
+      }
+      const rounded = Math.round((it.cts / uc) * 100) / 100;
+      const shim = { ...it, cts: rounded * uc };
+      return ctsItemYearCost(shim, yearIndex);
+    }
+
+    const costByYear = Array.from({ length: numYears }, (_, yi) => {
+      let sum = 0;
+      for (const sec of (opt.sections || [])) {
+        for (const it of (sec.items || [])) {
+          const tag = mappingNameFor(it).trim().toLowerCase();
+          if (!tag || !altTagSet.has(tag)) continue;
+          const c = ctsItemYearCost(it, yi + 1);
+          sum += c;
+          if (isPassThrough(it)) {
+            passThroughByYear[yi] += c;
+            passThroughRevenueByYear[yi] += ctsItemPassThroughRevenue(it, yi + 1);
+          }
+        }
+      }
+      return sum;
+    });
+    return { numYears, costByYear, passThroughByYear, passThroughRevenueByYear };
+  }
+
+  // The option's Deal margin — the same cumulative, pass-through-net
+  // percentage the Alt Fee table's "Deal margin" row shows, with the
+  // last year's value (margin over the full term) as `finalMargin`.
+  // That's the number quoted as the deal's margin, so it rides along on
+  // the snapshot saved to an Opp.
+  //
+  // Returns nulls rather than zeros when there's nothing to divide by
+  // (no fees, or no linked CTS cost at all) — a deal with no cost side
+  // isn't a 100%-margin deal, it's a deal whose margin isn't known here.
+  function dealMarginForOption(opt) {
+    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt);
+    const rows = opt ? (altFees[opt.optionNumber] || []) : [];
+    const feeByYear = Array.from({ length: numYears }, (_, i) =>
+      rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1), 0));
+    const altPassByYear = Array.from({ length: numYears }, (_, i) =>
+      rows.reduce((s, r) => (r.passThrough ? s + altFeeYearRevenue(r, i + 1) : s), 0));
+    const hasCost = costByYear.some(v => v > 0);
+    if (!hasCost) {
+      return { marginByYear: null, finalMargin: null, termRevenue: null, termCost: null };
+    }
+    return cumulativeDealMargins({
+      feeByYear,
+      costByYear,
+      ctsPassByYear: passThroughByYear,
+      altPassByYear,
+    });
+  }
+
   // Per-row pass-through toggle. Stores an explicit boolean so the row
   // can also mute a Linked-To default (toggle off when the (Line Item,
   // Type) default is on). If the toggled value matches the default,
@@ -4569,74 +4656,23 @@ export function PricingView({ settings } = {}) {
                         for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
                         const altItemSuggestions = [...seen.values()].sort((a, b) => a.localeCompare(b));
 
-                        // Linked-CTS cost per year: every CTS row on
-                        // this option whose resolved Linked To
-                        // matches an alt-fee tag contributes its
-                        // ctsItemYearCost(year) into that year's
-                        // bucket. Used by the table's Deal-margin row
-                        // so margin = (totalFee - totalCost) / totalFee.
+                        // Linked-CTS cost per year (all of it, plus the
+                        // pass-through slice) — shared with the margin
+                        // frozen onto an Opp at "Save to Opp" time, so
+                        // the table and the snapshot can't disagree.
+                        const {
+                          numYears: numYearsLocal,
+                          costByYear,
+                          passThroughByYear,
+                          passThroughRevenueByYear,
+                        } = optionCostBreakdown(opt);
+                        // Fee tags on this option, used below to flag cost
+                        // rows that aren't linked to any fee.
                         const altTagSet = new Set(
                           (altFees[opt.optionNumber] || [])
                             .map(r => (r.altItem || '').trim().toLowerCase())
                             .filter(Boolean)
                         );
-                        const numYearsLocal = Math.max(1, Math.ceil(termMonths / 12));
-                        // Per-year cost split into all linked CTS cost
-                        // vs the pass-through subset. Pass-through cost
-                        // is also the matching revenue (pass-through
-                        // bills at face), so the Deal-margin row can
-                        // subtract it from both sides of the ratio.
-                        const passThroughByYear = Array.from({ length: numYearsLocal }, () => 0);
-                        // Revenue-side mirror of passThroughByYear used
-                        // by the "Revenue less pass-through" totals row.
-                        // For each pass-through CTS row we contribute
-                        // round(cts/uc, 2) × uc instead of the raw cts
-                        // value, where uc is the linked alt-fee row's
-                        // unit count. That matches what actually lands
-                        // in Total fee (the auto-fee per unit is rounded
-                        // to two decimals before being multiplied back
-                        // out), so revLessPass = Total fee − passRev
-                        // doesn't carry a phantom margin from per-unit
-                        // rounding.
-                        const passThroughRevenueByYear = Array.from({ length: numYearsLocal }, () => 0);
-                        const altRowsForOpt = altFees[opt.optionNumber] || [];
-                        const altRowByTag = new Map();
-                        for (const r of altRowsForOpt) {
-                          const k = (r.altItem || '').trim().toLowerCase();
-                          if (k && !altRowByTag.has(k)) altRowByTag.set(k, r);
-                        }
-                        // Round the per-unit cost the same way auto-fee
-                        // rounds (see autoFeePerUnitFor) and run it
-                        // through ctsItemYearCost via a shim object so
-                        // the year / startMonth / escalator logic stays
-                        // in one place.
-                        function ctsItemPassThroughRevenue(it, yearIndex) {
-                          const tag = mappingNameFor(it).trim().toLowerCase();
-                          const altRow = tag ? altRowByTag.get(tag) : null;
-                          const uc = altRow ? Number(altRow.unitCount) : NaN;
-                          if (!altRow || !Number.isFinite(uc) || uc <= 0) {
-                            return ctsItemYearCost(it, yearIndex);
-                          }
-                          const rounded = Math.round((it.cts / uc) * 100) / 100;
-                          const shim = { ...it, cts: rounded * uc };
-                          return ctsItemYearCost(shim, yearIndex);
-                        }
-                        const costByYear = Array.from({ length: numYearsLocal }, (_, yi) => {
-                          let sum = 0;
-                          for (const sec of opt.sections) {
-                            for (const it of sec.items) {
-                              const tag = mappingNameFor(it).trim().toLowerCase();
-                              if (!tag || !altTagSet.has(tag)) continue;
-                              const c = ctsItemYearCost(it, yi + 1);
-                              sum += c;
-                              if (isPassThrough(it)) {
-                                passThroughByYear[yi] += c;
-                                passThroughRevenueByYear[yi] += ctsItemPassThroughRevenue(it, yi + 1);
-                              }
-                            }
-                          }
-                          return sum;
-                        });
 
                         // Cost line items whose Linked To doesn't match any
                         // alt-fee tag in this section — either blank or a
@@ -4945,12 +4981,21 @@ export function PricingView({ settings } = {}) {
                   startMonth: resolvedSm,
                 };
               });
+              // Deal margin for this option, frozen in alongside the
+              // fees: the Opp view has no cost side of its own, so
+              // without this the saved option shows what the customer
+              // pays and nothing about what the deal earns.
+              const margin = dealMarginForOption(opt);
               const snapshot = buildPricingOptionSnapshot({
                 name: label,
                 years: Math.max(1, Math.round((termMonths || 12) / 12)),
                 escPct: (Number(annualEscalator) || 0) * 100,
                 services: (opt && pricingOptionServices) ? (pricingOptionServices[opt.sheetName] || []) : [],
                 rows,
+                marginByYear: margin.marginByYear,
+                finalMargin: margin.finalMargin,
+                termRevenue: margin.termRevenue,
+                termCost: margin.termCost,
               });
               // Attach a copy of the uploaded SIA workbook to this opp
               // so the Opps 2 popup can offer a download later — even

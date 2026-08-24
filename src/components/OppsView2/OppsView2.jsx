@@ -39,7 +39,7 @@ import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
-import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
+import { fmtMarginPct, fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -1358,6 +1358,16 @@ function PricingOptionSnapshotView({ snapshot }) {
   const termValues = Array.isArray(snapshot.termValues) ? snapshot.termValues : [];
   const year1Monthly = Array.isArray(snapshot.year1Monthly) ? snapshot.year1Monthly : [];
   const termYears = Math.max(1, Number(snapshot.years) || 1);
+  // Deal margin frozen in by the Pricing tab: cumulative through each
+  // year, with the term value called out as Final Margin. Snapshots
+  // saved before margin was captured — and options from the Options
+  // subtab, which has no cost side — carry none, so the column and the
+  // row drop out rather than showing an empty scaffold.
+  const marginByYear = Array.isArray(snapshot.marginByYear) ? snapshot.marginByYear : [];
+  const finalMargin = typeof snapshot.finalMargin === 'number' && Number.isFinite(snapshot.finalMargin)
+    ? snapshot.finalMargin
+    : null;
+  const hasMargin = finalMargin != null || marginByYear.some(m => typeof m === 'number' && Number.isFinite(m));
   return (
     <div style={{
       border: '1px solid var(--color-border)', borderRadius: 6,
@@ -1374,9 +1384,17 @@ function PricingOptionSnapshotView({ snapshot }) {
             {snapshot.savedAt ? ` · saved ${new Date(snapshot.savedAt).toLocaleDateString()}` : ''}
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Year 1</div>
-          <div style={{ fontWeight: 700, fontSize: '1rem' }}>{fmtMoneyWhole(snapshot.year1Total || 0)}</div>
+        <div style={{ display: 'flex', gap: '1rem', textAlign: 'right' }}>
+          <div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Year 1</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{fmtMoneyWhole(snapshot.year1Total || 0)}</div>
+          </div>
+          {finalMargin != null && (
+            <div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Final Margin</div>
+              <div style={{ fontWeight: 700, fontSize: '1rem' }}>{fmtMarginPct(finalMargin)}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1385,20 +1403,37 @@ function PricingOptionSnapshotView({ snapshot }) {
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Year breakdown</div>
           <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
             <tbody>
+              {hasMargin && (
+                <tr>
+                  <td style={{ padding: '2px 4px' }} />
+                  <td style={{ padding: '2px 4px', textAlign: 'right', color: 'var(--color-text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Value</td>
+                  <td style={{ padding: '2px 4px', textAlign: 'right', color: 'var(--color-text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Margin</td>
+                </tr>
+              )}
               {Array.from({ length: termYears }, (_, i) => (
                 <tr key={`y-${i}`}>
                   <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Year {i + 1}</td>
                   <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(yearTotals[i] || 0)}</td>
+                  {hasMargin && (
+                    <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMarginPct(marginByYear[i]) || '-'}</td>
+                  )}
                 </tr>
               ))}
               <tr style={{ borderTop: '1px solid var(--color-border)' }}>
                 <td style={{ padding: '2px 4px', fontWeight: 600 }}>Total Contract Value</td>
                 <td style={{ padding: '2px 4px', textAlign: 'right', fontWeight: 600 }}>{fmtMoneyWhole(termValues[termYears - 1] || 0)}</td>
+                {hasMargin && (
+                  <td
+                    style={{ padding: '2px 4px', textAlign: 'right', fontWeight: 600 }}
+                    title="Final Margin - the deal's cumulative margin over the full term, net of pass-through"
+                  >{fmtMarginPct(finalMargin) || '-'}</td>
+                )}
               </tr>
               {snapshot.setupTotal ? (
                 <tr>
                   <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Setup</td>
                   <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(snapshot.setupTotal)}</td>
+                  {hasMargin && <td style={{ padding: '2px 4px' }} />}
                 </tr>
               ) : null}
             </tbody>
@@ -1519,7 +1554,13 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
       }
     }
     const year1Total = Number(snapshot.year1Total) || 0;
-    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total };
+    // Deal margin over the term, frozen in by the Pricing tab. Only the
+    // SIA path can compute one, so this is null for options saved from
+    // the hand-built Options subtab and the row is skipped.
+    const finalMargin = typeof snapshot.finalMargin === 'number' && Number.isFinite(snapshot.finalMargin)
+      ? snapshot.finalMargin
+      : null;
+    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total, finalMargin };
   }, [snapshot]);
 
   // Services bundled in the saved Option. Prefer the list frozen into
@@ -1668,6 +1709,12 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                   <span>Year 1 Total <span style={{ color: '#94A3B8' }}>(quoted)</span></span>
                   <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.year1Total) || '$0'}</strong>
                 </div>
+                {snapStats.finalMargin != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>Final Margin <span style={{ color: '#94A3B8' }}>(over the term)</span></span>
+                    <strong style={{ color: '#1E293B' }}>{fmtMarginPct(snapStats.finalMargin)}</strong>
+                  </div>
+                )}
               </div>
             )}
             {snapshot && optionServices.length > 0 && (

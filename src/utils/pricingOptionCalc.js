@@ -68,6 +68,48 @@ export function rowMonthRevenue(row, month, termYears, escPct) {
   return month === startMonth ? fee * uc : 0;
 }
 
+// Cumulative "Deal margin" through each year — the exact formula the
+// Pricing page's Deal-margin row renders, factored out so the on-screen
+// table and the snapshot frozen onto an Opp can't drift apart.
+//
+// Margin is cumulative, not per-year-in-isolation: a heavy Year-1 setup
+// fee keeps lifting the blended margin in later years, so fee and cost
+// accumulate year over year before the ratio is taken. Pass-through
+// (billed at face cost, no margin) is carved out of BOTH sides so it
+// can't dilute the percentage.
+//
+//   margin(year N) = (Σfee₁..ₙ − ΣctsPass₁..ₙ − ΣaltPass₁..ₙ − (Σcost₁..ₙ − ΣctsPass₁..ₙ))
+//                    ÷ (Σfee₁..ₙ − ΣctsPass₁..ₙ − ΣaltPass₁..ₙ)
+//
+// Returns one entry per year (null where there's no billable revenue to
+// take a ratio against) plus the term totals behind the last entry.
+export function cumulativeDealMargins({ feeByYear = [], costByYear = [], ctsPassByYear = [], altPassByYear = [] } = {}) {
+  const at = (arr, i) => (Array.isArray(arr) ? Number(arr[i]) || 0 : 0);
+  let cumFee = 0;
+  let cumCost = 0;
+  let cumCtsPass = 0;
+  let cumAltPass = 0;
+  const marginByYear = feeByYear.map((fee, i) => {
+    cumFee += Number(fee) || 0;
+    cumCost += at(costByYear, i);
+    cumCtsPass += at(ctsPassByYear, i);
+    cumAltPass += at(altPassByYear, i);
+    const adjFee = cumFee - cumCtsPass - cumAltPass;
+    if (adjFee <= 0) return null;
+    const adjCost = cumCost - cumCtsPass;
+    return (adjFee - adjCost) / adjFee;
+  });
+  return {
+    marginByYear,
+    // The last year's cumulative margin IS the margin over the full
+    // term — what the Pricing page's Deal-margin row ends on, and what
+    // gets quoted as the deal's margin.
+    finalMargin: marginByYear.length ? marginByYear[marginByYear.length - 1] : null,
+    termRevenue: cumFee - cumCtsPass - cumAltPass,
+    termCost: cumCost - cumCtsPass,
+  };
+}
+
 // Freeze an Options-tab option into a self-contained snapshot the
 // Opp can render later. Includes every computed total the Options-tab
 // summary shows so the Opp view never re-does the math.
@@ -112,11 +154,50 @@ export function buildPricingOptionSnapshot(option) {
     setupTotal,
     year1Monthly,
     year1MonthlyTotal,
+    // Margin the option was quoted at, when the caller can compute it.
+    // The SIA (Pricing) path can — it knows the linked CTS cost behind
+    // every fee — and passes it in; the hand-built Options subtab has
+    // no cost side at all, so it passes nothing and the margin block
+    // simply doesn't render on the Opp.
+    marginByYear: normMargins(option?.marginByYear, termYears),
+    finalMargin: normMargin(option?.finalMargin),
+    termRevenue: normNum(option?.termRevenue),
+    termCost: normNum(option?.termCost),
     savedAt: new Date().toISOString(),
   };
+}
+
+// Snapshot field guards — a margin is a finite fraction (0.46 = 46%) or
+// null; anything else (undefined, NaN, a string) is dropped rather than
+// frozen into the snapshot as junk the Opp view would have to re-check.
+function normMargin(v) {
+  // Guard the empty-ish values Number() happily coerces to 0 — a
+  // missing margin must stay null, not read as a 0% deal.
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normMargins(list, termYears) {
+  if (!Array.isArray(list)) return null;
+  return Array.from({ length: termYears }, (_, i) => normMargin(list[i]));
 }
 
 export function fmtMoneyWhole(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+// Margin as a display percentage — one decimal, matching the Pricing
+// page's Deal-margin cells. Blank for a missing / non-numeric margin so
+// callers can render a dash instead of "NaN%".
+export function fmtMarginPct(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return `${(n * 100).toFixed(1)}%`;
 }
