@@ -460,6 +460,9 @@ const EMPTY = {
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
+  // Opts this company into the weekly acquisition-news digest
+  // (api/company-news-scheduler). Off unless explicitly ticked.
+  trackAcquisitionNews: false,
   salesPartner: '',
 };
 
@@ -6627,6 +6630,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   No
                 </label>
               </div>
+            </div>
+
+            <div>
+              <label className={styles.label}>Acquisition News</label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', padding: '0.25rem 0', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={fields.trackAcquisitionNews === true}
+                  onChange={e => set('trackAcquisitionNews', e.target.checked)}
+                  style={{ accentColor: '#7C3AED', marginTop: 2 }}
+                />
+                <span>
+                  Track acquisition news
+                  <span style={{ display: 'block', fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: 2, lineHeight: 1.3 }}>
+                    Include this company in the weekly acquisition-news email — deals it
+                    makes, and for a PE firm its portfolio add-ons too.
+                  </span>
+                </span>
+              </label>
             </div>
 
             <div className={styles.sectionHead}>Scale</div>
