@@ -342,6 +342,9 @@ function useOppsRecords(userId) {
 export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
+  // Acquisition-news digest: covers every company ticked "Track acquisition
+  // news" on its company popup, so it lives on the page rather than a tab.
+  const [newsScheduleOpen, setNewsScheduleOpen] = useState(false);
   // Which PE firm the "PE Firm" sub-tab (formerly hardcoded to Blue Owl)
   // is showing. Defaults to Blue Owl so the tab opens exactly as before;
   // the in-tab picker lets the user switch to any other firm. The last
@@ -1193,13 +1196,31 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : <>Every opportunity from the <strong>Opps</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
-        {subtab === 'portfolio' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
-            <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
-            <span>Include closed (Sold / Not Sold / Lost)</span>
-          </label>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+          {subtab === 'portfolio' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+              <span>Include closed (Sold / Not Sold / Lost)</span>
+            </label>
+          )}
+          {/* Spans every company ticked "Track acquisition news", not just
+              this tab's rows, so it sits in the page header rather than in
+              any one sub-tab's toolbar. */}
+          <button
+            type="button"
+            onClick={() => setNewsScheduleOpen(true)}
+            title={'Schedule a recurring email of acquisitions made by the companies you\'ve ticked "Track acquisition news" on'}
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#fff', color: '#7C3AED', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >📰 Acquisition news</button>
+        </div>
       </div>
+
+      <CompanyNewsScheduleModal
+        open={newsScheduleOpen}
+        onClose={() => setNewsScheduleOpen(false)}
+        uid={user?.uid}
+        prospects={prospects}
+      />
 
       {/* Sub-tab bar — Portfolio firms vs. the flat PE Opps list. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.5rem', flexShrink: 0 }}>
@@ -3684,9 +3705,6 @@ function EditableCell({ value, align, onCommit }) {
 // exists so the user can jump into the company popup.
 function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  // Acquisition-news digest: covers every company ticked "Track acquisition
-  // news" on its company popup, not just the PE opps on this tab.
-  const [newsScheduleOpen, setNewsScheduleOpen] = useState(false);
   const firmLabel = firm.trim();
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
@@ -3906,20 +3924,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
           title="Schedule a recurring email that sends this PE Opps Excel file to a list of recipients"
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: '#fff', color: '#009530', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Schedule email</button>
-        <button
-          type="button"
-          onClick={() => setNewsScheduleOpen(true)}
-          title="Schedule a recurring email of acquisitions made by the companies you've ticked &quot;Track acquisition news&quot; on"
-          style={{ padding: '0.4rem 0.8rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#fff', color: '#7C3AED', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-        >Acquisition news</button>
       </div>
-
-      <CompanyNewsScheduleModal
-        open={newsScheduleOpen}
-        onClose={() => setNewsScheduleOpen(false)}
-        uid={user?.uid}
-        prospects={prospects}
-      />
 
       <PEOppsScheduleModal
         open={scheduleOpen}
