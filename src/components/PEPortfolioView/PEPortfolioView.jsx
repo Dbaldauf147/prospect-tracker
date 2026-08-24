@@ -380,9 +380,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -421,6 +421,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
           next.add('pcDownload');
           try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
+        }
+        // One-time migration: reveal the News Feed column for users whose
+        // saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-news-feed')) {
+          next.add('newsFeed');
+          try { localStorage.setItem('pe-portfolio:cols-news-feed', '1'); } catch {}
         }
         // One-time migration: reveal the Top PC column for users whose
         // saved set predates it.
@@ -1139,6 +1145,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           cmp = rank(sa) - rank(sb);
           break;
         }
+        case 'newsFeed':
+          // Plain on/off, so tracked firms group at one end and the
+          // company-name tiebreak below orders each group.
+          cmp = Number(a.trackAcquisitionNews === true) - Number(b.trackAcquisitionNews === true);
+          break;
         case 'peStage': {
           // PE_STAGES order — the same order the Stages board lays its
           // columns out in. Unassigned ranks below every real stage, so
@@ -1387,7 +1398,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               topPc: 'Top PC', topPcAnalysis: 'Top PC Analysis', topPcStatus: 'Top PC Status',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
-              peStage: 'PE Stage',
+              peStage: 'PE Stage', newsFeed: 'News Feed',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -1454,6 +1465,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
             { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage, set in its company popup: ${PE_STAGES.join(' / ')}. Sorts in that order, with unassigned firms at one end.` },
+            { key: 'newsFeed', label: 'News Feed', align: 'center', tip: 'Yes when "Track acquisition news" is ticked on this firm\'s company popup, which includes it in the weekly acquisition-news email. Sort to group the tracked firms together.' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -1875,6 +1887,27 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
                               }}
                             >{assigned ? meta.stage : 'Unassigned'}</span>
+                          </div>
+                        );
+                      })()}
+
+                      {visibleCols.has('newsFeed') && (() => {
+                        // Mirrors the "Track acquisition news" checkbox on the
+                        // firm's company popup — the same flag the weekly
+                        // acquisition-news digest reads to pick its companies.
+                        const tracked = pe.trackAcquisitionNews === true;
+                        return (
+                          <div
+                            title={tracked
+                              ? `"${pe.company}" is included in the weekly acquisition-news email. Untick "Track acquisition news" on its company popup to stop.`
+                              : `"${pe.company}" is not in the weekly acquisition-news email. Tick "Track acquisition news" on its company popup to include it.`}
+                            style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}
+                          >
+                            {tracked ? (
+                              <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F3E8FF', border: '1px solid #DDD6FE', color: '#6D28D9' }}>Yes</span>
+                            ) : (
+                              <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
+                            )}
                           </div>
                         );
                       })()}
