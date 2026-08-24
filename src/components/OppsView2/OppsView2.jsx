@@ -7261,23 +7261,109 @@ function ktmFor(name, serviceOverrides) {
   return raw === '-' ? '' : raw;
 }
 
+// HTML-escape a value going into the copy payload. The KTM column is free
+// text, so a name with an ampersand in it would otherwise break the markup
+// Outlook receives.
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Group a deal's { name, ktm } rows by owner: one entry per KTM, each
+// carrying the services they hold on this deal.
+//
+// Grouped case-insensitively (the column is hand-typed, so the same person
+// can be spelled two ways) but displayed with the first spelling seen.
+// Owners come out in the order their first service appears in Scope, which
+// is the order the user put them in; the unassigned bucket is forced last
+// so the copied email leads with the people who actually have work.
+function groupByKtm(rows) {
+  const byKey = new Map();
+  for (const r of rows) {
+    const key = r.ktm ? r.ktm.toLowerCase() : '\u0000unassigned';
+    if (!byKey.has(key)) byKey.set(key, { ktm: r.ktm, assigned: !!r.ktm, services: [] });
+    byKey.get(key).services.push(r.name);
+  }
+  const out = [...byKey.values()];
+  out.sort((a, b) => (a.assigned === b.assigned ? 0 : a.assigned ? -1 : 1));
+  return out;
+}
+
+const KTM_UNASSIGNED_LABEL = 'No KTM named yet';
+
+// The clipboard payload: the same owner-then-bullets shape the popup shows,
+// as real <ul>/<li> markup so pasting into Outlook lands a bulleted list
+// rather than a wall of text, plus a plain-text twin for anywhere that
+// won't take HTML. Styles are inline because Outlook drops <style> blocks.
+function buildKtmCopy(groups) {
+  const html = [
+    '<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:11pt;color:#1F2937">',
+    ...groups.map(g => (
+      `<div style="font-weight:700;margin:0 0 2px">${escapeHtml(g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL)}</div>`
+      + '<ul style="margin:0 0 12px 0;padding-left:22px">'
+      + g.services.map(n => `<li style="margin:0 0 2px">${escapeHtml(n)}</li>`).join('')
+      + '</ul>'
+    )),
+    '</div>',
+  ].join('');
+  const plain = groups
+    .map(g => [g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL, ...g.services.map(n => `\u2022 ${n}`)].join('\n'))
+    .join('\n\n');
+  return { html, plain };
+}
+
 function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
-  // One row per service in Scope, in Scope order — the order the user
-  // put them in, which is the order they think about them in.
+  const [copied, setCopied] = useState(false);
+  const listRef = useRef(null);
+  // One row per service in Scope, in Scope order — the order the user put
+  // them in, which is the order they think about them in.
   const rows = useMemo(
     () => (inScope || []).map(name => ({ name, ktm: ktmFor(name, serviceOverrides) })),
     [inScope, serviceOverrides],
   );
-  const unmapped = rows.filter(r => !r.ktm).length;
+  const groups = useMemo(() => groupByKtm(rows), [rows]);
+  const unmapped = useMemo(
+    () => groups.find(g => !g.assigned)?.services.length || 0,
+    [groups],
+  );
+
+  const copy = useCallback(async () => {
+    const { html, plain } = buildKtmCopy(groups);
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([
+          new window.ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+          }),
+        ]);
+        ok = true;
+      }
+    } catch { /* fall through to execCommand */ }
+    if (!ok) {
+      // Fallback: select the rendered list and run the legacy copy, so the
+      // bullets survive even where the async clipboard isn't available.
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(listRef.current);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ok = document.execCommand('copy');
+        sel.removeAllRanges();
+      } catch { ok = false; }
+    }
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } else {
+      window.alert('Could not copy automatically: select the list below and copy with Ctrl/Cmd+C.');
+    }
+  }, [groups]);
 
   const backdropMouseDown = useRef(false);
-  const th = {
-    textAlign: 'left', padding: '0.3rem 0.5rem',
-    fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
-    color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border-light)',
-    position: 'sticky', top: 0, background: '#fff',
-  };
-  const td = { padding: '0.35rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', verticalAlign: 'top' };
 
   return (
     <div
@@ -7292,33 +7378,50 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
         style={{
-          width: 'min(680px, 94vw)', maxHeight: '88vh',
+          width: 'min(640px, 94vw)', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
         <div style={{
           padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem',
         }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
               KTM Mapping{account ? <>: {account}</> : null}
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              The KTM named against each service in this deal’s Scope, from the KTM column of
+              This deal’s services grouped under the KTM they’re named against in the KTM column of
               Dropdowns › Services. Read-only — the KTM belongs to the service, not to this deal.
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1, flexShrink: 0,
-            }}
-          >×</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            {rows.length > 0 && (
+              <button
+                type="button"
+                onClick={copy}
+                title="Copy the list as bullets under each owner’s name — pastes into Outlook as a real bulleted list"
+                style={{
+                  padding: '0.3rem 0.7rem', borderRadius: 4, cursor: 'pointer',
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+                  border: `1px solid ${copied ? '#86EFAC' : 'var(--color-border)'}`,
+                  background: copied ? '#DCFCE7' : '#fff',
+                  color: copied ? '#15803D' : 'var(--color-text)',
+                  whiteSpace: 'nowrap',
+                }}
+              >{copied ? '✓ Copied' : 'Copy'}</button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+              }}
+            >×</button>
+          </div>
         </div>
 
         <div style={{ padding: '0.85rem 1rem', overflow: 'auto' }}>
@@ -7328,28 +7431,32 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
             </div>
           ) : (
             <>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-                <thead>
-                  <tr><th style={{ ...th, width: '45%' }}>Service</th><th style={th}>KTM</th></tr>
-                </thead>
-                <tbody>
-                  {rows.map(r => (
-                    <tr key={r.name}>
-                      <td style={td}>{r.name}</td>
-                      <td style={{
-                        ...td,
-                        color: r.ktm ? 'var(--color-text)' : 'var(--color-text-muted)',
-                        fontWeight: r.ktm ? 600 : 400,
-                        wordBreak: 'break-word',
-                      }}>{r.ktm || 'Not set'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {/* Real headings + <ul> rather than a styled table, so a manual
+                  select-and-copy pastes as a bulleted list too, not just the
+                  Copy button. */}
+              <div ref={listRef} style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
+                {groups.map(g => (
+                  <div key={g.assigned ? g.ktm : '__unassigned'} style={{ marginBottom: '0.9rem' }}>
+                    <div style={{
+                      fontWeight: 700,
+                      color: g.assigned ? 'var(--color-text)' : 'var(--color-text-muted)',
+                      wordBreak: 'break-word',
+                    }}>{g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL}</div>
+                    <ul style={{ margin: '2px 0 0', paddingLeft: '1.35rem' }}>
+                      {g.services.map(n => (
+                        <li key={n} style={{ margin: '0 0 2px' }}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
               {unmapped > 0 && (
-                <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.6rem', lineHeight: 1.4 }}>
+                <div style={{
+                  fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
+                  borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
+                }}>
                   {unmapped} of {rows.length} {unmapped === 1 ? 'has' : 'have'} no KTM named yet.
-                  Set them in the KTM column on Dropdowns › Services and they’ll show here.
+                  Set them in the KTM column on Dropdowns › Services and they’ll move up into the list.
                 </div>
               )}
             </>
