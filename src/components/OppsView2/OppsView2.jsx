@@ -4908,6 +4908,46 @@ function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChan
   );
 }
 
+// The same two ticket links on the Opp details popup, where they live now.
+//
+// They aren't table columns — the record carries them as `_contractTicketUrl`
+// and `_coaTicketUrl` — so they never arrive through the header list that
+// builds the rest of the detail rows, and need their own section. Committed
+// on blur, like every other edit in that popup.
+//
+// The caller keys this by opp id: the inputs are seeded from the record on
+// mount, so without a remount the popup would keep showing the previous
+// opp's links after moving to another record.
+function OppTicketLinksSection({ opp, onFieldChange }) {
+  const [contractUrl, setContractUrl] = useState(String(opp?._contractTicketUrl ?? ''));
+  const [coaUrl, setCoaUrl] = useState(String(opp?._coaTicketUrl ?? ''));
+  const labelStyle = {
+    fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em',
+    color: 'var(--color-text-muted)', display: 'block', marginBottom: 4,
+  };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+  return (
+    <div style={{ margin: '0.25rem 0 0.75rem' }}>
+      <TicketLinksFields
+        labelStyle={labelStyle}
+        inputStyle={inputStyle}
+        contractUrl={contractUrl}
+        coaUrl={coaUrl}
+        onChangeContract={setContractUrl}
+        onChangeCoa={setCoaUrl}
+        onCommitContract={(v) => onFieldChange && onFieldChange('_contractTicketUrl', v.trim())}
+        onCommitCoa={(v) => onFieldChange && onFieldChange('_coaTicketUrl', v.trim())}
+      />
+    </div>
+  );
+}
+
 // "today" / "tomorrow" / "in 8 days" / "6 days ago" for the Follow Up date
 // shown in the status popup, so the picked day reads as a distance as well
 // as a date. Past dates are spelled out rather than folded into "today" —
@@ -4955,8 +4995,6 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
-  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
-  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -4979,7 +5017,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ followUp, status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList, contractTicket: contractTicket.trim(), coaTicket: coaTicket.trim() });
+    onSave({ followUp, status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -5109,14 +5147,6 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
               />
             </div>
           </div>
-          <TicketLinksFields
-            labelStyle={labelStyle}
-            inputStyle={inputStyle}
-            contractUrl={contractTicket}
-            coaUrl={coaTicket}
-            onChangeContract={setContractTicket}
-            onChangeCoa={setCoaTicket}
-          />
           <div>
             <label style={labelStyle}>Timelines</label>
             <TimelinesEditor
@@ -5366,12 +5396,10 @@ export function OppInfoModal({
   // within each one.
   const fieldsByTab = new Map(OPP_DETAIL_TABS.map(t => [t.key, []]));
   for (const h of orderedFields) fieldsByTab.get(oppDetailTabFor(h)).push(h);
-  // A saved Pricing Option snapshot (or a dangling link to one) is part of
-  // the quote, so it rides along in that tab — and keeps the tab available
-  // even on a record whose headers carry no quote columns.
-  const hasPricingSection = Boolean(opp._pricingOption || pricingOptionLinkName);
+  // Scope & Quote is always available: it carries the two ticket links, which
+  // every opp can have whether or not the record has any quote columns.
   const visibleTabs = OPP_DETAIL_TABS.filter(t => (
-    fieldsByTab.get(t.key).length > 0 || (t.key === 'scope' && hasPricingSection)
+    fieldsByTab.get(t.key).length > 0 || t.key === 'scope'
   ));
   // Fall back to the first available tab when the sticky choice has no
   // fields on this record (e.g. "Other" with no user-added columns).
@@ -5675,6 +5703,16 @@ export function OppInfoModal({
                 }}
               >Restore</button>
             </div>
+          )}
+          {/* Contract Service Desk + COA Approval tickets. They sit with the
+              approvals the quote has to clear (COA Approval, Credit
+              approval), which is the work they track. */}
+          {currentTab === 'scope' && (
+            <OppTicketLinksSection
+              key={opp._id}
+              opp={opp}
+              onFieldChange={onFieldChange}
+            />
           )}
           {currentTab === 'scope' && (opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
@@ -7314,8 +7352,6 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
-  const [contractTicket, setContractTicket] = useState(String(opp?._contractTicketUrl ?? ''));
-  const [coaTicket, setCoaTicket] = useState(String(opp?._coaTicketUrl ?? ''));
 
   // Shared with FollowUpStatusModal so the Notes editor renders its fields
   // with the same label / input chrome as the Update Status popup.
@@ -7455,17 +7491,6 @@ function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides
               />
             </div>
           </div>
-
-          <TicketLinksFields
-            labelStyle={labelStyle}
-            inputStyle={inputStyle}
-            contractUrl={contractTicket}
-            coaUrl={coaTicket}
-            onChangeContract={setContractTicket}
-            onChangeCoa={setCoaTicket}
-            onCommitContract={(v) => updateOppField(opp._id, '_contractTicketUrl', v.trim())}
-            onCommitCoa={(v) => updateOppField(opp._id, '_coaTicketUrl', v.trim())}
-          />
 
           <div>
             <label style={labelStyle}>Timelines</label>
@@ -11481,7 +11506,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             settings={settings}
             updateOppField={updateOppField}
             prevFollowUp={followUpStatusPrev?.hadFollowUp ? followUpStatusPrev.followUp : ''}
-            onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines, contractTicket, coaTicket }) => {
+            onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines }) => {
               // A Follow Up date corrected inside the popup. Written with
               // skipFollowUpPrompt so saving the new date doesn't immediately
               // re-open this same popup for the date it just set.
@@ -11512,12 +11537,6 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
                 updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
-              }
-              if ((contractTicket || '') !== String(opp._contractTicketUrl ?? '')) {
-                updateOppField(opp._id, '_contractTicketUrl', contractTicket || '');
-              }
-              if ((coaTicket || '') !== String(opp._coaTicketUrl ?? '')) {
-                updateOppField(opp._id, '_coaTicketUrl', coaTicket || '');
               }
               setFollowUpStatusPromptId(null);
               setFollowUpStatusPrev(null);
