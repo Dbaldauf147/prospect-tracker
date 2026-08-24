@@ -35,6 +35,7 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'rolloutTime',      label: 'Rollout Time (weeks)', width: 190, editable: true  },
   { key: 'dependsOn',        label: 'Dependent Rollout Services', width: 260, editable: true },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
+  { key: 'ktm',              label: 'KTM',               width: 150,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
   // alwaysVisible), which also means it needs no reveal migration for users
   // who already have a saved column set.
@@ -48,6 +49,7 @@ const SERVICE_TABLE_COLUMNS = [
 const SERVICES_LATE_COLUMNS = [
   { key: 'sme',       flag: 'servicesSmeColumnRevealed' },
   { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
+  { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
 ];
 
 // Clicking a Services row opens its detail popup, so every editor inside a
@@ -1045,7 +1047,7 @@ export function DropdownsView({ settings, updateSettings }) {
     return visible.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1104,6 +1106,7 @@ export function DropdownsView({ settings, updateSettings }) {
     rolloutTime: meta?.rolloutTime || '',
     dependsOn: meta?.dependsOn || '',
     sme: meta?.sme || '',
+    ktm: meta?.ktm || '',
     _url: serviceLinks[name] || '',
     _muted: !!meta?.graveyard,
     _hidden: hiddenServices.has(name),

@@ -223,7 +223,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
-      timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '',
+      timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '', ktm: '',
     };
   }
   return {
@@ -243,6 +243,9 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // Free text: the Schneider subject-matter expert for this service. No
     // seed value — it's whoever the user names on the Services tab.
     sme:              override?.sme              ?? seed?.sme              ?? '',
+    // Free text, same as SME and with no seed value: whatever the user
+    // records as this service's KTM on the Services tab.
+    ktm:              override?.ktm              ?? seed?.ktm              ?? '',
     graveyard: seed?.graveyard || false,
   };
 }
