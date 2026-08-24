@@ -37,6 +37,7 @@ import {
 } from '../../utils/opps2Store';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
+import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMarginPct, fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
@@ -78,7 +79,6 @@ import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import {
   TRACKED_STAGES,
   TRACKED_STAGES_SET,
-  PULL_THROUGH_RE,
   stageActionFor,
   stageBandEnteredISO,
   buildStageDaysRows,
@@ -355,9 +355,10 @@ function findChanceColumn(headers, row) {
 
 // Days-in-Stage constants + board live in ./daysInStage so the PE
 // Portfolio page can render the identical board over its PE-scoped opps.
-// TRACKED_STAGES, TRACKED_STAGES_SET, PULL_THROUGH_RE, stageActionFor,
-// buildStageDaysRows, groupStageDaysByStage, and StageDaysBoard are
-// imported at the top of the file.
+// TRACKED_STAGES, TRACKED_STAGES_SET, stageActionFor, buildStageDaysRows,
+// groupStageDaysByStage, and StageDaysBoard are imported at the top of
+// the file; the pull-through test the board shares with PipelineView's
+// close rates lives in utils/pullThrough.
 
 // Closed (won/lost) stages — an opp in one of these is no longer active.
 // Mirrors the in-component CLOSED_STAGES used by the activity filter.
@@ -378,7 +379,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
-  'Target Signature Date'];
+  'Target Signature Date', PULL_THROUGH_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -812,6 +813,11 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverr
   // whose services haven't been picked yet.
   if (typeof seeds?.scope === 'string' && seeds.scope.trim()) row['Scope'] = seeds.scope.trim();
   if (typeof seeds?.notes === 'string' && seeds.notes.trim()) row['Notes'] = seeds.notes.trim();
+  // The New Opp modal's pull-through toggle. Written as an explicit
+  // "Yes" (not left to the Scope text) so the answer holds even for a
+  // scope that doesn't name a "… - pull through" service — and set
+  // unconditionally, so it sticks when the column is hidden.
+  if (seeds?.pullThrough) row[PULL_THROUGH_COLUMN] = 'Yes';
   // Seed the Next Steps column with the prompt the user always types
   // first. Set unconditionally — even if a column was hidden via the
   // columns toggle the value sticks around for when it's unhidden later.
@@ -1113,7 +1119,7 @@ function oppStageStall(row) {
   const stage = String(row?.['Stage'] || '').trim();
   if (!TRACKED_STAGES_SET.has(stage)) return null;
   if (resolveCallIn(row) == null) return null;
-  if (PULL_THROUGH_RE.test(String(row?.['Scope'] || ''))) return null;
+  if (isPullThroughOpp(row)) return null;
   const enteredISO = stageBandEnteredISO(row);
   const days = enteredISO ? -daysFromToday(enteredISO) : null;
   const rule = stageActionFor(stage, days);
@@ -1209,6 +1215,100 @@ function TristateCheckCell({ value, onChange, title }) {
       }}
     >{glyph}</span>
   );
+}
+
+// Pull-through toggle, shared by the "Pull Through" column, the opp
+// details popup and the New Opp modal.
+//
+// `on` is the *resolved* answer from isPullThroughOpp — the opp's own
+// explicit value when it has one, the Scope text otherwise — so an opp
+// scoped to a catalogue service like "Tax Matrix - pull through" shows
+// as on without anyone having ticked it. Clicking always writes an
+// explicit Yes/No, which is what lets a mixed scope ("GHG, Tax Matrix -
+// pull through") be kept as a real opportunity.
+//
+// Amber rather than the tri-state cells' green/red: this isn't a fact
+// about the deal the user is recording, it's a decision to leave the
+// opp out of their numbers.
+function PullThroughToggle({ on, onChange, variant = 'box', title }) {
+  const editable = typeof onChange === 'function';
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (editable) onChange(!on);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(e); }
+  };
+  const fg = on ? '#92400E' : 'var(--color-text-muted)';
+  const bg = on ? '#FEF3C7' : '#fff';
+  const border = on ? '#FCD34D' : 'var(--color-border)';
+  if (variant === 'box') {
+    return (
+      <span
+        role="checkbox"
+        aria-checked={on}
+        aria-label="Pull-through"
+        tabIndex={editable ? 0 : -1}
+        onClick={toggle}
+        onKeyDown={onKeyDown}
+        title={title}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 20, height: 20, lineHeight: 1,
+          border: `1px solid ${border}`, borderRadius: 3,
+          background: bg, color: fg, cursor: editable ? 'pointer' : 'default',
+          fontWeight: 700, fontSize: '0.95em', userSelect: 'none',
+        }}
+      >{on ? '\u21B3' : ''}</span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={on}
+      disabled={!editable}
+      title={title}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 7,
+        padding: '0.35rem 0.7rem',
+        border: `1px solid ${border}`, borderRadius: 999,
+        background: bg, color: on ? fg : 'var(--color-text)',
+        fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+        cursor: editable ? 'pointer' : 'default',
+      }}
+    >
+      {/* Decorative: aria-pressed already carries the state, and letting
+          the glyph into the accessible name would rename the button
+          every time it's toggled. */}
+      <span aria-hidden="true" style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 14, height: 14, borderRadius: 3,
+        border: `1px solid ${on ? '#D97706' : 'var(--color-border)'}`,
+        background: on ? '#F59E0B' : '#fff', color: '#fff',
+        fontSize: '0.62rem', lineHeight: 1,
+      }}>{on ? '\u21B3' : ''}</span>
+      Pull-through
+    </button>
+  );
+}
+
+// The tooltip / helper wording for a pull-through toggle, given the
+// resolved state and where it came from. One place so the column, the
+// details popup and the modal all explain the same thing.
+function pullThroughHint(on, source) {
+  if (!on) {
+    return 'Counts as a real opportunity. Click to mark it a pull-through '
+      + '\u2014 it then stays out of every close rate, the % not quoted table '
+      + 'and the Days-in-Stage board.';
+  }
+  const why = source === 'scope'
+    ? 'Pull-through, read from the Scope text. '
+    : 'Pull-through. ';
+  return why
+    + 'It rides along with a parent sale, so it stays out of every close rate, '
+    + 'the % not quoted table and the Days-in-Stage board. Click to count it '
+    + 'as a real opportunity instead.';
 }
 
 // Read-only cell for a column whose value is derived from another cell.
@@ -3063,6 +3163,14 @@ function NewOppModal({
   const [notes, setNotes] = useState('');
   const [scopeOpen, setScopeOpen] = useState(false);
   const scopeServices = useMemo(() => parseMulti(scope), [scope]);
+  // Pull-through: this opp rides along with a parent sale, so it's kept
+  // out of the close rates and the Days-in-Stage board. Seeded from the
+  // Scope the moment the picked services imply it, so the common case
+  // (picking "Tax Matrix - pull through") needs no second click — the
+  // toggle then just confirms what the user can already see.
+  const [pullThroughEdit, setPullThroughEdit] = useState(null);
+  const scopeSaysPullThrough = useMemo(() => isPullThroughOpp({ Scope: scope }), [scope]);
+  const pullThrough = pullThroughEdit == null ? scopeSaysPullThrough : pullThroughEdit;
   // Deferred create. Off by default — the modal still commits the row
   // straight away unless the user asks for a date. The date defaults to
   // tomorrow so switching it on is immediately meaningful; the time is
@@ -3184,6 +3292,7 @@ function NewOppModal({
       type: type.trim(),
       scope,
       notes: notes.trim(),
+      pullThrough,
       frameworks,
       frameworksEdited,
       addToTableView: willAddCompany,
@@ -3452,6 +3561,19 @@ function NewOppModal({
                   }}>{s}</span>
                 ))}
             </button>
+            <div style={{ marginTop: 8 }}>
+              <PullThroughToggle
+                variant="pill"
+                on={pullThrough}
+                onChange={setPullThroughEdit}
+                title={pullThroughHint(pullThrough, pullThrough && pullThroughEdit == null ? 'scope' : 'flag')}
+              />
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                {pullThrough
+                  ? <>Rides along with a parent sale{pullThroughEdit == null ? <> (the services picked above say so)</> : null} — this opp is left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
+                  : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
+              </div>
+            </div>
           </div>
 
           <div>
@@ -3607,6 +3729,7 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
   // shown as one muted line so the row stays scannable.
   const detailLine = (e) => [
     e.scope && `Services: ${parseMulti(e.scope).join(', ')}`,
+    e.pullThrough && 'Pull-through',
     e.source && `Source: ${e.source}`,
     e.peOwner && `PE Owner: ${e.peOwner}`,
     e.type && `Type: ${e.type}`,
@@ -5231,6 +5354,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Quoted Amount': 'scope',
   'USD?': 'scope',
   'Pricing Option': 'scope',
+  'Pull Through': 'scope',
   'Quoted On': 'scope',
   'Quoted Date': 'scope',
   'Chance?': 'scope',
@@ -5420,6 +5544,30 @@ export function OppInfoModal({
           value={linkedName || snapName}
           onClear={linkedName ? () => setOppOptionLink(opp._id, '') : undefined}
         />
+      );
+    }
+    // Pull-through gets the full labelled toggle plus a line saying what
+    // the current state actually does — the bare box the column shows is
+    // too terse for the one place the user goes to understand an opp.
+    // Rendered ahead of the read-only fallback so it still shows the
+    // resolved state (just not clickable) in a modal without an editor.
+    if (h === PULL_THROUGH_COLUMN) {
+      const on = isPullThroughOpp(opp);
+      const source = pullThroughSource(opp);
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
+          <PullThroughToggle
+            variant="pill"
+            on={on}
+            onChange={onFieldChange ? (next) => onFieldChange(h, next ? 'Yes' : 'No') : undefined}
+            title={pullThroughHint(on, source)}
+          />
+          <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+            {on
+              ? <>Rides along with a parent sale{source === 'scope' ? <> (read from the Scope text)</> : null} — left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
+              : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
+          </span>
+        </div>
       );
     }
     // Sourced from the matching Table View company, independent of the
@@ -8764,7 +8912,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // out of the modal's onCreate so a scheduled opp replays the identical
   // flow when its due time arrives — the deferred path isn't a
   // second, thinner version of the create.
-  const applyNewOpp = useCallback(({ company, source, peOwner, type, scope, notes, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
+  const applyNewOpp = useCallback(({ company, source, peOwner, type, scope, notes, pullThrough, frameworks, frameworksEdited, addToTableView, hqRegion }) => {
     // Create the company on Table View first (when requested and
     // it isn't there yet) so the new opp's Account immediately
     // resolves to a real prospect record. addProspect is
@@ -8795,7 +8943,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         }
       }
     }
-    addNewOpp(company, source, peOwner, { scope, notes });
+    addNewOpp(company, source, peOwner, { scope, notes, pullThrough });
   }, [addProspect, updateProspect, prospects, addNewOpp]);
 
   // ---- Scheduled opps ---------------------------------------------
@@ -8827,6 +8975,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       type: payload.type,
       scope: payload.scope,
       notes: payload.notes,
+      pullThrough: payload.pullThrough,
       frameworks: payload.frameworks,
       frameworksEdited: payload.frameworksEdited,
       addToTableView: payload.addToTableView,
@@ -9719,7 +9868,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .map(h => ({
         key: h,
         label: headerLabel(h),
-        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) ? 90 : h.length > 20 ? 160 : 120,
+        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) || h === PULL_THROUGH_COLUMN ? 90 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
         // filled in directly. getFilterValue exposes the raw text to
@@ -9808,6 +9957,19 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 title={`${h}: blank → ✓ → ✗ → blank`}
+              />
+            );
+          }
+          if (h === PULL_THROUGH_COLUMN) {
+            // Resolved, so an opp scoped to a "… - pull through" service
+            // reads as on without anyone having ticked it. Either way a
+            // click writes an explicit answer that outranks the Scope.
+            const on = isPullThroughOpp(row);
+            return (
+              <PullThroughToggle
+                on={on}
+                onChange={(next) => updateOppField(row._id, h, next ? 'Yes' : 'No')}
+                title={pullThroughHint(on, pullThroughSource(row))}
               />
             );
           }

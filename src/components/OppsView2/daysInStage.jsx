@@ -5,6 +5,7 @@
 // one focused module. Operates on Opps 2 rows (which carry
 // `_stageEnteredAt`, `_stageHistory`, `Stage`, `Scope`, `Follow Up`, …).
 import { toISODate, formatDateDisplay, daysFromToday, resolveCallIn } from '../../utils/oppsCallIn';
+import { isPullThroughOpp } from '../../utils/pullThrough';
 
 // Stages the Days-in-Stage board reports on. Ordered to mirror the
 // pipeline progression so a row stays under one bucket as it moves
@@ -72,11 +73,6 @@ export const STAGE_ACTION_THRESHOLDS = {
   'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
 };
 
-// Pull-through opps ride along with a parent sale rather than running
-// their own pipeline, so they're excluded from the Days-in-Stage board.
-// Matched on the Scope text, mirroring PipelineView's close-rate filter.
-export const PULL_THROUGH_RE = /pull[\s-]?through/i;
-
 // The stage-action rule an opp has tripped, or null if it's within the
 // limit (or its stage has no limit). Shared by the board so flagged opps
 // render inline with their suggestion instead of in a separate list.
@@ -102,7 +98,7 @@ export function buildStageDaysRows(records) {
     const stage = String(r['Stage'] || '').trim();
     if (!TRACKED_STAGES_SET.has(stage)) continue;
     if (resolveCallIn(r) == null) continue;
-    if (PULL_THROUGH_RE.test(String(r['Scope'] || ''))) continue;
+    if (isPullThroughOpp(r)) continue;
     const enteredISO = stageBandEnteredISO(r);
     const days = enteredISO ? -daysFromToday(enteredISO) : null;
     const scope = String(r['Scope'] ?? '').trim();

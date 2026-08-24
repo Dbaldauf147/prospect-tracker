@@ -49,6 +49,10 @@ export function normalizeScheduledOpps(stored) {
       // both replayed onto the row when the entry fires.
       scope: String(e.scope || ''),
       notes: String(e.notes || ''),
+      // The New Opp modal's pull-through toggle, replayed onto the row
+      // when the entry fires so a deferred opp lands with the same
+      // answer the user gave when they queued it.
+      pullThrough: !!e.pullThrough,
       frameworks: Array.isArray(e.frameworks) ? e.frameworks : [],
       frameworksEdited: !!e.frameworksEdited,
       addToTableView: !!e.addToTableView,
