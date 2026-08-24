@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { collection, writeBatch, doc, getDocs } from 'firebase/firestore';
+import { collection, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { usesSharedProspects } from '../utils/firestoreSync';
+import { newSheetRows } from '../utils/sheetSyncDiff';
 import { userLsGet, userLsSet } from '../utils/userLs';
 
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
@@ -110,13 +112,43 @@ function parseProspectsFromCsv(csvText) {
   return prospects;
 }
 
-export function useSheetSync(user) {
+// Additive-only import from the configured Google Sheet, on a timer.
+//
+// `prospects` is the live roster the app already subscribes to, and
+// `prospectsLoaded` says that subscription has delivered. This used to
+// re-read the whole `prospects` collection from Firestore on every tick
+// purely to build the "which companies do we already have" map — a full
+// collection read every 5 minutes, per open tab, forever, whether or not
+// the sheet had changed. On a few hundred prospects that is six figures
+// of reads a day and it exhausts the project's Firestore quota, at which
+// point every read in the app starts coming back RESOURCE_EXHAUSTED. The
+// subscription already holds the same rows, so the map is built from
+// memory and the tick costs nothing until there is genuinely a new row
+// to write.
+export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
   const syncingRef = useRef(false);
+  // Read through refs so the effect keeps its [user] dependency: adding
+  // `prospects` to the deps would tear down and re-arm the timer on every
+  // roster change, and re-run the sync on each one.
+  const prospectsRef = useRef(prospects);
+  prospectsRef.current = prospects;
+  const loadedRef = useRef(prospectsLoaded);
+  loadedRef.current = prospectsLoaded;
 
   useEffect(() => {
     if (!user) return;
 
     async function autoSync() {
+      // The roster hasn't arrived yet: every sheet row would look new and
+      // the import would re-add the entire sheet as duplicates.
+      if (!loadedRef.current) return;
+      // The import writes into the shared `prospects` collection, so it only
+      // makes sense for the account whose roster IS that collection. On a
+      // per-user roster the two are different collections, and diffing one
+      // against the other would read every sheet row as missing. (Before,
+      // this was decided by the security rules rejecting the read.)
+      if (!usesSharedProspects()) return;
+
       const settings = loadSettings();
       const sheetsUrl = settings.sheetsUrl;
       if (!sheetsUrl) return; // No sheet configured
@@ -147,38 +179,27 @@ export function useSheetSync(user) {
         const sheetProspects = parseProspectsFromCsv(csvText);
         if (sheetProspects.length === 0) return;
 
-        // Get existing Firestore data
-        const existing = await getDocs(collection(db, 'prospects'));
-        const existingMap = new Map();
-        for (const d of existing.docs) {
-          existingMap.set((d.data().company || '').toLowerCase(), d);
+        const roster = prospectsRef.current || [];
+        const fresh = newSheetRows(sheetProspects, roster);
+
+        // Nothing new — the steady state, most of the time. Stop here so a
+        // tick against an unchanged sheet costs no Firestore I/O at all.
+        if (fresh.length === 0) {
+          userLsSet(LAST_AUTO_SYNC_KEY, String(Date.now()));
+          return;
         }
 
-        // Import mode: ADDITIVE-ONLY. Existing Table View rows are never
-        // overwritten from the sheet. Only rows whose company is not yet in
-        // the website are added. This prevents Google Sheets from ever
-        // clobbering website data.
-        let added = 0, skipped = 0;
-        for (let i = 0; i < sheetProspects.length; i += 450) {
+        for (let i = 0; i < fresh.length; i += 450) {
           const batch = writeBatch(db);
-          const chunk = sheetProspects.slice(i, i + 450);
-          let inBatch = 0;
-          for (const p of chunk) {
-            const key = (p.company || '').toLowerCase();
-            if (existingMap.has(key)) {
-              skipped++;
-              continue;
-            }
+          for (const p of fresh.slice(i, i + 450)) {
             const ref = doc(collection(db, 'prospects'));
             batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-            added++;
-            inBatch++;
           }
-          if (inBatch > 0) await batch.commit();
+          await batch.commit();
         }
 
         userLsSet(LAST_AUTO_SYNC_KEY, String(Date.now()));
-        console.log(`Auto-sync from Google Sheets (additive-only): ${added} added, ${skipped} existing rows preserved`);
+        console.log(`Auto-sync from Google Sheets (additive-only): ${fresh.length} added, ${sheetProspects.length - fresh.length} existing rows preserved`);
       } catch (err) {
         console.error('Auto-sync error:', err);
       } finally {

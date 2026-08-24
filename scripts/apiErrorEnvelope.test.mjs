@@ -80,6 +80,29 @@ console.error = () => {};
 }
 
 {
+  // The condition behind the acquisition-news modal's 500: Firestore
+  // refusing every read because the project is out of quota. "Quota
+  // exceeded." alone reads like a fault in the route that reported it.
+  const err = new Error('8 RESOURCE_EXHAUSTED: Quota exceeded.');
+  err.code = 8;
+  const res = fakeRes();
+  failWith(res, err, '/api/company-news-schedules');
+  eq(res.body.error.startsWith('8 RESOURCE_EXHAUSTED: Quota exceeded.'), true, 'the raw Firestore message is kept');
+  eq(res.body.error.includes('project-wide'), true, 'and says the quota is the project\'s, not this feature\'s');
+  eq(res.body.error.includes('midnight US Pacific'), true, 'and when the free-tier allowance comes back');
+}
+
+{
+  // An error the hints say nothing about is passed through untouched —
+  // no invented advice.
+  const err = new Error('9 FAILED_PRECONDITION: The query requires an index.');
+  err.code = 9;
+  const res = fakeRes();
+  failWith(res, err, '/api/company-news-schedules');
+  eq(res.body.error, '9 FAILED_PRECONDITION: The query requires an index.', 'an uncatalogued code gets no invented hint');
+}
+
+{
   // Handlers throw non-Errors too (a rejected string, a thrown object).
   const res = fakeRes();
   failWith(res, 'plain string failure', '/api/whatever');

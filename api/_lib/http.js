@@ -105,6 +105,17 @@ export function isAdminEmail(email) {
   return String(email || '').trim().toLowerCase() === ADMIN_EMAIL;
 }
 
+// gRPC status codes the Firestore admin SDK throws for conditions that
+// are about the project rather than the request. The raw message for
+// these says what happened but not what to do about it — "Quota
+// exceeded." reads like a bug in the route that reported it.
+const FIRESTORE_HINTS = {
+  4: 'Firestore took too long to answer. Usually transient — try again.',
+  7: "Firestore refused the request. The server's service account is missing access to this data.",
+  8: 'The Firebase project is out of Firestore quota, so every read is being refused — this is project-wide, not specific to this feature. On the free (Spark) plan the daily allowance resets at midnight US Pacific; a project that keeps hitting it needs fewer reads or the Blaze plan.',
+  14: 'Firestore was unreachable. Usually transient — try again.',
+};
+
 /**
  * Answer a thrown error as JSON.
  *
@@ -118,8 +129,10 @@ export function isAdminEmail(email) {
  * someone entitled to it.
  */
 export function failWith(res, err, label) {
-  const detail = String(err?.message || err || 'Unknown error');
+  let detail = String(err?.message || err || 'Unknown error');
   const code = err?.code ? String(err.code) : null;
+  const hint = FIRESTORE_HINTS[err?.code];
+  if (hint) detail = `${detail} ${hint}`;
   console.error(`${label || 'handler'} failed:`, code || '', detail, err?.stack || '');
   // A response already on the wire is the handler's own answer: replacing
   // it would throw again, on top of a reply the client has.

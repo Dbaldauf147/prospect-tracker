@@ -81,6 +81,14 @@ export function setProspectsUser(uid, email) {
   _useShared = (email === 'baldaufdan@gmail.com');
 }
 
+// True when this session's prospects live in the shared collection (the
+// admin account) rather than a per-user one. Callers that write into
+// `prospects` directly need to know which roster they are comparing
+// against — see useSheetSync.
+export function usesSharedProspects() {
+  return _useShared;
+}
+
 function getCol() {
   if (_useShared) return collection(db, SHARED_COL);
   if (_userId) return collection(db, 'users', _userId, 'prospects');

@@ -126,7 +126,9 @@ function App() {
   // Same guard for the targeted-services step: an empty roster yields no
   // coverage rows, which would read as "every service is at 100%".
   const prospectingServiceGaps = dataLoading ? null : serviceGaps;
-  useSheetSync(user);
+  // The roster is passed in so the sheet import can diff against what the
+  // app already has, instead of re-reading the whole collection on a timer.
+  useSheetSync(user, prospects, !dataLoading);
   // Pull new Granola calls hourly from wherever the user is. It lives here
   // rather than on the Call Recordings page because that page is lazily
   // mounted — a sync tied to it only ran while it was open, so a morning
