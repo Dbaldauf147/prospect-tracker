@@ -20,7 +20,7 @@
 //
 // The server has always treated them as one tag (api/hubspot.js dansTagKey),
 // and so has the bulk picker — these tests hold the writer to the same rule.
-import { tagKey, dedupeTags, planTagEdit } from '../src/utils/contactTagReview.js';
+import { tagKey, dedupeTags, planTagEdit, groupTagWrites, recordForVerdict, recordKeepsTag } from '../src/utils/contactTagReview.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -129,6 +129,64 @@ function eq(actual, expected, name) {
     'reported case: the write keeps the tags the contact already had');
   eq(out[3].tags, 'Efficiency/Renewables',
     'reported case: an untagged contact gets just the new tag');
+}
+
+// ── The bulk "Mark …" actions ────────────────────────────────────────────
+// A mark records an answer AND moves the HubSpot tag. Which way it moves is
+// read off the record the mark leaves behind, per contact — not off one
+// direction picked for the whole batch. Yes is the reason: it turns the tag
+// on for everyone except a contact already held off by a Not sold, who
+// records the Yes and keeps the tag off. That hold-off is the whole point,
+// and a batch-wide "Yes means add" would quietly undo it.
+{
+  const after = (stored, verdict) => recordKeepsTag(recordForVerdict(stored, verdict));
+
+  eq(after(undefined, 'yes'), true, 'Mark Yes on an unanswered tag turns the tag on');
+  eq(after({ answer: 'no', status: '' }, 'yes'), true, 'Mark Yes over a No turns the tag on');
+  eq(after({ answer: '', status: 'notsold' }, 'yes'), false,
+    'Mark Yes over a Not sold keeps the tag OFF — the hold-off stands');
+  eq(recordForVerdict({ answer: '', status: 'notsold' }, 'yes'),
+    { answer: 'yes', status: 'notsold' },
+    'Mark Yes over a Not sold still records the Yes: theirs, not bought yet');
+
+  // The existing marks are unchanged by reading the record instead of a
+  // fixed direction — they were always uniform.
+  eq([after(undefined, 'sold'), after({ answer: 'yes', status: '' }, 'sold')], [true, true],
+    'Mark Sold turns the tag on, whatever was there');
+  eq([after(undefined, 'no'), after(undefined, 'unsure'), after(undefined, 'notsold')],
+    [false, false, false],
+    'Mark No / Not sure / Not sold all take the tag off');
+  eq(after({ answer: 'yes', status: '' }, 'notsold'), false,
+    'Mark Not sold over a Yes takes the tag off, and the Yes survives in the record');
+}
+
+// ── groupTagWrites ───────────────────────────────────────────────────────
+{
+  // The ordinary case: everyone wants the same thing, so it's one write.
+  const same = new Map([
+    ['1', { on: ['ESG'], off: [] }],
+    ['2', { on: ['ESG'], off: [] }],
+  ]);
+  eq(groupTagWrites(['1', '2'], same),
+    [{ mode: 'add', tags: ['ESG'], ids: ['1', '2'] }],
+    'contacts wanting the same change go out as one write');
+
+  // Mark Yes across a batch where one contact is held off.
+  const mixed = new Map([
+    ['1', { on: ['ESG'], off: [] }],
+    ['2', { on: [], off: ['ESG'] }],   // held off by a Not sold
+    ['3', { on: ['ESG'], off: [] }],
+  ]);
+  eq(groupTagWrites(['1', '2', '3'], mixed),
+    [{ mode: 'add', tags: ['ESG'], ids: ['1', '3'] },
+     { mode: 'remove', tags: ['ESG'], ids: ['2'] }],
+    'a held-off contact is split out instead of being tagged with the rest');
+
+  eq(groupTagWrites(['1'], new Map([['1', { on: [], off: [] }]])), [],
+    'a contact wanting nothing produces no write at all');
+
+  eq(groupTagWrites(['9'], new Map()), [],
+    'an id with no plan produces no write');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -107,6 +107,31 @@ export function planTagEdit(mode, chosenTags, current) {
   return { action: 'write', tags };
 }
 
+// The tag writes a bulk "Mark …" implies, as few calls as they'll fit in.
+//
+// `wanted` says, per contact, which of the chosen tags they should end up
+// carrying (`on`) and which they shouldn't (`off`) — read off the record the
+// mark leaves behind, not off one direction chosen for the whole batch. Yes
+// is why: it puts the tag on for everyone except a contact already held off
+// by a Not sold, who records the Yes and keeps the tag off.
+//
+// Contacts asking for the same change go out together, so the ordinary case —
+// every contact wanting the same thing — is still a single write. A group
+// asking for no tags at all is dropped rather than sent as an empty one.
+export function groupTagWrites(ids, wanted) {
+  const runs = new Map();
+  for (const id of (ids || [])) {
+    const want = wanted?.get(String(id)) || { on: [], off: [] };
+    for (const [mode, list] of [['add', want.on], ['remove', want.off]]) {
+      if (!list || list.length === 0) continue;
+      const key = `${mode}:${list.join(';')}`;
+      if (!runs.has(key)) runs.set(key, { mode, tags: list, ids: [] });
+      runs.get(key).ids.push(id);
+    }
+  }
+  return [...runs.values()];
+}
+
 // Tags left out of the score. Hide and Left decide whether a contact appears
 // at all and Test is a scratch value — none of them says anything about who
 // the person is, so counting them would cap the figure for reasons unrelated
