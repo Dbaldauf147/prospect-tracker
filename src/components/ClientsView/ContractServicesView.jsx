@@ -369,12 +369,27 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     setFiles(prev => prev.filter((_, i) => i !== idx));
     setApplyNote('');
   }
+  // Clear ends the review, so everything the review put on screen goes with
+  // it — including the client it was going to be applied to. Leaving the
+  // picked company behind meant the next contract dropped onto this page
+  // arrived already aimed at the last one's client, which is the wrong
+  // default in the one direction that costs something: applying services to
+  // an account that isn't in the document.
+  //
+  // Same for the reviewer's term corrections and the deal being linked: they
+  // describe the documents being cleared, and carrying them onto the next
+  // upload would put the last contract's edits on it.
   function clearAll() {
     setFiles([]);
     setOverrides({});
+    setClientId('');
     setApplyNote('');
     setLanguageNote('');
     setLanguageError({ error: '', code: '' });
+    setTermEdits({});
+    setDealIdx('');
+    setDealNote('');
+    setDealError('');
   }
 
   const selectedRows = rows.filter(r => { const s = rowState(r); return s.checked && s.catalogKey; });
