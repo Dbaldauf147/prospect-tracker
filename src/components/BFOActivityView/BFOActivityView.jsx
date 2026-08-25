@@ -13,6 +13,9 @@ import { normalizeCompany } from '../../utils/companyNorm';
 import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { PasteTableView } from './PasteTableView';
+import {
+  autoDetectLeadMapping, leadRowsFromTable, planLeadImport, summariseLeadNames,
+} from '../../utils/marketingLeadsImport';
 
 // IndexedDB store shared by both subtabs (a generic key-value store).
 // The Leads subtab persists under its own keys so it never collides with
@@ -48,7 +51,7 @@ function bfoOppName(r) {
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
-export function BFOActivityView({ prospects = [] } = {}) {
+export function BFOActivityView({ prospects = [], settings, updateSettings } = {}) {
   // Which subtab is showing: the rich BFO Activity table, or the generic
   // Leads-list paste table.
   const [subtab, setSubtab] = useState('bfo'); // 'bfo' | 'leads'
@@ -77,6 +80,43 @@ export function BFOActivityView({ prospects = [] } = {}) {
     return () => { cancelled = true; window.removeEventListener('focus', refresh); };
   }, []);
   const hydratedRef = useRef(false);
+
+  // Pasting the Salesforce Leads list into the Leads subtab also maps any
+  // lead that isn't on Contacts → Marketing Leads over to it, so the one
+  // paste feeds both. Additive only: a lead already there is left exactly
+  // as it is (statuses and links are edited on the Marketing Leads page),
+  // and a lead hidden there stays hidden.
+  function mapPastedLeadsToMarketingLeads({ headers, rows }) {
+    if (!updateSettings) return '';
+    const mapping = autoDetectLeadMapping(headers);
+    // No Name column means we can't tell who these rows are about — say
+    // so rather than silently mapping nothing.
+    if (!mapping.name) return 'No Name column found, so nothing was added to Marketing Leads.';
+    const incoming = leadRowsFromTable({ headers, rows, mapping });
+    if (!incoming.length) return '';
+    const saved = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    const hiddenIds = Array.isArray(settings?.marketingLeadsHiddenLeads)
+      ? settings.marketingLeadsHiddenLeads : [];
+    // Match on name as well as email here: the Leads printable view often
+    // carries no Email column at all, and without a name match every
+    // paste would add the whole list over again.
+    const plan = planLeadImport({ incoming, saved, hiddenIds, matchByName: true });
+    if (plan.additions.length) {
+      updateSettings({ marketingLeads: [...plan.savedAfter, ...plan.additions] });
+    }
+    const n = plan.additions.length;
+    const notes = [n
+      ? `${n} new lead${n === 1 ? '' : 's'} added to Marketing Leads: ${summariseLeadNames(plan.additions)}.`
+      : 'No new leads for Marketing Leads.'];
+    const h = plan.blockedHidden.length;
+    if (h) {
+      notes.push(
+        `${h} skipped as hidden there (${summariseLeadNames(plan.blockedHidden)}) — ` +
+        `unhide from "Show hidden" on Marketing Leads to bring ${h === 1 ? 'it' : 'them'} back.`
+      );
+    }
+    return notes.join(' ');
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -403,6 +443,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
           prefsKey={LEADS_PREFS_KEY}
           csvPrefix="leads"
           flipNameColumn
+          onRowsPasted={mapPastedLeadsToMarketingLeads}
           emptyHint="Open the Salesforce Leads list, click Printable View, select the table (including the header row), copy, then paste anywhere on this page. The data persists in your browser until you clear or replace it."
         />
       ) : (

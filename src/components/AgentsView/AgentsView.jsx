@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { leadNameKey } from '../../utils/marketingLeadsImport';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
 import { normalizeCompany as canonCompany } from '../../utils/companyNorm';
@@ -159,7 +160,7 @@ const DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS = `1.  Go to this Salesforce Lead
 4.  Navigate to https://prospect-tracker-ashen.vercel.app/, open the Contacts page and select the Marketing Leads subtab.
 5.  Paste the copied table anywhere on that page (Ctrl+V / Cmd+V, not inside a cell). A column-mapping box opens: check that Name, Email, Job Title, Company, Status, Created Date, Last Lead Source, Owner, Country and Qualification Source Detail each point at the matching pasted column, then click Import.
 6.  Leads already saved are skipped by email, so pasting the whole list is safe — only the new ones are added. If a message says leads were skipped because they match a hidden lead, report which ones rather than unhiding them.
-7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below.
+7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below, and any lead still missing from Marketing Leads is added there as you paste — the confirmation line names them.
 8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle — those were captured before the import ran — so say so, and I will re-copy the prompts to pick the new leads up.`
 
 const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
@@ -1173,21 +1174,6 @@ function normalizeCompany(name) {
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-// Order-insensitive name key so the Marketing Leads page's "First Last"
-// matches the Salesforce Leads printable view's "Last, First". Drops
-// punctuation (the comma) and sorts the remaining tokens, so both
-// orderings collapse to the same key ("Victor Blancarte" and
-// "Blancarte, Victor" → "blancarte victor").
-function leadNameKey(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .sort()
-    .join(' ');
 }
 
 // Loose status key for comparing a Marketing Lead's Status against the
