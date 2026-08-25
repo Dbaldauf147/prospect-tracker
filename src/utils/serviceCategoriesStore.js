@@ -17,13 +17,30 @@ import { SERVICE_CATEGORIES } from '../data/enums';
 // the service out of every box rather than filing it into one.
 export const UNGROUPED_SERVICES = 'Other services';
 
-// The layout in board order: the user's saved one, or a copy of the seed.
-// Always a fresh copy, so a caller can rearrange what it gets back without
-// mutating settings.
+// Services inside a box read alphabetically, by the name on screen — so a
+// rename sorts where the user sees it, and a service moved into a box lands
+// in order instead of on the end. Numeric so "Cat 9" comes before "Cat 10"
+// rather than after "Cat 1 & 2", and case-insensitive so capitalisation
+// doesn't split the list in two.
+//
+// Nothing lets a user order services inside a box by hand, so there's no
+// manual arrangement for this to overwrite.
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+export function sortServiceNames(items, renames) {
+  const label = (i) => String((renames && renames[i]) || i || '');
+  return [...(items || [])].sort((a, b) => NAME_COLLATOR.compare(label(a), label(b)));
+}
+
+// The layout: boxes in board order — that ordering groups the business, so
+// it's left as the user (or the seed) arranged it — each box's services
+// alphabetical. Always a fresh copy, so a caller can rearrange what it gets
+// back without mutating settings.
 export function getServiceCategories(settings) {
   const custom = settings?.customServiceCategories;
   const base = (Array.isArray(custom) && custom.length) ? custom : SERVICE_CATEGORIES;
-  return base.map(c => ({ name: c.name, items: [...(c.items || [])] }));
+  const renames = settings?.serviceRenames;
+  return base.map(c => ({ name: c.name, items: sortServiceNames(c.items, renames) }));
 }
 
 // Which box a service sits in, or '' when no box claims it — the Scope
@@ -41,11 +58,12 @@ export function serviceBucketOf(categories, name) {
 
 // The layout with `name` moved into `bucket` — or out of every box, when the
 // bucket is blank or UNGROUPED_SERVICES. Returns null when the service is
-// already there, so callers can skip a no-op write.
+// already there, so callers can skip a no-op write. `renames` is
+// settings.serviceRenames, so the new name sorts by what's on screen.
 //
 // The service is pulled from every box before it's filed, so a name that
 // somehow ended up in two of them comes out in one.
-export function moveServiceToBucket(categories, name, bucket) {
+export function moveServiceToBucket(categories, name, bucket, renames) {
   const target = bucket === UNGROUPED_SERVICES ? '' : String(bucket || '').trim();
   if (serviceBucketOf(categories, name) === target) return null;
   const key = String(name || '').trim().toLowerCase();
@@ -56,7 +74,9 @@ export function moveServiceToBucket(categories, name, bucket) {
   }));
   if (target) {
     const box = next.find(c => c.name === target);
-    if (box) box.items = [...box.items, name];
+    // Sorted on the way in as well as on the way out, so what's stored
+    // matches what every board shows rather than trailing the new name.
+    if (box) box.items = sortServiceNames([...box.items, name], renames);
     else next.push({ name: target, items: [name] });
   }
   return next;

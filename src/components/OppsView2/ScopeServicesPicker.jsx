@@ -17,7 +17,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
+import { SERVICE_STATUSES } from '../../data/enums';
+import {
+  getServiceCategories,
+  sortServiceNames,
+  UNGROUPED_SERVICES,
+} from '../../utils/serviceCategoriesStore';
 import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
@@ -34,8 +39,6 @@ const STAGE_PRIORITY = {
   'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2,
   'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0,
 };
-
-const UNGROUPED = 'Other services';
 
 // Bucket in the selection summary for anything in Scope that the board
 // doesn't offer — a hidden service, or free text typed straight into the cell.
@@ -79,18 +82,21 @@ function buildAutoStatuses({ account, oppRows, items, currentOppId }) {
 // list that no category claims — so a Solutions entry can never become
 // unpickable just because it hasn't been filed into a box yet.
 function buildCategories(settings, options) {
-  const base = settings?.customServiceCategories
-    || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
   const hidden = new Set(settings?.hiddenServices || []);
-  const cats = base
-    .map(c => ({ name: c.name, items: (c.items || []).filter(i => !hidden.has(i)) }))
+  const cats = getServiceCategories(settings)
+    .map(c => ({ name: c.name, items: c.items.filter(i => !hidden.has(i)) }))
     .filter(c => c.items.length > 0);
 
   const filed = new Set(cats.flatMap(c => c.items.map(i => i.toLowerCase())));
   const extra = (options || [])
     .map(o => String(o || '').trim())
     .filter(o => o && !hidden.has(o) && !filed.has(o.toLowerCase()));
-  if (extra.length) cats.push({ name: UNGROUPED, items: [...new Set(extra)] });
+  if (extra.length) {
+    cats.push({
+      name: UNGROUPED_SERVICES,
+      items: sortServiceNames([...new Set(extra)], settings?.serviceRenames),
+    });
+  }
   return cats;
 }
 
