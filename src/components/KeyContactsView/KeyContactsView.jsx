@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord } from '../../utils/contactTagReview';
+import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, tagKey, dedupeTags, planTagEdit } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -843,36 +843,58 @@ function KeyContactsViewInner({
   // instead of being written, so a bulk add across a mixed selection
   // only touches the rows that actually need it. Only writes HubSpot
   // accepted are mirrored into the local cache.
+  // The tags HubSpot holds for these contacts right now, as a Map of
+  // id -> tag string. An id HubSpot has no contact for is absent from the
+  // map rather than empty, so the caller can tell "no tags" from "no such
+  // contact". Returns null when the read itself fails — the caller then
+  // falls back to the cached snapshot.
+  async function fetchLiveContactTags(ids) {
+    try {
+      const res = await apiFetch('/api/hubspot?action=contact-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: ids }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error || !json.tags) return null;
+      return new Map(Object.entries(json.tags));
+    } catch {
+      return null;
+    }
+  }
+
   async function applyTagEdit(contactIds, mode, tags) {
     const ids = [...new Set((contactIds || []).map(String).filter(Boolean))];
-    const chosen = (tags || []).map(t => String(t).trim()).filter(Boolean);
-    if (ids.length === 0) return { updated: 0, unchanged: 0, errors: 0, errorMessage: '' };
-    if (mode !== 'replace' && chosen.length === 0) return { updated: 0, unchanged: 0, errors: 0, errorMessage: '' };
-    const chosenLower = new Set(chosen.map(t => t.toLowerCase()));
+    // Two spellings of one tag are one tag (see tagKey), so a pick list
+    // holding both writes it once.
+    const chosen = dedupeTags(tags);
+    const empty = { updated: 0, unchanged: 0, skipped: 0, errors: 0, errorMessage: '' };
+    if (ids.length === 0) return empty;
+    if (mode !== 'replace' && chosen.length === 0) return empty;
+    // What HubSpot has right now for exactly these contacts. dans_tags is
+    // one string, so the write below is a whole-list overwrite: built from
+    // the cached snapshot it silently reverts any tag changed in HubSpot
+    // since the last sync, and a contact the snapshot has never seen would
+    // be written as if they had no tags at all — wiping the rest. The cache
+    // is only the fallback for a read that fails outright.
+    const live = await fetchLiveContactTags(ids);
     const cache = hubspotCache?.contacts || [];
+    const cachedTags = (id) => {
+      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
+      return c ? String(c.dans_tags || c.dan_s_tags || c.dans_tag || '') : undefined;
+    };
     const nextById = new Map();
     let updated = 0;
     let unchanged = 0;
+    let skipped = 0;
     let errors = 0;
     let firstErrorMessage = '';
     for (const id of ids) {
-      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
-      const existing = String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '')
-        .split(';').map(s => s.trim()).filter(Boolean);
-      let next;
-      if (mode === 'replace') {
-        next = [...chosen];
-      } else if (mode === 'remove') {
-        next = existing.filter(t => !chosenLower.has(t.toLowerCase()));
-      } else {
-        const have = new Set(existing.map(t => t.toLowerCase()));
-        next = [...existing, ...chosen.filter(t => !have.has(t.toLowerCase()))];
-      }
-      // Use ';' (no space) to match the separator HubSpotView's tag
-      // picker uses; some HubSpot enum properties reject leading
-      // whitespace on values.
-      const nextStr = next.join(';');
-      if (nextStr === existing.join(';')) { unchanged += 1; continue; }
+      const current = live ? live.get(id) : cachedTags(id);
+      const plan = planTagEdit(mode, chosen, current);
+      if (plan.action === 'skip') { skipped += 1; continue; }
+      if (plan.action === 'unchanged') { unchanged += 1; continue; }
+      const nextStr = plan.tags;
       try {
         const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -908,7 +930,7 @@ function KeyContactsViewInner({
         });
       } catch (err) { console.warn('Tag cache update failed', err); }
     }
-    return { updated, unchanged, errors, errorMessage: firstErrorMessage };
+    return { updated, unchanged, skipped, errors, errorMessage: firstErrorMessage };
   }
 
   // Push a suggested-company value onto the contact in HubSpot and
@@ -1350,7 +1372,15 @@ function KeyContactsViewInner({
 
   // Bulk tag apply — the Tags field of the Mass Edit toolbar. Replace
   // is destructive (it drops tags the user never picked, including
-  // Hide), so it asks first; add / remove are additive and don't.
+  // Hide), so it asks first; add / remove do exactly what they say and
+  // don't.
+  //
+  // Three of the four Mark options are destructive too, and less obviously:
+  // No, Not sure and Not sold each take the HubSpot tag off every selected
+  // contact as a side effect of recording the answer. That's the intended
+  // rule — a Not sold is a hold-off, and keeping the tag off is what makes
+  // it hold — but "Mark Not sold" doesn't look like "untag 22 people", so it
+  // asks first as well.
   //
   // The verdict modes are two writes in one: the answer goes to settings
   // for every selected contact, and the HubSpot tag follows it on or off
@@ -1369,6 +1399,11 @@ function KeyContactsViewInner({
         ? `Clear every tag on ${n} selected contact${plural}?`
         : `Replace the tags on ${n} selected contact${plural} with ${tags.join(', ')}? Any other tags they have today are removed.`;
       if (!window.confirm(message)) return;
+    } else if (verdict && verdict.tagMode === 'remove') {
+      const message = `${verdict.label} for ${tags.join(', ')} on ${n} selected contact${plural}?`
+        + `\n\nThat records the answer AND takes ${tags.length === 1 ? 'that tag' : 'those tags'} off `
+        + `${n === 1 ? 'the contact' : `all ${n}`} in HubSpot, so they stop coming back in a general pull of it.`;
+      if (!window.confirm(message)) return;
     }
     setMassProcessing(true);
     setMassStatus(null);
@@ -1378,7 +1413,7 @@ function KeyContactsViewInner({
     // A contact who already had the tag off still gets the answer — that
     // case IS the point of the mode.
     const marked = verdict ? saveMassTagVerdicts(ids, tags, verdict.mode) : 0;
-    const { updated, unchanged, errors, errorMessage } = await applyTagEdit(ids, verdict ? verdict.tagMode : massTagMode, tags);
+    const { updated, unchanged, skipped, errors, errorMessage } = await applyTagEdit(ids, verdict ? verdict.tagMode : massTagMode, tags);
     // The API registers a tag that isn't in the Dan's Tags allowed values
     // and retries, so "go add it by hand" is only the right advice when
     // that didn't happen — and the API's own message says so when it did.
@@ -1399,10 +1434,15 @@ function KeyContactsViewInner({
       ? `${verb} on ${marked || n} contact${(marked || n) === 1 ? '' : 's'} for ${tags.join(', ')}`
         + ` · tag ${verdict.tagMode === 'add' ? 'added to' : 'removed from'} ${updated}`
       : `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
-        + (unchanged > 0 ? ` · ${unchanged} already up to date` : '');
+        + (unchanged > 0 ? ` · ${unchanged} already up to date in HubSpot` : '');
+    // A contact HubSpot has no record of was left alone rather than written
+    // from a guess — say so, because silence there reads as success.
+    const skippedNote = skipped > 0
+      ? ` · ${skipped} skipped (HubSpot has no contact with that ID)`
+      : '';
     setMassStatus({
-      type: errors === 0 ? 'success' : 'partial',
-      message: head + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
+      type: errors === 0 && skipped === 0 ? 'success' : 'partial',
+      message: head + skippedNote + (errors > 0 ? ` · ${errors} failed: ${errorMessage}${hint}` : ''),
     });
     setMassProcessing(false);
     // Clear the chosen tags, keep the chosen contacts. Tagging a group is
@@ -1759,7 +1799,7 @@ function KeyContactsViewInner({
     const add = (raw) => {
       const t = String(raw || '').trim();
       if (!t) return;
-      const k = t.toLowerCase().replace(/\s+/g, '');
+      const k = tagKey(t);
       if (!seen.has(k)) seen.set(k, t);
     };
     for (const c of (hubspotCache?.contacts || [])) {

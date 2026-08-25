@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey } from '../../utils/contactTagReview';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -709,7 +709,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // strip it from the offered options regardless of what a caller passes in.
   const metLower = MET_IN_PERSON_TAG.toLowerCase();
   const visibleTagOptions = tagOptions.filter(t => t.toLowerCase() !== metLower);
-  const knownTagsLower = new Set(visibleTagOptions.map(t => t.toLowerCase()));
+  // Matched on the spacing-insensitive key, not the raw string: this
+  // dataset carries both "Efficiency / Renewables" and
+  // "Efficiency/Renewables", and an exact match reads the second as a
+  // stranger — leaving the box unticked for a contact who plainly has the
+  // tag, and the tag itself sitting in the free-text extras.
+  const knownTagKeys = new Set(visibleTagOptions.map(tagKey));
 
   const cid = contact.id || contact.vid;
   const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
@@ -756,9 +761,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   });
   // Checked state for the 5 known tags
   const [checkedTags, setCheckedTags] = useState(() =>
-    new Set(parsedTags.filter(t => knownTagsLower.has(t.toLowerCase())).map(t => {
-      // Normalise to the canonical casing
-      return visibleTagOptions.find(o => o.toLowerCase() === t.toLowerCase()) || t;
+    new Set(parsedTags.filter(t => knownTagKeys.has(tagKey(t))).map(t => {
+      // Normalise to the option's own spelling, so saving converges the
+      // duplicates rather than preserving both — the same rewrite the API
+      // performs when HubSpot refuses a spelling it already holds under
+      // another (see reconcileDansTags).
+      return visibleTagOptions.find(o => tagKey(o) === tagKey(t)) || t;
     }))
   );
   // "Met In Person" is its own checkbox, stored locally (never in HubSpot).
@@ -785,7 +793,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   );
   // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
   // met-in-person flag, which is reattached from its checkbox on save).
-  const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()) && t.toLowerCase() !== metLower);
+  const extraTags = parsedTags.filter(t => !knownTagKeys.has(tagKey(t)) && t.toLowerCase() !== metLower);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);

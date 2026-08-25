@@ -32,6 +32,81 @@ export const TAG_OPTIONS = [
   'Primary Point of Contact', 'Test', 'NAM Only', 'EU', 'Hide', 'Left',
 ];
 
+// Case- and spacing-insensitive identity for a tag. HubSpot validates a
+// dans_tags value against the exact option string, but "Efficiency /
+// Renewables" and "Efficiency/Renewables" — or "NAM Only" and "Nam only" —
+// are one tag to anyone using the app, and this dataset carries both
+// spellings of several of them.
+//
+// The server already reconciles writes this way (api/hubspot.js dansTagKey)
+// and the bulk tag picker collapses its options this way, so every
+// comparison on the client has to agree: a check that only lowercases reads
+// a contact tagged under the other spelling as untagged, which then adds a
+// duplicate or silently fails to remove anything.
+export function tagKey(t) {
+  return String(t || '').toLowerCase().replace(/\s+/g, '');
+}
+
+// Does this tag list already carry `tag`, whatever spelling it's in?
+export function tagListHas(list, tag) {
+  const k = tagKey(tag);
+  return (list || []).some(t => tagKey(t) === k);
+}
+
+// One list of tags with the duplicates collapsed — two spellings of the same
+// tag keep the first one given.
+export function dedupeTags(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of (list || [])) {
+    const t = String(raw || '').trim();
+    const k = tagKey(t);
+    if (!t || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
+// What one contact's dans_tags string becomes under a bulk tag edit.
+//
+// `current` is the tag string HubSpot holds for that contact right now, or
+// undefined when there's no contact to read. That distinction is the point:
+// dans_tags is a single string, so every write is a whole-list overwrite,
+// and treating an unreadable contact as "has no tags" turns a bulk ADD into
+// a bulk REPLACE that clears everything else they had. Replace is the one
+// mode that doesn't need the current list, so it alone still runs.
+//
+// Returns one of:
+//   { action: 'write', tags }  — the string to send to HubSpot
+//   { action: 'unchanged' }    — HubSpot already holds exactly this
+//   { action: 'skip' }         — nothing to build a list from
+//
+// Pure and exported so the modes can be tested without a HubSpot round trip.
+export function planTagEdit(mode, chosenTags, current) {
+  const chosen = dedupeTags(chosenTags);
+  if (current === undefined && mode !== 'replace') return { action: 'skip' };
+  const existing = String(current || '').split(';').map(t => t.trim()).filter(Boolean);
+  let next;
+  if (mode === 'replace') {
+    next = chosen;
+  } else if (mode === 'remove') {
+    const drop = new Set(chosen.map(tagKey));
+    next = existing.filter(t => !drop.has(tagKey(t)));
+  } else {
+    // A tag the contact already carries under a different spelling is a tag
+    // they already carry — adding the picker's spelling on top would leave
+    // them holding both.
+    const have = new Set(existing.map(tagKey));
+    next = [...existing, ...chosen.filter(t => !have.has(tagKey(t)))];
+  }
+  // ';' with no space is the separator the tag pickers write; some HubSpot
+  // enum properties reject leading whitespace on a value.
+  const tags = next.join(';');
+  if (tags === existing.join(';')) return { action: 'unchanged' };
+  return { action: 'write', tags };
+}
+
 // Tags left out of the score. Hide and Left decide whether a contact appears
 // at all and Test is a scratch value — none of them says anything about who
 // the person is, so counting them would cap the figure for reasons unrelated

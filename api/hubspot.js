@@ -1054,6 +1054,37 @@ async function handler(req, res) {
       return res.json({ success: true, created, updated, errors, total: contacts.length, results, notesCreated, notesFailed });
     }
 
+    // The dans_tags value HubSpot holds right now for a specific set of
+    // contacts.
+    //
+    // dans_tags is a single string, so every tag write is a whole-list
+    // overwrite. A bulk tag edit that builds that list from the client's
+    // cached snapshot silently reverts anything changed in HubSpot since the
+    // last sync, and writes a contact the snapshot has never seen as if they
+    // had no tags at all. Reading the live values for exactly the contacts
+    // being edited is what stops both.
+    //
+    // Returns { tags: { id: value }, missing: [id] } — an id HubSpot has no
+    // contact for is reported rather than defaulted, so the caller can skip
+    // it instead of guessing.
+    if (action === 'contact-tags' && req.method === 'POST') {
+      const ids = [...new Set((req.body?.contactIds || []).map(v => String(v || '').trim()).filter(Boolean))];
+      if (ids.length === 0) return res.json({ tags: {}, missing: [] });
+      const tags = {};
+      // HubSpot's batch read takes at most 100 inputs per call.
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        const data = await hubspotPost('/crm/v3/objects/contacts/batch/read', token, {
+          properties: ['dans_tags'],
+          inputs: chunk.map(id => ({ id })),
+        });
+        for (const r of (data.results || [])) {
+          tags[String(r.id)] = r.properties?.dans_tags || '';
+        }
+      }
+      return res.json({ tags, missing: ids.filter(id => tags[id] === undefined) });
+    }
+
     if (action === 'properties') {
       const data = await hubspotFetch('/crm/v3/properties/contacts', token);
       const props = (data.results || []).map(p => ({
@@ -1152,6 +1183,8 @@ async function handler(req, res) {
 
 export default withAuth(handler);
 
-// Exported for scripts/dansTagsOptionError.test.mjs. Vercel only routes the
-// default export, so the extra names don't change the endpoint.
-export { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags };
+// Exported for scripts/dansTagsOptionError.test.mjs and
+// scripts/contactTagsRead.test.mjs. Vercel only routes the default export, so
+// the extra names don't change the endpoint. `handler` is the unwrapped
+// version — the tests supply their own request rather than an auth session.
+export { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags, handler as handlerForTests };
