@@ -52,6 +52,7 @@ const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
+const IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-import-marketing-leads';
 const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
 const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
@@ -145,6 +146,21 @@ const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 
 const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
 2.  Reference the BFO Opportunity names below.  My goal is to have you open their websites and copy and paste the BFO website Address to the BFO address table here on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/ in the AI BFO Prep table.`;
+
+// The one prompt that pulls INTO the tracker. Every other Marketing
+// Leads prompt reads the leads already saved on the Contacts page, so a
+// lead sitting in Salesforce but not in the tracker is invisible to all
+// of them — this is what gets it in. Runs first in the bundle for that
+// reason, and feeds the BFO Activity "Leads" subtab in the same pass
+// (the Status Update + Duplicate Leads prompts compare against it).
+const DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
+2.  Click Printable View. A new tab opens — go to that tab and set the number of records to 250 so the whole list is on one page.
+3.  Copy the entire table, starting with the Name header and going down to the bottom right-hand corner of the last row.
+4.  Navigate to https://prospect-tracker-ashen.vercel.app/, open the Contacts page and select the Marketing Leads subtab.
+5.  Paste the copied table anywhere on that page (Ctrl+V / Cmd+V, not inside a cell). A column-mapping box opens: check that Name, Email, Job Title, Company, Status, Created Date, Last Lead Source, Owner, Country and Qualification Source Detail each point at the matching pasted column, then click Import.
+6.  Leads already saved are skipped by email, so pasting the whole list is safe — only the new ones are added. If a message says leads were skipped because they match a hidden lead, report which ones rather than unhiding them.
+7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below.
+8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle — those were captured before the import ran — so say so, and I will re-copy the prompts to pick the new leads up.`
 
 const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
 2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
@@ -781,6 +797,19 @@ function readBfoPrepPrompt() {
 
 function writeBfoPrepPrompt(next) {
   try { userLsSet(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+function readImportMarketingLeadsPrompt() {
+  try {
+    const raw = userLsGet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS;
+  }
+}
+
+function writeImportMarketingLeadsPrompt(next) {
+  try { userLsSet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readMarketingLeadsPrompt() {
@@ -1639,6 +1668,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
+  const [importMarketingLeadsPrompt, setImportMarketingLeadsPrompt] = useState(readImportMarketingLeadsPrompt);
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [duplicateLeadsPrompt, setDuplicateLeadsPrompt] = useState(readDuplicateLeadsPrompt);
@@ -1649,6 +1679,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [assigningBfo, setAssigningBfo] = useState(false);
   const [bfoAssignFlash, setBfoAssignFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
+  const [importMarketingLeadsCopyFlash, setImportMarketingLeadsCopyFlash] = useState('');
   const [marketingLeadsCopyFlash, setMarketingLeadsCopyFlash] = useState('');
   const [marketingLeadStatusUpdateCopyFlash, setMarketingLeadStatusUpdateCopyFlash] = useState('');
   const [duplicateLeadsCopyFlash, setDuplicateLeadsCopyFlash] = useState('');
@@ -1770,6 +1801,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeBfoPrepPrompt(next);
   };
   const resetBfoPrepPrompt = () => updateBfoPrepPrompt(DEFAULT_AI_PROMPT_BFO_PREP);
+  const updateImportMarketingLeadsPrompt = (next) => {
+    setImportMarketingLeadsPrompt(next);
+    writeImportMarketingLeadsPrompt(next);
+  };
+  const resetImportMarketingLeadsPrompt = () => updateImportMarketingLeadsPrompt(DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS);
   const updateMarketingLeadsPrompt = (next) => {
     setMarketingLeadsPrompt(next);
     writeMarketingLeadsPrompt(next);
@@ -3129,6 +3165,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
+      // Import Marketing Leads leads the three lead sections: it is the only
+      // one that pulls new leads in from Salesforce, and the ones below can
+      // only act on leads the tracker already holds. No data block of its
+      // own — the whole job is to fetch a list this app doesn't have yet.
+      { title: 'Import Marketing Leads', prompt: importMarketingLeadsPrompt, block: '', hasData: false, always: true },
       // Marketing Leads always rides along in the bundle, even with no leads
       // missing a Salesforce Link — its prompt stands alone as a reusable
       // instruction, so `always` keeps it in every copy regardless of data.
@@ -3157,7 +3198,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
-    marketingLeadsPrompt, marketingLeadsMissing,
+    importMarketingLeadsPrompt, marketingLeadsPrompt, marketingLeadsMissing,
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
     duplicateLeadsPrompt, duplicateLeadRows,
   ]);
@@ -3730,6 +3771,44 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>Import Marketing Leads</h2>
+        <p className={styles.subnote}>
+          Pulls the Salesforce Leads list into the app: the assistant copies the Leads printable view and pastes it into the Contacts page&rsquo;s <strong>Marketing Leads</strong> subtab, then into the BFO Activity page&rsquo;s <strong>Leads</strong> subtab. Leads already saved are skipped by email, so the whole list can be pasted every time. This is the only prompt that brings <em>new</em> leads in &mdash; the three below act on leads the app already holds, so run this first. Leads it imports won&rsquo;t appear in the lists below until you copy the prompts again. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+        </p>
+        {revealedPrompts.importMarketingLeads && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={importMarketingLeadsPrompt}
+            onChange={(e) => updateImportMarketingLeadsPrompt(e.target.value)}
+            rows={10}
+            spellCheck={false}
+          />
+        )}
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(importMarketingLeadsPrompt);
+                setImportMarketingLeadsCopyFlash('Copied!');
+              } catch {
+                setImportMarketingLeadsCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setImportMarketingLeadsCopyFlash(''), 1500);
+            }}
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('importMarketingLeads')}>
+            {revealedPrompts.importMarketingLeads ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.importMarketingLeads && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetImportMarketingLeadsPrompt}>Reset to default</button>
+          )}
+          {importMarketingLeadsCopyFlash && <span className={styles.copyFlash}>{importMarketingLeadsCopyFlash}</span>}
         </div>
       </section>
 
