@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore, TAG_OPTIONS } from '../../utils/contactTagReview';
+import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -1322,6 +1322,11 @@ function KeyContactsViewInner({
   // each write builds its patch from the settings it captured, so a
   // burst of them ends with the last writer's copy — most of the answers
   // silently lost. Returns how many contacts actually changed.
+  //
+  // A record holds an answer and a sale status, and a mark sets one half
+  // without disturbing the other — recordForVerdict applies it exactly as
+  // the popup's own buttons would, per contact, so a Yes already recorded
+  // survives a bulk Not sold.
   function saveMassTagVerdicts(ids, tags, verdict) {
     if (!updateSettings) return 0;
     const next = { ...(settings?.contactTagReview || {}) };
@@ -1332,8 +1337,9 @@ function KeyContactsViewInner({
       const map = { ...(next[key] || {}) };
       let changed = false;
       for (const tag of tags) {
-        if (map[tag] === verdict) continue;
-        map[tag] = verdict;
+        const record = recordForVerdict(map[tag], verdict);
+        if (sameTagRecord(map[tag], record)) continue;
+        map[tag] = record;
         changed = true;
       }
       if (changed) { next[key] = map; touched += 1; }
@@ -3104,7 +3110,7 @@ function KeyContactsViewInner({
                     title={'Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list'
                       + '\n\nThe Mark options record the same answers as the contact popup, across every selected contact:'
                       + '\nNo — doesn\'t apply to them · Not sure — haven\'t worked it out · Not sold — theirs, but their company hasn\'t bought it'
-                      + '\nAll three take the tag off; Sold records it and keeps the tag on, so they still come back in a general pull.'}
+                      + '\nSold and Not sold both record the Yes they imply. Sold keeps the tag on, so they still come back in a general pull; the other three take it off.'}
                     style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
                   >
                     <optgroup label="Tag in HubSpot">

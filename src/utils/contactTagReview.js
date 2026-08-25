@@ -1,10 +1,15 @@
-// How thoroughly a contact's tags have been worked through.
+// What a contact's tags say, and how thoroughly they've been worked through.
 //
-// The contact popup answers each tag Yes / No / Not sure. Yes is the tag
-// itself and lives in HubSpot; No and Not sure are local, because an absent
-// HubSpot tag can't tell "doesn't apply" from "haven't looked" from "don't
-// know". The score is simply how many of the tags have any of those three
-// answers.
+// Each tag carries two answers, not one:
+//
+//   answer   does this area belong to this person?   Yes / No / Not sure
+//   status   has their company bought it?            Sold / Not sold
+//
+// They're independent, so a contact can be Yes AND Not sold — the area is
+// theirs, their account just hasn't bought it yet — which a single answer
+// couldn't say. Yes is the HubSpot tag itself; everything else is local,
+// because an absent tag can't tell "doesn't apply" from "haven't looked"
+// from "don't know" from "holding off".
 //
 // Shared between the popup that collects the answers and the contacts table
 // that reports the figure, so the two can't quietly disagree about what a
@@ -38,53 +43,108 @@ export const TAG_SCORE_EXCLUDED = new Set(['hide', 'left', 'test']);
 // it as a dans_tags value, so it never appears in the table or the score.
 export const MET_IN_PERSON_TAG = 'Met In Person';
 
-// The answers that live locally, because HubSpot can only say "tagged" or
-// "not tagged".
-//
-// Three of them are reasons the tag is OFF:
-//
-//   no       doesn't apply to this person
-//   unsure   haven't worked it out yet
-//   notsold  applies to them, but their company hasn't bought it yet
-//
-// and one is a fact recorded ON TOP of the tag:
-//
-//   sold     applies to them, and their company has bought it
-//
-// Sold and Not sold are one question — has this account bought what this
-// person owns? — asked of anyone the tag is true of. Not sold is the
-// hold-off: a No would be wrong, because the person really does own that
-// area, but until the account buys it they shouldn't turn up in a general
-// pull of everyone who owns it, and keeping the HubSpot tag off is what
-// makes that hold. Sold is the other end, and keeps the tag on, because
-// someone at a sold account is exactly who a general pull should return.
-// Either way the answer recorded here remembers that the area is theirs.
-export const TAG_OFF_VERDICTS = new Set(['no', 'unsure', 'notsold']);
-export const TAG_ON_VERDICTS = new Set(['sold']);
-export const LOCAL_TAG_VERDICTS = new Set([...TAG_OFF_VERDICTS, ...TAG_ON_VERDICTS]);
+// The two axes an answer is recorded on. `answer` says whether the area is
+// this person's; `status` says whether their company has bought it. Either
+// can stand alone: a Not sold with no answer is still a useful "hold off on
+// this one", and a plain Yes is a tag with the sale question unasked.
+export const TAG_ANSWERS = ['yes', 'no', 'unsure'];
+export const TAG_SALE_STATUSES = ['sold', 'notsold'];
 
+// One tag's stored record, normalized to { answer, status }.
+//
+// Records used to be a single string — 'no' | 'unsure' | 'sold' | 'notsold'
+// — with Yes read off the tag itself. Those are still read: the two sale
+// values become a status, the other two an answer. Anything unrecognised
+// reads as unanswered rather than throwing a stored typo onto the screen.
+export function tagRecordFrom(stored) {
+  if (typeof stored === 'string') {
+    if (TAG_SALE_STATUSES.includes(stored)) return { answer: '', status: stored };
+    return { answer: TAG_ANSWERS.includes(stored) && stored !== 'yes' ? stored : '', status: '' };
+  }
+  if (stored && typeof stored === 'object') {
+    return {
+      answer: TAG_ANSWERS.includes(stored.answer) ? stored.answer : '',
+      status: TAG_SALE_STATUSES.includes(stored.status) ? stored.status : '',
+    };
+  }
+  return { answer: '', status: '' };
+}
+
+export function sameTagRecord(a, b) {
+  const x = tagRecordFrom(a);
+  const y = tagRecordFrom(b);
+  return x.answer === y.answer && x.status === y.status;
+}
+
+// Does anything live in this record? A bare Yes doesn't count: the tag is
+// where a Yes lives, so a stored one is only ever a copy — the callers that
+// ask this are looking for the answers HubSpot can't hold.
 export function isLocalTagVerdict(v) {
-  return LOCAL_TAG_VERDICTS.has(v);
+  const { answer, status } = tagRecordFrom(v);
+  return !!status || (!!answer && answer !== 'yes');
 }
 
-// Does this answer leave the HubSpot tag on the contact? Only Sold does —
-// every other recorded answer means the tag comes off.
-export function verdictKeepsTag(v) {
-  return TAG_ON_VERDICTS.has(v);
-}
-
-// The answer to show for a tag, given whether the contact carries it and
-// what's recorded locally. Shared by the popup's table and the All Contacts
-// status filter so the two can't disagree about what a contact "is" for a
-// tag.
+// Does this record leave the HubSpot tag on the contact?
 //
-// The tag itself is the source of truth for whether it applies, so a
-// recorded Sold is only honoured while the tag is actually on — a tag pulled
-// off in HubSpot or by a bulk edit can't leave a stale Sold behind — and the
-// tag-off answers are only honoured while it's actually off.
-export function tagAnswerFrom(tagged, verdict) {
-  if (tagged) return verdict === 'sold' ? 'sold' : 'yes';
-  return TAG_OFF_VERDICTS.has(verdict) ? verdict : '';
+// Yes puts it on, and so does Sold — someone at an account that has bought
+// the area is exactly who a general pull of the tag should return. Not sold
+// overrides both: it's the hold-off, and keeping the tag off is the whole
+// mechanism. Until the account buys, they shouldn't come back in a plain
+// pull, however true the area is of them.
+export function recordKeepsTag(record) {
+  const { answer, status } = tagRecordFrom(record);
+  if (status === 'notsold') return false;
+  return answer === 'yes' || status === 'sold';
+}
+
+// What to show for a tag, given whether the contact carries it and what's
+// recorded locally. The HubSpot tag stays the source of truth for whether
+// the tag is ON, so a tag pulled off in HubSpot or by a bulk edit can't
+// leave a stale Yes or Sold behind here.
+//
+// The one place a Yes outlives the tag being off is a Not sold, because
+// that's exactly what a hold-off means: the area is theirs, the tag is off
+// on purpose.
+export function tagStateFrom(tagged, stored) {
+  const { answer, status } = tagRecordFrom(stored);
+  if (tagged) return { answer: 'yes', status: status === 'sold' ? 'sold' : '' };
+  if (status === 'notsold') return { answer, status: 'notsold' };
+  return { answer: answer === 'yes' ? '' : answer, status: '' };
+}
+
+// The single answer a tag reads as, for the places that show one pill rather
+// than two controls (the All Contacts status filter, its counts). The sale
+// status wins when there is one: "Sold" and "Not sold" already say the area
+// is theirs, so they're the more specific reading of the same row.
+export function tagAnswerFrom(tagged, stored) {
+  const { answer, status } = tagStateFrom(tagged, stored);
+  return status || answer || '';
+}
+
+// Setting one half of a record leaves the other half alone — that's the
+// point of two axes — except where the two would contradict each other. No
+// and Not sure say the area isn't theirs (or isn't known to be), which
+// leaves nothing for a sale status to be about, so they clear it; a sale
+// status likewise clears a No or Not sure, while a Yes stands beside it.
+//
+// Used by the popup's two setters and by the bulk "Mark …" actions, so a
+// mark applied to 26 contacts lands exactly as it would one at a time.
+export function withTagAnswer(stored, answer) {
+  const cur = tagRecordFrom(stored);
+  const next = TAG_ANSWERS.includes(answer) ? answer : '';
+  return { answer: next, status: (next === 'no' || next === 'unsure') ? '' : cur.status };
+}
+
+export function withTagStatus(stored, status) {
+  const cur = tagRecordFrom(stored);
+  const next = TAG_SALE_STATUSES.includes(status) ? status : '';
+  return { answer: (next && cur.answer !== 'yes') ? '' : cur.answer, status: next };
+}
+
+// The record a bulk "Mark …" writes on top of whatever is already there.
+export function recordForVerdict(stored, verdict) {
+  if (TAG_SALE_STATUSES.includes(verdict)) return withTagStatus(stored, verdict);
+  return withTagAnswer(stored, verdict);
 }
 
 export function contactTagList(contact) {
@@ -107,10 +167,13 @@ export function scoredTagOptions(tagOptions = TAG_OPTIONS) {
 /**
  * { answered, total, pct, done } for one contact.
  *
- * `review` is that contact's local answer map ({ tag: LOCAL_TAG_VERDICTS }).
- * A "yes" is never read from there — it's read off the contact's own tags,
- * so a tag changed in a bulk edit or in HubSpot itself can't leave a stale
- * yes behind. `total` of 0 yields 0%, not a division by zero.
+ * `review` is that contact's local record map ({ tag: { answer, status } }).
+ * A tag counts as answered when the contact carries it (that's the Yes) or
+ * the record holds anything HubSpot can't — an answer of No / Not sure, or
+ * a Sold / Not sold status. A bare stored "yes" doesn't count on its own:
+ * the tag is where a Yes lives, so a tag dropped in a bulk edit or in
+ * HubSpot itself can't leave a stale one behind. `total` of 0 yields 0%,
+ * not a division by zero.
  */
 export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
   const scored = scoredTagOptions(tagOptions);
