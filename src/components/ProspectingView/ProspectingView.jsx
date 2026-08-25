@@ -255,21 +255,37 @@ function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
           up turns this page green without touching a single tag, so the one
           number nothing else surfaces is exactly the one that shouldn't go
           quiet when the page stops saying anything else. */}
-      {missing.length > 0 && (
-        <span
-          data-tag-debt
-          title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out — it's a rolling window rather than a book to work through — and All is the union of the rest.`}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            padding: '1px 8px', borderRadius: 999,
-            background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
-            fontSize: '0.68rem', fontWeight: 700,
-          }}
-        >
-          <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
-          {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
-        </span>
-      )}
+      {missing.length > 0 && (() => {
+        // The pill counts groups, so clicking it goes to a group: the roster
+        // behind it, or the first of them when several are short. A missing
+        // roster always has contacts — the debt rule only counts a roster
+        // whose percentage exists — so the list is never opened empty.
+        const target = missing[0].key;
+        const isOpen = openKey === target;
+        const which = missing.length === 1
+          ? `Click to list the ${missing[0].label} contacts, least-tagged first.`
+          : `Click to list the ${missing[0].label} contacts, least-tagged first — then the other chips for the rest.`;
+        return (
+          <button
+            data-tag-debt
+            type="button"
+            onClick={() => setOpenKey(isOpen ? null : target)}
+            aria-expanded={isOpen}
+            title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out — it's a rolling window rather than a book to work through — and All is the union of the rest. ${which}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '1px 8px', borderRadius: 999,
+              background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
+              fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
+              cursor: 'pointer',
+              boxShadow: isOpen ? '0 0 0 2px #FCA5A5' : 'none',
+            }}
+          >
+            <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
+            {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
+          </button>
+        );
+      })()}
       {openKey && (
         <TagContactList
           cell={cells.find(c => c.key === openKey)}
