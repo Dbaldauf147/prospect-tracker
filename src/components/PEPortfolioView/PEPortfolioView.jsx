@@ -22,6 +22,7 @@ import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '..
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { serviceStatusColor } from '../../utils/serviceStatusColors';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -1197,7 +1198,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Every PE Overview column is here too, and this tab keeps its own column layout.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span> and what didn't in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span>, so the Services Not Sold column isn't repeated here. Every other PE Overview column is, and this tab keeps its own column layout.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -2357,6 +2358,56 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
 // contacts / decision makers): shows them comma-joined on one line,
 // truncated with the full list on hover, or a muted placeholder when
 // the list is empty.
+// Sold reads dark green, Not Sold reads red — the same two colours the
+// company card's Services Explored grid and the Opps Scope picker paint
+// those statuses, so a service looks the same wherever it's listed.
+const SOLD_TEXT = serviceStatusColor('Sold').color || '#166534';
+const NOT_SOLD_TEXT = serviceStatusColor('Not Sold').color || '#991B1B';
+
+// A services cell that carries its outcome in its colour: the sold ones
+// first in dark green, then the ones marked Not Sold in red. Same one-line,
+// ellipsised shape as NameListCell — the tooltip spells the split out in
+// full, since the row only has room for the first few.
+function ServiceOutcomeCell({ sold = [], notSold = [], empty }) {
+  const soldList = sold.filter(Boolean);
+  const notSoldList = notSold.filter(Boolean);
+  if (soldList.length === 0 && notSoldList.length === 0) {
+    return <span style={{ color: '#CBD5E1' }} title={empty || ''}>-</span>;
+  }
+  const tip = [
+    soldList.length ? `Sold:\n${soldList.map(n => `• ${n}`).join('\n')}` : '',
+    notSoldList.length ? `Not sold:\n${notSoldList.map(n => `• ${n}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+  return (
+    <span
+      title={tip}
+      style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.78rem' }}
+    >
+      {soldList.map((name, i) => (
+        <span key={`sold-${name}`} style={{ color: SOLD_TEXT }}>{i > 0 ? ', ' : ''}{name}</span>
+      ))}
+      {notSoldList.map((name, i) => (
+        <span key={`not-${name}`} style={{ color: NOT_SOLD_TEXT }}>{(i > 0 || soldList.length > 0) ? ', ' : ''}{name}</span>
+      ))}
+    </span>
+  );
+}
+
+// A row's entry for one bucket, always shaped { sold, notSold } even when
+// the row has nothing filed in that box.
+const EMPTY_BUCKET = { sold: [], notSold: [] };
+function bucketOf(row, name) { return row._byBucket[name] || EMPTY_BUCKET; }
+
+// Every service in a bucket cell whatever its outcome — what the column's
+// filter box matches on, so typing a service name finds the row either way.
+function bucketNames(box) { return [...box.sold, ...box.notSold]; }
+
+// One bucket cell as a single export string. Colour doesn't survive the
+// trip to Excel, so the not-sold ones say so in words instead.
+function bucketExport(box) {
+  return [...box.sold, ...box.notSold.map(n => `${n} (not sold)`)].join(', ');
+}
+
 function NameListCell({ items, empty }) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (list.length === 0) {
@@ -2534,11 +2585,12 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
 // `variant` picks which of the two tabs this instance is rendering:
 //   'overview' — the PE Overview tab: every company column.
 //   'services' — the PE Overview - Services tab: the same columns plus
-//                the Services Sold breakdown, one column per Service
-//                Bucket. Same rows, same editing, its own saved column
-//                layout (own tableId) so widening the Services tab out
-//                to the bucket columns doesn't disturb the layout the
-//                user keeps on PE Overview.
+//                the services breakdown, one column per Service Bucket,
+//                sold in green and not sold in red (which is why this
+//                variant drops the Services Not Sold column). Same rows,
+//                same editing, its own saved column layout (own tableId)
+//                so widening the Services tab out to the bucket columns
+//                doesn't disturb the layout the user keeps on PE Overview.
 function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const isServicesVariant = variant === 'services';
   const tabLabel = isServicesVariant ? 'PE Overview - Services' : 'PE Overview';
@@ -2764,21 +2816,26 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       else if (s === 'Not Sold') servicesNotSold.push(name);
       else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
     }
-    // Sold services grouped by bucket, plus a catch-all for the ones no box
-    // claims — the Scope picker's "Other services" card. The buckets always
-    // sum back to Services Sold: nothing is dropped.
-    const soldByBucket = {};
-    const soldNoBucket = [];
-    for (const name of servicesSold) {
+    // Sold and Not Sold services grouped by bucket, plus a catch-all for
+    // the ones no box claims — the Scope picker's "Other services" card.
+    // Both outcomes live in the same cell (green vs red) rather than in two
+    // columns, so a box reads as "here's what we sold, here's what we
+    // didn't". The buckets always sum back to Services Sold + Services Not
+    // Sold: nothing is dropped.
+    const byBucket = {};
+    const noBucket = { sold: [], notSold: [] };
+    const fileService = (name, outcome) => {
       const bucket = serviceBucketOf(serviceCategories, name);
-      if (!bucket) { soldNoBucket.push(name); continue; }
-      (soldByBucket[bucket] ||= []).push(name);
-    }
+      const box = bucket ? (byBucket[bucket] ||= { sold: [], notSold: [] }) : noBucket;
+      box[outcome].push(name);
+    };
+    for (const name of servicesSold) fileService(name, 'sold');
+    for (const name of servicesNotSold) fileService(name, 'notSold');
     return {
       id: p.id,
       _prospect: p,
-      _soldByBucket: soldByBucket,
-      _soldNoBucket: soldNoBucket,
+      _byBucket: byBucket,
+      _noBucket: noBucket,
       _oppsTip: counts?.tip || [],
       _oppRecords: counts?.records || [],
       _pcOppsTip: pcCounts?.tip || [],
@@ -2860,10 +2917,10 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getSortValue: (r) => r.servicesSold.length,
         getFilterValue: (r) => r.servicesSold.join(', '),
         exportValue: (r) => r.servicesSold.join(', '),
-        render: (r) => <NameListCell items={r.servicesSold} empty="No services sold" /> },
-      // One column per bucket: the sold services filed in that box. Sits
-      // between Services Sold (the full list) and Services Not Sold, so the
-      // breakdown reads left to right off the roll-up it came from.
+        render: (r) => <ServiceOutcomeCell sold={r.servicesSold} empty="No services sold" /> },
+      // One column per bucket: what that box sold, in dark green, then what
+      // it didn't, in red. Sits right after Services Sold (the full list),
+      // so the breakdown reads left to right off the roll-up it came from.
       ...bucketColumns.map(({ name, key }) => ({
         key,
         label: name,
@@ -2872,29 +2929,36 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         // header's tooltip spells them out, and widths are draggable.
         defaultWidth: 200,
         renderHeader: (label) => (
-          <span title={`Services sold that the services board files under "${name}" (a service's box is its Service Bucket on the Dropdowns › Services tab)`}>{label}</span>
+          <span title={`Services the services board files under "${name}": sold in green, Not Sold in red (a service's box is its Service Bucket on the Dropdowns › Services tab)`}>{label}</span>
         ),
-        getSortValue: (r) => (r._soldByBucket[name]?.length || 0),
-        getFilterValue: (r) => (r._soldByBucket[name] || []).join(', '),
-        exportValue: (r) => (r._soldByBucket[name] || []).join(', '),
-        render: (r) => <NameListCell items={r._soldByBucket[name] || []} empty={`No ${name} services sold`} />,
+        // Sold count leads the sort, with the not-sold count breaking ties,
+        // so a firm that bought the most in this box sorts to the top and
+        // the ones we pitched hardest follow.
+        getSortValue: (r) => bucketOf(r, name).sold.length * 1000 + bucketOf(r, name).notSold.length,
+        getFilterValue: (r) => bucketNames(bucketOf(r, name)).join(', '),
+        exportValue: (r) => bucketExport(bucketOf(r, name)),
+        render: (r) => <ServiceOutcomeCell {...bucketOf(r, name)} empty={`No ${name} services explored`} />,
       })),
-      // Sold services no box claims — the same card the Scope picker adds.
-      // Kept so the per-bucket columns account for everything in Services
-      // Sold rather than quietly losing the unfiled ones.
+      // Services no box claims — the same card the Scope picker adds. Kept
+      // so the per-bucket columns account for every explored service rather
+      // than quietly losing the unfiled ones.
       ...(isServicesVariant ? [{ key: 'svcBucketNone', label: UNGROUPED_SERVICES, defaultWidth: 200,
         renderHeader: (label) => (
-          <span title="Services sold that no box on the services board claims — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
+          <span title="Services that no box on the services board claims: sold in green, Not Sold in red — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
         ),
-        getSortValue: (r) => r._soldNoBucket.length,
-        getFilterValue: (r) => r._soldNoBucket.join(', '),
-        exportValue: (r) => r._soldNoBucket.join(', '),
-        render: (r) => <NameListCell items={r._soldNoBucket} empty="No unfiled services sold" /> }] : []),
-      { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
+        getSortValue: (r) => r._noBucket.sold.length * 1000 + r._noBucket.notSold.length,
+        getFilterValue: (r) => bucketNames(r._noBucket).join(', '),
+        exportValue: (r) => bucketExport(r._noBucket),
+        render: (r) => <ServiceOutcomeCell {...r._noBucket} empty="No unfiled services explored" /> }] : []),
+      // Services Not Sold has its own column on PE Overview. The Services
+      // tab drops it: every not-sold service is already in its bucket
+      // column there, in red, so a second run-on list of the same names
+      // would just cost a column's width.
+      ...(isServicesVariant ? [] : [{ key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
         getSortValue: (r) => r.servicesNotSold.length,
         getFilterValue: (r) => r.servicesNotSold.join(', '),
         exportValue: (r) => r.servicesNotSold.join(', '),
-        render: (r) => <NameListCell items={r.servicesNotSold} empty="No services marked not sold" /> },
+        render: (r) => <ServiceOutcomeCell notSold={r.servicesNotSold} empty="No services marked not sold" /> }]),
       // Services In Progress: in-flight explored services. When the
       // company has a matching opp in the Opps tab, the cell becomes a
       // link that pops those opps' details (active first) — so a user can
