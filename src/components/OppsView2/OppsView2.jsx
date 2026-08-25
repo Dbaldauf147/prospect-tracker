@@ -1161,6 +1161,28 @@ function oppNeedsCreditApproval(row) {
   return bfoFieldMissing(row?.['Credit approval']);
 }
 
+// "Missing Entity Approval" / "Missing Verbal" flags: an opp that has
+// reached Agreement Sent with either of those two cells still blank.
+// Both are asked for by the AgreementSentFollowUpModal when the stage
+// flips, so these catch the opps where that prompt was skipped — or that
+// reached Agreement Sent before it existed — rather than leaving the gap
+// to be found when the paperwork is already out. One flag per field so
+// the chip names the cell to fill. Blank sentinels ("-", "#N/A", …) count
+// as missing, same as every other Flags-column check. The entity chip
+// reads "Missing Entity Approval" rather than the field's full name,
+// which overflows the column; the tooltip carries the full name.
+const AGREEMENT_SENT_STAGES_SET = new Set(['Agreement Sent']);
+function oppMissingEntityApproval(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!AGREEMENT_SENT_STAGES_SET.has(stage)) return false;
+  return bfoFieldMissing(row?.['Entity Outside the US Approval']);
+}
+function oppMissingVerbal(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!AGREEMENT_SENT_STAGES_SET.has(stage)) return false;
+  return bfoFieldMissing(row?.['Verbal']);
+}
+
 // One-shot Call-In ascending sort used during initial hydration. Rows
 // without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
@@ -10723,6 +10745,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
       if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
+      if (oppMissingEntityApproval(row)) parts.push('Missing Entity Approval');
+      if (oppMissingVerbal(row)) parts.push('Missing Verbal');
       const kickoffDays = kickoffDeadlineFlag(row);
       if (kickoffDays != null) parts.push(`Kickoff ${kickoffCountdownLabel(kickoffDays)}`);
       const stall = oppStageStall(row);
@@ -10744,6 +10768,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
         if (oppNeedsCreditApproval(row)) n += 1;
+        if (oppMissingEntityApproval(row)) n += 1;
+        if (oppMissingVerbal(row)) n += 1;
         if (kickoffDeadlineFlag(row) != null) n += 1;
         if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
         return n;
@@ -10758,10 +10784,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
         const needsCredit = oppNeedsCreditApproval(row);
+        const missingEntity = oppMissingEntityApproval(row);
+        const missingVerbal = oppMissingVerbal(row);
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -10838,6 +10866,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval: get credit approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Credit Approval Needed</span>
+            )}
+            {missingEntity && (
+              <span
+                title="Opp in &quot;Agreement Sent&quot; with a blank Entity Outside the US Approval: fill it in."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing Entity Approval</span>
+            )}
+            {missingVerbal && (
+              <span
+                title="Opp in &quot;Agreement Sent&quot; with a blank Verbal: fill it in."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing Verbal</span>
             )}
             {kickoffDays != null && (
               <span
