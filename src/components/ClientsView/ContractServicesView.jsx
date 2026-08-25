@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SERVICE_STATUSES } from '../../data/enums';
 import { buildServiceCatalog } from '../../utils/serviceCoverage';
-import { mergeExtractedServices } from '../../utils/contractServices';
+import { mergeExtractedServices, ignoreKeyFor } from '../../utils/contractServices';
 import { apiFetch } from '../../utils/apiFetch';
 import { appendContractLanguage } from '../../utils/contractLanguageStore';
 import { applyDealTerms, DEAL_TERM_FIELDS, loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
@@ -29,6 +29,19 @@ function loadSaved() {
 }
 function save(state) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota — the analysis is re-runnable */ }
+}
+
+// Whitespace-insensitive comparison, for deciding whether a service's full
+// scope wording actually says more than the short quote beside it.
+function collapse(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim();
+}
+
+// The first line of a block of scope wording, used as the table's one-liner
+// when a document set out a service's scope without a quotable heading.
+function firstLine(s) {
+  const line = String(s || '').split('\n').map(t => t.trim()).find(Boolean) || '';
+  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
 }
 
 function extOf(name) {
@@ -258,7 +271,7 @@ function ClientCombobox({ clients, value, onChange }) {
  * client picked, and it appends rather than replaces, because the library is
  * built up across many contracts.
  */
-export function ContractServicesView({ prospects = [], settings = {}, updateProspect, user }) {
+export function ContractServicesView({ prospects = [], settings = {}, updateSettings, updateProspect, user }) {
   const saved = useRef(loadSaved()).current;
   const [clientId, setClientId] = useState(() => saved?.clientId || '');
   // [{ fileName, readAs, status, error, result }] in the order analyzed —
@@ -279,11 +292,33 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   const [dealNote, setDealNote] = useState('');
   const [dealError, setDealError] = useState('');
   // The Deals roster, re-read when another tab uploads or edits it.
+  // Which evidence rows have their full scope wording expanded, keyed
+  // `${row.key}#${i}`. The table shows the one-line quote; the wording
+  // underneath it is what actually gets filed, so it has to be readable
+  // before the button is pressed — but inline for every row would bury the
+  // table under whole clauses.
+  const [openWording, setOpenWording] = useState({});
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [dealClientMap, setDealClientMap] = useState(() => loadDealClientMap());
   const inputRef = useRef(null);
 
   const catalog = useMemo(() => buildServiceCatalog(settings), [settings]);
+
+  // Services the reviewer has said aren't services — remembered across
+  // contracts rather than per upload, because the wording that doesn't tie
+  // to a catalogue service in this quarter's amendment is the same wording
+  // that won't tie in the next one. Held in settings (Firestore, so it
+  // follows the user between devices) rather than in the per-review
+  // localStorage blob, which Clear wipes.
+  //
+  // Keyed by ignoreKeyFor, which is what makes an ignore carry to the next
+  // document: the catalogue match where there is one, and otherwise a
+  // deliberately blunt reading of the name, so "Global Research & Analytics"
+  // and "Global research and analytics" are one remembered decision.
+  const ignoredKeys = useMemo(() => {
+    const arr = settings?.contractServicesIgnored;
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  }, [settings?.contractServicesIgnored]);
 
   const clients = useMemo(() => {
     const wanted = new Set(['client', 'old client']);
@@ -328,7 +363,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     const o = overrides[row.key] || {};
     const catalogKey = o.catalogKey !== undefined ? o.catalogKey : (row.match?.key || '');
     const status = o.status !== undefined ? o.status : (row.removed ? 'N/A' : 'Sold');
-    const ignored = !!o.ignored;
+    const ignored = ignoredKeys.has(ignoreKeyFor(row));
     // `tick` is the row's own answer to "apply this?"; `checked` is that
     // answer as the table shows it. They differ only while the row is
     // ignored, which suppresses the tick without discarding it — so
@@ -338,16 +373,19 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   }
   function setRowState(row, patch) {
     // `tick` is derived from the other three, so it never goes to the store.
-    const { tick, ...state } = rowState(row);
-    void tick;
+    const { tick, ignored, ...state } = rowState(row);
+    void tick; void ignored;
     setOverrides(prev => ({ ...prev, [row.key]: { ...state, ...patch } }));
   }
+  // Ignoring is a decision about the wording, not about this upload, so it
+  // is written to the remembered list rather than to the review's overrides.
+  // Restoring forgets it — there is no second place to go and clear it.
   function toggleIgnored(row) {
-    const st = rowState(row);
-    setOverrides(prev => ({
-      ...prev,
-      [row.key]: { catalogKey: st.catalogKey, status: st.status, checked: st.tick, ignored: !st.ignored },
-    }));
+    if (typeof updateSettings !== 'function') return;
+    const key = ignoreKeyFor(row);
+    const next = new Set(ignoredKeys);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    updateSettings({ contractServicesIgnored: [...next] });
     setApplyNote('');
     setLanguageNote('');
   }
@@ -469,10 +507,16 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     return m;
   }, [done]);
 
-  // Ticked rows that actually carry a quote. A row with a catalogue match but
+  // Ticked rows that actually carry wording. A row with a catalogue match but
   // no evidence has nothing to contribute to the library, so it isn't counted
   // in the button's number — a button offering to save 9 clauses that saves 6
   // is worse than one that says 6.
+  //
+  // What gets filed is the service's scope wording transcribed in full, not
+  // the one-line quote the table shows: the library is drawn on when the next
+  // contract is drafted, and a sentence out of the middle of a clause is not
+  // something anyone can paste into one. The quote is the fallback for a
+  // document that named a service without ever setting out its scope.
   // Computed plainly rather than memoized, the same way selectedRows above is:
   // it reads rowState, which closes over the overrides and is rebuilt every
   // render, so a dependency array would either be a lie or defeat the memo.
@@ -481,11 +525,11 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   for (const row of selectedRows) {
     const { catalogKey } = rowState(row);
     const clauses = (row.evidence || [])
-      .filter(e => e.quote)
       .map(e => ({
         label: clauseLabelByFile.get(e.fileName) || e.fileName || row.name,
-        text: e.quote,
-      }));
+        text: e.language || e.quote,
+      }))
+      .filter(c => c.text);
     if (clauses.length) languageEntries.push({ service: catalogKey, clauses });
   }
   const languageClauseCount = languageEntries.reduce((n, e) => n + e.clauses.length, 0);
@@ -560,8 +604,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           Upload a contract and Claude transcribes the services it puts in scope, mapped onto the tracked service
           catalogue. Review the rows, then apply the ones you want to a client&apos;s <strong>Services Explored</strong>.
-          The same ticked rows can have their contract wording saved to the <strong>Contract Language</strong> subtab,
-          filed under each service. Nothing is written until you press a button.
+          The same ticked rows can have their scope wording — as the contract sets it out, in full — saved to the
+          <strong> Contract Language</strong> subtab, filed under each service. Nothing is written until you press a button.
         </div>
       </div>
 
@@ -800,6 +844,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
             {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}
             {ignoredCount > 0 && `, ${ignoredCount} ignored`}.
+            {ignoredCount > 0 && ' Ignored wording is remembered, so it arrives ignored on the next contract too — restore a row to undo that.'}
             {unmatchedCount > 0 && ` ${unmatchedCount} row${unmatchedCount === 1 ? '' : 's'} still need${unmatchedCount === 1 ? 's' : ''} a catalogue service picked before ${unmatchedCount === 1 ? 'it' : 'they'} can be applied — ignore the ones whose scope doesn’t tie to a service.`}
             {' '}The box in the header row selects (or clears) every matched row at once.
           </div>
@@ -856,9 +901,10 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                           <button
                             type="button"
                             onClick={() => toggleIgnored(row)}
+                            disabled={typeof updateSettings !== 'function'}
                             title={st.ignored
-                              ? 'Put this row back in the review'
-                              : 'Set this row aside: its scope doesn’t tie to a catalogue service. It stops asking for a match and is left out of both buttons.'}
+                              ? 'Put this row back in the review, and stop ignoring this wording on future contracts'
+                              : 'Set this row aside: its scope doesn’t tie to a catalogue service. It stops asking for a match, is left out of both buttons, and stays ignored when this wording turns up in a future contract.'}
                             style={{
                               border: 'none', background: 'none', padding: 0, cursor: 'pointer',
                               fontFamily: 'inherit', fontSize: '0.62rem', color: '#94A3B8', textDecoration: 'underline',
@@ -869,7 +915,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', minWidth: 200 }}>
                         <div style={{ fontWeight: 600, color: '#1E293B', textDecoration: st.ignored ? 'line-through' : 'none' }}>{row.name}</div>
                         <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
-                          {st.ignored && pill('ignored', { bg: '#E2E8F0', color: '#475569' }, 'Set aside — not applied, not saved to Contract Language, and not counted as needing a match')}
+                          {st.ignored && pill('ignored', { bg: '#E2E8F0', color: '#475569' }, 'Set aside — not applied, not saved to Contract Language, and not counted as needing a match. Remembered, so this wording arrives ignored on future contracts too')}
                           {row.removed && pill('removed', { bg: '#FEE2E2', color: '#B91C1C' }, 'A document says this service type ceases')}
                           {pill(row.confidence, CONFIDENCE_STYLE[row.confidence] || CONFIDENCE_STYLE.medium, 'How sure the model is this is a named service')}
                           {row.match?.basis === 'alias' && pill('alias', { bg: '#E0E7FF', color: '#3730A3' }, 'Mapped through the hand-maintained wording table')}
@@ -912,11 +958,40 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                         {client ? (current || 'untouched') : '—'}
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', color: '#475569', minWidth: 240 }}>
-                        {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>—</span> : row.evidence.map((e, i) => (
-                          <div key={i} style={{ marginBottom: i === row.evidence.length - 1 ? 0 : 4 }}>
-                            <span style={{ fontStyle: 'italic' }}>“{e.quote}”</span>
-                          </div>
-                        ))}
+                        {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>—</span> : row.evidence.map((e, i) => {
+                          const wordingKey = `${row.key}#${i}`;
+                          const open = !!openWording[wordingKey];
+                          const language = e.language || '';
+                          // Only worth a toggle where the wording says more
+                          // than the quote already does.
+                          const hasMore = !!language && collapse(language) !== collapse(e.quote || '');
+                          return (
+                            <div key={i} style={{ marginBottom: i === row.evidence.length - 1 ? 0 : 4 }}>
+                              <span style={{ fontStyle: 'italic' }}>“{e.quote || firstLine(language)}”</span>
+                              {hasMore && (
+                                <>
+                                  {' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => setOpenWording(p => ({ ...p, [wordingKey]: !open }))}
+                                    title="The scope wording as the contract sets it out — this is what gets filed under this service on Contract Language"
+                                    style={{
+                                      border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+                                      fontFamily: 'inherit', fontSize: '0.65rem', color: '#2563EB', textDecoration: 'underline',
+                                    }}
+                                  >{open ? 'hide full wording' : 'full wording'}</button>
+                                  {open && (
+                                    <div style={{
+                                      whiteSpace: 'pre-wrap', marginTop: 4, padding: '0.4rem 0.5rem',
+                                      background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 5,
+                                      color: '#334155', maxHeight: 260, overflowY: 'auto',
+                                    }}>{language}</div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                       </td>
                     </tr>
                   );

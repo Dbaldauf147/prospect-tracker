@@ -1289,7 +1289,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <ContractServicesView prospects={prospects} settings={settings} updateProspect={updateProspect} user={user} />
+        <ContractServicesView prospects={prospects} settings={settings} updateSettings={updateSettings} updateProspect={updateProspect} user={user} />
       </div>
     );
   }
