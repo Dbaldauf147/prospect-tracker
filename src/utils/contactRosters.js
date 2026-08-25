@@ -66,6 +66,16 @@ function accountDomain(c) {
   return domain && !FREE_MAIL.has(domain) ? domain : '';
 }
 
+// How a contact reads in a list: their name, falling back to the email
+// when HubSpot has no name on the record (imported rows often don't), and
+// finally to a placeholder so a row is never blank and unclickable.
+export function contactDisplayName(c) {
+  const name = `${String(c?.firstname || '').trim()} ${String(c?.lastname || '').trim()}`.trim();
+  if (name) return name;
+  const email = String(c?.email || '').trim();
+  return email || '(no name)';
+}
+
 function tagsOf(c) {
   return String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase();
 }
@@ -440,7 +450,7 @@ export function makeRosterGates({
  * reports `pct: null` — "nothing to answer for" is not 0%.
  */
 export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, localFields = null }) {
-  const empty = () => ({ contacts: 0, answered: 0, slots: 0, done: 0 });
+  const empty = () => ({ contacts: 0, answered: 0, slots: 0, done: 0, people: [] });
   const buckets = { all: empty() };
   for (const { key } of ROSTER_CATEGORIES) buckets[key] = empty();
   const left = { cancelling: 0, untracked: 0 };
@@ -460,12 +470,26 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
     // contact counts do.
     const cid = c?.id ?? c?.vid;
     const score = tagReviewScore(c, cid == null ? null : tagReviewMap[String(cid)]);
+    // The same row object goes into every bucket the contact is on: the
+    // people behind a percentage are the point of the percentage, and
+    // collecting them here rather than in a second pass is what keeps the
+    // list and the number describing the same set of contacts.
+    const person = {
+      id: cid == null ? null : String(cid),
+      name: contactDisplayName(c),
+      company: String(c?.company || '').trim(),
+      email: String(c?.email || '').trim(),
+      answered: score.answered,
+      total: score.total,
+      done: score.done,
+    };
     for (const { key } of [...hits, { key: 'all' }]) {
       const b = buckets[key];
       b.contacts += 1;
       b.answered += score.answered;
       b.slots += score.total;
       if (score.done) b.done += 1;
+      b.people.push(person);
     }
   }
   return finalizeCoverage(buckets, left);
@@ -474,7 +498,15 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
 function finalizeCoverage(buckets, left) {
   const out = { ...left };
   for (const [key, b] of Object.entries(buckets)) {
-    out[key] = { ...b, pct: b.slots > 0 ? Math.round((b.answered / b.slots) * 100) : null };
+    // Least-tagged first, then alphabetical. The list hangs off a coverage
+    // percentage, so the contacts that percentage is waiting on are the ones
+    // worth putting at the top; a finished roster falls back to plain
+    // alphabetical order, which is how you look someone up.
+    const people = b.people.slice().sort((x, y) => (
+      (x.answered - x.total) - (y.answered - y.total)
+      || x.name.localeCompare(y.name)
+    ));
+    out[key] = { ...b, people, pct: b.slots > 0 ? Math.round((b.answered / b.slots) * 100) : null };
   }
   return out;
 }
