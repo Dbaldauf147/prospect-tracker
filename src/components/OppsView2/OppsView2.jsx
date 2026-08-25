@@ -3882,6 +3882,57 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
   );
 }
 
+// The margin already tracked for this opp, offered beside the close-out
+// Final Margin box.
+//
+// Saving an SIA option to an opp freezes the term margin onto the record
+// (_pricingOption.finalMargin) and mirrors it into the Final Margin cell.
+// By the time the deal closes that cell has often been typed over, cleared,
+// or never written at all — so the number the deal was quoted at is sitting
+// on the record with nothing pointing at it, and the user is left recalling
+// a percentage at exactly the moment they're trying to close the popup.
+//
+// A suggestion, not a prefill: Final Margin is what the deal CLOSED at, and
+// a quoted margin that got negotiated down is the normal case. Writing the
+// quoted number into a saved field unasked would be a number the user has
+// to notice to correct — offering it is one click and no lie.
+function TrackedMarginHint({ opp, current, onUse }) {
+  const snapshot = opp?._pricingOption;
+  const tracked = fmtMarginPct(snapshot?.finalMargin);
+  // Nothing quoted through Pricing (or a hand-built option, which has no
+  // cost side and so no margin): there is nothing to suggest, and a line
+  // explaining the absence would show on most close-outs.
+  if (!tracked) return null;
+  const optionName = String(snapshot?.name || '').trim();
+  const matches = String(current || '').trim() === tracked;
+  return (
+    <div style={{
+      marginTop: 5, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap',
+      fontSize: '0.7rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
+    }}>
+      <span>
+        Quoted at <strong style={{ color: 'var(--color-text)' }}>{tracked}</strong>
+        {optionName ? <> on <em>{optionName}</em></> : null} over the term
+      </span>
+      {matches ? (
+        <span style={{ color: '#15803D', fontWeight: 600 }}>— in the box</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onUse(tracked)}
+          title={`Put ${tracked} in the Final Margin box`}
+          style={{
+            padding: '0.1rem 0.4rem', background: 'transparent',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
+            color: 'var(--color-accent)', cursor: 'pointer',
+          }}
+        >Use</button>
+      )}
+    </div>
+  );
+}
+
 // Popup that fires after Stage flips to "Not Sold". Prompts the user to
 // fill in the close-out columns (Close Date, Reason Not Sold, Final
 // Margin, Competition) so the downstream reporting tabs (AgentsView's
@@ -4083,6 +4134,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
                 placeholder="e.g. 22% or $4,500"
                 style={inputStyle}
               />
+              <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
             </div>
           </div>
           <div>
@@ -4226,6 +4278,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
               placeholder="e.g. 22% or $4,500"
               style={inputStyle}
             />
+            <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
           </div>
           <div>
             <label style={labelStyle}>Competition</label>
