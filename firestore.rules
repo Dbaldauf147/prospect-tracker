@@ -119,6 +119,16 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Contract language: the wording that goes into a contract for each
+    // service, typed on the Clients view's Contract Language subtab. One
+    // document per service for the same reason companySiteLists split —
+    // clause text is long-form prose, and a library covering the catalogue
+    // would fill the settings document and take every other settings write
+    // down with it.
+    match /userSettings/{userId}/contractLanguage/{serviceSlug} {
+      allow read, write: if owns(userId);
+    }
+
     // Target accounts: users can only read/write their own data
     match /targetAccounts/{userId} {
       allow read, write: if owns(userId);

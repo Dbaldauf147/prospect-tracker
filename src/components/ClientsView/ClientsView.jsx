@@ -6,6 +6,7 @@ import { buildTargetTierResolver } from '../../utils/targetTier';
 import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
 import { ContractServicesView } from './ContractServicesView';
+import { ContractLanguageView } from './ContractLanguageView';
 import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
@@ -1262,6 +1263,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         { key: 'commissions', label: 'Commissions' },
         { key: 'postsale', label: 'Post-Sale Follow-Up' },
         { key: 'contractservices', label: 'Contract Services' },
+        { key: 'contractlanguage', label: 'Contract Language' },
       ].map(t => {
         const active = subtab === t.key;
         return (
@@ -1321,6 +1323,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
         <ContractServicesView prospects={prospects} settings={settings} updateProspect={updateProspect} />
+      </div>
+    );
+  }
+
+  if (subtab === 'contractlanguage') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <ContractLanguageView settings={settings} user={user} />
       </div>
     );
   }
