@@ -21,7 +21,7 @@ import { splitPeOwners } from '../../utils/peOwners';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
-import { getLocalProjectNames, localProjectNameFor } from '../../data/serviceCatalog';
+import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -1197,7 +1197,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>Local Project Name</strong> (set per service on the Dropdowns › Services tab). Every PE Overview column is here too, and this tab keeps its own column layout.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Every PE Overview column is here too, and this tab keeps its own column layout.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -1322,7 +1322,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         // same spot in this chain, so without distinct keys React would
         // reuse one instance and only swap props — and the Services tab
         // would inherit PE Overview's saved column visibility, hiding
-        // the very project columns it exists to show (plus its search,
+        // the very bucket columns it exists to show (plus its search,
         // sort and row selection).
         <PEBlueOwlTab
           key="pe-overview"
@@ -2534,11 +2534,11 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
 // `variant` picks which of the two tabs this instance is rendering:
 //   'overview' — the PE Overview tab: every company column.
 //   'services' — the PE Overview - Services tab: the same columns plus
-//                the Services Sold breakdown, one column per Local
-//                Project Name. Same rows, same editing, its own saved
-//                column layout (own tableId) so widening the Services
-//                tab out to the project columns doesn't disturb the
-//                layout the user keeps on PE Overview.
+//                the Services Sold breakdown, one column per Service
+//                Bucket. Same rows, same editing, its own saved column
+//                layout (own tableId) so widening the Services tab out
+//                to the bucket columns doesn't disturb the layout the
+//                user keeps on PE Overview.
 function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const isServicesVariant = variant === 'services';
   const tabLabel = isServicesVariant ? 'PE Overview - Services' : 'PE Overview';
@@ -2727,26 +2727,24 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
   // them (the workbook the Utility Lookup page saves), and when.
   const savedAnalyses = useSavedAnalyses(companies);
 
-  // Services Sold, broken out by the service's Local Project Name — the
-  // "#SUECO" / "#DATA" family set on the Dropdowns › Services tab. One
-  // column per family (below), so a row shows which project each sold
-  // service bills under instead of one run-on list.
+  // Services Sold, broken out by the service's bucket — the box the
+  // services board files it in ("DATA", "RA Modules", "GHG Reporting", …),
+  // the same layout the Opps Scope picker lays out and the Service Bucket
+  // column on Dropdowns › Services edits. One column per box (below), so a
+  // row shows which part of the portfolio each sold service came from
+  // instead of one run-on list.
   //
-  // The family list comes from the whole catalog rather than from what's
-  // on screen, so the columns don't appear and vanish as the user
-  // switches PE firm (which would churn their saved column layout).
-  const serviceOverrides = settings?.serviceOverrides;
-  const projectNames = useMemo(
-    () => getLocalProjectNames(serviceOverrides),
-    [serviceOverrides],
-  );
-  // Column key per family. Prefixed and slugged so a project name with
-  // punctuation (they all start with "#") can't collide with a real
-  // column key or break the saved-prefs maps.
-  const projectColumns = useMemo(() => (isServicesVariant ? projectNames.map(name => ({
+  // Every box gets a column whether or not a sold service currently sits in
+  // it, so the columns don't appear and vanish as the user switches PE firm
+  // (which would churn their saved column layout).
+  const serviceCategories = useMemo(() => getServiceCategories(settings), [settings]);
+  // Column key per box, in board order. Prefixed and slugged so a box name
+  // with punctuation or spaces can't collide with a real column key or
+  // break the saved-prefs maps.
+  const bucketColumns = useMemo(() => (isServicesVariant ? serviceCategories.map(c => c.name).map(name => ({
     name,
-    key: `svcProject:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
-  })) : []), [projectNames, isServicesVariant]);
+    key: `svcBucket:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+  })) : []), [serviceCategories, isServicesVariant]);
 
   const rows = useMemo(() => companies.map(p => {
     const counts = oppCountsByCompanyId.get(p.id);
@@ -2766,22 +2764,21 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       else if (s === 'Not Sold') servicesNotSold.push(name);
       else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
     }
-    // Sold services bucketed by project family, plus a catch-all for the
-    // ones whose service has no Local Project Name set (a service the
-    // user added themselves, or a catalog row that never got one). The
-    // buckets always sum back to Services Sold — nothing is dropped.
-    const soldByProject = {};
-    const soldNoProject = [];
+    // Sold services grouped by bucket, plus a catch-all for the ones no box
+    // claims — the Scope picker's "Other services" card. The buckets always
+    // sum back to Services Sold: nothing is dropped.
+    const soldByBucket = {};
+    const soldNoBucket = [];
     for (const name of servicesSold) {
-      const project = localProjectNameFor(name, serviceOverrides);
-      if (!project) { soldNoProject.push(name); continue; }
-      (soldByProject[project] ||= []).push(name);
+      const bucket = serviceBucketOf(serviceCategories, name);
+      if (!bucket) { soldNoBucket.push(name); continue; }
+      (soldByBucket[bucket] ||= []).push(name);
     }
     return {
       id: p.id,
       _prospect: p,
-      _soldByProject: soldByProject,
-      _soldNoProject: soldNoProject,
+      _soldByBucket: soldByBucket,
+      _soldNoBucket: soldNoBucket,
       _oppsTip: counts?.tip || [],
       _oppRecords: counts?.records || [],
       _pcOppsTip: pcCounts?.tip || [],
@@ -2818,7 +2815,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       _analysis: analysis,
       analysisSavedAt: analysis?.savedAt ? new Date(analysis.savedAt).getTime() || 0 : (analysis ? 1 : 0),
     };
-  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap, savedAnalyses, serviceOverrides]);
+  }), [companies, oppCountsByCompanyId, pcOppCountsByCompanyId, portfolioByPe, dmNamesByCompanyId, managerMap, savedAnalyses, serviceCategories]);
 
   // Same dropdown vocabularies as Table View's inline editors, built
   // from the full prospect list so the options match exactly.
@@ -2864,33 +2861,35 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getFilterValue: (r) => r.servicesSold.join(', '),
         exportValue: (r) => r.servicesSold.join(', '),
         render: (r) => <NameListCell items={r.servicesSold} empty="No services sold" /> },
-      // One column per Local Project Name: the sold services that bill
-      // under that project family. Sits between Services Sold (the full
-      // list) and Services Not Sold, so the breakdown reads left to
-      // right off the roll-up it came from.
-      ...projectColumns.map(({ name, key }) => ({
+      // One column per bucket: the sold services filed in that box. Sits
+      // between Services Sold (the full list) and Services Not Sold, so the
+      // breakdown reads left to right off the roll-up it came from.
+      ...bucketColumns.map(({ name, key }) => ({
         key,
         label: name,
-        defaultWidth: 180,
+        // Wider than the old "#DATA" project columns were: bucket names
+        // are words, not tags. The longest few still truncate — the
+        // header's tooltip spells them out, and widths are draggable.
+        defaultWidth: 200,
         renderHeader: (label) => (
-          <span title={`Services sold that bill under the "${name}" Local Project Name (set per service on the Dropdowns › Services tab)`}>{label}</span>
+          <span title={`Services sold that the services board files under "${name}" (a service's box is its Service Bucket on the Dropdowns › Services tab)`}>{label}</span>
         ),
-        getSortValue: (r) => (r._soldByProject[name]?.length || 0),
-        getFilterValue: (r) => (r._soldByProject[name] || []).join(', '),
-        exportValue: (r) => (r._soldByProject[name] || []).join(', '),
-        render: (r) => <NameListCell items={r._soldByProject[name] || []} empty={`No ${name} services sold`} />,
+        getSortValue: (r) => (r._soldByBucket[name]?.length || 0),
+        getFilterValue: (r) => (r._soldByBucket[name] || []).join(', '),
+        exportValue: (r) => (r._soldByBucket[name] || []).join(', '),
+        render: (r) => <NameListCell items={r._soldByBucket[name] || []} empty={`No ${name} services sold`} />,
       })),
-      // Sold services whose service has no Local Project Name — kept so
-      // the per-project columns account for everything in Services Sold
-      // rather than quietly losing the unmapped ones.
-      ...(isServicesVariant ? [{ key: 'svcProjectNone', label: 'No Project Name', defaultWidth: 180,
+      // Sold services no box claims — the same card the Scope picker adds.
+      // Kept so the per-bucket columns account for everything in Services
+      // Sold rather than quietly losing the unfiled ones.
+      ...(isServicesVariant ? [{ key: 'svcBucketNone', label: UNGROUPED_SERVICES, defaultWidth: 200,
         renderHeader: (label) => (
-          <span title="Services sold whose service has no Local Project Name set on the Dropdowns › Services tab">{label}</span>
+          <span title="Services sold that no box on the services board claims — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
         ),
-        getSortValue: (r) => r._soldNoProject.length,
-        getFilterValue: (r) => r._soldNoProject.join(', '),
-        exportValue: (r) => r._soldNoProject.join(', '),
-        render: (r) => <NameListCell items={r._soldNoProject} empty="No unmapped services sold" /> }] : []),
+        getSortValue: (r) => r._soldNoBucket.length,
+        getFilterValue: (r) => r._soldNoBucket.join(', '),
+        exportValue: (r) => r._soldNoBucket.join(', '),
+        render: (r) => <NameListCell items={r._soldNoBucket} empty="No unfiled services sold" /> }] : []),
       { key: 'servicesNotSold', label: 'Services Not Sold', defaultWidth: 220,
         getSortValue: (r) => r.servicesNotSold.length,
         getFilterValue: (r) => r.servicesNotSold.join(', '),
@@ -3087,7 +3086,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       ) },
       { key: 'notes', label: 'Notes', defaultWidth: 320, render: editable({ key: 'notes', label: 'Notes', type: 'notes' }) },
     ];
-  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, projectColumns, isServicesVariant]);
+  }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, bucketColumns, isServicesVariant]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -3348,9 +3347,13 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
             // the Asset Types column at -9, the per-Local-Project-Name
             // Services Sold columns at -10, which then moved to the
             // Services tab). The Services tab starts on its own key so
-            // widening it out to the project columns never disturbs the
-            // layout the user keeps on PE Overview.
-            tableId={isServicesVariant ? 'pe-overview-services-1' : 'pe-blue-owl-companies-10'}
+            // widening it out to the bucket columns never disturbs the
+            // layout the user keeps on PE Overview; it went to -2 when
+            // the Services Sold breakdown switched from Local Project
+            // Name to Service Bucket, since every one of those columns
+            // changed key and a saved order would otherwise strand the
+            // new ones at the far right.
+            tableId={isServicesVariant ? 'pe-overview-services-2' : 'pe-blue-owl-companies-10'}
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
