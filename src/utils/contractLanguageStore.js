@@ -21,7 +21,7 @@
 // rules predate this collection — and a library that silently failed to
 // save would read exactly like one that saved fine.
 
-import { collection, doc, deleteDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, doc, deleteDoc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const COL = 'userSettings';
@@ -111,4 +111,58 @@ export async function saveServiceClauses(userId, service, clauses) {
     console.warn('contractLanguage: write failed', err);
     return { ok: false, error: err?.message || String(err), code: err?.code || '' };
   }
+}
+
+// Two clauses are the same wording if they differ only in whitespace. A
+// quote lifted twice out of the same contract — by a re-run, or by an
+// amendment that repeats the clause — shouldn't land in the library twice.
+function wordingKey(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Append clauses to services without disturbing what's already there.
+ *
+ * This is how the Contract Services subtab hands its work over: it reads a
+ * signed contract, and the verbatim quote it captured as evidence for each
+ * service IS that service's contract language. Appending rather than
+ * replacing matters — the library is built up over many contracts, and a
+ * service's existing wording is not this document's to overwrite.
+ *
+ * `entries` is [{ service, clauses: [{ label, text }] }]. Wording already on
+ * file is skipped, so pressing the button twice is a no-op rather than a
+ * duplicate.
+ *
+ * Returns { ok, added, skipped, services, error, code } — `added` and
+ * `skipped` count clauses, `services` counts documents actually written.
+ */
+export async function appendContractLanguage(userId, entries) {
+  const tally = { ok: true, added: 0, skipped: 0, services: 0, error: '', code: '' };
+  if (!userId) return { ...tally, ok: false, error: 'Not signed in — nothing was saved.' };
+  for (const entry of entries || []) {
+    const name = String(entry?.service || '').trim();
+    const incoming = normalizeClauses(entry?.clauses).filter(c => c.text.trim());
+    if (!name || incoming.length === 0) continue;
+    const ref = doc(db, COL, userId, SUB, serviceSlug(name));
+    try {
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? normalizeClauses(snap.data()?.clauses) : [];
+      const seen = new Set(existing.map(c => wordingKey(c.text)));
+      const fresh = [];
+      for (const c of incoming) {
+        const k = wordingKey(c.text);
+        if (seen.has(k)) { tally.skipped += 1; continue; }
+        seen.add(k);
+        fresh.push(c);
+      }
+      if (fresh.length === 0) continue;
+      await setDoc(ref, { service: name, clauses: [...existing, ...fresh], updatedAt: Date.now() });
+      tally.added += fresh.length;
+      tally.services += 1;
+    } catch (err) {
+      console.warn('contractLanguage: append failed', err);
+      return { ...tally, ok: false, error: err?.message || String(err), code: err?.code || '' };
+    }
+  }
+  return tally;
 }

@@ -3,6 +3,7 @@ import { SERVICE_STATUSES } from '../../data/enums';
 import { buildServiceCatalog } from '../../utils/serviceCoverage';
 import { mergeExtractedServices } from '../../utils/contractServices';
 import { apiFetch } from '../../utils/apiFetch';
+import { appendContractLanguage } from '../../utils/contractLanguageStore';
 
 // Vercel caps a serverless request body at 4.5 MB and base64 adds a third,
 // so this is the largest PDF that can be posted whole for Claude to read
@@ -104,8 +105,16 @@ function pill(text, palette, title) {
  * services it puts in scope, map them onto the tracked service catalogue, and
  * — for the rows a human ticks — write them onto the client's Services
  * Explored. Nothing reaches a client record without an explicit Apply.
+ *
+ * The ticked rows can also be pushed the other way, into the Contract
+ * Language library: the verbatim quote captured as evidence for a service IS
+ * that service's contract language, and re-typing it into the other subtab
+ * by hand would be copying text this page already has. That write is
+ * client-independent — language belongs to the service — so it needs no
+ * client picked, and it appends rather than replaces, because the library is
+ * built up across many contracts.
  */
-export function ContractServicesView({ prospects = [], settings = {}, updateProspect }) {
+export function ContractServicesView({ prospects = [], settings = {}, updateProspect, user }) {
   const saved = useRef(loadSaved()).current;
   const [clientId, setClientId] = useState(() => saved?.clientId || '');
   // [{ fileName, readAs, status, error, result }] in the order analyzed —
@@ -115,6 +124,9 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [applyNote, setApplyNote] = useState('');
+  const [languageNote, setLanguageNote] = useState('');
+  const [languageError, setLanguageError] = useState({ error: '', code: '' });
+  const [savingLanguage, setSavingLanguage] = useState(false);
   const inputRef = useRef(null);
 
   const catalog = useMemo(() => buildServiceCatalog(settings), [settings]);
@@ -156,6 +168,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     if (!picked.length) return;
     setBusy(true);
     setApplyNote('');
+    setLanguageNote('');
     for (const file of picked) {
       // Own id rather than array position or filename: entries are patched
       // asynchronously and the reviewer can remove one mid-run, and two
@@ -196,6 +209,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     setFiles([]);
     setOverrides({});
     setApplyNote('');
+    setLanguageNote('');
+    setLanguageError({ error: '', code: '' });
   }
 
   const selectedRows = rows.filter(r => { const s = rowState(r); return s.checked && s.catalogKey; });
@@ -214,6 +229,67 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     setApplyNote(`Wrote ${selectedRows.length} service${selectedRows.length === 1 ? '' : 's'} to ${client.company}`);
   }
 
+  // What to call a clause that came out of a given file: the agreement's own
+  // name when the document states one, its type if not, and the filename as a
+  // last resort — so the library says "Master Services Agreement" rather than
+  // "acme-msa-final-v3.pdf" wherever the contract gave it a name.
+  const clauseLabelByFile = useMemo(() => {
+    const m = new Map();
+    for (const f of done) {
+      const r = f.result || {};
+      const label = String(r.agreementName || '').trim()
+        || String(r.agreementType || '').trim()
+        || String(f.fileName || '').trim();
+      if (f.fileName) m.set(f.fileName, label);
+    }
+    return m;
+  }, [done]);
+
+  // Ticked rows that actually carry a quote. A row with a catalogue match but
+  // no evidence has nothing to contribute to the library, so it isn't counted
+  // in the button's number — a button offering to save 9 clauses that saves 6
+  // is worse than one that says 6.
+  // Computed plainly rather than memoized, the same way selectedRows above is:
+  // it reads rowState, which closes over the overrides and is rebuilt every
+  // render, so a dependency array would either be a lie or defeat the memo.
+  // It is a handful of rows either way.
+  const languageEntries = [];
+  for (const row of selectedRows) {
+    const { catalogKey } = rowState(row);
+    const clauses = (row.evidence || [])
+      .filter(e => e.quote)
+      .map(e => ({
+        label: clauseLabelByFile.get(e.fileName) || e.fileName || row.name,
+        text: e.quote,
+      }));
+    if (clauses.length) languageEntries.push({ service: catalogKey, clauses });
+  }
+  const languageClauseCount = languageEntries.reduce((n, e) => n + e.clauses.length, 0);
+
+  async function saveLanguage() {
+    if (!languageEntries.length || savingLanguage) return;
+    setSavingLanguage(true);
+    setLanguageNote('');
+    setLanguageError({ error: '', code: '' });
+    const res = await appendContractLanguage(user?.uid, languageEntries);
+    setSavingLanguage(false);
+    if (!res.ok) {
+      setLanguageError({ error: res.error, code: res.code });
+      return;
+    }
+    if (res.added === 0) {
+      setLanguageNote(res.skipped > 0
+        ? 'Already in the library — nothing new to save'
+        : 'Nothing to save');
+      return;
+    }
+    const skipped = res.skipped > 0 ? `, ${res.skipped} already on file` : '';
+    setLanguageNote(
+      `Saved ${res.added} clause${res.added === 1 ? '' : 's'} to `
+      + `${res.services} service${res.services === 1 ? '' : 's'} on Contract Language${skipped}`
+    );
+  }
+
   const canApply = !!client && selectedRows.length > 0 && typeof updateProspect === 'function';
   const currentStatuses = client?.servicesExplored || {};
 
@@ -224,7 +300,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           Upload a contract and Claude transcribes the services it puts in scope, mapped onto the tracked service
           catalogue. Review the rows, then apply the ones you want to a client&apos;s <strong>Services Explored</strong>.
-          Nothing is written until you press Apply.
+          The same ticked rows can have their contract wording saved to the <strong>Contract Language</strong> subtab,
+          filed under each service. Nothing is written until you press a button.
         </div>
       </div>
 
@@ -333,11 +410,44 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
             >Apply {selectedRows.length} service{selectedRows.length === 1 ? '' : 's'}</button>
             <button
               type="button"
+              disabled={!languageClauseCount || savingLanguage}
+              onClick={saveLanguage}
+              title={languageClauseCount
+                ? 'Append each ticked service\u2019s verbatim quote to that service on the Contract Language subtab. Wording already on file is skipped.'
+                : 'Tick a service that has an evidence quote first.'}
+              style={{
+                padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid',
+                borderColor: languageClauseCount ? '#2563EB' : '#CBD5E1',
+                background: languageClauseCount ? '#EFF6FF' : '#F1F5F9',
+                color: languageClauseCount ? '#1E40AF' : '#94A3B8',
+                fontSize: '0.75rem', fontWeight: 700, fontFamily: 'inherit',
+                cursor: languageClauseCount && !savingLanguage ? 'pointer' : 'not-allowed',
+              }}
+            >{savingLanguage
+              ? 'Saving\u2026'
+              : `Save ${languageClauseCount} clause${languageClauseCount === 1 ? '' : 's'} to Contract Language`}</button>
+            <button
+              type="button"
               onClick={clearAll}
               style={{ padding: '0.4rem 0.7rem', borderRadius: 6, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
             >Clear</button>
             {applyNote && <span style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 600 }}>{applyNote}</span>}
+            {languageNote && <span style={{ fontSize: '0.72rem', color: '#1E40AF', fontWeight: 600 }}>{languageNote}</span>}
           </div>
+
+          {languageError.error && (
+            <div style={{
+              margin: '0 0 0.5rem', padding: '0.5rem 0.7rem', borderRadius: 6,
+              background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
+              fontSize: '0.72rem', lineHeight: 1.45,
+            }}>
+              <strong>Couldn’t save the contract language.</strong>{' '}
+              {languageError.code === 'permission-denied'
+                ? 'Firestore refused the write \u2014 the deployed rules are missing the userSettings/{uid}/contractLanguage path.'
+                : 'Check your connection and try again. Nothing on this page was lost.'}
+              <div style={{ marginTop: 4, opacity: 0.85 }}>{languageError.error}</div>
+            </div>
+          )}
 
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
             {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}.
