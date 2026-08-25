@@ -53,6 +53,7 @@ const PricingView = lazyView(() => import('./components/PricingView/PricingView'
 const ProspectingView = lazyView(() => import('./components/ProspectingView/ProspectingView').then(m => ({ default: m.ProspectingView })));
 const ProspectModal = lazyView(() => import('./components/ProspectModal/ProspectModal').then(m => ({ default: m.ProspectModal })));
 const TableView = lazyView(() => import('./components/TableView/TableView').then(m => ({ default: m.TableView })));
+const BulkAddModal = lazyView(() => import('./components/TableView/BulkAddModal').then(m => ({ default: m.BulkAddModal })));
 const UploadedListView = lazyView(() => import('./components/UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
 const VibeProspecting = lazyView(() => import('./components/VibeProspecting/VibeProspecting').then(m => ({ default: m.VibeProspecting })));
 
@@ -179,6 +180,7 @@ function App() {
 
   const [view, setView] = useState('opps2');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
+  const [bulkAddOpen, setBulkAddOpen] = useState(false);
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
   const [showCdmName, setShowCdmName] = useState(false);
@@ -403,6 +405,7 @@ function App() {
             view={view}
             setView={setView}
             onAddNew={handleAddNew}
+            onBulkAdd={() => setBulkAddOpen(true)}
             resultCount={filtered.length}
             totalCount={prospects.length}
             savedFilters={settings.savedFilters || []}
@@ -550,6 +553,17 @@ function App() {
           updateSettingsPath={updateSettingsPath}
           cdmName={cdmName}
           targetAccountsData={targetAccountsData}
+        />
+        </Suspense>
+      )}
+
+      {bulkAddOpen && (
+        <Suspense fallback={null}>
+        <BulkAddModal
+          existingProspects={prospects}
+          onAdd={addProspect}
+          onClose={() => setBulkAddOpen(false)}
+          settings={settings}
         />
         </Suspense>
       )}

@@ -150,12 +150,57 @@ function SavedFiltersMenu({ filters, searchTerm, onLoad, saved, onUpdateSaved })
   );
 }
 
+// "+ Add" is a split button: the main half opens the single-company
+// popup (what it has always done), the caret half offers the bulk add
+// so a batch of companies can go in from one paste.
+function AddMenu({ onAddNew, onBulkAdd }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  if (!onBulkAdd) return <button className={styles.addBtn} onClick={onAddNew}>+ Add</button>;
+
+  return (
+    <div className={styles.filterGroup} ref={ref}>
+      <div className={styles.addSplit}>
+        <button className={styles.addBtnMain} onClick={onAddNew} title="Add one company">+ Add</button>
+        <button
+          className={styles.addBtnCaret}
+          onClick={() => setOpen(p => !p)}
+          aria-label="More add options"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >{open ? '\u25B2' : '\u25BC'}</button>
+      </div>
+      {open && (
+        <div className={styles.addDropdown} role="menu">
+          <button className={styles.addDropdownItem} role="menuitem" onClick={() => { setOpen(false); onAddNew(); }}>
+            One company&hellip;
+          </button>
+          <button className={styles.addDropdownItem} role="menuitem" onClick={() => { setOpen(false); onBulkAdd(); }}>
+            Multiple companies&hellip;
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FilterBar({
   searchTerm, setSearchTerm,
   filters, filterOptions, toggleFilter, clearFilters, activeFilterCount,
   onLoadSavedFilter,
   view, setView,
   onAddNew,
+  onBulkAdd,
   resultCount, totalCount,
   savedFilters, onUpdateSavedFilters,
 }) {
@@ -195,7 +240,7 @@ export function FilterBar({
           <button className={view === 'table' ? styles.viewBtnActive : styles.viewBtn} onClick={() => setView('table')}>Table</button>
           <button className={view === 'kanban' ? styles.viewBtnActive : styles.viewBtn} onClick={() => setView('kanban')}>Pipeline</button>
         </div>
-        <button className={styles.addBtn} onClick={onAddNew}>+ Add</button>
+        <AddMenu onAddNew={onAddNew} onBulkAdd={onBulkAdd} />
       </div>
     </div>
   );
