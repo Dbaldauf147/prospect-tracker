@@ -22,6 +22,7 @@ import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '..
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA } from '../../utils/hqRegion';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
@@ -1196,9 +1197,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
-              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
+              ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold and Services Not Sold columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. <strong>Export Excel</strong> carries the same three colours into the file.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold and Services Not Sold columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen. It carries the same three colours into the file, and gives every service column the same width.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -2601,6 +2602,27 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
   );
 }
 
+// The HQ split PE Overview and PE Overview - Services are sliced by, on
+// screen and as the three sheets of their Excel export.
+//
+// A company counts as North America when its HQ Region says so — either the
+// canonical value the company popup stores ("North America") or a free-text
+// location the classifier recognises ("Chicago, IL, US"). Everything else is
+// non-NAM: a location outside North America, and equally one left blank or
+// too vague to place. That keeps the two slices adding back up to All
+// instead of quietly dropping the companies whose HQ nobody has filled in
+// yet — they show up on the Outside tab, where they can be spotted and fixed.
+const HQ_TABS = [
+  { key: 'nam', label: 'NAM HQ', sheet: 'NAM HQ' },
+  { key: 'outside', label: 'Outside NAM HQ', sheet: 'Outside NAM HQ' },
+  { key: 'all', label: 'All companies', sheet: 'All Companies' },
+];
+
+function isNamHqRow(row) {
+  const raw = row?.hqRegion ?? row?._prospect?.hqRegion ?? '';
+  return (normalizeHqRegion(raw) || classifyHqRegion(raw)) === NORTH_AMERICA;
+}
+
 // `variant` picks which of the two tabs this instance is rendering:
 //   'overview' — the PE Overview tab: every company column.
 //   'services' — the PE Overview - Services tab: the same columns plus
@@ -2629,6 +2651,18 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
   }, [onUpdateProspect]);
   const addStrategy = useCallback((tag) => persistCustomStrategy(tag, settings, updateSettings), [settings, updateSettings]);
   const [search, setSearch] = useState('');
+  // Which HQ slice this tab is showing. Persisted per variant so a user who
+  // works NAM-first lands on NAM HQ every time rather than re-picking it,
+  // while the other tab keeps its own choice.
+  const hqPrefKey = isServicesVariant ? 'services' : 'overview';
+  const [hqFilter, setHqFilterState] = useState(() => {
+    const saved = settings?.peHqFilter?.[hqPrefKey];
+    return HQ_TABS.some(t => t.key === saved) ? saved : 'all';
+  });
+  const setHqFilter = useCallback((key) => {
+    setHqFilterState(key);
+    updateSettings?.({ peHqFilter: { ...(settings?.peHqFilter || {}), [hqPrefKey]: key } });
+  }, [settings, updateSettings, hqPrefKey]);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   // Client Manager values live in the shared per-company store (the same
@@ -3187,11 +3221,26 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     ];
   }, [onSelectProspect, onUpdateProspect, handleAddOption, typeOptions, cdmOptions, assetTypeOptions, selectedIds, filteredRowIds, onDownloadPortfolio, strategyOptions, toggleStrategy, addStrategy, bucketColumns, isServicesVariant]);
 
-  const filtered = useMemo(() => {
+  // Row counts per HQ slice, for the tab labels — always over every company
+  // of the firm, so the numbers don't move as the tabs are switched.
+  const hqCounts = useMemo(() => {
+    let nam = 0;
+    for (const r of rows) if (isNamHqRow(r)) nam++;
+    return { nam, outside: rows.length - nam, all: rows.length };
+  }, [rows]);
+
+  // The rows this tab is showing, before the search box narrows them.
+  const hqRows = useMemo(() => (
+    hqFilter === 'all' ? rows : rows.filter(r => isNamHqRow(r) === (hqFilter === 'nam'))
+  ), [rows, hqFilter]);
+
+  const matchesSearch = useCallback((row) => {
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
-  }, [search, rows]);
+    if (!term) return true;
+    return Object.values(row).some(v => String(v).toLowerCase().includes(term));
+  }, [search]);
+
+  const filtered = useMemo(() => hqRows.filter(matchesSearch), [hqRows, matchesSearch]);
 
   // Which companies the services report covers. Checking rows scopes it to
   // those (the same selection the bulk-edit bar acts on); otherwise it
@@ -3262,6 +3311,12 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
   // dark-green header, Nunito Sans, zebra rows) matching the other
   // Schneider exports, using each column's exportValue mapper so the file
   // reflects what's on screen.
+  // Export Excel writes one workbook with three sheets — NAM HQ, Outside NAM
+  // HQ, All Companies — so the split is in the file whichever HQ tab is on
+  // screen. The on-screen HQ tab therefore does NOT narrow the export: the
+  // rows it hides are folded back in (through the same search box, since the
+  // table never saw them to apply its column filters to). Everything else on
+  // screen still shapes the file: search, column filters, sort, column choice.
   const exportSchneider = async ({ columns: exportCols, rows: exportRows, colNames }) => {
     const { Workbook } = await import('exceljs');
     const SE_GREEN = 'FF3DCD58';
@@ -3276,14 +3331,28 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     const cols = (exportCols || []).filter(c => c.key !== '_select');
     const headers = cols.map(c => colNames?.[c.key] || c.label || c.key);
 
+    // Every service column exports at a fixed width so the service part of
+    // the sheet reads as one block instead of stair-stepping with the length
+    // of each bucket's name.
+    const SERVICE_COL_WIDTH = 20;
+    const isServiceCol = (c) => c.key === 'servicesSold' || c.key === 'servicesNotSold'
+      || c.key === 'servicesInProgress' || c.key === 'svcBucketNone' || String(c.key).startsWith('svcBucket:');
+
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
-    const ws = wb.addWorksheet(`${firmLabel} ${isServicesVariant ? 'Services' : 'Companies'}`.slice(0, 31), {
+
+    // One styled sheet for a slice of the companies. Called once per HQ tab,
+    // and always called — an empty slice still gets its sheet, so the
+    // workbook has the same three tabs every time.
+    const addSheet = (sheetName, sheetRows) => {
+    const ws = wb.addWorksheet(sheetName.slice(0, 31), {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ state: 'frozen', ySplit: 3 }],
     });
-    ws.columns = cols.map((c, i) => ({ width: i === 0 ? 34 : Math.max((headers[i] || '').length + 4, 16) }));
+    ws.columns = cols.map((c, i) => ({
+      width: i === 0 ? 34 : isServiceCol(c) ? SERVICE_COL_WIDTH : Math.max((headers[i] || '').length + 4, 16),
+    }));
 
     ws.mergeCells(1, 1, 1, cols.length);
     const title = ws.getCell(1, 1);
@@ -3295,7 +3364,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
 
     ws.mergeCells(2, 1, 2, cols.length);
     const sub = ws.getCell(2, 1);
-    sub.value = `${tabLabel} · ${firmLabel} · ${exportRows.length} compan${exportRows.length === 1 ? 'y' : 'ies'}`;
+    sub.value = `${tabLabel} · ${firmLabel} · ${sheetName} · ${sheetRows.length} compan${sheetRows.length === 1 ? 'y' : 'ies'}`;
     sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
     sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(2).height = 20;
@@ -3316,7 +3385,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     });
     headerRow.height = 26;
 
-    exportRows.forEach((row, ri) => {
+    sheetRows.forEach((row, ri) => {
       const r = ws.getRow(4 + ri);
       cols.forEach((c, ci) => {
         const cell = r.getCell(ci + 1);
@@ -3350,6 +3419,24 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     if (cols.length > 0) {
       ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
     }
+    };
+
+    // The HQ tab hides rows from the table, but not from the file. Those
+    // rows never reached the table, so only this tab's search can be applied
+    // to them — the per-column filters can't be, and don't claim to be.
+    const hiddenByHq = hqFilter === 'all'
+      ? []
+      : rows.filter(r => isNamHqRow(r) !== (hqFilter === 'nam')).filter(matchesSearch);
+    // Folded-back rows have no place in the table's sort order (they were
+    // never in it), so a mixed book falls back to company order rather than
+    // reading as "what was on screen, then the rest".
+    const bookRows = hiddenByHq.length === 0
+      ? exportRows
+      : [...exportRows, ...hiddenByHq].sort((a, b) => String(a.company || '').localeCompare(String(b.company || '')));
+    for (const tab of HQ_TABS) {
+      const sheetRows = tab.key === 'all' ? bookRows : bookRows.filter(r => isNamHqRow(r) === (tab.key === 'nam'));
+      addSheet(tab.sheet, sheetRows);
+    }
 
     sanitizeExcelWorkbook(wb);
     const buf = await wb.xlsx.writeBuffer();
@@ -3379,14 +3466,41 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
             {firmOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         </label>
+        {/* HQ slice. Sticks per tab, so "NAM HQ" can be the default view.
+            The Excel export always carries all three slices as its own
+            three sheets, whichever one is selected here. */}
+        <div style={{ display: 'flex', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden' }}>
+          {HQ_TABS.map(t => {
+            const isActive = hqFilter === t.key;
+            const count = t.key === 'nam' ? hqCounts.nam : t.key === 'outside' ? hqCounts.outside : hqCounts.all;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setHqFilter(t.key)}
+                title={t.key === 'outside'
+                  ? 'Companies whose HQ Region is outside North America — including the ones with no HQ Region set yet'
+                  : t.key === 'nam'
+                  ? 'Companies whose HQ Region is North America'
+                  : 'Every company of this PE firm'}
+                style={{
+                  padding: '0.4rem 0.7rem', border: 'none', borderRight: '1px solid #E2E8F0',
+                  background: isActive ? '#F3EEFF' : '#fff',
+                  color: isActive ? '#6D28D9' : '#64748B',
+                  fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >{t.label} <span style={{ fontWeight: 600, opacity: 0.75 }}>{count}</span></button>
+            );
+          })}
+        </div>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder={`Search ${rows.length} ${firmLabel} compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          placeholder={`Search ${hqRows.length} ${firmLabel} compan${hqRows.length === 1 ? 'y' : 'ies'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
-        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {hqRows.length}</span>}
         <button
           type="button"
           onClick={() => setServicesReportOpen(true)}
