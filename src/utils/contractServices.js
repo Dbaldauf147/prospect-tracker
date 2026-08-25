@@ -214,6 +214,49 @@ export function matchCatalogService(rawName, catalog = []) {
  * amendment terminating a service means) and a later `add` un-removes it.
  * Files must be passed oldest first for that to say what it looks like.
  */
+// Joining words that carry no signal in a service name. Dropped only when
+// building the ignore key below — every other comparison in this module keeps
+// them, because "Cat 1 and 2" is not "Cat 12".
+const IGNORE_STOPWORDS = new Set(['and', 'the', 'of', 'for', 'to', 'a', 'an', 'in', 'on', 'with']);
+
+/**
+ * The key an "this wording isn't a service" decision is remembered under.
+ *
+ * Deliberately blunter than the row key. A remembered ignore has to survive
+ * the way the same clause is worded from one contract to the next — "Global
+ * Research & Analytics" in the amendment, "Global research and analytics" in
+ * the renewal — and one that only matches the spelling it was made on is one
+ * that doesn't work. So "&" folds to "and" and the joining words come out,
+ * leaving both on "global research analytics".
+ *
+ * A row that DID match the catalogue is keyed by its catalogue key instead:
+ * two contracts that both land on "Strategic sourcing" are the same service
+ * whatever either of them calls it.
+ */
+export function ignoreKeyFor(row) {
+  const catKey = row?.match?.key;
+  if (catKey) return `k:${catKey}`;
+  const name = String(row?.name ?? '').replace(/&/g, ' and ');
+  const norm = normServiceName(name)
+    .split(' ')
+    .filter(t => t && !IGNORE_STOPWORDS.has(t))
+    .join(' ');
+  return `n:${norm}`;
+}
+
+// One file's evidence for one service: the short quote that says where the
+// service came from, plus the service's scope wording transcribed in full.
+// The quote is what the review table shows; the wording is what gets filed
+// in the Contract Language library, which wants the clause rather than a
+// line of it. A document that names a service without ever setting out its
+// scope yields no `language`, and the quote stands in for it.
+function evidenceEntry(fileName, svc) {
+  const quote = String(svc?.evidence || '').trim();
+  const language = String(svc?.scope_language || '').trim();
+  if (!quote && !language) return null;
+  return { fileName, quote, language };
+}
+
 export function mergeExtractedServices(files = [], catalog = []) {
   const rows = new Map();
   for (const file of files) {
@@ -236,7 +279,7 @@ export function mergeExtractedServices(files = [], catalog = []) {
           fee: String(svc?.fee || '').trim(),
           effectiveDate: String(svc?.effective_date || '').trim(),
           confidence: String(svc?.confidence || '').toLowerCase() || 'medium',
-          evidence: [{ fileName, quote: String(svc?.evidence || '').trim() }].filter(e => e.quote),
+          evidence: [evidenceEntry(fileName, svc)].filter(Boolean),
           sources: [fileName].filter(Boolean),
         });
         continue;
@@ -246,8 +289,8 @@ export function mergeExtractedServices(files = [], catalog = []) {
       if (svc?.kind) existing.kind = String(svc.kind).toLowerCase() === 'one_time' ? 'one_time' : 'recurring';
       if (svc?.fee) existing.fee = String(svc.fee).trim();
       if (svc?.effective_date) existing.effectiveDate = String(svc.effective_date).trim();
-      const quote = String(svc?.evidence || '').trim();
-      if (quote && existing.evidence.length < 5) existing.evidence.push({ fileName, quote });
+      const entry = evidenceEntry(fileName, svc);
+      if (entry && existing.evidence.length < 5) existing.evidence.push(entry);
       if (fileName && !existing.sources.includes(fileName)) existing.sources.push(fileName);
     }
   }

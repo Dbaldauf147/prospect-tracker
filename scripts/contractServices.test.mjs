@@ -12,7 +12,7 @@
 // unmatched row a human resolves in one click. It is a confident WRONG match,
 // which writes a service the contract never mentioned onto a client record.
 import {
-  normServiceName, scoreMatch, matchCatalogService, mergeExtractedServices,
+  normServiceName, scoreMatch, matchCatalogService, mergeExtractedServices, ignoreKeyFor,
 } from '../src/utils/contractServices.js';
 import { SERVICE_CATEGORIES } from '../src/data/enums.js';
 
@@ -158,6 +158,30 @@ eq(unmatched[0].match, null, 'and carries no catalogue match');
 eq(mergeExtractedServices([{ fileName: 'x.pdf', result: { services: [{ name: '   ', action: 'add' }] } }], CATALOG).length, 0, 'a blank service name is dropped');
 eq(mergeExtractedServices([], CATALOG).length, 0, 'no documents means no rows');
 eq(mergeExtractedServices([{ fileName: 'x.pdf', result: {} }], CATALOG).length, 0, 'a result with no services array is tolerated');
+
+// ---- ignore keys ------------------------------------------------------------
+// An "this wording isn't a service" decision is remembered across contracts,
+// so its key has to survive the way the same clause is re-worded from one
+// document to the next. These are the drifts that actually occur.
+
+eq(ignoreKeyFor({ name: 'Global Research & Analytics', match: null }),
+   ignoreKeyFor({ name: 'Global research and analytics', match: null }),
+   '"&" and "and" are one remembered ignore');
+eq(ignoreKeyFor({ name: 'Board Reporting Narrative', match: null }),
+   ignoreKeyFor({ name: 'board reporting narrative', match: null }),
+   'casing does not split a remembered ignore');
+eq(ignoreKeyFor({ name: 'Summary of Findings', match: null }),
+   ignoreKeyFor({ name: 'Summary Findings', match: null }),
+   'a dropped joining word does not split a remembered ignore');
+eq(ignoreKeyFor({ name: 'Anything', match: { key: 'Bill payment' } }),
+   'k:Bill payment',
+   'a matched row is remembered by its catalogue key, not its wording');
+eq(ignoreKeyFor({ name: 'Zamboni resurfacing', match: null }), 'n:zamboni resurfacing',
+   'an unmatched row is remembered by its normalized name');
+// Blunt, but not so blunt it folds two real services together.
+const differs = ignoreKeyFor({ name: 'Cat 1 emissions', match: null })
+  !== ignoreKeyFor({ name: 'Cat 12 emissions', match: null });
+eq(differs, true, 'two services that differ only by number stay two remembered decisions');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

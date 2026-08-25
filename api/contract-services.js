@@ -36,6 +36,7 @@ How to decide what counts as a service:
 5. Mark action "remove" only when the document states an entire service type ceases — terminated, deleted, struck, "shall no longer provide", removed from Exhibit A. Dropping sites, meters, accounts, volumes or fees is NOT a service removal; those stay "add".
 6. kind is "recurring" for anything ongoing or subscription-like, "one_time" for a project, assessment or deliverable performed once.
 7. evidence must be a short verbatim quote from the document — the sentence, heading or table cell the service came from. Never paraphrase it.
+7b. scope_language must be this service's scope wording copied out of the document IN FULL and VERBATIM: the whole clause, sub-section or matrix cell that says what the vendor will do, including every sub-bullet, sub-heading and enumerated deliverable under it. This one is filed as the service's contract language and reused when drafting the next contract, so it is a transcription, not a summary — do not shorten it, do not tidy it, do not merge bullets into a sentence, and do not stop at the first sentence. Keep the document's own line breaks between bullets. Where an amendment restates a service's scope, transcribe the restated wording. Leave it an empty string only if the document names the service without ever setting out its scope.
 8. confidence is "high" when the document names the service explicitly, "medium" when you inferred it from surrounding language, "low" when it is a guess.
 9. If the document genuinely names no services, return an empty services array and say why in scope_note.
 
@@ -72,6 +73,7 @@ const TOOL = {
             fee: { type: 'string', description: 'Fee as written, if the document ties one to this service. Empty string otherwise.' },
             effective_date: { type: 'string', description: 'Date this service starts or stops, if stated separately. Empty string otherwise.' },
             evidence: { type: 'string', description: 'Short verbatim quote from the document.' },
+            scope_language: { type: 'string', description: 'This service\u2019s full scope wording, transcribed verbatim from the document including every sub-bullet. Not a summary. Empty string only if the document never sets out its scope.' },
             confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
           },
           required: ['name', 'action', 'kind', 'evidence', 'confidence'],
@@ -131,7 +133,12 @@ async function handler(req, res, auth) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 8000,
+        // Transcribing each service's scope wording in full (rather than a
+        // one-line quote) is most of this response, and a restated master
+        // agreement can carry a dozen services. 8k truncated those mid-tool-
+        // call, which surfaces as "no structured result" rather than as the
+        // size problem it is.
+        max_tokens: 16000,
         system: SYSTEM_PROMPT,
         tools: [TOOL],
         tool_choice: { type: 'tool', name: TOOL.name },
@@ -147,6 +154,14 @@ async function handler(req, res, auth) {
     const data = await resp.json();
     const call = (data.content || []).find(b => b.type === 'tool_use' && b.name === TOOL.name);
     if (!call?.input) {
+      // A cut-off tool call and a model that ignored the tool look identical
+      // from here — the stop reason is the only thing that tells them apart,
+      // and only one of them is fixed by sending less document.
+      if (data.stop_reason === 'max_tokens') {
+        return res.status(502).json({
+          error: 'That contract\u2019s scope wording ran past the reply limit before it finished. Split the document (or send just the pages that carry the scope) and try again.',
+        });
+      }
       return res.status(502).json({ error: 'Claude did not return a structured result for this document.' });
     }
     const input = call.input;
@@ -160,6 +175,7 @@ async function handler(req, res, auth) {
         fee: str(s.fee),
         effective_date: str(s.effective_date),
         evidence: str(s.evidence),
+        scope_language: str(s.scope_language),
         confidence: ['high', 'medium', 'low'].includes(str(s.confidence).toLowerCase())
           ? str(s.confidence).toLowerCase()
           : 'medium',
