@@ -30,6 +30,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 // Shared with the Issues tab so both surfaces agree on what's expired.
 import { isInactiveAgreement, normClientName, soonestExpiration } from '../../utils/clientIssues';
+import { dealSoldDate, postSaleFollowUpRows } from '../../utils/postSaleFollowUp';
 
 const MS_PER_DAY = 86400000;
 
@@ -361,25 +362,6 @@ function ContractTable({ deals }) {
   );
 }
 
-// A deal needs a post-sale follow-up when its "Follow Up On Sale" cell is
-// blank (or a placeholder dash / Excel #N/A error). Mirrors how the Deals
-// subtab stores that date column so the two agree on what counts as "no
-// value". A deliberate "N/A" (marked from the follow-up editor to say a deal
-// never needs a follow-up) counts as resolved and drops the row off the list;
-// only Excel's #N/A error placeholder still reads as missing.
-function isBlankFollowUp(row) {
-  const v = String(row?.['Follow Up On Sale'] ?? '').trim();
-  if (!v) return true;
-  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase());
-}
-
-// The date a deal closed/sold. Deals don't carry an explicit close date, so
-// we use Original Contract Start — the same field the Deals tab treats as the
-// deal's canonical date. Returns a Date or null.
-function dealSoldDate(row) {
-  return asDate(row?.['Original Contract Start']);
-}
-
 // Whole-day delta between when a deal was sold and today, rendered as a
 // colored cell. A post-sale follow-up should land soon after the sale, so the
 // longer a deal has gone without one the more overdue it is: rows past 30 days
@@ -473,27 +455,12 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
     savePostSaleWidths({});
   }
 
-  const flagged = useMemo(() => {
-    const out = [];
-    for (const d of (deals || [])) {
-      const client = String(d['Client Name'] ?? d['Client Name '] ?? '').trim();
-      const agreement = String(d['Agreement Name'] ?? '').trim();
-      if (!client && !agreement) continue;  // skip blank spacer rows
-      if (!isBlankFollowUp(d)) continue;     // only deals still needing follow-up
-      out.push(d);
-    }
-    // Longest since sold first — the deals sold furthest back with still no
-    // follow-up are the most overdue. Rows with no sold date sink to the bottom.
-    out.sort((a, b) => {
-      const da = dealSoldDate(a);
-      const db = dealSoldDate(b);
-      if (!da && !db) return 0;
-      if (!da) return 1;
-      if (!db) return -1;
-      return da.getTime() - db.getTime();
-    });
-    return out;
-  }, [deals]);
+  // The shared row builder the Pipeline table and the Issues detector run on:
+  // same skips (blank spacer rows, deals ignored on the Deals subtab, deals
+  // that already have a follow-up date) and the same longest-since-sold-first
+  // order this subtab was doing by hand. One definition, so a deal can't be
+  // owed here and settled there.
+  const flagged = useMemo(() => postSaleFollowUpRows(deals), [deals]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

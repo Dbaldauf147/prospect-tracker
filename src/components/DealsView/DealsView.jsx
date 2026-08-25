@@ -13,6 +13,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import { loadCommissions } from '../../utils/commissionsStore';
+import { DEAL_IGNORED_KEY } from '../../utils/postSaleFollowUp';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import {
   loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
@@ -45,7 +46,11 @@ const PROGRESS_COL_LABEL = 'Progress';
 // other cell values so it persists through the same dealsStore path
 // as everything else. Double-underscore prefix keeps it out of the
 // generated column list (buildColumns filters those out).
-const PROGRESS_IGNORED_KEY = '__progressIgnored';
+//
+// Defined in utils/postSaleFollowUp now that the Issues page, the Pipeline
+// table and the Clients subtab all honour it too — ignoring a deal here
+// stops it being chased there.
+const PROGRESS_IGNORED_KEY = DEAL_IGNORED_KEY;
 
 // The "ready to invoice" handoff fields the user wants to see
 // at a glance on every deal. `label` is what shows up in the popover;
