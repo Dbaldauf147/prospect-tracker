@@ -20,8 +20,9 @@
 // isn't already Qualifying — so the calls to make are on the page rather
 // than a tab away.
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Newest } from '../../utils/opps2Store';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { countOverdueCallIns } from '../../utils/oppsCallIn';
 import {
   categorizeStep,
@@ -46,7 +47,18 @@ import {
 } from '../../utils/prospectingPlaybook';
 import { collectTopPcIntros } from '../../utils/topPcOutreach';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { useAuth } from '../../contexts/AuthContext';
+
+// The contact popup, loaded when one is actually opened. It lives in
+// ProspectModal, which is the largest module in the app — a static import
+// would bolt all of it onto a page whose own job is a twelve-row ladder, and
+// most visits here never open a contact. App already prefetches that chunk
+// while the browser is idle, so by the time a name is clicked it's usually
+// warm anyway.
+const ContactEditModal = lazy(() =>
+  import('../ProspectModal/ProspectModal').then(m => ({ default: m.ContactEditModal })),
+);
 
 // Rank 1 carries the strongest accent and it cools down the list, so the
 // order reads at a glance without anyone having to count the numbers.
@@ -109,9 +121,18 @@ const TAG_LIST_LIMIT = 200;
 // The contacts behind one Tagged chip: who is on that roster, and how far
 // through the tag questions each of them is. Least-tagged first, so the
 // names the percentage is waiting on lead.
-function TagContactList({ cell, bucket, onNavigate, onClose }) {
+function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact }) {
   const people = Array.isArray(bucket?.people) ? bucket.people : [];
   const shown = people.slice(0, TAG_LIST_LIMIT);
+  // A name opens that contact's popup — the same one the contacts pages
+  // open, so the tags this percentage is counting can be answered from the
+  // list that names them rather than a tab away. Underlined so it reads as
+  // clickable at 0.7rem, where a colour change alone doesn't.
+  const nameStyle = {
+    padding: 0, border: 0, background: 'none', font: 'inherit', textAlign: 'left',
+    fontWeight: 700, color: '#1E293B', flexShrink: 0, cursor: 'pointer',
+    textDecoration: 'underline', textDecorationColor: '#CBD5E1', textUnderlineOffset: 2,
+  };
   return (
     <div style={{
       marginTop: 6, border: `1px solid ${cell.border}`, borderRadius: 8,
@@ -162,7 +183,18 @@ function TagContactList({ cell, bucket, onNavigate, onClose }) {
                 fontSize: '0.7rem',
               }}
             >
-              <span style={{ fontWeight: 700, color: '#1E293B', flexShrink: 0 }}>{person.name}</span>
+              {/* Rows imported without a HubSpot record behind them have no
+                  contact to open, so those names stay plain text. */}
+              {onOpenContact && person.contact ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenContact(person.contact)}
+                  title={`Open ${person.name}`}
+                  style={nameStyle}
+                >{person.name}</button>
+              ) : (
+                <span style={{ fontWeight: 700, color: '#1E293B', flexShrink: 0 }}>{person.name}</span>
+              )}
               <span style={{
                 color: '#64748B', flex: 1, minWidth: 0,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -191,7 +223,7 @@ function TagContactList({ cell, bucket, onNavigate, onClose }) {
   );
 }
 
-function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
+function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact }) {
   // Which chip's contacts are listed underneath, if any. Local to the row:
   // it's a look, not a setting, and it should be closed again next visit.
   const [openKey, setOpenKey] = useState(null);
@@ -292,6 +324,7 @@ function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
           bucket={coverage[openKey]}
           onNavigate={onNavigate}
           onClose={() => setOpenKey(null)}
+          onOpenContact={onOpenContact}
         />
       )}
     </div>
@@ -628,6 +661,52 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
     return m;
   }, [prospects]);
 
+  // The contact whose popup is open, straight off the row that was clicked —
+  // the tag list carries the HubSpot record, so there's nothing to look up.
+  const [editingContact, setEditingContact] = useState(null);
+  const openContact = useCallback((contact) => { if (contact) setEditingContact(contact); }, []);
+  const closeContact = useCallback(() => setEditingContact(null), []);
+  // The popup saves through HubSpot and the shared cache itself, so there's
+  // nothing for this page to write back — the coverage above recomputes off
+  // the hubspot-cache-updated event like every other reader. A `silent` save
+  // is the popup's tag autosave, which must not close it.
+  const saveContact = useCallback((_updated, opts) => { if (!opts?.silent) setEditingContact(null); }, []);
+
+  // The rest of the book, for the popup's Reports-To picker: the manager
+  // being named is often someone the rosters don't list. Read on the first
+  // open rather than on mount — the ladder doesn't need it, and most visits
+  // never open a contact — and kept afterwards, since it's the same cache
+  // every time.
+  const [allContacts, setAllContacts] = useState(null);
+  useEffect(() => {
+    if (!editingContact || allContacts) return;
+    let cancelled = false;
+    getHubspotCache()
+      .then(c => { if (!cancelled) setAllContacts(c?.contacts || []); })
+      // An empty list only costs the popup its autocomplete, so failing
+      // quietly beats blocking the edit.
+      .catch(() => { if (!cancelled) setAllContacts([]); });
+    return () => { cancelled = true; };
+  }, [editingContact, allContacts]);
+
+  // Colleagues at the open contact's company, and the account's email
+  // domains — the same two lookups the other pages hand the popup.
+  const editCompanyContacts = useMemo(() => {
+    const k = String(editingContact?.company || '').trim().toLowerCase();
+    if (!k || !allContacts) return [];
+    return allContacts.filter(c => String(c?.company || '').trim().toLowerCase() === k);
+  }, [editingContact, allContacts]);
+  const editEmailDomains = useMemo(() => {
+    const k = String(editingContact?.company || '').trim().toLowerCase();
+    if (!k) return [];
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === k);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean)
+      : [];
+  }, [editingContact, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+
   const counts = useMemo(
     () => ({
       opps: overdueCallIns,
@@ -852,6 +931,7 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
                     coverage={tagCoverage}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                     missing={tagDebt || []}
+                    onOpenContact={openContact}
                   />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
@@ -911,6 +991,23 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
 
         {editing && <AddStepForm onAdd={addStep} />}
       </div>
+
+      {/* No fallback: the popup is a modal, and a "Loading…" panel flashing
+          where it's about to appear is worse than the click taking a beat. */}
+      {editingContact && (
+        <Suspense fallback={null}>
+          <ContactEditModal
+            contact={editingContact}
+            onSave={saveContact}
+            onClose={closeContact}
+            {...contactEditSettings}
+            companyContacts={editCompanyContacts}
+            allContacts={allContacts}
+            emailDomains={editEmailDomains}
+            companyNames={editCompanyNames}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

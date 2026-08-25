@@ -439,6 +439,11 @@ export function makeRosterGates({
  * answer, how many contacts are fully worked through (`done`), and the
  * resulting percentage.
  *
+ * Each roster also carries `people`: one row per contact on it, least-tagged
+ * first, holding the display fields, that contact's own answered/total, and
+ * the HubSpot record itself under `contact` — so a caller can both list the
+ * people behind a percentage and open one of them.
+ *
  * The per-contact score is the same one the All Contacts "Tagged %" column
  * and the contact popup's header show (see contactTagReview.js). Summing the
  * raw answered/slots counts rather than averaging per-contact percentages
@@ -482,6 +487,13 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
       answered: score.answered,
       total: score.total,
       done: score.done,
+      // The record itself, so a list built from this coverage can open the
+      // contact popup on a name rather than send the user to another tab to
+      // find the same person again. A reference, not a copy: these contacts
+      // are already in memory behind the cache this ran over. Company
+      // overrides are already applied — this is the contact as the contacts
+      // pages show it, which is the one the popup should edit.
+      contact: c,
     };
     for (const { key } of [...hits, { key: 'all' }]) {
       const b = buckets[key];
