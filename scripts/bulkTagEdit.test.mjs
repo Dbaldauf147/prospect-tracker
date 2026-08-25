@@ -20,7 +20,8 @@
 //
 // The server has always treated them as one tag (api/hubspot.js dansTagKey),
 // and so has the bulk picker — these tests hold the writer to the same rule.
-import { tagKey, dedupeTags, planTagEdit, groupTagWrites, recordForVerdict, recordKeepsTag } from '../src/utils/contactTagReview.js';
+import { tagKey, dedupeTags, planTagEdit, groupTagWrites, recordForVerdict, recordKeepsTag,
+  findTagRecord, tagRecordKeyFor, tagReviewScore, tagStateFrom } from '../src/utils/contactTagReview.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -187,6 +188,71 @@ function eq(actual, expected, name) {
 
   eq(groupTagWrites(['9'], new Map()), [],
     'an id with no plan produces no write');
+}
+
+// ── Saved answers are keyed by tag spelling ──────────────────────────────
+// A contact's records live in settings.contactTagReview keyed by the tag as
+// whoever wrote them spelled it: the popup writes the vocabulary's spelling,
+// the bulk editor writes HubSpot's. Those differ here. A lookup that doesn't
+// collapse the spelling reads an answered tag as unanswered — which is how a
+// bulk "Mark Yes" lands and then shows as a blank row in the contact popup.
+{
+  const SPACED = 'Efficiency / Renewables';
+  const TIGHT = 'Efficiency/Renewables';
+  const saved = { [TIGHT]: { answer: 'yes', status: '' } };
+
+  eq(findTagRecord(saved, SPACED), { answer: 'yes', status: '' },
+    'a mark saved under HubSpot\'s spelling is found by the vocabulary\'s');
+  eq(findTagRecord(saved, TIGHT), { answer: 'yes', status: '' },
+    'and by its own');
+  eq(findTagRecord(saved, 'ESG'), undefined,
+    'a different tag still finds nothing');
+  eq(findTagRecord(null, SPACED), undefined, 'no records at all is not an error');
+
+  // An exact key always wins, so a contact who somehow has both keeps the
+  // reading stable.
+  eq(findTagRecord({ [SPACED]: { answer: 'no', status: '' }, [TIGHT]: { answer: 'yes', status: '' } }, SPACED),
+    { answer: 'no', status: '' },
+    'an exact key wins over the other spelling');
+
+  eq(tagRecordKeyFor(saved, SPACED), TIGHT,
+    'a write lands on the key already there, rather than making a twin');
+  eq(tagRecordKeyFor({}, SPACED), SPACED,
+    'with nothing saved, a write uses the spelling it was given');
+}
+
+// ── The reported case: Mark Yes then open the popup ──────────────────────
+{
+  const SPACED = 'Efficiency / Renewables';
+  const TIGHT = 'Efficiency/Renewables';
+
+  // The contact is held off: the area is theirs, their account hasn't bought
+  // it, so the tag is deliberately off. The record was saved under HubSpot's
+  // spelling by an earlier bulk edit.
+  const before = { [TIGHT]: { answer: '', status: 'notsold' } };
+
+  // Bulk Mark Yes, picking HubSpot's spelling.
+  const record = recordForVerdict(findTagRecord(before, TIGHT), 'yes');
+  eq(record, { answer: 'yes', status: 'notsold' }, 'the Yes is recorded over the hold-off');
+  eq(recordKeepsTag(record), false, 'and the tag rightly stays off');
+  const after = { ...before, [tagRecordKeyFor(before, TIGHT)]: record };
+
+  // The popup renders its row under the vocabulary's spelling. Before the
+  // fix this lookup returned undefined and the row came up blank — no Yes,
+  // no Not sold, nothing to explain why the tag never went on.
+  eq(tagStateFrom(false, findTagRecord(after, SPACED)),
+    { answer: 'yes', status: 'notsold' },
+    'the popup row shows Yes · Not sold, not a blank line');
+}
+
+// ── Tagged % counts a tag whatever spelling it wears ─────────────────────
+{
+  const contact = { dans_tags: 'Efficiency/Renewables' };
+  const scoredOnly = ['Efficiency / Renewables'];
+  eq(tagReviewScore(contact, {}, scoredOnly).answered, 1,
+    'a contact tagged in HubSpot\'s spelling counts against the vocabulary\'s');
+  eq(tagReviewScore({ dans_tags: '' }, { 'Efficiency/Renewables': { answer: 'no', status: '' } }, scoredOnly).answered, 1,
+    'and so does an answer saved under the other spelling');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

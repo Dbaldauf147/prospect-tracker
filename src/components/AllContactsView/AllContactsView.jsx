@@ -13,7 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
-import { isLocalTagVerdict, tagAnswerFrom } from '../../utils/contactTagReview';
+import { isLocalTagVerdict, tagAnswerFrom, tagKey, findTagRecord } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 
 // A contact's Dan's Tags as individual values. Stored as one ';'-joined
@@ -52,21 +52,15 @@ const TAG_STATUSES = [
 // pill.
 function contactTagStatus(c, tag, reviewMap) {
   if (!tag) return '';
-  const lower = tag.toLowerCase();
-  const tagged = contactTagList(c).some(t => t.toLowerCase() === lower);
+  const key = tagKey(tag);
+  const tagged = contactTagList(c).some(t => tagKey(t) === key);
   const cid = c?.id ?? c?.vid;
   const answers = cid == null ? null : reviewMap?.[cid];
-  let verdict = '';
-  if (answers && typeof answers === 'object') {
-    // Keyed by the tag as the popup spelled it, so match case-insensitively
-    // for the same reason the tag filter itself does.
-    for (const [k, v] of Object.entries(answers)) {
-      if (k.toLowerCase() !== lower) continue;
-      if (isLocalTagVerdict(v)) verdict = v;
-      break;
-    }
-  }
-  return tagAnswerFrom(tagged, verdict);
+  // Keyed by the tag as whoever recorded it spelled it — the popup writes the
+  // vocabulary's spelling, the bulk editor HubSpot's — so it's matched the
+  // same way the tag filter itself matches, on tagKey.
+  const stored = findTagRecord(answers, tag);
+  return tagAnswerFrom(tagged, isLocalTagVerdict(stored) ? stored : '');
 }
 
 export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
@@ -230,9 +224,11 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // and counted before the tag gate so the numbers don't collapse to the
   // current selection.
   //
-  // Tags that differ only in case are one entry, shown in whichever spelling
-  // the most contacts use (ties broken alphabetically, so the label doesn't
-  // hinge on cache order). Matching is case-insensitive either way — the
+  // Tags that differ only in spelling — case or spacing, so "Efficiency /
+  // Renewables" and "Efficiency/Renewables" — are one entry, shown in
+  // whichever spelling the most contacts use (ties broken alphabetically, so
+  // the label doesn't hinge on cache order). Matching collapses both either
+  // way — the
   // spelling only decides what the dropdown reads.
   //
   // A tag someone has been answered No / Not sure / Not sold on is offered
@@ -254,7 +250,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!rosterSelector(c)) continue;
       const seenHere = new Set();
       for (const tag of contactTagList(c)) {
-        const key = tag.toLowerCase();
+        const key = tagKey(tag);
         // A tag repeated within one contact still only counts once.
         if (seenHere.has(key)) continue;
         seenHere.add(key);
@@ -267,7 +263,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       if (!answers || typeof answers !== 'object') continue;
       for (const [tag, v] of Object.entries(answers)) {
         if (!isLocalTagVerdict(v)) continue;
-        const key = String(tag).toLowerCase();
+        const key = tagKey(tag);
         // Registers the spelling without a count — these contacts don't carry
         // the tag, and saying they do would contradict the table. The half
         // weight only breaks spelling ties: any contact actually wearing the
@@ -290,7 +286,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // rather than stranding the page on an empty list with nothing in the
   // dropdown to undo it. Derived, so the recovery needs no effect.
   const activeTag = useMemo(() => (
-    tagFilter && tagOptions.some(o => o.tag.toLowerCase() === tagFilter.toLowerCase()) ? tagFilter : ''
+    tagFilter && tagOptions.some(o => tagKey(o.tag) === tagKey(tagFilter)) ? tagFilter : ''
   ), [tagFilter, tagOptions]);
 
   // The status gate actually in force. Statuses only mean anything against
@@ -325,9 +321,10 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     // tag — which is the only way a No / Not sure contact can appear at all,
     // since neither carries the tag.
     if (statusGateOn) return activeStatuses.has(contactTagStatus(c, activeTag, tagReviewMap));
-    // Exact match per tag, not substring — "Key" must not sweep in every
-    // "Dan Key Target" contact.
-    return contactTagList(c).some(t => t.toLowerCase() === activeTag.toLowerCase());
+    // Whole-tag match, not substring — "Key" must not sweep in every
+    // "Dan Key Target" contact — and on tagKey, so a contact carrying the
+    // other spelling of the chosen tag isn't filtered out of its own tag.
+    return contactTagList(c).some(t => tagKey(t) === tagKey(activeTag));
   }, [rosterSelector, activeTag, statusGateOn, activeStatuses, tagReviewMap]);
 
   // The Totals pills. Defined once and used by both the count row and the
