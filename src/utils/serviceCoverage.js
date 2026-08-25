@@ -7,6 +7,7 @@
 // Extensions spelled out so this module loads under plain Node too — the
 // tests in scripts/ run without Vite's resolver.
 import { SERVICE_CATEGORIES } from '../data/enums.js';
+import { getServiceCategories } from './serviceCategoriesStore.js';
 import { matchesCdm } from './cdmMatch.js';
 import { scopeTokens, scopeTokenMatchesService } from './scopeMatch.js';
 
@@ -114,10 +115,7 @@ export function effectiveServiceStatus(prospect, serviceKey, oppStagesByClient) 
 export function buildServiceCatalog(settings = {}) {
   const hidden = new Set(settings.hiddenServices || []);
   const renames = settings.serviceRenames || {};
-  const cats = Array.isArray(settings.customServiceCategories) && settings.customServiceCategories.length
-    ? settings.customServiceCategories
-    : SERVICE_CATEGORIES;
-  return cats
+  return getServiceCategories(settings)
     .map(cat => ({
       name: cat.name,
       items: (cat.items || [])

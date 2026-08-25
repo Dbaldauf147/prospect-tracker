@@ -972,7 +972,7 @@ export function DropdownsView({ settings, updateSettings }) {
   // every board reads — the same thing dragging a service on the company
   // card has always done.
   function saveServiceBucket(name, bucket) {
-    const next = moveServiceToBucket(serviceCategories, name, bucket);
+    const next = moveServiceToBucket(serviceCategories, name, bucket, settings?.serviceRenames);
     if (next) updateSettings?.({ customServiceCategories: next });
   }
   function saveServiceField(name, field, value) {
@@ -1184,7 +1184,12 @@ export function DropdownsView({ settings, updateSettings }) {
     let layout = null;
     const nextOverrides = { ...overrides };
     for (const name of stale) {
-      const moved = moveServiceToBucket(layout || getServiceCategories(settings), name, overrides[name].serviceBucket);
+      const moved = moveServiceToBucket(
+        layout || getServiceCategories(settings),
+        name,
+        overrides[name].serviceBucket,
+        settings.serviceRenames,
+      );
       if (moved) layout = moved;
       const row = { ...nextOverrides[name] };
       delete row.serviceBucket;

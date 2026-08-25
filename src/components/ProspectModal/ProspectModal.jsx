@@ -9,6 +9,7 @@ import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
@@ -4743,10 +4744,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Every service the board can show, in the user's own category layout —
   // the universe the scheduled-opp match below runs against.
   const allServiceItems = useMemo(() => {
-    const cats = settings.customServiceCategories
-      || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+    const cats = getServiceCategories(settings);
     return [...new Set(cats.flatMap(c => c.items || []))];
-  }, [settings.customServiceCategories]);
+  }, [settings]);
 
   // Services this company has an opp QUEUED for — a New Opp scheduled for
   // a future date, which has no row on the Opps table yet and so matches
@@ -7414,7 +7414,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const svcSMEs = fields.serviceSMEs || {};
                     const hidden = new Set(settings.hiddenServices || []);
                     const renames = settings.serviceRenames || {};
-                    const categories = settings.customServiceCategories || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+                    const categories = getServiceCategories(settings);
                     const SE_GREEN = 'FF3DCD58';
                     const SE_GREEN_DARK = 'FF009530';
                     const SE_TEXT_DARK = 'FF1E293B';
@@ -7541,7 +7541,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 const getDisplayName = (item) => serviceRenames[item] || item;
 
                 // Use custom categories if saved, otherwise default
-                const categories = settings.customServiceCategories || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+                const categories = getServiceCategories(settings);
 
                 function saveCategories(next) {
                   updateSettings({ customServiceCategories: next });
