@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SERVICE_STATUSES } from '../../data/enums';
-import { buildServiceCatalog } from '../../utils/serviceCoverage';
+import { buildServiceCatalog, serviceLabelMap } from '../../utils/serviceCoverage';
 import { mergeExtractedServices, ignoreKeyFor } from '../../utils/contractServices';
 import { apiFetch } from '../../utils/apiFetch';
 import { appendContractLanguage } from '../../utils/contractLanguageStore';
@@ -129,6 +129,120 @@ function pill(text, palette, title) {
     <span title={title} style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: palette.bg, color: palette.color, whiteSpace: 'nowrap' }}>
       {text}
     </span>
+  );
+}
+
+// The scope wording behind one review row, opened by clicking its evidence.
+//
+// The table can only carry a one-line quote, but the wording underneath it is
+// what actually gets filed under the service on Contract Language — whole
+// clauses, sub-bullets and all. Reading that before pressing the save button
+// needs room the Evidence column doesn't have, so the full transcription
+// lives here, one block per document the service was found in.
+function ScopeLanguageModal({ row, catalogLabel, labelForFile, onClose }) {
+  // Which clause's copy button has just been pressed, by index, so the
+  // confirmation sits on the button that was clicked rather than all of them.
+  const [copied, setCopied] = useState(-1);
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function copy(text, i) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(i);
+      setTimeout(() => setCopied(c => (c === i ? -1 : c)), 1500);
+    } catch { /* clipboard blocked — the text is selectable anyway */ }
+  }
+
+  const entries = row?.evidence || [];
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 4900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Scope language for ${row?.name || 'this service'}`}
+        style={{ background: '#fff', borderRadius: 8, width: 'min(820px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', padding: '0.9rem 1.1rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{row?.name}</div>
+            <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.5 }}>
+              Scope language as the contract sets it out
+              {catalogLabel ? <> · files under <strong style={{ color: '#334155' }}>{catalogLabel}</strong></> : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px', fontFamily: 'inherit' }}
+          >×</button>
+        </div>
+
+        <div style={{ padding: '0.9rem 1.1rem', overflowY: 'auto' }}>
+          {entries.length === 0 ? (
+            <div style={{ fontSize: '0.78rem', color: '#94A3B8', fontStyle: 'italic' }}>No wording was captured for this service.</div>
+          ) : entries.map((e, i) => {
+            const language = String(e.language || '').trim();
+            return (
+              <div key={i} style={{ marginBottom: i === entries.length - 1 ? 0 : '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap', marginBottom: 4 }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>
+                    {labelForFile(e.fileName) || e.fileName || 'Document'}
+                    {e.fileName && labelForFile(e.fileName) !== e.fileName && (
+                      <span style={{ fontWeight: 500, color: '#94A3B8' }}> · {e.fileName}</span>
+                    )}
+                  </div>
+                  {language && (
+                    <button
+                      type="button"
+                      onClick={() => copy(language, i)}
+                      style={{
+                        padding: '0.2rem 0.55rem', borderRadius: 5, border: '1px solid #E2E8F0',
+                        background: '#fff', color: copied === i ? '#166534' : '#475569',
+                        fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >{copied === i ? 'Copied' : 'Copy'}</button>
+                  )}
+                </div>
+                {e.quote && collapse(e.quote) !== collapse(language) && (
+                  <div style={{ fontSize: '0.74rem', color: '#64748B', fontStyle: 'italic', marginBottom: 4 }}>“{e.quote}”</div>
+                )}
+                {language ? (
+                  <div style={{
+                    whiteSpace: 'pre-wrap', padding: '0.6rem 0.7rem', background: '#F8FAFC',
+                    border: '1px solid #E2E8F0', borderRadius: 6, color: '#1E293B',
+                    fontSize: '0.78rem', lineHeight: 1.55,
+                  }}>{language}</div>
+                ) : (
+                  // Either the document names the service without ever setting
+                  // out its scope, or the review predates full-wording capture
+                  // — a re-read of the file is what tells the two apart.
+                  <div style={{ fontSize: '0.74rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                    Only the quote above came back for this document — either it names the service without setting out
+                    a scope clause, or this review was run before full wording was captured. Re-read the file to pull
+                    the clause in.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ padding: '0.6rem 1.1rem', borderTop: '1px solid #E2E8F0', fontSize: '0.68rem', color: '#94A3B8' }}>
+          This is the text that gets filed under the service when you press “Save clauses to Contract Language”. Esc closes.
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -292,12 +406,13 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
   const [dealNote, setDealNote] = useState('');
   const [dealError, setDealError] = useState('');
   // The Deals roster, re-read when another tab uploads or edits it.
-  // Which evidence rows have their full scope wording expanded, keyed
-  // `${row.key}#${i}`. The table shows the one-line quote; the wording
-  // underneath it is what actually gets filed, so it has to be readable
-  // before the button is pressed — but inline for every row would bury the
-  // table under whole clauses.
-  const [openWording, setOpenWording] = useState({});
+  // The review row whose scope wording is open, by key. The table shows the
+  // one-line quote; the wording underneath it is what actually gets filed, so
+  // it has to be readable before the button is pressed — but inline for every
+  // row would bury the table under whole clauses, so clicking the evidence
+  // opens it in a dialog instead. Held as a key rather than the row itself so
+  // re-reading a document refreshes what's on screen.
+  const [wordingKey, setWordingKey] = useState('');
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [dealClientMap, setDealClientMap] = useState(() => loadDealClientMap());
   const inputRef = useRef(null);
@@ -594,6 +709,11 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
     setDealNote(`Wrote ${res.written.length} field${res.written.length === 1 ? '' : 's'} to that deal: ${res.written.join(', ')}`);
   }
 
+  const catalogLabels = useMemo(() => serviceLabelMap(catalog), [catalog]);
+  // Resolved every render rather than stored: a re-read rebuilds the rows, and
+  // an open dialog should follow the row it was opened on or close with it.
+  const wordingRow = wordingKey ? rows.find(r => r.key === wordingKey) || null : null;
+
   const canApply = !!client && selectedRows.length > 0 && typeof updateProspect === 'function';
   const currentStatuses = client?.servicesExplored || {};
 
@@ -846,7 +966,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
             {ignoredCount > 0 && `, ${ignoredCount} ignored`}.
             {ignoredCount > 0 && ' Ignored wording is remembered, so it arrives ignored on the next contract too — restore a row to undo that.'}
             {unmatchedCount > 0 && ` ${unmatchedCount} row${unmatchedCount === 1 ? '' : 's'} still need${unmatchedCount === 1 ? 's' : ''} a catalogue service picked before ${unmatchedCount === 1 ? 'it' : 'they'} can be applied — ignore the ones whose scope doesn’t tie to a service.`}
-            {' '}The box in the header row selects (or clears) every matched row at once.
+            {' '}The box in the header row selects (or clears) every matched row at once, and clicking a row’s
+            evidence quote opens the scope language behind it in full.
           </div>
 
           <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
@@ -959,35 +1080,29 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', color: '#475569', minWidth: 240 }}>
                         {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>—</span> : row.evidence.map((e, i) => {
-                          const wordingKey = `${row.key}#${i}`;
-                          const open = !!openWording[wordingKey];
                           const language = e.language || '';
-                          // Only worth a toggle where the wording says more
-                          // than the quote already does.
+                          // The quote is the handle on the whole clause: one
+                          // click on any of a row's quotes opens the row's
+                          // wording, every document at once, because that is
+                          // the unit that gets filed.
                           const hasMore = !!language && collapse(language) !== collapse(e.quote || '');
                           return (
                             <div key={i} style={{ marginBottom: i === row.evidence.length - 1 ? 0 : 4 }}>
-                              <span style={{ fontStyle: 'italic' }}>“{e.quote || firstLine(language)}”</span>
+                              <button
+                                type="button"
+                                onClick={() => setWordingKey(row.key)}
+                                title={hasMore
+                                  ? 'Read the full scope wording as the contract sets it out — this is what gets filed under this service on Contract Language'
+                                  : 'Read what the document gave for this service'}
+                                style={{
+                                  border: 'none', background: 'none', padding: 0, margin: 0, textAlign: 'left',
+                                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: '#334155',
+                                  fontStyle: 'italic', textDecoration: 'underline', textDecorationStyle: 'dotted',
+                                  textUnderlineOffset: 2,
+                                }}
+                              >“{e.quote || firstLine(language)}”</button>
                               {hasMore && (
-                                <>
-                                  {' '}
-                                  <button
-                                    type="button"
-                                    onClick={() => setOpenWording(p => ({ ...p, [wordingKey]: !open }))}
-                                    title="The scope wording as the contract sets it out — this is what gets filed under this service on Contract Language"
-                                    style={{
-                                      border: 'none', background: 'none', padding: 0, cursor: 'pointer',
-                                      fontFamily: 'inherit', fontSize: '0.65rem', color: '#2563EB', textDecoration: 'underline',
-                                    }}
-                                  >{open ? 'hide full wording' : 'full wording'}</button>
-                                  {open && (
-                                    <div style={{
-                                      whiteSpace: 'pre-wrap', marginTop: 4, padding: '0.4rem 0.5rem',
-                                      background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 5,
-                                      color: '#334155', maxHeight: 260, overflowY: 'auto',
-                                    }}>{language}</div>
-                                  )}
-                                </>
+                                <span style={{ marginLeft: 5, fontSize: '0.62rem', color: '#2563EB', whiteSpace: 'nowrap' }}>full wording</span>
                               )}
                             </div>
                           );
@@ -1006,6 +1121,15 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
         <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
           Nothing readable as a service in {done.length === 1 ? 'that document' : 'those documents'} — check the scope note above.
         </div>
+      )}
+
+      {wordingRow && (
+        <ScopeLanguageModal
+          row={wordingRow}
+          catalogLabel={catalogLabels.get(rowState(wordingRow).catalogKey) || ''}
+          labelForFile={name => clauseLabelByFile.get(name) || name || ''}
+          onClose={() => setWordingKey('')}
+        />
       )}
     </div>
   );
