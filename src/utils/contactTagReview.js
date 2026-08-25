@@ -268,26 +268,32 @@ export function scoredTagOptions(tagOptions = TAG_OPTIONS) {
  * { answered, total, pct, done } for one contact.
  *
  * `review` is that contact's local record map ({ tag: { answer, status } }).
- * A tag counts as answered when the contact carries it (that's the Yes) or
- * the record holds anything HubSpot can't — an answer of No / Not sure, or
- * a Sold / Not sold status. A bare stored "yes" doesn't count on its own:
- * the tag is where a Yes lives, so a tag dropped in a bulk edit or in
- * HubSpot itself can't leave a stale one behind. `total` of 0 yields 0%,
+ * A tag counts as answered when its RESOLVED state — what the popup's row
+ * for that tag actually shows — holds an answer or a status. Resolving
+ * through tagStateFrom rather than reading the stored record directly is
+ * what keeps this figure equal to the one in the popup header: the tag is
+ * where a Yes lives, so a stored "yes" (or a Sold, which also only exists
+ * while the tag is on) counts for nothing once the tag is off, whether it
+ * came off in a bulk edit or in HubSpot itself. `total` of 0 yields 0%,
  * not a division by zero.
+ *
+ * Records are matched to tags case-insensitively, so one saved under a
+ * different casing than the vocabulary spells it still finds its tag.
  */
 export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
   const scored = scoredTagOptions(tagOptions);
   const tagged = new Set(contactTagList(contact).map(t => t.toLowerCase()));
   const marks = (review && typeof review === 'object') ? review : {};
-  const markedLower = new Set(
-    Object.entries(marks)
-      .filter(([, v]) => isLocalTagVerdict(v))
-      .map(([k]) => String(k).toLowerCase()),
-  );
+  const recordByTag = new Map();
+  for (const [k, v] of Object.entries(marks)) {
+    const key = String(k).toLowerCase();
+    if (!recordByTag.has(key)) recordByTag.set(key, v);
+  }
   let answered = 0;
   for (const tag of scored) {
     const k = tag.toLowerCase();
-    if (tagged.has(k) || markedLower.has(k)) answered += 1;
+    const { answer, status } = tagStateFrom(tagged.has(k), recordByTag.get(k));
+    if (answer || status) answered += 1;
   }
   const total = scored.length;
   return {
