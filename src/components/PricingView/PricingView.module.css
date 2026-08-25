@@ -1201,3 +1201,32 @@ select.altCellInput::-ms-expand {
   border-radius: 50%;
   background: #047857;
 }
+
+/* "Use SIA 35%" beside the Global GM% box: the margin read out of the
+   uploaded SIA, offered as a one-click fill rather than applied for you. */
+.gmImportBtn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gmImportBtn:hover {
+  background: #F0F9FF;
+}
+
+.gmSourceTag {
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: #ECFDF5;
+  color: #047857;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}

@@ -3586,6 +3586,25 @@ export function PricingView({ settings } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook, overrides, globalGmPct]);
 
+  // The Target GM% the uploaded SIA carries, so the page can offer it
+  // instead of the margin being typed in by hand. The active Option sheet's
+  // own target wins; failing that, the first sheet in the book that has one
+  // (the target is usually the same across a workbook's options). Null when
+  // the file has no target — including a workbook parsed before this was
+  // read, which simply won't offer the button until it's uploaded again.
+  const siaGm = useMemo(() => {
+    const opts = workbook?.options || [];
+    if (opts.length === 0) return null;
+    const active = opts.find(o => o.optionNumber === activeOption);
+    const hit = (typeof active?.targetGmPct === 'number' ? active : opts.find(o => typeof o.targetGmPct === 'number'));
+    if (!hit || typeof hit.targetGmPct !== 'number') return null;
+    return { pct: hit.targetGmPct, sheetName: hit.sheetName, useTargetGm: hit.useTargetGm ?? null };
+  }, [workbook, activeOption]);
+  // Whether the box already holds the SIA's number — down to the tenth of a
+  // percent the field itself edits in, so a value typed to match still reads
+  // as "from SIA" rather than offering to set what is already set.
+  const siaGmApplied = !!siaGm && Math.round(siaGm.pct * 1000) === Math.round(globalGmPct * 1000);
+
   return (
     <div
       className={styles.wrapper}
@@ -3617,6 +3636,24 @@ export function PricingView({ settings } = {}) {
               }}
             />
             <span>%</span>
+            {/* The SIA's own Target GM%, offered rather than applied: the
+                margin is still typed here by default, and this only fills it
+                in when the user asks for it. */}
+            {siaGm && (
+              siaGmApplied ? (
+                <span
+                  className={styles.gmSourceTag}
+                  title={`Matches the Target GM% on ${siaGm.sheetName}${siaGm.useTargetGm === false ? ' (that sheet priced off its individual line GM%, not this target)' : ''}`}
+                >from SIA</span>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.gmImportBtn}
+                  onClick={() => setGlobalGmPct(siaGm.pct)}
+                  title={`Use the Target GM% read from ${siaGm.sheetName} (${fmtPct(siaGm.pct)})${siaGm.useTargetGm === false ? '. That sheet is set to price off its individual line GM% rather than this target.' : ''}`}
+                >Use SIA {fmtPct(siaGm.pct)}</button>
+              )
+            )}
           </label>
 
           <label className={styles.gmField} title="Number of months in the contract term: used to project recurring (monthly) totals.">
