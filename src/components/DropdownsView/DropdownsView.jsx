@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
-import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCatalog';
+import { getEffectiveServiceMetadata, rolloutWeeks, SERVICE_BUCKETS } from '../../data/serviceCatalog';
 import {
   getEffectiveDropdownLists,
   makeCustomListKey,
@@ -23,12 +23,20 @@ const SERVICES_TABLE_ID = 'dropdowns-services';
 // drags them to, per column, under settings.tablePrefs (see SERVICES_TABLE_ID).
 const SERVICE_TABLE_COLUMNS = [
   { key: 'name',             label: 'Solutions',         width: 280,    editable: false },
-  { key: 'bfoTag',           label: 'BFO Tag',           width: 110,    editable: true  },
+  // BFO Tag and Local Project Name were two columns holding the same
+  // "#DATA" / "#SUECO" string on every service, so they're one column now.
+  // It writes `bfoTag`; the catalog hands the value back under both names,
+  // so anything reading a Local Project Name still reads this cell.
+  // Wide enough for the two-name header, which is what has to fit — the
+  // tags themselves are short.
+  { key: 'bfoTag',           label: 'BFO Tag / Local Project Name', width: 265, editable: true },
+  // The group the Opps Scope picker files this service under ("DATA", "RA
+  // Modules", …), seeded from that picker and editable like the rest.
+  { key: 'serviceBucket',    label: 'Service Bucket',    width: 235,    editable: true  },
   { key: 'region',           label: 'Region',            width: 90,     editable: true  },
   { key: 'years',            label: 'Years',             width: 90,     editable: true  },
   { key: 'productLine',      label: 'Product Line',      width: 260,    editable: true  },
   { key: 'serviceType',      label: 'Service Type',      width: 110,    editable: true  },
-  { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
   { key: 'timelineDriven',   label: 'Timeline Driven',   width: 120,    editable: true  },
   // Wider than the numbers in it need, because the header is what has to
   // fit: "Rollout Time (weeks)" is where the unit is stated.
@@ -50,6 +58,11 @@ const SERVICES_LATE_COLUMNS = [
   { key: 'sme',       flag: 'servicesSmeColumnRevealed' },
   { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
   { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
+  { key: 'serviceBucket', flag: 'servicesBucketColumnRevealed' },
+  // Not a new column, but the survivor of the BFO Tag / Local Project Name
+  // merge: a user who had hidden BFO Tag and kept Local Project Name would
+  // otherwise be left with neither, since the retired key matches no column.
+  { key: 'bfoTag',    flag: 'servicesMergedBfoTagColumnRevealed' },
 ];
 
 // Clicking a Services row opens its detail popup, so every editor inside a
@@ -142,6 +155,40 @@ function ServiceYesNoCell({ value, onCommit }) {
       <option value="">-</option>
       <option value="Yes">Yes</option>
       <option value="No">No</option>
+    </select>
+  );
+}
+
+// Service Bucket picker. The vocabulary is the Opps Scope picker's group
+// headings, so it's a select rather than free text — but a value that
+// isn't one of them (a bucket typed in before, or a heading since renamed)
+// is added to the options rather than silently reset to blank.
+function ServiceBucketCell({ value, onCommit }) {
+  const current = value || '';
+  const options = SERVICE_BUCKETS.includes(current) || !current
+    ? SERVICE_BUCKETS
+    : [current, ...SERVICE_BUCKETS];
+  return (
+    <select
+      value={current}
+      onClick={swallowClick}
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next === current) return;
+        onCommit(next);
+      }}
+      title="Which group of the Opps Scope picker this service belongs to"
+      style={{
+        width: '100%',
+        padding: '3px 4px',
+        border: '1px solid transparent', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: 'transparent', color: 'var(--color-text)',
+        cursor: 'pointer', boxSizing: 'border-box',
+      }}
+    >
+      <option value="">-</option>
+      {options.map(b => <option key={b} value={b}>{b}</option>)}
     </select>
   );
 }
@@ -1047,7 +1094,7 @@ export function DropdownsView({ settings, updateSettings }) {
     return visible.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
+      return [meta.bfoTag, meta.serviceBucket, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1097,11 +1144,11 @@ export function DropdownsView({ settings, updateSettings }) {
     id: name,
     name,
     bfoTag: meta?.bfoTag || '',
+    serviceBucket: meta?.serviceBucket || '',
     region: meta?.region || '',
     years: meta?.years || '',
     productLine: meta?.productLine || '',
     serviceType: meta?.serviceType || '',
-    localProjectName: meta?.localProjectName || '',
     timelineDriven: meta?.timelineDriven || '',
     rolloutTime: meta?.rolloutTime || '',
     dependsOn: meta?.dependsOn || '',
@@ -1140,6 +1187,13 @@ export function DropdownsView({ settings, updateSettings }) {
           url={row._url}
           onSaveUrl={saveServiceLink}
           onOpenDetails={() => setDetailName(row.name)}
+        />
+      )
+      : col.key === 'serviceBucket'
+      ? (row) => (
+        <ServiceBucketCell
+          value={row.serviceBucket}
+          onCommit={(v) => saveServiceField(row.name, 'serviceBucket', v)}
         />
       )
       : col.key === 'timelineDriven'

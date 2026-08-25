@@ -4,149 +4,155 @@
 // Services subtab renders one row per service in the live Solutions
 // dropdown list and looks the per-service columns up here. Missing
 // services render with empty cells.
+//
+// BFO Tag and Local Project Name used to be two seeded fields holding the
+// same string on every row — one field wearing two names. They're merged
+// into `bfoTag` here; see mergedBfoTag(), which reads either stored key
+// and hands the value back under both names.
+import { SERVICE_CATEGORIES } from './enums';
 
 export const SERVICE_CATALOG = [
-  { name: 'AP upload (indirect payment)',               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Global compliance screening',                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'API/ETL',                                    bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'Arc performance certs',                      bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'Assurance gap assessment',                   bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Audits',                                     bfoTag: '#SUESP', region: 'NAM',    years: '1 year',  productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project', localProjectName: '#SUESP' },
-  { name: 'BBS reporting',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Due diligence',                              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'BECS/BPS screening',                         bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Bespoke consulting SUCON',                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Bill payment',                               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'BPS Reporting',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Budgets',                                    bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'CA SB Bills - SUCON',                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Capital asset planning',                     bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Recurring', localProjectName: '#SUESP' },
-  { name: 'Cat 1 & 2',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 10',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 11',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 12',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 13',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 14',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 15',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 4',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 8',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Cat 9',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP biodiversity',                           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP biodiversity risk assessment',           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP climate',                                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP plastics',                               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP water',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'CDP water risk assessment',                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Client sends invoices',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Climate risk & opportunity assessment SUCON', bfoTag: '#SUECO', region: 'NAM',   years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Climate risk disclosure SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Climate risk gap analysis',                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Climate risk scenario analysis SUCON',       bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Comp GHG',                                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Corporate Compliance Screening',             bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'CSRD - DMA - SUCON',                         bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'CSRD readiness',                             bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Demand response',                            bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Deposit recovery',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'E.E.D.',                                     bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'EAC procurement - pull through',             bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project', localProjectName: '#SUREN' },
-  { name: 'EAC/Offset Advisory',                        bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Recurring', localProjectName: '#SUREN' },
-  { name: 'ECH',                                        bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'ECLR - SUCON',                               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Ecovadis',                                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'ENERGY STAR cert',                           bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Enterprise workshop',                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project', localProjectName: '#SUESP' },
-  { name: 'ESG marketing',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'ESG module',                                 bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'ESG report',                                 bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'ESOS',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'ESPM link',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'ESPM to RA',                                 bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'EV',                                         bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: '-', localProjectName: '#SUESP' },
-  { name: 'GHG',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Goals & Projects',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Local Law 88',                               bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'GRESB fully managed',                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'GRESB quant',                                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'GRESB scorecards',                           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'GRI',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Historical invoices',                        bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'IDM',                                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'IMP',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Insight sourcing',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Invoice collection',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Invoice recalculation',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Invoice variance testing',                   bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'LEED',                                       bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Manual data upload',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Materiality assessment SUCON',               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Open/Close',                                 bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'Other',                                      bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '-', localProjectName: '#SUSUP' },
-  { name: 'Partner scope',                              bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'Peak alerts',                                bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Peer benchmarking SUCON',                    bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Power Availability Tool',                    bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'PPA/VPPA',                                   bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Recurring', localProjectName: '#SUREN' },
-  { name: 'Procurement contract review',                bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'Professional sourcing',                      bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Pull through',                               bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'RA AV report',                               bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'RA dashboards & reporting',                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'RA internal data feed',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'RA survey',                                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'RADAR',                                      bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Rate optimization',                          bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Rebasline project',                          bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Remote assessments',                         bfoTag: '#SUESP', region: 'NAM',    years: '1 year',  productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project', localProjectName: '#SUESP' },
-  { name: 'REOA',                                       bfoTag: '#SUREN', region: 'NAM',    years: '1 year',  productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project', localProjectName: '#SUREN' },
-  { name: 'Reporting gap assessment',                   bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Risk managment',                             bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'SASB',                                       bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'SBT AV',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Scope 3 estimates',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Scope 3 target/roadmap SUCON',               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Invoice collection - light',                 bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'SE metering',                                bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'SECR',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Sensor audit',                               bfoTag: '#DATA',  region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#DATA' },
-  { name: 'SFDR',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'SSO',                                        bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUSUP' },
-  { name: 'Strategic sourcing',                         bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Sustainability exchange SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Target setting/roadmaps SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Tax Equity - pull through',                  bfoTag: '#SUREN', region: 'NAM',    years: '1 year',  productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project', localProjectName: '#SUREN' },
-  { name: 'TCFD - UK',                                  bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'UCA',                                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'UN PRI - SUCON',                             bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'UPRs',                                       bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Utility feeds',                              bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Utility screening',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project', localProjectName: '#SUECO' },
-  { name: 'Value chain SUCON',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring', localProjectName: '#SUECO' },
-  { name: 'Waste data capture',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Water Cost Recovery',                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#DATA' },
-  { name: 'Ziego Activate',                             bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring', localProjectName: '#SUDIG' },
-  { name: 'Ziego Hub',                                  bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring', localProjectName: '#SUDIG' },
-  { name: 'Ziego Network',                              bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring', localProjectName: '#SUDIG' },
-  { name: 'Ziego Power',                                bfoTag: '#SUDIG', region: 'EU',     years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring', localProjectName: '#SUDIG' },
-  { name: 'ISO 50001',                                  bfoTag: '#SUESP', region: 'EU',     years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project', localProjectName: '#SUESP' },
-  { name: 'Microgrid Advisor',                          bfoTag: '',       region: '',       years: '3 years', productLine: '',                                serviceType: 'Recurring', localProjectName: '' },
-  { name: 'Tax Matrix - pull through',                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'Building Activate',                          bfoTag: '-',      region: '-',      years: '3 years', productLine: '-',                               serviceType: 'Project', localProjectName: '-' },
-  { name: 'EaaS - pull through',                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Recurring', localProjectName: '#SUESP' },
-  { name: 'ClimVar - EcoAct',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '', localProjectName: '#SUSUP' },
-  { name: 'RA + - pull through',                        bfoTag: '#SUSUP', region: '',       years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '', localProjectName: '#SUSUP' },
-  { name: 'Nature + Biodiversity',                      bfoTag: '',       region: '',       years: '3 years', productLine: '',                                serviceType: '', localProjectName: '' },
-  { name: 'EPS',                                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: '', localProjectName: '#SUESP' },
-  { name: 'Recap - CRREM tool',                         bfoTag: '#SUSUP', region: 'Global', years: '4 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring', localProjectName: '#SUSUP' },
-  { name: 'SE Bill Pay',                                bfoTag: '#DATA',  region: 'EU',     years: '',        productLine: '',                                serviceType: '-', localProjectName: '#DATA' },
+  { name: 'AP upload (indirect payment)',               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Global compliance screening',                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'API/ETL',                                    bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Arc performance certs',                      bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Assurance gap assessment',                   bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Audits',                                     bfoTag: '#SUESP', region: 'NAM',    years: '1 year',  productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project' },
+  { name: 'BBS reporting',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Due diligence',                              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'BECS/BPS screening',                         bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Bespoke consulting SUCON',                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Bill payment',                               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'BPS Reporting',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Budgets',                                    bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CA SB Bills - SUCON',                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Capital asset planning',                     bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Recurring' },
+  { name: 'Cat 1 & 2',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 10',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 11',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 12',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 13',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 14',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 15',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 4',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 8',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Cat 9',                                      bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP biodiversity',                           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP biodiversity risk assessment',           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP climate',                                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP plastics',                               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP water',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'CDP water risk assessment',                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Client sends invoices',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Climate risk & opportunity assessment SUCON', bfoTag: '#SUECO', region: 'NAM',   years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Climate risk disclosure SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Climate risk gap analysis',                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Climate risk scenario analysis SUCON',       bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Comp GHG',                                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Corporate Compliance Screening',             bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'CSRD - DMA - SUCON',                         bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'CSRD readiness',                             bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Demand response',                            bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Deposit recovery',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'E.E.D.',                                     bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'EAC procurement - pull through',             bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project' },
+  { name: 'EAC/Offset Advisory',                        bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Recurring' },
+  { name: 'ECH',                                        bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'ECLR - SUCON',                               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring' },
+  { name: 'Ecovadis',                                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'ENERGY STAR cert',                           bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Enterprise workshop',                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project' },
+  { name: 'ESG marketing',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'ESG module',                                 bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'ESG report',                                 bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'ESOS',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'ESPM link',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'ESPM to RA',                                 bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'EV',                                         bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: '-' },
+  { name: 'GHG',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Goals & Projects',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Local Law 88',                               bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'GRESB fully managed',                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'GRESB quant',                                bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'GRESB scorecards',                           bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'GRI',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Historical invoices',                        bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'IDM',                                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'IMP',                                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Insight sourcing',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Invoice collection',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Invoice recalculation',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Invoice variance testing',                   bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'LEED',                                       bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Manual data upload',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Materiality assessment SUCON',               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Open/Close',                                 bfoTag: '#DATA',  region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Other',                                      bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '-' },
+  { name: 'Partner scope',                              bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Peak alerts',                                bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Peer benchmarking SUCON',                    bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Power Availability Tool',                    bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'PPA/VPPA',                                   bfoTag: '#SUREN', region: 'NAM',    years: '3 years', productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Recurring' },
+  { name: 'Procurement contract review',                bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Professional sourcing',                      bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Pull through',                               bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'RA AV report',                               bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'RA dashboards & reporting',                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'RA internal data feed',                      bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'RA survey',                                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'RADAR',                                      bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Rate optimization',                          bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Rebasline project',                          bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Remote assessments',                         bfoTag: '#SUESP', region: 'NAM',    years: '1 year',  productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project' },
+  { name: 'REOA',                                       bfoTag: '#SUREN', region: 'NAM',    years: '1 year',  productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project' },
+  { name: 'Reporting gap assessment',                   bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Risk managment',                             bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'SASB',                                       bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'SBT AV',                                     bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Scope 3 estimates',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Scope 3 target/roadmap SUCON',               bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Invoice collection - light',                 bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'SE metering',                                bfoTag: '#SUSUP', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'SECR',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Sensor audit',                               bfoTag: '#DATA',  region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'SFDR',                                       bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'SSO',                                        bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Strategic sourcing',                         bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Sustainability exchange SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Target setting/roadmaps SUCON',              bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
+  { name: 'Tax Equity - pull through',                  bfoTag: '#SUREN', region: 'NAM',    years: '1 year',  productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project' },
+  { name: 'TCFD - UK',                                  bfoTag: '#SUECO', region: 'EU',     years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'UCA',                                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'UN PRI - SUCON',                             bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring' },
+  { name: 'UPRs',                                       bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Utility feeds',                              bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Utility screening',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Value chain SUCON',                          bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Recurring' },
+  { name: 'Waste data capture',                         bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Water Cost Recovery',                        bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Ziego Activate',                             bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring' },
+  { name: 'Ziego Hub',                                  bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring' },
+  { name: 'Ziego Network',                              bfoTag: '#SUDIG', region: 'NAM',    years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring' },
+  { name: 'Ziego Power',                                bfoTag: '#SUDIG', region: 'EU',     years: '3 years', productLine: 'SUDIG - SB DIGITAL SOLUTIONS',   serviceType: 'Recurring' },
+  { name: 'ISO 50001',                                  bfoTag: '#SUESP', region: 'EU',     years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project' },
+  { name: 'Microgrid Advisor',                          bfoTag: '',       region: '',       years: '3 years', productLine: '',                                serviceType: 'Recurring' },
+  { name: 'Tax Matrix - pull through',                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Building Activate',                          bfoTag: '-',      region: '-',      years: '3 years', productLine: '-',                               serviceType: 'Project' },
+  { name: 'EaaS - pull through',                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Recurring' },
+  { name: 'ClimVar - EcoAct',                           bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '' },
+  { name: 'RA + - pull through',                        bfoTag: '#SUSUP', region: '',       years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: '' },
+  { name: 'Nature + Biodiversity',                      bfoTag: '',       region: '',       years: '3 years', productLine: '',                                serviceType: '' },
+  { name: 'EPS',                                        bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: '' },
+  { name: 'Recap - CRREM tool',                         bfoTag: '#SUSUP', region: 'Global', years: '4 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'SE Bill Pay',                                bfoTag: '#DATA',  region: 'EU',     years: '',        productLine: '',                                serviceType: '-' },
   // Graveyard — kept for reference; flagged so the UI can render them
   // muted / sorted to the bottom when needed.
-  { name: 'WELL',              bfoTag: '#SUECO', region: '-',      years: '', productLine: '', serviceType: '-', localProjectName: '#SUECO', graveyard: true },
-  { name: 'Incentives/taxes',  bfoTag: '-',      region: '-',      years: '', productLine: '', serviceType: '-', localProjectName: '-', graveyard: true },
-  { name: 'SEC Reporting',     bfoTag: '#SUECO', region: 'Dead',   years: '', productLine: '', serviceType: '',  localProjectName: '#SUECO', graveyard: true },
-  { name: 'IREM',              bfoTag: '#SUSUP', region: 'Dead',   years: '', productLine: '', serviceType: '-', localProjectName: '#SUSUP', graveyard: true },
-  { name: 'KPI',               bfoTag: '#SUECO', region: 'Global', years: '', productLine: '', serviceType: '-', localProjectName: '#SUECO', graveyard: true },
-  { name: 'Greenstruxure',     bfoTag: '#SUESP', region: '-',      years: '', productLine: '', serviceType: '',  localProjectName: '#SUESP', graveyard: true },
+  { name: 'WELL',              bfoTag: '#SUECO', region: '-',      years: '', productLine: '', serviceType: '-', graveyard: true },
+  { name: 'Incentives/taxes',  bfoTag: '-',      region: '-',      years: '', productLine: '', serviceType: '-', graveyard: true },
+  { name: 'SEC Reporting',     bfoTag: '#SUECO', region: 'Dead',   years: '', productLine: '', serviceType: '',  graveyard: true },
+  { name: 'IREM',              bfoTag: '#SUSUP', region: 'Dead',   years: '', productLine: '', serviceType: '-', graveyard: true },
+  { name: 'KPI',               bfoTag: '#SUECO', region: 'Global', years: '', productLine: '', serviceType: '-', graveyard: true },
+  { name: 'Greenstruxure',     bfoTag: '#SUESP', region: '-',      years: '', productLine: '', serviceType: '',  graveyard: true },
 ];
 
 // Map from lower-cased service name → metadata so a lookup ignores
@@ -187,15 +193,88 @@ export function formatRolloutWeeks(raw) {
 
 // Editable per-service fields the Dropdowns › Services subtab exposes.
 // The seed values above are the defaults; the user can override any of
-// them via settings.serviceOverrides. Local Project Name has no seed —
-// it's a user-supplied label that flows into the AI Prompt (New BFO
-// Opp) prompt block. Timeline Driven (yes/no) and Rollout Time (a number
-// of weeks) also have no seed — they're user-supplied and default to
-// empty.
+// them via settings.serviceOverrides. Service Bucket seeds off the Scope
+// picker's groups rather than the rows above (see seedServiceBucket).
+// Timeline Driven (yes/no) and Rollout Time (a number of weeks) have no
+// seed at all — they're user-supplied and default to empty.
+// `localProjectName` stays listed for the overrides a user saved back when
+// it was its own column — reads still honour it, writes go to `bfoTag`.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
-  'timelineDriven', 'rolloutTime', 'dependsOn',
+  'serviceBucket', 'timelineDriven', 'rolloutTime', 'dependsOn',
 ];
+
+// --- Service Bucket ---------------------------------------------------
+// The Opps Scope picker lays every service out under a group heading
+// ("DATA", "RA Modules", "Traditional Energy Management", …). That heading
+// is the service's bucket, and SERVICE_CATEGORIES is the one place it's
+// defined — so the Services subtab derives the column from there rather
+// than keeping a second copy that could drift.
+export const SERVICE_BUCKETS = SERVICE_CATEGORIES.map(c => c.name);
+
+// The two lists spell the same service differently in places: casing,
+// punctuation, an ampersand written out, or a trailing qualifier
+// ("… SUCON", "… - pull through") that only one side carries. Match on a
+// normalized key first, then on a looser one with those qualifiers gone.
+function normalizeServiceKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+const QUALIFIER_RE = /\s+(?:sucon|pull through)$/;
+
+function looseServiceKey(name) {
+  let key = normalizeServiceKey(name);
+  let prev;
+  do { prev = key; key = key.replace(QUALIFIER_RE, '').trim(); } while (key !== prev);
+  return key;
+}
+
+// Straight spelling mismatches between the picker's groups and the
+// Solutions list, which no amount of normalizing bridges. Keyed by the
+// Solutions spelling, valued with the picker's.
+const BUCKET_NAME_ALIASES = {
+  'rebaseline project': 'rebasline project',
+};
+
+const BUCKET_BY_KEY = new Map();
+const BUCKET_BY_LOOSE_KEY = new Map();
+for (const category of SERVICE_CATEGORIES) {
+  for (const item of category.items) {
+    const key = normalizeServiceKey(item);
+    if (!BUCKET_BY_KEY.has(key)) BUCKET_BY_KEY.set(key, category.name);
+    const loose = looseServiceKey(item);
+    if (!BUCKET_BY_LOOSE_KEY.has(loose)) BUCKET_BY_LOOSE_KEY.set(loose, category.name);
+  }
+}
+
+// The bucket the Scope picker files a service under, or '' for a service
+// the picker doesn't list (it's in the Solutions vocabulary but no group
+// claims it). This is the seed value only — a user's own bucket, saved on
+// the Services subtab, wins over it in the effective metadata.
+export function seedServiceBucket(name) {
+  const key = normalizeServiceKey(name);
+  if (!key) return '';
+  const aliased = BUCKET_NAME_ALIASES[key];
+  const direct = BUCKET_BY_KEY.get(key) || (aliased ? BUCKET_BY_KEY.get(aliased) : undefined);
+  if (direct) return direct;
+  const loose = looseServiceKey(name);
+  return BUCKET_BY_LOOSE_KEY.get(loose)
+    || (aliased ? BUCKET_BY_LOOSE_KEY.get(looseServiceKey(aliased)) : '')
+    || '';
+}
+
+// BFO Tag and Local Project Name held the same "#DATA" / "#SUECO" family
+// tag on every service, so they're one field now. Either stored key is
+// read — a user's override under the retired `localProjectName` key still
+// counts — and the merged value goes back out under both names so
+// downstream readers (New BFO Opp, PE Portfolio) need no change.
+function mergedBfoTag(seed, override) {
+  return override?.bfoTag ?? override?.localProjectName ?? seed?.bfoTag ?? '';
+}
 
 // Merge the static seed catalog with the user's per-service overrides.
 // Returns a fully-populated metadata object (every editable field
@@ -223,17 +302,26 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
+      // Derived from the Scope picker's groups, so it's there even for a
+      // service with no catalog seed and nothing overridden.
+      serviceBucket: seedServiceBucket(name),
       timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '', ktm: '',
     };
   }
+  const bfoTag = mergedBfoTag(seed, override);
   return {
     name,
-    bfoTag:           override?.bfoTag           ?? seed?.bfoTag           ?? '',
+    bfoTag,
     region:           override?.region           ?? seed?.region           ?? '',
     years:            override?.years            ?? seed?.years            ?? '',
     productLine:      override?.productLine      ?? seed?.productLine      ?? '',
     serviceType:      override?.serviceType      ?? seed?.serviceType      ?? '',
-    localProjectName: override?.localProjectName ?? seed?.localProjectName ?? '',
+    // The same value as bfoTag — one field, two names, kept so callers
+    // that ask for a Local Project Name still get one.
+    localProjectName: bfoTag,
+    // Seeded from the service's group in the Scope picker; the user can
+    // set their own on the Services subtab.
+    serviceBucket:    override?.serviceBucket    ?? seedServiceBucket(name),
     timelineDriven:   override?.timelineDriven   ?? seed?.timelineDriven   ?? '',
     rolloutTime:      override?.rolloutTime      ?? seed?.rolloutTime      ?? '',
     // Services that have to be rolled out before this one can start,
@@ -251,8 +339,9 @@ export function getEffectiveServiceMetadata(name, overrides) {
 }
 
 // A service's Local Project Name (the "#SUECO" / "#DATA" family it bills
-// under), or '' when it has none. The dash is the app's blank sentinel
-// and reads as unset here, same as an empty cell.
+// under), or '' when it has none — the same value as its BFO Tag, which is
+// the one field the two names now share. The dash is the app's blank
+// sentinel and reads as unset here, same as an empty cell.
 export function localProjectNameFor(name, overrides) {
   const raw = String(getEffectiveServiceMetadata(name, overrides)?.localProjectName || '').trim();
   return raw === '-' ? '' : raw;
