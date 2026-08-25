@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, recordKeepsTag, tagKey, dedupeTags, planTagEdit, groupTagWrites } from '../../utils/contactTagReview';
+import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, recordKeepsTag, tagKey, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -1378,10 +1378,16 @@ function KeyContactsViewInner({
       const on = [];
       const off = [];
       for (const tag of tags) {
-        const record = recordForVerdict(map[tag], verdict);
+        // The record may already be saved under the other spelling of this
+        // tag — the popup writes the vocabulary's, this picker writes
+        // HubSpot's. Read through either and write back onto the key that's
+        // already there, or the answer lands somewhere the popup can't see.
+        const storedKey = tagRecordKeyFor(map, tag);
+        const stored = findTagRecord(map, tag);
+        const record = recordForVerdict(stored, verdict);
         (recordKeepsTag(record) ? on : off).push(tag);
-        if (sameTagRecord(map[tag], record)) continue;
-        map[tag] = record;
+        if (sameTagRecord(stored, record)) continue;
+        map[storedKey] = record;
         changed = true;
       }
       wanted.set(key, { on, off });

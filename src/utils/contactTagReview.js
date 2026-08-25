@@ -53,6 +53,36 @@ export function tagListHas(list, tag) {
   return (list || []).some(t => tagKey(t) === k);
 }
 
+// A contact's saved records are keyed by the tag as whoever wrote them
+// spelled it: the popup writes the vocabulary's spelling, the bulk editor
+// writes HubSpot's. Those differ — "Efficiency / Renewables" against
+// "Efficiency/Renewables" — so a lookup that doesn't collapse the spelling
+// reads an answered tag as unanswered, which is how a bulk Mark Yes lands
+// and then shows up as a blank row in the popup.
+//
+// findTagRecord reads through either spelling; tagRecordKeyFor says which key
+// a write should land on, so an edit updates the record that's already there
+// instead of leaving a twin under the other spelling.
+export function findTagRecord(map, tag) {
+  if (!map || typeof map !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(map, tag)) return map[tag];
+  const k = tagKey(tag);
+  for (const key of Object.keys(map)) {
+    if (tagKey(key) === k) return map[key];
+  }
+  return undefined;
+}
+
+export function tagRecordKeyFor(map, tag) {
+  if (!map || typeof map !== 'object') return tag;
+  if (Object.prototype.hasOwnProperty.call(map, tag)) return tag;
+  const k = tagKey(tag);
+  for (const key of Object.keys(map)) {
+    if (tagKey(key) === k) return key;
+  }
+  return tag;
+}
+
 // One list of tags with the duplicates collapsed — two spellings of the same
 // tag keep the first one given.
 export function dedupeTags(list) {
@@ -282,16 +312,16 @@ export function scoredTagOptions(tagOptions = TAG_OPTIONS) {
  */
 export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
   const scored = scoredTagOptions(tagOptions);
-  const tagged = new Set(contactTagList(contact).map(t => t.toLowerCase()));
+  const tagged = new Set(contactTagList(contact).map(tagKey));
   const marks = (review && typeof review === 'object') ? review : {};
   const recordByTag = new Map();
   for (const [k, v] of Object.entries(marks)) {
-    const key = String(k).toLowerCase();
+    const key = tagKey(k);
     if (!recordByTag.has(key)) recordByTag.set(key, v);
   }
   let answered = 0;
   for (const tag of scored) {
-    const k = tag.toLowerCase();
+    const k = tagKey(tag);
     const { answer, status } = tagStateFrom(tagged.has(k), recordByTag.get(k));
     if (answer || status) answered += 1;
   }

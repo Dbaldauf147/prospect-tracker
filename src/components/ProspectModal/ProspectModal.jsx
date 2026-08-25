@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord } from '../../utils/contactTagReview';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -803,15 +803,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // holding what was just written. The optimistic state a click leaves
   // behind is therefore safe until the write lands (or is rolled back by
   // persistDansTags below when HubSpot refuses it).
+  //
+  // Keyed on tagKey, not on case alone. A tag whose spelling the vocabulary
+  // doesn't hold exactly — "Efficiency/Renewables" against the list's
+  // "Efficiency / Renewables" — has to resolve to the option it IS, or this
+  // drops it: the row reads as untagged however plainly HubSpot has it, and
+  // the next save from this popup writes the tag list without it.
   useEffect(() => {
     const canonical = new Map(
       tagOptions
         .filter(t => t.toLowerCase() !== MET_IN_PERSON_TAG.toLowerCase())
-        .map(t => [t.toLowerCase(), t]),
+        .map(t => [tagKey(t), t]),
     );
     setCheckedTags(new Set(
       rawTags.split(';').map(t => t.trim()).filter(Boolean)
-        .map(t => canonical.get(t.toLowerCase()))
+        .map(t => canonical.get(tagKey(t)))
         .filter(Boolean),
     ));
   }, [rawTags, tagOptions]);
@@ -1085,17 +1091,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     }
   }
 
-  // This tag's saved record, whatever casing it was stored under. The bulk
+  // This tag's saved record, whatever spelling it was stored under. The bulk
   // tag editor writes HubSpot's spelling of a tag while this table is keyed
-  // on the vocabulary's, so an exact-key lookup can miss an answer that the
-  // contacts table — which matches case-insensitively — does count.
+  // on the vocabulary's, and the two differ by more than case in this
+  // dataset — "Efficiency/Renewables" against "Efficiency / Renewables" — so
+  // matching on anything narrower than tagKey reads an answered tag as a
+  // blank row.
   function verdictFor(tag) {
-    if (Object.prototype.hasOwnProperty.call(tagVerdicts, tag)) return tagVerdicts[tag];
-    const k = String(tag).toLowerCase();
-    for (const key of Object.keys(tagVerdicts)) {
-      if (key.toLowerCase() === k) return tagVerdicts[key];
-    }
-    return undefined;
+    return findTagRecord(tagVerdicts, tag);
   }
 
   // Set one half of a tag's record — the answer (Yes / No / Not sure) or the
@@ -1136,10 +1139,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     }
     setTagVerdicts(prev => {
       const map = { ...prev };
-      // Drop any record saved under another casing of this tag, so an edit
+      // Drop any record saved under another spelling of this tag, so an edit
       // replaces it rather than leaving two records for the one tag.
-      const k = String(tag).toLowerCase();
-      for (const key of Object.keys(map)) if (key !== tag && key.toLowerCase() === k) delete map[key];
+      const k = tagKey(tag);
+      for (const key of Object.keys(map)) if (key !== tag && tagKey(key) === k) delete map[key];
       if (next.answer || next.status) map[tag] = { answer: next.answer, status: next.status };
       else delete map[tag];
       const cid = contact.id || contact.vid;
