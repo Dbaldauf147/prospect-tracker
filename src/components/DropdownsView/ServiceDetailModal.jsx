@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { rolloutWeeks, SERVICE_BUCKETS } from '../../data/serviceCatalog';
+import { rolloutWeeks } from '../../data/serviceCatalog';
+import { UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import {
   TIMELINE_STAGE_OWNERS,
   makeTimelineStage,
@@ -76,9 +77,9 @@ function TextField({ label, value, placeholder, onCommit }) {
 }
 
 // Timeline Driven. Same three states as the table's cell: unset, Yes, No.
-// A picker over a fixed vocabulary. Any value that isn't in it (typed in
-// before the list existed, or a heading since renamed) is kept as an
-// option so opening the popup can't quietly wipe it.
+// A picker over a fixed vocabulary. A value that isn't in it (a box since
+// renamed, say) is kept as an option so opening the popup can't quietly
+// wipe it.
 function SelectField({ label, value, options, onCommit }) {
   const current = value || '';
   const opts = current && !options.includes(current) ? [current, ...options] : options;
@@ -90,7 +91,6 @@ function SelectField({ label, value, options, onCommit }) {
         value={current}
         onChange={e => { if (e.target.value !== current) onCommit(e.target.value); }}
       >
-        <option value="">—</option>
         {opts.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     </label>
@@ -992,6 +992,12 @@ export function ServiceDetailModal({
   dependents,
   options,
   templates = [],
+  // Which box the services board files this service in, and the boxes it
+  // could be moved to. Not a field on `service` — it's board layout, saved
+  // by the parent straight onto settings.customServiceCategories.
+  bucket,
+  bucketOptions = [],
+  onSaveBucket,
   onSaveField,
   onSaveUrl,
   onToggleHide,
@@ -1069,9 +1075,9 @@ export function ServiceDetailModal({
             <TextField label="BFO Tag / Local Project Name" value={meta?.bfoTag} onCommit={save('bfoTag')} />
             <SelectField
               label="Service Bucket"
-              value={meta?.serviceBucket}
-              options={SERVICE_BUCKETS}
-              onCommit={save('serviceBucket')}
+              value={bucket || UNGROUPED_SERVICES}
+              options={[...bucketOptions, UNGROUPED_SERVICES]}
+              onCommit={(v) => onSaveBucket?.(name, v)}
             />
             <TextField label="Region" value={meta?.region} onCommit={save('region')} />
             <TextField label="Years" value={meta?.years} onCommit={save('years')} />

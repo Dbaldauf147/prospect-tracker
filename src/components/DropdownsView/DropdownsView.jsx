@@ -1,7 +1,13 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
-import { getEffectiveServiceMetadata, rolloutWeeks, SERVICE_BUCKETS } from '../../data/serviceCatalog';
+import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCatalog';
+import {
+  getServiceCategories,
+  moveServiceToBucket,
+  serviceBucketOf,
+  UNGROUPED_SERVICES,
+} from '../../utils/serviceCategoriesStore';
 import {
   getEffectiveDropdownLists,
   makeCustomListKey,
@@ -30,8 +36,9 @@ const SERVICE_TABLE_COLUMNS = [
   // Wide enough for the two-name header, which is what has to fit — the
   // tags themselves are short.
   { key: 'bfoTag',           label: 'BFO Tag / Local Project Name', width: 265, editable: true },
-  // The group the Opps Scope picker files this service under ("DATA", "RA
-  // Modules", …), seeded from that picker and editable like the rest.
+  // The box the services board files this service in ("DATA", "RA Modules",
+  // …). Editing it moves the service on the board itself, so the Opps Scope
+  // picker and the company card show it in its new box straight away.
   { key: 'serviceBucket',    label: 'Service Bucket',    width: 235,    editable: true  },
   { key: 'region',           label: 'Region',            width: 90,     editable: true  },
   { key: 'years',            label: 'Years',             width: 90,     editable: true  },
@@ -159,15 +166,12 @@ function ServiceYesNoCell({ value, onCommit }) {
   );
 }
 
-// Service Bucket picker. The vocabulary is the Opps Scope picker's group
-// headings, so it's a select rather than free text — but a value that
-// isn't one of them (a bucket typed in before, or a heading since renamed)
-// is added to the options rather than silently reset to blank.
-function ServiceBucketCell({ value, onCommit }) {
-  const current = value || '';
-  const options = SERVICE_BUCKETS.includes(current) || !current
-    ? SERVICE_BUCKETS
-    : [current, ...SERVICE_BUCKETS];
+// Service Bucket picker. The options are the boxes the services board
+// actually has, so picking one moves the service into that box rather than
+// recording a label beside it. "Other services" is the Scope picker's
+// catch-all card, and choosing it takes the service out of every box.
+function ServiceBucketCell({ value, options, onCommit }) {
+  const current = value || UNGROUPED_SERVICES;
   return (
     <select
       value={current}
@@ -177,7 +181,7 @@ function ServiceBucketCell({ value, onCommit }) {
         if (next === current) return;
         onCommit(next);
       }}
-      title="Which group of the Opps Scope picker this service belongs to"
+      title="Which box of the services board this service sits in — the same boxes the Opps Scope picker and the company card show"
       style={{
         width: '100%',
         padding: '3px 4px',
@@ -187,8 +191,8 @@ function ServiceBucketCell({ value, onCommit }) {
         cursor: 'pointer', boxSizing: 'border-box',
       }}
     >
-      <option value="">-</option>
       {options.map(b => <option key={b} value={b}>{b}</option>)}
+      <option value={UNGROUPED_SERVICES}>{UNGROUPED_SERVICES}</option>
     </select>
   );
 }
@@ -953,6 +957,24 @@ export function DropdownsView({ settings, updateSettings }) {
       : {},
     [settings?.serviceOverrides]
   );
+  // The services board's box layout. Service Bucket is a view onto this —
+  // not a per-service field — so the Scope picker, the company card's
+  // board and this column can't drift apart.
+  const serviceCategories = useMemo(
+    () => getServiceCategories(settings),
+    [settings?.customServiceCategories],
+  );
+  // Not memoized: seventeen strings off an already-memoized array, and
+  // nothing downstream keys off its identity.
+  const serviceBucketNames = serviceCategories.map(c => c.name);
+  // Move a service into another box. The first such edit writes the whole
+  // layout to settings.customServiceCategories, which from then on is what
+  // every board reads — the same thing dragging a service on the company
+  // card has always done.
+  function saveServiceBucket(name, bucket) {
+    const next = moveServiceToBucket(serviceCategories, name, bucket);
+    if (next) updateSettings?.({ customServiceCategories: next });
+  }
   function saveServiceField(name, field, value) {
     const next = { ...serviceOverrides };
     const row = { ...(next[name] || {}) };
@@ -975,8 +997,14 @@ export function DropdownsView({ settings, updateSettings }) {
   const solutionNames = useMemo(() => solutionsList?.options || [], [solutionsList]);
   const serviceRows = useMemo(() => {
     const options = solutionsList?.options || [];
-    return options.map(name => ({ name, meta: getEffectiveServiceMetadata(name, serviceOverrides) }));
-  }, [solutionsList, serviceOverrides]);
+    return options.map(name => ({
+      name,
+      meta: getEffectiveServiceMetadata(name, serviceOverrides),
+      // '' means no box claims it, which is the Scope picker's catch-all
+      // card — named here so the cell and the search box read the same.
+      bucket: serviceBucketOf(serviceCategories, name) || UNGROUPED_SERVICES,
+    }));
+  }, [solutionsList, serviceOverrides, serviceCategories]);
   // Services the user has retired. The same app-wide set the company card's
   // Services Explored board and the Opps Scope picker read, so hiding here
   // takes a service out of circulation everywhere rather than only on this
@@ -1091,10 +1119,11 @@ export function DropdownsView({ settings, updateSettings }) {
       ? serviceRows
       : serviceRows.filter(({ name }) => !hiddenServices.has(name));
     if (!term) return visible;
-    return visible.filter(({ name, meta }) => {
+    return visible.filter(({ name, meta, bucket }) => {
       if (name.toLowerCase().includes(term)) return true;
+      if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.serviceBucket, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1137,14 +1166,48 @@ export function DropdownsView({ settings, updateSettings }) {
     updateSettings?.(updates);
   }, [settings, updateSettings]);
 
+  // Service Bucket was briefly stored as a per-service `serviceBucket`
+  // override, before it became a view onto the board layout. Fold any of
+  // those into the layout once and drop the retired key, so a bucket picked
+  // while it worked that way still shows — on the board as well as here.
+  // Gated on _lastWriteAt like the column reveal below: synced settings have
+  // to have landed before we can tell an empty map from an unloaded one.
+  useEffect(() => {
+    if (!settings || !settings._lastWriteAt) return;
+    if (settings.serviceBucketOverridesMigrated) return;
+    const overrides = settings.serviceOverrides || {};
+    const stale = Object.keys(overrides).filter(n => overrides[n]?.serviceBucket);
+    if (stale.length === 0) {
+      updateSettings?.({ serviceBucketOverridesMigrated: true });
+      return;
+    }
+    let layout = null;
+    const nextOverrides = { ...overrides };
+    for (const name of stale) {
+      const moved = moveServiceToBucket(layout || getServiceCategories(settings), name, overrides[name].serviceBucket);
+      if (moved) layout = moved;
+      const row = { ...nextOverrides[name] };
+      delete row.serviceBucket;
+      if (Object.keys(row).length === 0) delete nextOverrides[name];
+      else nextOverrides[name] = row;
+    }
+    updateSettings?.({
+      // Only when a service actually moved: an override that named the box
+      // it was already in shouldn't freeze the seed layout into settings.
+      ...(layout ? { customServiceCategories: layout } : {}),
+      serviceOverrides: nextOverrides,
+      serviceBucketOverridesMigrated: true,
+    });
+  }, [settings, updateSettings]);
+
   // Flat rows for the table: one field per column so sorting, the search
   // box and the Excel export all read straight off the row, with the
   // pieces the cells need to render (link, muted state) alongside.
-  const serviceTableRows = useMemo(() => filteredServiceRows.map(({ name, meta }) => ({
+  const serviceTableRows = useMemo(() => filteredServiceRows.map(({ name, meta, bucket }) => ({
     id: name,
     name,
     bfoTag: meta?.bfoTag || '',
-    serviceBucket: meta?.serviceBucket || '',
+    serviceBucket: bucket,
     region: meta?.region || '',
     years: meta?.years || '',
     productLine: meta?.productLine || '',
@@ -1193,7 +1256,8 @@ export function DropdownsView({ settings, updateSettings }) {
       ? (row) => (
         <ServiceBucketCell
           value={row.serviceBucket}
-          onCommit={(v) => saveServiceField(row.name, 'serviceBucket', v)}
+          options={serviceBucketNames}
+          onCommit={(v) => saveServiceBucket(row.name, v)}
         />
       )
       : col.key === 'timelineDriven'
@@ -1537,6 +1601,9 @@ export function DropdownsView({ settings, updateSettings }) {
               dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
               options={solutionNames}
               templates={timelineTemplates}
+              bucket={detailService.bucket}
+              bucketOptions={serviceBucketNames}
+              onSaveBucket={saveServiceBucket}
               onSaveField={saveServiceField}
               onSaveUrl={saveServiceLink}
               onToggleHide={toggleHideService}

@@ -9,7 +9,10 @@
 // same string on every row — one field wearing two names. They're merged
 // into `bfoTag` here; see mergedBfoTag(), which reads either stored key
 // and hands the value back under both names.
-import { SERVICE_CATEGORIES } from './enums';
+//
+// A service's bucket isn't here: it's which box the services board files it
+// in, which lives in the board layout (src/utils/serviceCategoriesStore.js)
+// rather than as per-service metadata.
 
 export const SERVICE_CATALOG = [
   { name: 'AP upload (indirect payment)',               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
@@ -193,79 +196,16 @@ export function formatRolloutWeeks(raw) {
 
 // Editable per-service fields the Dropdowns › Services subtab exposes.
 // The seed values above are the defaults; the user can override any of
-// them via settings.serviceOverrides. Service Bucket seeds off the Scope
-// picker's groups rather than the rows above (see seedServiceBucket).
-// Timeline Driven (yes/no) and Rollout Time (a number of weeks) have no
-// seed at all — they're user-supplied and default to empty.
+// them via settings.serviceOverrides. Timeline Driven (yes/no) and Rollout
+// Time (a number of weeks) have no seed at all — they're user-supplied and
+// default to empty. Service Bucket isn't here either: it's board layout,
+// not metadata (see src/utils/serviceCategoriesStore.js).
 // `localProjectName` stays listed for the overrides a user saved back when
 // it was its own column — reads still honour it, writes go to `bfoTag`.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
-  'serviceBucket', 'timelineDriven', 'rolloutTime', 'dependsOn',
+  'timelineDriven', 'rolloutTime', 'dependsOn',
 ];
-
-// --- Service Bucket ---------------------------------------------------
-// The Opps Scope picker lays every service out under a group heading
-// ("DATA", "RA Modules", "Traditional Energy Management", …). That heading
-// is the service's bucket, and SERVICE_CATEGORIES is the one place it's
-// defined — so the Services subtab derives the column from there rather
-// than keeping a second copy that could drift.
-export const SERVICE_BUCKETS = SERVICE_CATEGORIES.map(c => c.name);
-
-// The two lists spell the same service differently in places: casing,
-// punctuation, an ampersand written out, or a trailing qualifier
-// ("… SUCON", "… - pull through") that only one side carries. Match on a
-// normalized key first, then on a looser one with those qualifiers gone.
-function normalizeServiceKey(name) {
-  return String(name || '')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-const QUALIFIER_RE = /\s+(?:sucon|pull through)$/;
-
-function looseServiceKey(name) {
-  let key = normalizeServiceKey(name);
-  let prev;
-  do { prev = key; key = key.replace(QUALIFIER_RE, '').trim(); } while (key !== prev);
-  return key;
-}
-
-// Straight spelling mismatches between the picker's groups and the
-// Solutions list, which no amount of normalizing bridges. Keyed by the
-// Solutions spelling, valued with the picker's.
-const BUCKET_NAME_ALIASES = {
-  'rebaseline project': 'rebasline project',
-};
-
-const BUCKET_BY_KEY = new Map();
-const BUCKET_BY_LOOSE_KEY = new Map();
-for (const category of SERVICE_CATEGORIES) {
-  for (const item of category.items) {
-    const key = normalizeServiceKey(item);
-    if (!BUCKET_BY_KEY.has(key)) BUCKET_BY_KEY.set(key, category.name);
-    const loose = looseServiceKey(item);
-    if (!BUCKET_BY_LOOSE_KEY.has(loose)) BUCKET_BY_LOOSE_KEY.set(loose, category.name);
-  }
-}
-
-// The bucket the Scope picker files a service under, or '' for a service
-// the picker doesn't list (it's in the Solutions vocabulary but no group
-// claims it). This is the seed value only — a user's own bucket, saved on
-// the Services subtab, wins over it in the effective metadata.
-export function seedServiceBucket(name) {
-  const key = normalizeServiceKey(name);
-  if (!key) return '';
-  const aliased = BUCKET_NAME_ALIASES[key];
-  const direct = BUCKET_BY_KEY.get(key) || (aliased ? BUCKET_BY_KEY.get(aliased) : undefined);
-  if (direct) return direct;
-  const loose = looseServiceKey(name);
-  return BUCKET_BY_LOOSE_KEY.get(loose)
-    || (aliased ? BUCKET_BY_LOOSE_KEY.get(looseServiceKey(aliased)) : '')
-    || '';
-}
 
 // BFO Tag and Local Project Name held the same "#DATA" / "#SUECO" family
 // tag on every service, so they're one field now. Either stored key is
@@ -302,9 +242,6 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
-      // Derived from the Scope picker's groups, so it's there even for a
-      // service with no catalog seed and nothing overridden.
-      serviceBucket: seedServiceBucket(name),
       timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '', ktm: '',
     };
   }
@@ -319,9 +256,6 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // The same value as bfoTag — one field, two names, kept so callers
     // that ask for a Local Project Name still get one.
     localProjectName: bfoTag,
-    // Seeded from the service's group in the Scope picker; the user can
-    // set their own on the Services subtab.
-    serviceBucket:    override?.serviceBucket    ?? seedServiceBucket(name),
     timelineDriven:   override?.timelineDriven   ?? seed?.timelineDriven   ?? '',
     rolloutTime:      override?.rolloutTime      ?? seed?.rolloutTime      ?? '',
     // Services that have to be rolled out before this one can start,
