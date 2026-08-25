@@ -11,6 +11,7 @@ import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
+import { incompleteHandoffDeals } from './dealHandoff';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -608,6 +609,58 @@ function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [] }) {
   return issues;
 }
 
+// Issue #11: a deal on the Deals subtab that still has an outstanding
+// handoff item — its Progress pill reads less than 9/9 (whatever N the
+// checklist is at). The checklist and the "which deals still owe
+// something" rule live in utils/dealHandoff, so a pill the Deals subtab
+// paints red or amber is exactly the row raised here.
+//
+// Deals the user ticked "Ignore this deal" on are already dropped by
+// incompleteHandoffDeals — that flag greys out the pill there and means
+// the same thing here, the same way it does for post-sale follow-ups.
+//
+// Not CDM-scoped, for the same reason detectPostSaleFollowUpOverdue
+// isn't: it runs off the uploaded deals list rather than the prospect
+// list, so filtering would hide rows the Deals subtab still shows as
+// incomplete.
+function detectIncompleteHandoff({ dealsList = [], prospects = [] }) {
+  // Company → prospect id, so a flagged deal can open its account like the
+  // other client issues do. Deals whose client isn't a tracked prospect
+  // still raise the issue; they just aren't clickable.
+  const idByCompany = new Map();
+  for (const p of prospects) {
+    const k = normClientName(p.company);
+    if (k && !idByCompany.has(k)) idByCompany.set(k, p.id);
+  }
+  const issues = [];
+  // Ids have to survive a re-upload of the workbook, since a snooze is
+  // stored against them — so they're built from the deal's own values
+  // rather than its position in the list. Client + agreement + contract
+  // start is what distinguishes one row from another, including the same
+  // agreement renewed in a later year; a `#n` suffix separates rows that
+  // are identical even on all three.
+  const seenIds = new Map();
+  for (const { deal, done, total, missing } of incompleteHandoffDeals(dealsList)) {
+    const company = String(deal['Client Name'] ?? deal['Client Name '] ?? '').trim() || '-';
+    const agreement = String(deal['Agreement Name'] ?? '').trim();
+    const started = String(deal['Original Contract Start'] ?? '').trim();
+    const base = `deal-handoff:${normClientName(company)}:${agreement.toLowerCase()}:${started.toLowerCase()}`;
+    const nth = (seenIds.get(base) || 0) + 1;
+    seenIds.set(base, nth);
+    issues.push({
+      id: nth === 1 ? base : `${base}#${nth}`,
+      source: 'Deals',
+      type: 'Handoff items outstanding',
+      company,
+      prospectId: idByCompany.get(normClientName(company)) || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `Handoff ${done}/${total}${agreement ? ` on ${agreement}` : ''} \u2014 still outstanding: ${missing.map(f => f.label).join(', ')}`,
+    });
+  }
+  return issues;
+}
+
 // Active clients whose soonest contract End Date falls within `withinDays`
 // days (default 270 — the Clients-tab renewal-warning threshold). Mirrors
 // the Clients-tab row build: CDM match + Status = Client, untracked clients
@@ -663,5 +716,6 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
+  issues.push(...detectIncompleteHandoff({ dealsList, prospects }));
   return issues;
 }
