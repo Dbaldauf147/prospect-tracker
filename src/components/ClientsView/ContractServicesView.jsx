@@ -214,6 +214,22 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   }
 
   const selectedRows = rows.filter(r => { const s = rowState(r); return s.checked && s.catalogKey; });
+  // Only a row with a catalogue match can be ticked, so "all" means all of
+  // those — a header box that never reaches "checked" because two unmapped
+  // rows can't be ticked would read as broken.
+  const selectableRows = rows.filter(r => rowState(r).catalogKey);
+  const allSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
+  const someSelected = selectedRows.length > 0 && !allSelected;
+
+  // One overrides write rather than one per row: setRowState in a loop is
+  // as many renders as there are rows, and on a restated master agreement
+  // that is a visible stall.
+  function setAllChecked(checked) {
+    const patch = {};
+    for (const row of selectableRows) patch[row.key] = { ...rowState(row), checked };
+    setOverrides(prev => ({ ...prev, ...patch }));
+    setApplyNote('');
+  }
 
   function applyToClient() {
     if (!client || !selectedRows.length || typeof updateProspect !== 'function') return;
@@ -452,13 +468,31 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
             {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}.
             Rows with no catalogue match need one picking before they can be applied.
+            The box in the header row selects (or clears) every matched row at once.
           </div>
 
           <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
             <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
               <thead>
                 <tr style={{ background: '#F1F5F9' }}>
-                  {['', 'Service in the contract', 'Catalogue service', 'Type', 'Status to write', 'Current', 'Evidence'].map((h, i) => (
+                  <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', borderBottom: '1px solid #CBD5E1' }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      disabled={selectableRows.length === 0}
+                      // Indeterminate is a DOM property, not an attribute, so
+                      // it can only be set on the node itself.
+                      ref={el => { if (el) el.indeterminate = someSelected; }}
+                      onChange={e => setAllChecked(e.target.checked)}
+                      aria-label={allSelected ? 'Clear all' : 'Select all'}
+                      title={selectableRows.length === 0
+                        ? 'No row has a catalogue match yet — pick one first.'
+                        : allSelected
+                          ? `Clear all ${selectableRows.length}`
+                          : `Select all ${selectableRows.length} matched service${selectableRows.length === 1 ? '' : 's'}`}
+                    />
+                  </th>
+                  {['Service in the contract', 'Catalogue service', 'Type', 'Status to write', 'Current', 'Evidence'].map((h, i) => (
                     <th key={i} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.66rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1' }}>{h}</th>
                   ))}
                 </tr>
