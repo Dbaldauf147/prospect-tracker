@@ -39,6 +39,8 @@ How to decide what counts as a service:
 8. confidence is "high" when the document names the service explicitly, "medium" when you inferred it from surrounding language, "low" when it is a guess.
 9. If the document genuinely names no services, return an empty services array and say why in scope_note.
 
+Also capture the document's own commercial terms when they are stated: the current term's start and end, whether it auto-renews, the annual escalator, and the payment terms. Quote each one the way the document puts it rather than normalising it — "Net 30", "3% per annum", "renews for successive one-year terms unless either party gives 90 days' written notice". These are reviewed and pasted onto a deal record, so a faithful phrase is worth more than a tidy one. Leave a field as an empty string when the document does not state it; never infer an escalator from a fee table or a renewal from the mere presence of an end date.
+
 Also capture the document's own header facts (client, agreement name, type, dates) when they are stated. Leave a field as an empty string rather than guessing. Set restates_full_scope true only for an amended-and-restated agreement, or an exhibit that replaces the prior service list in full — not for an amendment that adds or removes a few things.`;
 
 const TOOL = {
@@ -53,6 +55,9 @@ const TOOL = {
       effective_date: { type: 'string', description: 'Effective / commencement date as written. Empty string if not stated.' },
       term_start: { type: 'string', description: 'Start of the current term. Empty string if not stated.' },
       term_end: { type: 'string', description: 'End of the current term. Empty string if not stated.' },
+      auto_renewal: { type: 'string', description: 'Renewal behaviour as written, including any notice period. Empty string if the document does not say.' },
+      escalator: { type: 'string', description: 'Annual escalator / uplift as written, e.g. "3% per annum" or "CPI, capped at 5%". Empty string if not stated.' },
+      payment_terms: { type: 'string', description: 'Payment terms as written, e.g. "Net 30 days from invoice date". Empty string if not stated.' },
       restates_full_scope: { type: 'boolean', description: 'True only if this document replaces the prior service list in full.' },
       scope_note: { type: 'string', description: 'One sentence on how this document sets or changes scope.' },
       services: {
@@ -170,6 +175,9 @@ async function handler(req, res, auth) {
       effectiveDate: str(input.effective_date),
       termStart: str(input.term_start),
       termEnd: str(input.term_end),
+      autoRenewal: str(input.auto_renewal),
+      escalator: str(input.escalator),
+      paymentTerms: str(input.payment_terms),
       restatesFullScope: input.restates_full_scope === true,
       scopeNote: str(input.scope_note),
       services,
