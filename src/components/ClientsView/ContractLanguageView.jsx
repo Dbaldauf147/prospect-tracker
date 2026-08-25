@@ -122,6 +122,16 @@ export function ContractLanguageView({ settings = {}, user }) {
   }, [remote, drafts, clausesFor]);
 
   const clauses = selected ? clausesFor(selected) : [];
+  // Services are keyed by their catalogue key but shown by their label, so a
+  // service the user renamed on Dropdowns reads the same here as everywhere
+  // else. Falls back to the key for a stored service the catalogue no longer
+  // lists (hidden, or renamed away).
+  const selectedLabel = useMemo(() => {
+    for (const cat of catalog) {
+      for (const it of cat.items) if (it.key === selected) return it.label;
+    }
+    return selected;
+  }, [catalog, selected]);
 
   function addClause() {
     if (!selected) return;
@@ -246,7 +256,7 @@ export function ContractLanguageView({ settings = {}, user }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
               }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', wordBreak: 'break-word' }}>{selected}</div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', wordBreak: 'break-word' }}>{selectedLabel}</div>
                   <div style={{ fontSize: '0.7rem', color: '#94A3B8' }}>
                     {clauses.length} clause{clauses.length === 1 ? '' : 's'}
                   </div>
@@ -273,7 +283,7 @@ export function ContractLanguageView({ settings = {}, user }) {
               <div style={{ flex: 1, overflow: 'auto', padding: '0.8rem' }}>
                 {clauses.length === 0 ? (
                   <div style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                    No contract language for <strong>{selected}</strong> yet.
+                    No contract language for <strong>{selectedLabel}</strong> yet.
                     Click <strong>+ Add clause</strong> to write some.
                   </div>
                 ) : clauses.map((c, i) => (
