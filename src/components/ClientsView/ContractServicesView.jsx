@@ -316,15 +316,40 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   // when there is one, otherwise what the match implies. Removals default to
   // N/A and start unticked — dropping a service is the call you most want a
   // human to make deliberately.
+  //
+  // `ignored` is the reviewer saying this clause isn't a service at all.
+  // Contracts scope plenty of wording that has no catalogue equivalent, and
+  // without this the page can only nag: an unmatched row is unappliable, so
+  // it sits there asking for a catalogue pick that doesn't exist. Ignoring
+  // takes the row out of both buttons and out of the outstanding count,
+  // while leaving it on screen (dimmed) so the decision is visible and
+  // reversible.
   function rowState(row) {
     const o = overrides[row.key] || {};
     const catalogKey = o.catalogKey !== undefined ? o.catalogKey : (row.match?.key || '');
     const status = o.status !== undefined ? o.status : (row.removed ? 'N/A' : 'Sold');
-    const checked = o.checked !== undefined ? o.checked : (!!catalogKey && !row.removed);
-    return { catalogKey, status, checked };
+    const ignored = !!o.ignored;
+    // `tick` is the row's own answer to "apply this?"; `checked` is that
+    // answer as the table shows it. They differ only while the row is
+    // ignored, which suppresses the tick without discarding it — so
+    // restoring a row puts it back as it was instead of making you re-tick.
+    const tick = o.checked !== undefined ? o.checked : (!!catalogKey && !row.removed);
+    return { catalogKey, status, tick, checked: ignored ? false : tick, ignored };
   }
   function setRowState(row, patch) {
-    setOverrides(prev => ({ ...prev, [row.key]: { ...rowState(row), ...patch } }));
+    // `tick` is derived from the other three, so it never goes to the store.
+    const { tick, ...state } = rowState(row);
+    void tick;
+    setOverrides(prev => ({ ...prev, [row.key]: { ...state, ...patch } }));
+  }
+  function toggleIgnored(row) {
+    const st = rowState(row);
+    setOverrides(prev => ({
+      ...prev,
+      [row.key]: { catalogKey: st.catalogKey, status: st.status, checked: st.tick, ignored: !st.ignored },
+    }));
+    setApplyNote('');
+    setLanguageNote('');
   }
 
   async function analyze(fileList) {
@@ -392,11 +417,15 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     setDealError('');
   }
 
-  const selectedRows = rows.filter(r => { const s = rowState(r); return s.checked && s.catalogKey; });
+  const selectedRows = rows.filter(r => { const s = rowState(r); return !s.ignored && s.checked && s.catalogKey; });
   // Only a row with a catalogue match can be ticked, so "all" means all of
   // those — a header box that never reaches "checked" because two unmapped
-  // rows can't be ticked would read as broken.
-  const selectableRows = rows.filter(r => rowState(r).catalogKey);
+  // rows can't be ticked would read as broken. Ignored rows are out for the
+  // same reason: they can never be part of "all".
+  const selectableRows = rows.filter(r => { const s = rowState(r); return !s.ignored && s.catalogKey; });
+  const ignoredCount = rows.filter(r => rowState(r).ignored).length;
+  // Rows still asking for a decision: no catalogue service, not ignored.
+  const unmatchedCount = rows.filter(r => { const s = rowState(r); return !s.ignored && !s.catalogKey; }).length;
   const allSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
   const someSelected = selectedRows.length > 0 && !allSelected;
 
@@ -769,9 +798,10 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
           </div>
 
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
-            {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}.
-            Rows with no catalogue match need one picking before they can be applied.
-            The box in the header row selects (or clears) every matched row at once.
+            {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}
+            {ignoredCount > 0 && `, ${ignoredCount} ignored`}.
+            {unmatchedCount > 0 && ` ${unmatchedCount} row${unmatchedCount === 1 ? '' : 's'} still need${unmatchedCount === 1 ? 's' : ''} a catalogue service picked before ${unmatchedCount === 1 ? 'it' : 'they'} can be applied — ignore the ones whose scope doesn’t tie to a service.`}
+            {' '}The box in the header row selects (or clears) every matched row at once.
           </div>
 
           <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 8 }}>
@@ -805,19 +835,41 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                   const st = rowState(row);
                   const current = st.catalogKey ? (currentStatuses[st.catalogKey] || '') : '';
                   return (
-                    <tr key={row.key} style={{ borderBottom: '1px solid #F1F5F9', background: row.removed ? '#FEF2F2' : '#fff' }}>
+                    <tr key={row.key} style={{
+                      borderBottom: '1px solid #F1F5F9',
+                      background: st.ignored ? '#F8FAFC' : row.removed ? '#FEF2F2' : '#fff',
+                      opacity: st.ignored ? 0.55 : 1,
+                    }}>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
                         <input
                           type="checkbox"
                           checked={st.checked}
-                          disabled={!st.catalogKey}
+                          disabled={!st.catalogKey || st.ignored}
                           onChange={e => setRowState(row, { checked: e.target.checked })}
-                          title={st.catalogKey ? '' : 'Pick a catalogue service first.'}
+                          title={st.ignored ? 'Ignored — restore it to apply it.' : st.catalogKey ? '' : 'Pick a catalogue service first, or ignore the row.'}
                         />
+                        {/* Ignore / restore. Kept beside the tick because the
+                            two are the same decision: this row is in, or it
+                            isn't. Reversible, so an ignore made in haste on a
+                            long contract costs nothing to undo. */}
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            type="button"
+                            onClick={() => toggleIgnored(row)}
+                            title={st.ignored
+                              ? 'Put this row back in the review'
+                              : 'Set this row aside: its scope doesn’t tie to a catalogue service. It stops asking for a match and is left out of both buttons.'}
+                            style={{
+                              border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+                              fontFamily: 'inherit', fontSize: '0.62rem', color: '#94A3B8', textDecoration: 'underline',
+                            }}
+                          >{st.ignored ? 'restore' : 'ignore'}</button>
+                        </div>
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', minWidth: 200 }}>
-                        <div style={{ fontWeight: 600, color: '#1E293B' }}>{row.name}</div>
+                        <div style={{ fontWeight: 600, color: '#1E293B', textDecoration: st.ignored ? 'line-through' : 'none' }}>{row.name}</div>
                         <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
+                          {st.ignored && pill('ignored', { bg: '#E2E8F0', color: '#475569' }, 'Set aside — not applied, not saved to Contract Language, and not counted as needing a match')}
                           {row.removed && pill('removed', { bg: '#FEE2E2', color: '#B91C1C' }, 'A document says this service type ceases')}
                           {pill(row.confidence, CONFIDENCE_STYLE[row.confidence] || CONFIDENCE_STYLE.medium, 'How sure the model is this is a named service')}
                           {row.match?.basis === 'alias' && pill('alias', { bg: '#E0E7FF', color: '#3730A3' }, 'Mapped through the hand-maintained wording table')}
@@ -828,8 +880,11 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
                         <select
                           value={st.catalogKey}
+                          disabled={st.ignored}
                           onChange={e => setRowState(row, { catalogKey: e.target.value, checked: !!e.target.value && st.checked })}
-                          style={{ padding: '0.25rem 0.4rem', border: '1px solid', borderColor: st.catalogKey ? '#E2E8F0' : '#FCA5A5', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 260 }}
+                          // An ignored row's missing match is no longer a gap
+                          // to fix, so it loses the red border that says so.
+                          style={{ padding: '0.25rem 0.4rem', border: '1px solid', borderColor: (st.catalogKey || st.ignored) ? '#E2E8F0' : '#FCA5A5', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 260 }}
                         >
                           <option value="">— no match —</option>
                           {catalog.map(cat => (
@@ -846,6 +901,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top' }}>
                         <select
                           value={st.status}
+                          disabled={st.ignored}
                           onChange={e => setRowState(row, { status: e.target.value })}
                           style={{ padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit' }}
                         >
