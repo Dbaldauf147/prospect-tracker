@@ -1822,6 +1822,22 @@ function KeyContactsViewInner({
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
+  // Keep an open popup pointed at the live contact. It opens on the row's
+  // cached HubSpot record, and the cache replaces those records wholesale
+  // on every refresh — a mass edit run over the selection, a tag write,
+  // a sync. Without this the popup goes on showing the copy it opened
+  // with while the table behind it shows the new one, which is how its
+  // Tagged % and the table's come to disagree.
+  useEffect(() => {
+    setEditingContact(prev => {
+      if (!prev) return prev;
+      const id = String(prev.id || prev.vid || '');
+      if (!id) return prev;
+      const fresh = (hubspotCache?.contacts || []).find(c => String(c.id || c.vid || '') === id);
+      return (fresh && fresh !== prev) ? fresh : prev;
+    });
+  }, [hubspotCache]);
+
   // The option list for the bulk tag editor: every distinct Dan's Tags
   // value in the cache, plus the app's own tag vocabulary.
   //

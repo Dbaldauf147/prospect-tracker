@@ -791,6 +791,35 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       ? { ...contactTagReview[metCid] }
       : {}
   );
+  // Both bits of tag state above are seeded once, from the contact this
+  // popup opened with. Re-seed them whenever the saved values change
+  // underneath it — a mass edit applied to this same contact while the
+  // popup is open, a HubSpot sync, a change made on another device — so
+  // the header's Tagged % can't drift away from the figure the contacts
+  // table shows, which is read from those same saved values.
+  //
+  // Neither effect fires on an edit made HERE: a click writes the tag to
+  // HubSpot and the record to settings, and the props only come back
+  // holding what was just written. The optimistic state a click leaves
+  // behind is therefore safe until the write lands (or is rolled back by
+  // persistDansTags below when HubSpot refuses it).
+  useEffect(() => {
+    const canonical = new Map(
+      tagOptions
+        .filter(t => t.toLowerCase() !== MET_IN_PERSON_TAG.toLowerCase())
+        .map(t => [t.toLowerCase(), t]),
+    );
+    setCheckedTags(new Set(
+      rawTags.split(';').map(t => t.trim()).filter(Boolean)
+        .map(t => canonical.get(t.toLowerCase()))
+        .filter(Boolean),
+    ));
+  }, [rawTags, tagOptions]);
+  const savedTagReview = metCid != null ? contactTagReview[metCid] : undefined;
+  useEffect(() => {
+    setTagVerdicts(savedTagReview && typeof savedTagReview === 'object' ? { ...savedTagReview } : {});
+  }, [savedTagReview]);
+
   // Any extra tags not in TAG_OPTIONS are kept verbatim (excluding the
   // met-in-person flag, which is reattached from its checkbox on save).
   const extraTags = parsedTags.filter(t => !knownTagKeys.has(tagKey(t)) && t.toLowerCase() !== metLower);
@@ -1023,9 +1052,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return [...set, ...extraTags].join(';');
   }
 
+  // Returns true when HubSpot took the tags, false when it refused them —
+  // the caller uses that to undo the checkbox it flipped optimistically.
   async function persistDansTags(tagsStr) {
     const cid = contact.id || contact.vid;
-    if (!cid) return; // new contact — save will include tags on create
+    if (!cid) return true; // new contact — save will include tags on create
     setTagsSaveStatus('Saving tag…');
     try {
       const res = await apiFetch(`/api/hubspot?action=update-contact`, {
@@ -1045,11 +1076,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
+      return true;
     } catch (err) {
       console.error('[ContactEditModal] Tag autosave failed:', err);
       setTagsSaveStatus('Save failed: ' + (err?.message || err));
       setTimeout(() => setTagsSaveStatus(''), 4000);
+      return false;
     }
+  }
+
+  // This tag's saved record, whatever casing it was stored under. The bulk
+  // tag editor writes HubSpot's spelling of a tag while this table is keyed
+  // on the vocabulary's, so an exact-key lookup can miss an answer that the
+  // contacts table — which matches case-insensitively — does count.
+  function verdictFor(tag) {
+    if (Object.prototype.hasOwnProperty.call(tagVerdicts, tag)) return tagVerdicts[tag];
+    const k = String(tag).toLowerCase();
+    for (const key of Object.keys(tagVerdicts)) {
+      if (key.toLowerCase() === k) return tagVerdicts[key];
+    }
+    return undefined;
   }
 
   // Set one half of a tag's record — the answer (Yes / No / Not sure) or the
@@ -1066,19 +1112,34 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   function updateTagRecord(tag, apply) {
     // Built from the resolved state rather than the raw record, so a value
     // the tag has since contradicted can't leak back in through an edit.
-    const current = tagStateFrom(checkedTags.has(tag), tagVerdicts[tag]);
+    const current = tagStateFrom(checkedTags.has(tag), verdictFor(tag));
     const next = apply(current);
     const shouldBeTagged = recordKeepsTag(next);
     if (shouldBeTagged !== checkedTags.has(tag)) {
-      setCheckedTags(prev => {
-        const set = new Set(prev);
-        if (shouldBeTagged) set.add(tag); else set.delete(tag);
-        persistDansTags(buildTagsStringFrom(set));
-        return set;
+      const set = new Set(checkedTags);
+      if (shouldBeTagged) set.add(tag); else set.delete(tag);
+      setCheckedTags(set);
+      // The tag is shown on (or off) before HubSpot has agreed, so the row
+      // answers instantly. If HubSpot refuses the write, put it back: a tag
+      // this popup believes in but the saved record doesn't have is exactly
+      // how the header's Tagged % ends up ahead of the table's, which reads
+      // the saved record. The failure is already on screen next to the Tags
+      // label; this stops the count claiming the write landed.
+      persistDansTags(buildTagsStringFrom(set)).then(ok => {
+        if (ok) return;
+        setCheckedTags(prev => {
+          const back = new Set(prev);
+          if (shouldBeTagged) back.delete(tag); else back.add(tag);
+          return back;
+        });
       });
     }
     setTagVerdicts(prev => {
       const map = { ...prev };
+      // Drop any record saved under another casing of this tag, so an edit
+      // replaces it rather than leaving two records for the one tag.
+      const k = String(tag).toLowerCase();
+      for (const key of Object.keys(map)) if (key !== tag && key.toLowerCase() === k) delete map[key];
       if (next.answer || next.status) map[tag] = { answer: next.answer, status: next.status };
       else delete map[tag];
       const cid = contact.id || contact.vid;
@@ -1932,7 +1993,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               // known, or true of the person but not yet bought by their
               // company — rather than being indistinguishable from one nobody
               // has looked at.
-              const stateOf = (tag) => tagStateFrom(checkedTags.has(tag), tagVerdicts[tag]);
+              const stateOf = (tag) => tagStateFrom(checkedTags.has(tag), verdictFor(tag));
               // Hide, Left and Test are housekeeping, not classifications:
               // the first two control whether a contact surfaces at all and
               // the third is a scratch value. They're still answerable rows,
