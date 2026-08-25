@@ -1199,7 +1199,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold and Services Not Sold columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen. It carries the same three colours into the file, and gives every service column the same width.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold, Services Not Sold and Services In Progress columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen. It carries the same three colours into the file, and gives every service column the same width.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -3030,7 +3030,12 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       // company has a matching opp in the Opps tab, the cell becomes a
       // link that pops those opps' details (active first) — so a user can
       // jump from "what's in progress" to the live opportunity behind it.
-      { key: 'servicesInProgress', label: 'Services In Progress', defaultWidth: 220,
+      //
+      // PE Overview only, for the same reason Services Sold and Services
+      // Not Sold are: on the Services tab every in-flight service already
+      // sits in its bucket column in yellow, so a second run-on list of
+      // the same names would only cost a column's width.
+      ...(isServicesVariant ? [] : [{ key: 'servicesInProgress', label: 'Services In Progress', defaultWidth: 220,
         getSortValue: (r) => r.servicesInProgress.length,
         getFilterValue: (r) => r.servicesInProgress.join(', '),
         exportValue: (r) => r.servicesInProgress.join(', '),
@@ -3060,7 +3065,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
               {r.servicesInProgress.join(', ')}
             </button>
           );
-        } },
+        } }]),
       // Bulk-edit checkbox. Sits after the Company column (not before)
       // because Company is the sticky column pinned at left: 0 — a
       // column to its left would slide underneath it on horizontal
@@ -3333,8 +3338,10 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
 
     // Every service column exports at a fixed width so the service part of
     // the sheet reads as one block instead of stair-stepping with the length
-    // of each bucket's name.
+    // of each bucket's name. Notes gets a wide column of its own — it holds
+    // sentences, not a value, and wraps rather than being read in one line.
     const SERVICE_COL_WIDTH = 20;
+    const NOTES_COL_WIDTH = 80;
     const isServiceCol = (c) => c.key === 'servicesSold' || c.key === 'servicesNotSold'
       || c.key === 'servicesInProgress' || c.key === 'svcBucketNone' || String(c.key).startsWith('svcBucket:');
 
@@ -3351,7 +3358,10 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       views: [{ state: 'frozen', ySplit: 3 }],
     });
     ws.columns = cols.map((c, i) => ({
-      width: i === 0 ? 34 : isServiceCol(c) ? SERVICE_COL_WIDTH : Math.max((headers[i] || '').length + 4, 16),
+      width: i === 0 ? 34
+        : c.key === 'notes' ? NOTES_COL_WIDTH
+        : isServiceCol(c) ? SERVICE_COL_WIDTH
+        : Math.max((headers[i] || '').length + 4, 16),
     }));
 
     ws.mergeCells(1, 1, 1, cols.length);
