@@ -1198,7 +1198,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with <strong>Services Sold</strong> broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span> and what didn't in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span>, so the Services Not Sold column isn't repeated here. Every other PE Overview column is, and this tab keeps its own column layout.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span>, so the Services Not Sold column isn't repeated here. Every other PE Overview column is, and this tab keeps its own column layout.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -2358,36 +2358,38 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
 // contacts / decision makers): shows them comma-joined on one line,
 // truncated with the full list on hover, or a muted placeholder when
 // the list is empty.
-// Sold reads dark green, Not Sold reads red — the same two colours the
-// company card's Services Explored grid and the Opps Scope picker paint
-// those statuses, so a service looks the same wherever it's listed.
+// Sold reads dark green, in-flight reads dark yellow, Not Sold reads red —
+// the same three colours the company card's Services Explored grid and the
+// Opps Scope picker paint those statuses, so a service looks the same
+// wherever it's listed.
 const SOLD_TEXT = serviceStatusColor('Sold').color || '#166534';
+const IN_PROGRESS_TEXT = serviceStatusColor('In Progress').color || '#854D0E';
 const NOT_SOLD_TEXT = serviceStatusColor('Not Sold').color || '#991B1B';
 
 // A services cell that carries its outcome in its colour: the sold ones
 // first in dark green, then the ones marked Not Sold in red. Same one-line,
 // ellipsised shape as NameListCell — the tooltip spells the split out in
 // full, since the row only has room for the first few.
-function ServiceOutcomeCell({ sold = [], notSold = [], empty }) {
-  const soldList = sold.filter(Boolean);
-  const notSoldList = notSold.filter(Boolean);
-  if (soldList.length === 0 && notSoldList.length === 0) {
+function ServiceOutcomeCell({ sold = [], inProgress = [], notSold = [], empty }) {
+  // Won first, then in flight, then lost: the cell reads down the pipeline
+  // rather than in whatever order the statuses happened to be entered.
+  const groups = [
+    { label: 'Sold', names: sold.filter(Boolean), color: SOLD_TEXT },
+    { label: 'In progress', names: inProgress.filter(Boolean), color: IN_PROGRESS_TEXT },
+    { label: 'Not sold', names: notSold.filter(Boolean), color: NOT_SOLD_TEXT },
+  ].filter(g => g.names.length > 0);
+  if (groups.length === 0) {
     return <span style={{ color: '#CBD5E1' }} title={empty || ''}>-</span>;
   }
-  const tip = [
-    soldList.length ? `Sold:\n${soldList.map(n => `• ${n}`).join('\n')}` : '',
-    notSoldList.length ? `Not sold:\n${notSoldList.map(n => `• ${n}`).join('\n')}` : '',
-  ].filter(Boolean).join('\n\n');
+  const tip = groups.map(g => `${g.label}:\n${g.names.map(n => `• ${n}`).join('\n')}`).join('\n\n');
+  const parts = groups.flatMap(g => g.names.map(name => ({ name, color: g.color })));
   return (
     <span
       title={tip}
       style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.78rem' }}
     >
-      {soldList.map((name, i) => (
-        <span key={`sold-${name}`} style={{ color: SOLD_TEXT }}>{i > 0 ? ', ' : ''}{name}</span>
-      ))}
-      {notSoldList.map((name, i) => (
-        <span key={`not-${name}`} style={{ color: NOT_SOLD_TEXT }}>{(i > 0 || soldList.length > 0) ? ', ' : ''}{name}</span>
+      {parts.map(({ name, color }, i) => (
+        <span key={name} style={{ color }}>{i > 0 ? ', ' : ''}{name}</span>
       ))}
     </span>
   );
@@ -2395,17 +2397,21 @@ function ServiceOutcomeCell({ sold = [], notSold = [], empty }) {
 
 // A row's entry for one bucket, always shaped { sold, notSold } even when
 // the row has nothing filed in that box.
-const EMPTY_BUCKET = { sold: [], notSold: [] };
+const EMPTY_BUCKET = { sold: [], inProgress: [], notSold: [] };
 function bucketOf(row, name) { return row._byBucket[name] || EMPTY_BUCKET; }
 
 // Every service in a bucket cell whatever its outcome — what the column's
 // filter box matches on, so typing a service name finds the row either way.
-function bucketNames(box) { return [...box.sold, ...box.notSold]; }
+function bucketNames(box) { return [...box.sold, ...box.inProgress, ...box.notSold]; }
 
 // One bucket cell as a single export string. Colour doesn't survive the
 // trip to Excel, so the not-sold ones say so in words instead.
 function bucketExport(box) {
-  return [...box.sold, ...box.notSold.map(n => `${n} (not sold)`)].join(', ');
+  return [
+    ...box.sold,
+    ...box.inProgress.map(n => `${n} (in progress)`),
+    ...box.notSold.map(n => `${n} (not sold)`),
+  ].join(', ');
 }
 
 function NameListCell({ items, empty }) {
@@ -2586,8 +2592,9 @@ function CompanyOppsModal({ company, opps = [], onClose, onOpenCompany }) {
 //   'overview' — the PE Overview tab: every company column.
 //   'services' — the PE Overview - Services tab: the same columns plus
 //                the services breakdown, one column per Service Bucket,
-//                sold in green and not sold in red (which is why this
-//                variant drops the Services Not Sold column). Same rows,
+//                sold in green, in progress in yellow and not sold in red
+//                (which is why this variant drops the Services Not Sold
+//                column). Same rows,
 //                same editing, its own saved column layout (own tableId)
 //                so widening the Services tab out to the bucket columns
 //                doesn't disturb the layout the user keeps on PE Overview.
@@ -2816,20 +2823,21 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       else if (s === 'Not Sold') servicesNotSold.push(name);
       else if (s && s !== '-' && s !== 'N/A') servicesInProgress.push(name);
     }
-    // Sold and Not Sold services grouped by bucket, plus a catch-all for
-    // the ones no box claims — the Scope picker's "Other services" card.
-    // Both outcomes live in the same cell (green vs red) rather than in two
-    // columns, so a box reads as "here's what we sold, here's what we
-    // didn't". The buckets always sum back to Services Sold + Services Not
-    // Sold: nothing is dropped.
+    // Every explored service grouped by bucket, plus a catch-all for the
+    // ones no box claims — the Scope picker's "Other services" card. All
+    // three outcomes live in the same cell (green / yellow / red) rather
+    // than in three columns, so a box reads as "here's what we sold, what's
+    // still open, and what we lost". The buckets always sum back to
+    // Services Sold + In Progress + Not Sold: nothing is dropped.
     const byBucket = {};
-    const noBucket = { sold: [], notSold: [] };
+    const noBucket = { sold: [], inProgress: [], notSold: [] };
     const fileService = (name, outcome) => {
       const bucket = serviceBucketOf(serviceCategories, name);
-      const box = bucket ? (byBucket[bucket] ||= { sold: [], notSold: [] }) : noBucket;
+      const box = bucket ? (byBucket[bucket] ||= { sold: [], inProgress: [], notSold: [] }) : noBucket;
       box[outcome].push(name);
     };
     for (const name of servicesSold) fileService(name, 'sold');
+    for (const name of servicesInProgress) fileService(name, 'inProgress');
     for (const name of servicesNotSold) fileService(name, 'notSold');
     return {
       id: p.id,
@@ -2918,9 +2926,10 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getFilterValue: (r) => r.servicesSold.join(', '),
         exportValue: (r) => r.servicesSold.join(', '),
         render: (r) => <ServiceOutcomeCell sold={r.servicesSold} empty="No services sold" /> },
-      // One column per bucket: what that box sold, in dark green, then what
-      // it didn't, in red. Sits right after Services Sold (the full list),
-      // so the breakdown reads left to right off the roll-up it came from.
+      // One column per bucket: what that box sold in dark green, what's
+      // still in flight in dark yellow, then what it lost in red. Sits right
+      // after Services Sold (the full list), so the breakdown reads left to
+      // right off the roll-up it came from.
       ...bucketColumns.map(({ name, key }) => ({
         key,
         label: name,
@@ -2929,12 +2938,14 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         // header's tooltip spells them out, and widths are draggable.
         defaultWidth: 200,
         renderHeader: (label) => (
-          <span title={`Services the services board files under "${name}": sold in green, Not Sold in red (a service's box is its Service Bucket on the Dropdowns › Services tab)`}>{label}</span>
+          <span title={`Services the services board files under "${name}": sold in green, in progress in yellow, Not Sold in red (a service's box is its Service Bucket on the Dropdowns › Services tab)`}>{label}</span>
         ),
-        // Sold count leads the sort, with the not-sold count breaking ties,
-        // so a firm that bought the most in this box sorts to the top and
-        // the ones we pitched hardest follow.
-        getSortValue: (r) => bucketOf(r, name).sold.length * 1000 + bucketOf(r, name).notSold.length,
+        // Sold count leads the sort, then in-flight, then not-sold, so a
+        // firm that bought the most in this box sorts to the top and the
+        // ones with the most still open follow.
+        getSortValue: (r) => bucketOf(r, name).sold.length * 1e6
+          + bucketOf(r, name).inProgress.length * 1e3
+          + bucketOf(r, name).notSold.length,
         getFilterValue: (r) => bucketNames(bucketOf(r, name)).join(', '),
         exportValue: (r) => bucketExport(bucketOf(r, name)),
         render: (r) => <ServiceOutcomeCell {...bucketOf(r, name)} empty={`No ${name} services explored`} />,
@@ -2944,9 +2955,11 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       // than quietly losing the unfiled ones.
       ...(isServicesVariant ? [{ key: 'svcBucketNone', label: UNGROUPED_SERVICES, defaultWidth: 200,
         renderHeader: (label) => (
-          <span title="Services that no box on the services board claims: sold in green, Not Sold in red — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
+          <span title="Services that no box on the services board claims: sold in green, in progress in yellow, Not Sold in red — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
         ),
-        getSortValue: (r) => r._noBucket.sold.length * 1000 + r._noBucket.notSold.length,
+        getSortValue: (r) => r._noBucket.sold.length * 1e6
+          + r._noBucket.inProgress.length * 1e3
+          + r._noBucket.notSold.length,
         getFilterValue: (r) => bucketNames(r._noBucket).join(', '),
         exportValue: (r) => bucketExport(r._noBucket),
         render: (r) => <ServiceOutcomeCell {...r._noBucket} empty="No unfiled services explored" /> }] : []),
@@ -2968,11 +2981,12 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getFilterValue: (r) => r.servicesInProgress.join(', '),
         exportValue: (r) => r.servicesInProgress.join(', '),
         render: (r) => {
-          if (r.servicesInProgress.length === 0) {
-            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
-          }
-          if (r._oppRecords.length === 0) {
-            return <NameListCell items={r.servicesInProgress} empty="No services in progress" />;
+          // Dark yellow, same as the in-flight services in the bucket
+          // columns — except when the row has matching opps, where the cell
+          // is a link and stays the table's link purple so it still reads
+          // as clickable.
+          if (r.servicesInProgress.length === 0 || r._oppRecords.length === 0) {
+            return <ServiceOutcomeCell inProgress={r.servicesInProgress} empty="No services in progress" />;
           }
           const oppCount = r._oppRecords.length;
           return (
