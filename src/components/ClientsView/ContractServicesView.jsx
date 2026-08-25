@@ -100,6 +100,131 @@ function pill(text, palette, title) {
   );
 }
 
+// Type-ahead picker for the "Apply to client" field.
+//
+// A <select> was fine when the client list was short, but it forces you to
+// either scroll it or know the first letter — and the roster is long enough
+// now that "Acme" is faster to type than to find. Matching is
+// prefix-then-substring, the same order the Opps company combobox uses, so
+// the client whose name STARTS with what you typed leads.
+//
+// The field is a picker, not free text: it resolves to a client id, and
+// blurring without choosing anything puts the current selection's name back
+// rather than leaving whatever half-typed string is in the box.
+function ClientCombobox({ clients, value, onChange }) {
+  // null = show the current selection; a string = the user is searching.
+  const [draft, setDraft] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState(0);
+  const wrapRef = useRef(null);
+
+  const items = useMemo(() => clients.map(c => ({
+    id: c.id,
+    company: String(c.company || ''),
+    label: `${c.company}${String(c.status || '').toLowerCase() === 'old client' ? ' (old client)' : ''}`,
+  })), [clients]);
+
+  const selectedLabel = items.find(i => i.id === value)?.label || '';
+
+  const matches = useMemo(() => {
+    const q = String(draft ?? '').trim().toLowerCase();
+    // Nothing typed yet — show the head of the list so the field advertises
+    // that it predicts, rather than looking like an empty text box.
+    if (!q) return items.slice(0, 8);
+    const prefix = [];
+    const sub = [];
+    for (const it of items) {
+      const lower = it.company.toLowerCase();
+      if (lower.startsWith(q)) prefix.push(it);
+      else if (lower.includes(q)) sub.push(it);
+      if (prefix.length + sub.length >= 25) break;
+    }
+    return [...prefix, ...sub].slice(0, 8);
+  }, [draft, items]);
+
+  function pick(item) {
+    if (!item) return;
+    onChange(item.id);
+    setDraft(null);
+    setOpen(false);
+    setHoverIdx(0);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <input
+        type="text"
+        value={draft ?? selectedLabel}
+        placeholder="Search clients…"
+        onChange={e => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
+        // Focus shows the whole list and selects what's there, so the first
+        // keystroke replaces the current client instead of appending to it.
+        onFocus={e => { setDraft(selectedLabel); setOpen(true); setHoverIdx(0); e.target.select(); }}
+        onBlur={() => {
+          requestAnimationFrame(() => {
+            if (wrapRef.current?.contains(document.activeElement)) return;
+            setDraft(null);
+            setOpen(false);
+          });
+        }}
+        onKeyDown={e => {
+          if (open && matches.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(matches[hoverIdx] || matches[0]); return; }
+          }
+          if (e.key === 'Escape') { e.preventDefault(); setDraft(null); setOpen(false); }
+        }}
+        style={{
+          width: 260, padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0',
+          borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit',
+        }}
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => { onChange(''); setDraft(null); }}
+          title="Clear the client"
+          style={{
+            background: 'transparent', border: 'none', color: '#94A3B8',
+            cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 2px', fontFamily: 'inherit',
+          }}
+        >×</button>
+      )}
+      {open && (
+        <div
+          // mousedown would blur the input before the click lands, and the
+          // blur handler closes this list.
+          onMouseDown={e => e.preventDefault()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, minWidth: 260, zIndex: 50,
+            background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6,
+            boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', marginTop: 2,
+            maxHeight: 240, overflowY: 'auto', fontSize: '0.75rem',
+          }}
+        >
+          {matches.length === 0 ? (
+            <div style={{ padding: '0.4rem 0.6rem', color: '#94A3B8' }}>No client matches that.</div>
+          ) : matches.map((m, i) => (
+            <div
+              key={m.id}
+              onClick={() => pick(m)}
+              onMouseEnter={() => setHoverIdx(i)}
+              style={{
+                padding: '0.35rem 0.6rem', cursor: 'pointer',
+                background: i === hoverIdx ? '#EFF6FF' : 'transparent',
+                color: i === hoverIdx ? '#1E40AF' : '#1E293B',
+                fontWeight: m.id === value ? 700 : 400,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}
+            >{m.label}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * "Contract Services" subtab: upload a contract, have Claude transcribe the
  * services it puts in scope, map them onto the tracked service catalogue, and
@@ -401,16 +526,11 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
             <label style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 700 }}>Apply to client</label>
-            <select
+            <ClientCombobox
+              clients={clients}
               value={clientId}
-              onChange={e => { setClientId(e.target.value); setApplyNote(''); }}
-              style={{ padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit', maxWidth: 320 }}
-            >
-              <option value="">— pick a client —</option>
-              {clients.map(c => (
-                <option key={c.id} value={c.id}>{c.company}{String(c.status || '').toLowerCase() === 'old client' ? ' (old client)' : ''}</option>
-              ))}
-            </select>
+              onChange={id => { setClientId(id); setApplyNote(''); }}
+            />
             <button
               type="button"
               disabled={!canApply}
