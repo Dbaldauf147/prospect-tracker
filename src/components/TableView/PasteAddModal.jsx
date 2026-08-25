@@ -1,112 +1,20 @@
 import { useState, useMemo } from 'react';
 import { companyDedupeKey } from '../../utils/firestoreSync';
+import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
 
-// Destination prospect fields offered by the mapping dropdowns. Labels
-// match the Table View column headers; aliases cover the header
-// spellings seen in the Google Sheet / Excel exports (same set as the
-// Upload Excel HEADER_MAP) so columns auto-map on paste.
-const FIELDS = [
-  { key: 'company', label: 'Company', aliases: ['account', 'account name', 'client', 'client name'] },
-  { key: 'cdm', label: 'CDM', aliases: ['salesperson', 'sales rep', 'account owner'] },
-  { key: 'status', label: 'Status', aliases: [] },
-  { key: 'type', label: 'Type', aliases: ['account type'] },
-  { key: 'geography', label: 'Geography', aliases: ['geo', 'region'] },
-  { key: 'publicPrivate', label: 'Pub/Priv', aliases: ['public/private', 'public/ private', 'public private'] },
-  { key: 'assetTypes', label: 'Asset Types', type: 'list', aliases: ['asset type'] },
-  { key: 'peAum', label: 'PE AUM', type: 'number', aliases: ['pe aum', 'pe aum (billions)'] },
-  { key: 'reAum', label: 'RE AUM', type: 'number', aliases: ['re aum', 're aum (billions)'] },
-  { key: 'numberOfSites', label: 'Sites', type: 'number', aliases: ['number of sites', '# sites'] },
-  { key: 'rank', label: 'Rank', aliases: [] },
-  { key: 'tier', label: 'Tier', aliases: [] },
-  { key: 'hqRegion', label: 'HQ Region', aliases: [] },
-  { key: 'frameworks', label: 'Frameworks', type: 'frameworks', aliases: ['framework'] },
-  { key: 'strategies', label: 'Strategies', type: 'list', aliases: ['strategy', 'pe strategy', 'pe strategies', 'investment strategy', 'investment strategies'] },
-  { key: 'notes', label: 'Notes', aliases: [] },
-  { key: 'website', label: 'Website', aliases: ['url', 'web site'] },
-  { key: 'emailDomain', label: 'Email Domain', aliases: ['domain'] },
-  { key: 'bfoCompanyName', label: 'BFO Company Name', aliases: [] },
-  { key: 'peOwner', label: 'PE Owner', aliases: ['pe owner (if portfolio co)', 'pe owner/parent company', 'pe owner / parent company', 'parent company'] },
-];
-
-const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
-
-function parseNumber(val) {
-  if (!val || val === 'Missing Data') return null;
-  const n = parseFloat(String(val).replace(/[,$]/g, ''));
-  return isNaN(n) ? null : n;
-}
-
-function autoMap(srcHeader) {
-  const lower = String(srcHeader || '').trim().toLowerCase();
-  if (!lower) return '';
-  const hit = FIELDS.find(f =>
-    f.key.toLowerCase() === lower ||
-    f.label.toLowerCase() === lower ||
-    f.aliases.includes(lower)
-  );
-  return hit ? hit.key : '';
-}
-
-// Delimited parser for the Excel / Google Sheets clipboard format:
-// cells with newlines/delimiters/quotes arrive wrapped in double
-// quotes, with internal quotes doubled. A naive line.split('\n') would
-// tear quoted multi-line cells in half. Excel copies as tab-separated;
-// a plain CSV paste (no tabs on the first line) falls back to commas.
+// Split the clipboard text into a header row plus data rows. The cell
+// parsing itself (quoting, tab-vs-comma) is shared with the bulk add.
 function parseDelimited(text) {
-  const s = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const firstLine = s.slice(0, s.indexOf('\n') === -1 ? s.length : s.indexOf('\n'));
-  const delim = firstLine.includes('\t') ? '\t' : ',';
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let inQuotes = false;
-  let cellStarted = false;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (s[i + 1] === '"') { cell += '"'; i++; continue; }
-        inQuotes = false;
-        continue;
-      }
-      cell += ch;
-      continue;
-    }
-    if (ch === '"' && !cellStarted) { inQuotes = true; cellStarted = true; continue; }
-    if (ch === delim) { row.push(cell); cell = ''; cellStarted = false; continue; }
-    if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; cellStarted = false; continue; }
-    cell += ch;
-    cellStarted = true;
-  }
-  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
-  while (rows.length > 0 && rows[rows.length - 1].every(c => c === '')) rows.pop();
+  const rows = parseDelimitedRows(text);
   if (rows.length === 0) return { headers: [], rows: [] };
   const headers = rows[0].map(h => String(h || '').trim());
   return { headers, rows: rows.slice(1) };
 }
 
-// Convert one pasted row into a prospect object using the mapping,
-// applying the same per-field typing as the Upload Excel flow.
+// Convert one pasted row into a prospect object using the header->field
+// mapping, applying the same per-field typing as the Upload Excel flow.
 function rowToProspect(cells, headers, mapping) {
-  const record = {};
-  for (let i = 0; i < headers.length; i++) {
-    const key = mapping[headers[i]];
-    if (!key) continue;
-    const val = cells[i] != null ? String(cells[i]).trim() : '';
-    if (!val) continue;
-    const field = FIELDS.find(f => f.key === key);
-    if (field?.type === 'list') {
-      record[key] = val.split(',').map(t => t.trim()).filter(Boolean);
-    } else if (field?.type === 'frameworks') {
-      record[key] = val.split(',').map(t => t.trim()).filter(t => VALID_FRAMEWORKS.has(t));
-    } else if (field?.type === 'number') {
-      const n = parseNumber(val);
-      if (n != null) record[key] = n;
-    } else {
-      record[key] = val;
-    }
-  }
-  return record;
+  return cellsToProspect(cells, headers.map(h => mapping[h] || ''));
 }
 
 // Paste-from-Excel mass add for Table View. Stage 1 takes the raw

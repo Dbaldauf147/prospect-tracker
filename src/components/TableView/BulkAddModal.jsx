@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { STATUSES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
+import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
 
 // Defaults a bulk-added company starts with, matching what the single
 // "+ Add" popup pre-fills (see EMPTY in ProspectModal) so a company
@@ -16,8 +17,9 @@ const BULK_DEFAULTS = {
 };
 
 // Fields the shared-values row offers. Whatever is picked here is
-// stamped on every company in the list — the point of the bulk add is
-// that a batch usually shares its CDM / type / status.
+// stamped on every company in the list that doesn't bring its own value
+// from a mapped column — the point of the bulk add is that a batch
+// usually shares its CDM / type / status.
 const SHARED_FIELDS = [
   { key: 'status', label: 'Status', options: STATUSES },
   { key: 'cdm', label: 'CDM', dynamic: 'cdm' },
@@ -28,15 +30,12 @@ const SHARED_FIELDS = [
 ];
 
 // One pasted line -> one company name. Tolerates the shapes a name list
-// actually arrives in: a spreadsheet column (tab-separated, extra cells
-// ignored), a comma-separated list on one line, numbered or bulleted
-// lists, and cells Excel wrapped in quotes.
+// actually arrives in: a comma-separated list on one line, numbered or
+// bulleted lists, and cells Excel wrapped in quotes.
 function parseLine(line) {
   let s = String(line || '').trim();
   if (!s) return '';
-  // A tabbed paste is a spreadsheet column: the company is the first cell.
-  if (s.includes('\t')) s = s.split('\t')[0].trim();
-  s = s.replace(/^[-*•·▪●]\s+/, '');   // bullet
+  s = s.replace(/^[-*•·▪●]\s+/, '');                       // bullet
   s = s.replace(/^\d+[.)]\s+/, '');                        // "1. " / "1) "
   s = s.replace(/,\s*$/, '').trim();                       // trailing comma
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
@@ -60,17 +59,16 @@ function splitOnCommas(line) {
   return parts;
 }
 
-// Split the textarea into candidate names. Newlines are the primary
-// separator; a single line holding a comma list ("Acme, Globex, Initech")
-// is split on commas so a one-line paste still works. A line with tabs is
-// left to parseLine — that's a spreadsheet row, and its later cells are
-// other fields, not other companies.
+// Split a name-list paste (no columns) into candidate names. Newlines
+// are the primary separator; a single line holding a comma list
+// ("Acme, Globex, Initech") is split on commas so a one-line paste
+// still works.
 function parseNames(text) {
   const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   for (const line of lines) {
     if (!line.trim()) continue;
-    if (!line.includes('\t') && line.includes(',')) {
+    if (line.includes(',')) {
       for (const part of splitOnCommas(line)) {
         const name = parseLine(part);
         if (name) out.push(name);
@@ -83,20 +81,34 @@ function parseNames(text) {
   return out;
 }
 
-// Mass-add companies by name. Sits behind the "+ Add" split button's
-// "Multiple companies…" item, next to the single-company popup: paste a
-// list of names, optionally stamp shared values (CDM, Status, Type, …)
-// on all of them, and every name that isn't already in Table View is
-// created. Companies already on the roster — and repeats inside the
-// paste itself — are listed as skipped rather than duplicated; the
-// heavier column-mapping import stays on Table View's "Paste from
-// Excel" button.
+// A pasted table's first row is a header when any of its cells names a
+// Table View field ("Company", "HQ", "CDM", …). Data rows are company
+// names and free text, which don't match the field vocabulary.
+function looksLikeHeader(row) {
+  return (row || []).some(cell => autoMap(cell));
+}
+
+// Mass-add companies for Table View. Sits behind the "+ Add" split
+// button's "Multiple companies…" item, next to the single-company popup.
+//
+// Two shapes of paste are handled from the one box. A plain list of
+// names (one per line) adds them as-is. A table copied out of Excel or
+// Google Sheets — anything with tab-separated columns — switches on the
+// column mapper: each pasted column gets a dropdown naming the Table
+// View field it lands in, auto-picked where the header matches, and a
+// header row is detected and dropped rather than being read as a
+// company. Either way, companies already on the roster and repeats
+// inside the paste are listed as skipped rather than duplicated.
 export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings }) {
   const [text, setText] = useState('');
   const [shared, setShared] = useState(BULK_DEFAULTS);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
   const [result, setResult] = useState(null);     // { added, failed: [] }
+  // Per-column mapping overrides, keyed by column index; the auto-mapping
+  // shows through wherever the user hasn't picked something else.
+  const [mapOverrides, setMapOverrides] = useState({});
+  const [headerOverride, setHeaderOverride] = useState(null); // null = auto-detect
   const textareaRef = useRef(null);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
@@ -110,8 +122,60 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
   const typeOptions = useMemo(() => buildTypeOptions(existingProspects, settings), [existingProspects, settings]);
   const cdmOptions = useMemo(() => buildCdmOptions(existingProspects, settings), [existingProspects, settings]);
 
-  // Classify every pasted name against the roster (and against the
-  // earlier lines of the paste) so the button can say exactly how many
+  // A tab anywhere in the paste means columns, which is the one thing a
+  // typed list of names never contains.
+  const isTable = text.includes('\t');
+
+  // Columns mode: the raw grid as pasted, before any header decision.
+  const grid = useMemo(() => {
+    if (!isTable) return null;
+    const rows = parseDelimitedRows(text, '\t')
+      .map(r => r.map(c => String(c ?? '').trim()))
+      .filter(r => r.some(c => c));
+    if (rows.length === 0) return null;
+    return { rows, colCount: rows.reduce((n, r) => Math.max(n, r.length), 0) };
+  }, [isTable, text]);
+
+  // A new paste re-detects everything: stale column picks and a stale
+  // header decision belong to the paste they were made against, and
+  // column 3 of the old paste has nothing to do with column 3 of the
+  // new one. Keyed on the pasted shape rather than on the header
+  // decision, so ticking the checkbox keeps the picks.
+  const shapeKey = grid ? `${grid.colCount}|${grid.rows[0].join('|')}` : '';
+  useEffect(() => {
+    setMapOverrides({});
+    setHeaderOverride(null);
+  }, [shapeKey]);
+
+  // Where row 0 is a header, what the data rows are, and the mapping
+  // auto-picked from the header text.
+  const table = useMemo(() => {
+    if (!grid) return null;
+    const { rows, colCount } = grid;
+    const detectedHeader = looksLikeHeader(rows[0]);
+    const hasHeader = headerOverride == null ? detectedHeader : headerOverride;
+    const headers = hasHeader ? rows[0] : [];
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    // Without a header there's nothing to match on, so the first column
+    // is the company (that's the shape of a pasted name column).
+    const auto = Array.from({ length: colCount }, (_, i) => (hasHeader ? autoMap(headers[i]) : (i === 0 ? 'company' : '')));
+    return { colCount, headers, dataRows, hasHeader, detectedHeader, auto };
+  }, [grid, headerOverride]);
+
+  const mapping = useMemo(() => {
+    if (!table) return [];
+    return table.auto.map((key, i) => (Object.prototype.hasOwnProperty.call(mapOverrides, i) ? mapOverrides[i] : key));
+  }, [table, mapOverrides]);
+
+  const companyMapped = mapping.includes('company');
+  // The mapped fields other than Company, in FIELDS order, for the preview.
+  const extraFields = useMemo(() => {
+    const keys = new Set(mapping.filter(k => k && k !== 'company'));
+    return FIELDS.filter(f => keys.has(f.key));
+  }, [mapping]);
+
+  // Classify every pasted row against the roster (and against the
+  // earlier rows of the paste) so the button can say exactly how many
   // companies it is about to create before it is clicked.
   const plan = useMemo(() => {
     const existing = new Map();
@@ -121,13 +185,22 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
     }
     const seen = new Set();
     const rows = [];
-    for (const name of parseNames(text)) {
+
+    // Both modes produce the same thing: a record per pasted row. The
+    // name list only ever fills `company`; the column mapper fills
+    // whatever the user mapped.
+    const records = table
+      ? (companyMapped ? table.dataRows.map(cells => cellsToProspect(cells, mapping)) : [])
+      : parseNames(text).map(name => ({ company: name }));
+
+    for (const record of records) {
+      const name = String(record.company || '').trim();
       const key = companyDedupeKey(name);
       let state = 'new';
       let note = '';
       if (!key) {
         state = 'skip';
-        note = 'not a company name';
+        note = name ? 'not a company name' : 'no company in this row';
       } else if (existing.has(key)) {
         state = 'existing';
         note = `already in Table View as "${existing.get(key)}"`;
@@ -137,16 +210,16 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
       } else {
         seen.add(key);
       }
-      rows.push({ name, state, note });
+      rows.push({ record, name, state, note });
     }
     return {
       rows,
-      toAdd: rows.filter(r => r.state === 'new').map(r => r.name),
+      toAdd: rows.filter(r => r.state === 'new').map(r => r.record),
       existing: rows.filter(r => r.state === 'existing').length,
       repeats: rows.filter(r => r.state === 'repeat').length,
       skipped: rows.filter(r => r.state === 'skip').length,
     };
-  }, [text, existingProspects]);
+  }, [text, existingProspects, table, mapping, companyMapped]);
 
   async function handleAdd() {
     if (busy || plan.toAdd.length === 0) return;
@@ -155,20 +228,21 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
     const failed = [];
     let added = 0;
     try {
-      for (const company of plan.toAdd) {
+      for (const record of plan.toAdd) {
         setProgress({ done: added + failed.length, total: plan.toAdd.length });
         try {
           // Only the shared values actually picked are written, so a
-          // blank dropdown leaves the field empty rather than stamping ''.
-          const record = { company };
+          // blank dropdown leaves the field empty rather than stamping
+          // ''. A value the paste itself supplied always wins.
+          const withDefaults = {};
           for (const [key, val] of Object.entries(shared)) {
-            if (String(val || '').trim()) record[key] = val;
+            if (String(val || '').trim()) withDefaults[key] = val;
           }
-          await onAdd(record);
+          await onAdd({ ...withDefaults, ...record });
           added++;
         } catch (err) {
-          console.error('Bulk add failed for', company, err);
-          failed.push(company);
+          console.error('Bulk add failed for', record.company, err);
+          failed.push(record.company);
         }
       }
       setResult({ added, failed });
@@ -189,10 +263,12 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
     repeat: { color: '#92400E', background: '#FFFBEB', label: 'Skip' },
     skip: { color: '#991B1B', background: '#FEF2F2', label: 'Skip' },
   };
+  const cell = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0' };
+  const canAdd = plan.toAdd.length > 0 && (!table || companyMapped);
 
   return (
     <div onClick={() => { if (!busy) onClose(); }} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(760px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(900px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>Add multiple companies</strong>
           <button onClick={() => { if (!busy) onClose(); }} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: busy ? 'not-allowed' : 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
@@ -200,7 +276,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
 
         <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', flex: 1, minHeight: 0, overflowY: 'auto' }}>
           <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-            One company per line (a pasted spreadsheet column works too). Anything already in Table View is skipped, never overwritten. Values picked below are applied to every company added — leave one blank to leave that field empty, and everything else can be filled in on the table afterwards.
+            One company per line, or paste a whole table from Excel — columns are picked up and you say which Table View field each one lands in. Anything already in Table View is skipped, never overwritten.
           </div>
 
           <textarea
@@ -209,15 +285,66 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
             onChange={e => setText(e.target.value)}
             disabled={busy}
             placeholder={'Acme Properties\nGlobex Realty\nInitech Capital'}
-            style={{ width: '100%', minHeight: 200, padding: '0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical', boxSizing: 'border-box', background: busy ? '#F8FAFC' : '#fff' }}
+            style={{ width: '100%', minHeight: isTable ? 130 : 200, padding: '0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical', boxSizing: 'border-box', background: busy ? '#F8FAFC' : '#fff' }}
           />
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {table && (
+            <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '0.75rem', color: '#1E293B' }}>Columns</strong>
+                <span style={{ fontSize: '0.72rem', color: '#475569' }}>{table.dataRows.length} rows · {table.colCount} columns</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', color: '#475569', cursor: busy ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={table.hasHeader}
+                    disabled={busy}
+                    onChange={e => setHeaderOverride(e.target.checked)}
+                  />
+                  First row is a header
+                </label>
+                {!companyMapped && <span style={{ fontSize: '0.72rem', color: '#991B1B', fontWeight: 700 }}>Map a column to Company to enable the add</span>}
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                  <tbody>
+                    <tr>
+                      {mapping.map((dest, i) => (
+                        <td key={i} style={{ padding: '0 0.4rem 0.3rem 0', verticalAlign: 'top' }}>
+                          <div style={{ fontWeight: 700, color: '#1E293B', whiteSpace: 'nowrap', marginBottom: 2 }}>
+                            {table.hasHeader && table.headers[i] ? table.headers[i] : `Column ${i + 1}`}
+                          </div>
+                          <select
+                            value={dest || ''}
+                            disabled={busy}
+                            onChange={e => setMapOverrides(m => ({ ...m, [i]: e.target.value }))}
+                            style={{ padding: '0.25rem 0.4rem', border: `1px solid ${dest ? '#CBD5E1' : '#FCD34D'}`, borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', minWidth: 150, background: dest ? '#fff' : '#FFFBEB' }}
+                          >
+                            <option value="">(Skip)</option>
+                            {FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                          </select>
+                          <div style={{ color: '#64748B', marginTop: 2, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={table.dataRows[0]?.[i] || ''}>
+                            {table.dataRows[0]?.[i] || <span style={{ color: '#CBD5E1' }}>-</span>}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            <span style={{ fontSize: '0.72rem', color: '#475569' }}>
+              Applied to every company added{table ? ', where the paste doesn\u2019t supply its own value' : ''}:
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-end' }}>
             {SHARED_FIELDS.map(f => {
               const options = f.dynamic === 'cdm' ? cdmOptions : f.dynamic === 'type' ? typeOptions : f.options;
+              const overridden = mapping.includes(f.key);
               return (
                 <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                  {f.label}
+                  {f.label}{overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}> (from paste)</span>}
                   <select
                     value={shared[f.key] || ''}
                     disabled={busy}
@@ -230,6 +357,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
                 </label>
               );
             })}
+            </div>
           </div>
 
           {plan.rows.length > 0 && (
@@ -240,18 +368,33 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
                 {plan.repeats > 0 && <> · <span style={{ color: '#92400E' }}>{plan.repeats} repeated in the list</span></>}
                 {plan.skipped > 0 && <> · <span style={{ color: '#991B1B' }}>{plan.skipped} unusable</span></>}
               </div>
-              <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, maxHeight: 220, overflowY: 'auto' }}>
+              <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, maxHeight: 260, overflow: 'auto' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
+                  {extraFields.length > 0 && (
+                    <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
+                      <tr>
+                        <th style={{ ...cell, textAlign: 'left', color: '#475569', width: 52 }}></th>
+                        <th style={{ ...cell, textAlign: 'left', color: '#475569' }}>Company</th>
+                        {extraFields.map(f => <th key={f.key} style={{ ...cell, textAlign: 'left', color: '#475569', whiteSpace: 'nowrap' }}>{f.label}</th>)}
+                        <th style={{ ...cell, textAlign: 'left', color: '#475569' }}></th>
+                      </tr>
+                    </thead>
+                  )}
                   <tbody>
                     {plan.rows.map((r, i) => {
                       const s = stateStyles[r.state];
                       return (
                         <tr key={i} style={{ background: r.state === 'new' ? '#fff' : s.background }}>
-                          <td style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0', width: 52 }}>
+                          <td style={{ ...cell, width: 52 }}>
                             <span style={{ color: s.color, fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase' }}>{s.label}</span>
                           </td>
-                          <td style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0', fontWeight: 600, color: '#1E293B' }}>{r.name}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0', color: '#64748B' }}>{r.note}</td>
+                          <td style={{ ...cell, fontWeight: 600, color: '#1E293B' }}>{r.name || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                          {extraFields.map(f => {
+                            const v = r.record[f.key];
+                            const shown = Array.isArray(v) ? v.join(', ') : v == null ? '' : String(v);
+                            return <td key={f.key} style={{ ...cell, color: '#475569', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={shown}>{shown || <span style={{ color: '#CBD5E1' }}>-</span>}</td>;
+                          })}
+                          <td style={{ ...cell, color: '#64748B' }}>{r.note}</td>
                         </tr>
                       );
                     })}
@@ -278,8 +421,8 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
           </button>
           <button
             onClick={handleAdd}
-            disabled={busy || plan.toAdd.length === 0}
-            style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (busy || plan.toAdd.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (busy || plan.toAdd.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            disabled={busy || !canAdd}
+            style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (busy || !canAdd) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (busy || !canAdd) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
           >
             {busy ? 'Adding…' : `Add ${plan.toAdd.length} compan${plan.toAdd.length === 1 ? 'y' : 'ies'}`}
           </button>
