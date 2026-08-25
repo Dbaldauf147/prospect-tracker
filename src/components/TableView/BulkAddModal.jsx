@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { companyDedupeKey } from '../../utils/firestoreSync';
-import { STATUSES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
-import { buildTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
+import { STATUSES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
+import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategyOptions } from '../../utils/prospectOptions';
+import { splitPeOwners } from '../../utils/peOwners';
 import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
 
 // Defaults a bulk-added company starts with, matching what the single
@@ -16,10 +17,11 @@ const BULK_DEFAULTS = {
   publicPrivate: '',
 };
 
-// Fields the shared-values row offers. Whatever is picked here is
-// stamped on every company in the list that doesn't bring its own value
-// from a mapped column — the point of the bulk add is that a batch
-// usually shares its CDM / type / status.
+// Fields the shared-values row always offers, as dropdowns. Whatever is
+// picked here is stamped on every company in the list that doesn't bring
+// its own value from a mapped column — the point of the bulk add is that
+// a batch usually shares its CDM / type / status. Any other field can be
+// added to the row from the picker beside them (see EXTRA_FIELDS).
 const SHARED_FIELDS = [
   { key: 'status', label: 'Status', options: STATUSES },
   { key: 'cdm', label: 'CDM', dynamic: 'cdm' },
@@ -28,6 +30,72 @@ const SHARED_FIELDS = [
   { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
   { key: 'publicPrivate', label: 'Pub/Priv', options: PUBLIC_PRIVATE },
 ];
+const FIXED_SHARED = new Set(SHARED_FIELDS.map(f => f.key));
+
+// Everything else a pasted column can land in is also settable for the
+// whole batch — PE Owner for a portfolio list, Frameworks for a
+// compliance list, and so on. Same vocabulary as the column mapper, so
+// the two halves of the modal can't offer different fields.
+const EXTRA_FIELDS = FIELDS.filter(f => f.key !== 'company' && !FIXED_SHARED.has(f.key));
+
+// Values already on the roster for a field, offered as type-ahead
+// suggestions so a batch's PE Owner / HQ Region / Rank matches what is
+// already there instead of introducing a near-miss spelling.
+function suggestionsFor(key, prospects) {
+  const vals = new Set();
+  for (const p of prospects || []) {
+    const v = p?.[key];
+    if (Array.isArray(v)) {
+      for (const item of v) if (String(item || '').trim()) vals.add(String(item).trim());
+    } else if (String(v ?? '').trim()) {
+      // PE Owner holds a comma-separated list of firms in one string.
+      if (key === 'peOwner') for (const owner of splitPeOwners(v)) vals.add(owner);
+      else vals.add(String(v).trim());
+    }
+  }
+  return [...vals].sort((a, b) => a.localeCompare(b)).slice(0, 300);
+}
+
+// One added shared field: a value editor matched to the field's type,
+// with the roster's existing values (plus the built-in vocabulary for
+// tag fields) as datalist suggestions.
+function ExtraSharedField({ field, value, onChange, onRemove, disabled, overridden, prospects, vocab }) {
+  const listId = `bulk-shared-${field.key}`;
+  const options = useMemo(() => {
+    const known = vocab?.[field.key] || [];
+    return [...new Set([...known, ...suggestionsFor(field.key, prospects)])];
+  }, [field.key, prospects, vocab]);
+  const isList = field.type === 'list' || field.type === 'frameworks';
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {field.label}
+        {overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(paste wins)</span>}
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={disabled}
+          aria-label={`Remove ${field.label}`}
+          style={{ border: 'none', background: 'none', color: '#94A3B8', cursor: disabled ? 'not-allowed' : 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}
+        >×</button>
+      </span>
+      <input
+        type={field.type === 'number' ? 'number' : 'text'}
+        value={value}
+        disabled={disabled}
+        list={options.length ? listId : undefined}
+        onChange={e => onChange(e.target.value)}
+        placeholder={isList ? 'comma separated' : ''}
+        style={{ padding: '0.3rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', minWidth: 150, background: '#fff', color: '#1E293B', fontWeight: 400 }}
+      />
+      {options.length > 0 && (
+        <datalist id={listId}>
+          {options.map(o => <option key={o} value={o} />)}
+        </datalist>
+      )}
+    </label>
+  );
+}
 
 // One pasted line -> one company name. Tolerates the shapes a name list
 // actually arrives in: a comma-separated list on one line, numbered or
@@ -102,6 +170,9 @@ function looksLikeHeader(row) {
 export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings }) {
   const [text, setText] = useState('');
   const [shared, setShared] = useState(BULK_DEFAULTS);
+  // Fields added to the shared row beyond the six fixed dropdowns, in the
+  // order they were added: [{ key, value }].
+  const [extras, setExtras] = useState([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
   const [result, setResult] = useState(null);     // { added, failed: [] }
@@ -121,6 +192,14 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
 
   const typeOptions = useMemo(() => buildTypeOptions(existingProspects, settings), [existingProspects, settings]);
   const cdmOptions = useMemo(() => buildCdmOptions(existingProspects, settings), [existingProspects, settings]);
+  // Built-in vocabularies for the tag fields, so an added Asset Types /
+  // Frameworks / Strategies row suggests the real options rather than
+  // only what the roster happens to use already.
+  const vocab = useMemo(() => ({
+    assetTypes: buildAssetTypeOptions(existingProspects, settings),
+    strategies: buildStrategyOptions(existingProspects, settings),
+    frameworks: FRAMEWORKS,
+  }), [existingProspects, settings]);
 
   // A tab anywhere in the paste means columns, which is the one thing a
   // typed list of names never contains.
@@ -173,6 +252,27 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
     const keys = new Set(mapping.filter(k => k && k !== 'company'));
     return FIELDS.filter(f => keys.has(f.key));
   }, [mapping]);
+
+  const availableExtras = useMemo(
+    () => EXTRA_FIELDS.filter(f => !extras.some(e => e.key === f.key)),
+    [extras]
+  );
+
+  // The shared values as a prospect patch. Only what was actually filled
+  // in is written, so a blank dropdown leaves the field empty rather than
+  // stamping ''. Added fields go through the same typing as a pasted
+  // cell, so "Hotels, Retail" lands as tags and "12" as a number.
+  const sharedRecord = useMemo(() => {
+    const out = {};
+    for (const [key, val] of Object.entries(shared)) {
+      if (String(val || '').trim()) out[key] = val;
+    }
+    for (const { key, value } of extras) {
+      if (!key || !String(value || '').trim()) continue;
+      Object.assign(out, cellsToProspect([value], [key]));
+    }
+    return out;
+  }, [shared, extras]);
 
   // Classify every pasted row against the roster (and against the
   // earlier rows of the paste) so the button can say exactly how many
@@ -231,14 +331,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
       for (const record of plan.toAdd) {
         setProgress({ done: added + failed.length, total: plan.toAdd.length });
         try {
-          // Only the shared values actually picked are written, so a
-          // blank dropdown leaves the field empty rather than stamping
-          // ''. A value the paste itself supplied always wins.
-          const withDefaults = {};
-          for (const [key, val] of Object.entries(shared)) {
-            if (String(val || '').trim()) withDefaults[key] = val;
-          }
-          await onAdd({ ...withDefaults, ...record });
+          await onAdd({ ...sharedRecord, ...record });
           added++;
         } catch (err) {
           console.error('Bulk add failed for', record.company, err);
@@ -344,7 +437,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
               const overridden = mapping.includes(f.key);
               return (
                 <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                  {f.label}{overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}> (from paste)</span>}
+                  {f.label}{overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}> (paste wins)</span>}
                   <select
                     value={shared[f.key] || ''}
                     disabled={busy}
@@ -357,6 +450,35 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
                 </label>
               );
             })}
+            {extras.map(({ key, value }) => {
+              const field = EXTRA_FIELDS.find(f => f.key === key);
+              if (!field) return null;
+              return (
+                <ExtraSharedField
+                  key={key}
+                  field={field}
+                  value={value}
+                  disabled={busy}
+                  overridden={mapping.includes(key)}
+                  prospects={existingProspects}
+                  vocab={vocab}
+                  onChange={v => setExtras(list => list.map(e => (e.key === key ? { ...e, value: v } : e)))}
+                  onRemove={() => setExtras(list => list.filter(e => e.key !== key))}
+                />
+              );
+            })}
+            {availableExtras.length > 0 && (
+              <select
+                value=""
+                disabled={busy}
+                onChange={e => { if (e.target.value) setExtras(list => [...list, { key: e.target.value, value: '' }]); }}
+                aria-label="Add another field to apply to every company"
+                style={{ padding: '0.3rem 0.4rem', border: '1px dashed #94A3B8', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', background: '#F8FAFC', color: '#475569', cursor: busy ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}
+              >
+                <option value="">+ Add another field…</option>
+                {availableExtras.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+              </select>
+            )}
             </div>
           </div>
 
