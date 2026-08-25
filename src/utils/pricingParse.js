@@ -29,6 +29,13 @@ const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
 // value can sit in any cell to the right of the label on the same row.
 const SITES_LABEL_RE = /^\s*(#\s*(of\s+)?sites?|number\s*of\s*sites?|sites?\s*count|total\s*sites?|sites?)\s*[:-]?\s*$/i;
 const ACCOUNTS_LABEL_RE = /^\s*(#\s*(of\s+)?accounts?|number\s*of\s*accounts?|accounts?\s*count|total\s*accounts?|accounts?)\s*[:-]?\s*$/i;
+// The SIA's own margin: the "Target GM %" setup row, and the "Use Target"
+// flag beside it that says whether the workbook priced off that target or
+// off each line's individual GM. Both can sit in the metadata block at the
+// top of the sheet or further down beside the Cost Summary, depending on
+// the template vintage, so they're scanned for across the whole sheet.
+const TARGET_GM_LABEL_RE = /^\s*(target\s*gm\s*%?|recommended\s*gm\s*%?|gm\s*%\s*target)\s*[:-]?\s*$/i;
+const USE_TARGET_LABEL_RE = /^\s*use\s*target\s*(gm\s*%?)?\s*[:-]?\s*$/i;
 // Per the SIA template, the first 18 rows are sheet metadata (Date,
 // Salesperson, Currency Conversion, Solution description, Target
 // GM%, Use Target). The line-item tables always begin below row 18.
@@ -192,6 +199,32 @@ function parseOptionSheet(sheet, sheetName) {
       if (isSiteLabel) siteCount = value;
       else accountCount = value;
     }
+  }
+
+  // Target GM % / Use Target — the SIA's own margin, so the Pricing page can
+  // offer it instead of the user typing one. Scanned across the whole sheet
+  // (see the label regexes above); the value is the first usable cell to the
+  // right of the label on the same row.
+  let targetGmPct = null;
+  let useTargetGm = null;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || [];
+    for (let c = 0; c < row.length; c++) {
+      const label = cellStr(row[c]);
+      if (!label) continue;
+      if (targetGmPct === null && TARGET_GM_LABEL_RE.test(label)) {
+        for (let j = c + 1; j < row.length; j++) {
+          const g = toGmFraction(row[j]);
+          if (g !== null) { targetGmPct = g; break; }
+        }
+      } else if (useTargetGm === null && USE_TARGET_LABEL_RE.test(label)) {
+        for (let j = c + 1; j < row.length; j++) {
+          const f = toFlag(row[j]);
+          if (f !== null) { useTargetGm = f; break; }
+        }
+      }
+    }
+    if (targetGmPct !== null && useTargetGm !== null) break;
   }
 
   // Solution description — captured from anywhere on the sheet, even
@@ -381,6 +414,8 @@ function parseOptionSheet(sheet, sheetName) {
     solutionDescription,
     siteCount,
     accountCount,
+    targetGmPct,
+    useTargetGm,
     sections,
     altFees,
     rawSample,
@@ -391,6 +426,29 @@ function parseOptionSheet(sheet, sheetName) {
     cellCount,
     refUsed,
   };
+}
+
+// A GM cell as a 0..1 fraction. Excel hands back 0.35 for a cell formatted
+// as 35%, but a hand-typed "35" or "35%" arrives as 35 / "35%" — so anything
+// above 1 is read as whole percent. 0 (and anything that doesn't parse) is
+// treated as "not set" rather than a 0% target, since that's what an
+// untouched template cell looks like.
+function toGmFraction(v) {
+  if (v === null || v === undefined || v === '') return null;
+  let n = typeof v === 'number' ? v : toNumber(String(v).replace(/%/g, ''));
+  if (n === null || !Number.isFinite(n)) return null;
+  if (n > 1) n /= 100;
+  if (!(n > 0) || n >= 1) return null;
+  return n;
+}
+
+// "Use Target" as a boolean; null when the cell says nothing recognisable.
+function toFlag(v) {
+  const s = cellStr(v).toLowerCase();
+  if (!s) return null;
+  if (/^(y|yes|true|x|1)$/.test(s)) return true;
+  if (/^(n|no|false|0)$/.test(s)) return false;
+  return null;
 }
 
 function toNumber(v) {
