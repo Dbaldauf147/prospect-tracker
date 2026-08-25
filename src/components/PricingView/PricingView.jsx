@@ -635,6 +635,94 @@ Type a value to override.`
   );
 }
 
+// The Line Item → Services rows: every line item on the active workbook
+// option, plus every saved mapping that still names a service (so entries
+// stay reachable after the workbook is cleared). Deduped case-insensitively;
+// workbook ordering wins for names it knows, saved-only entries follow
+// alphabetically.
+function lineItemMappingRows(workbookItems, lineItemServices) {
+  const out = [];
+  const seen = new Set();
+  for (const item of workbookItems || []) {
+    const name = String(item.description || '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, name });
+  }
+  const savedExtras = [];
+  for (const key of Object.keys(lineItemServices || {})) {
+    if (!key || seen.has(key)) continue;
+    const services = lineItemServices[key];
+    if (!Array.isArray(services) || services.length === 0) continue;
+    seen.add(key);
+    savedExtras.push({ key, name: key });
+  }
+  savedExtras.sort((a, b) => a.name.localeCompare(b.name));
+  return out.concat(savedExtras);
+}
+
+// Which of those rows still need an answer, split by what's wrong with them:
+//
+//   unset   no services picked at all
+//   offList services picked, but not one of them is still in the Dropdowns
+//           tab's Solutions / Service Catalog
+//
+// The second case is the one a plain "has any services?" check misses. The
+// mapping stores service names as text, so renaming or deleting a service on
+// the Dropdowns tab leaves the line item pointing at a name that no longer
+// exists — mapped on paper, and useless to the Scope picker that reads it.
+// Only a mapping naming a service the list still has counts as mapped.
+//
+// With an empty catalog there is nothing to check against — everything would
+// read as off-list, which says "your catalog is empty" in the most confusing
+// way available — so that check is skipped and the section's own "add
+// services on the Dropdowns tab first" notice carries it instead.
+//
+// Ignored line items are out of all of this: ticking Ignore is the user
+// saying this one needs no service, which is an answer.
+//
+// Shared by the Linked To editor that fixes these and the banner on the
+// Pricing subtab that says they exist, so the two can't disagree about what
+// counts as mapped.
+function unmappedLineItems({ workbookItems, lineItemServices, lineItemIgnored, solutionsOptions }) {
+  const rows = lineItemMappingRows(workbookItems, lineItemServices);
+  const known = new Set((solutionsOptions || []).map(o => String(o).trim().toLowerCase()).filter(Boolean));
+  const unset = [];
+  const offList = [];
+  for (const row of rows) {
+    if (lineItemIgnored?.[row.key]) continue;
+    const services = Array.isArray(lineItemServices?.[row.key]) ? lineItemServices[row.key] : [];
+    if (services.length === 0) { unset.push(row); continue; }
+    if (known.size === 0) continue;
+    if (!services.some(s => known.has(String(s).trim().toLowerCase()))) offList.push(row);
+  }
+  return { rows, unset, offList, all: unset.concat(offList) };
+}
+
+// "2 with nothing picked, 1 pointing only at a service the Dropdowns list no
+// longer has" — the split behind the total, or '' when every one of them is
+// simply blank and the total already said it.
+function unmappedBreakdown({ unset, offList }) {
+  if (offList.length === 0) return '';
+  const parts = [];
+  if (unset.length > 0) parts.push(`${unset.length} with nothing picked`);
+  parts.push(offList.length === 1
+    ? '1 pointing only at a service the Dropdowns list no longer has'
+    : `${offList.length} pointing only at services the Dropdowns list no longer has`);
+  return parts.join(', ');
+}
+
+// Is this service still one the Dropdowns tab offers? An empty catalog
+// vouches for nothing rather than condemning everything, matching the rule
+// above.
+function isKnownService(service, solutionsOptions) {
+  if (!Array.isArray(solutionsOptions) || solutionsOptions.length === 0) return true;
+  const want = String(service || '').trim().toLowerCase();
+  return solutionsOptions.some(o => String(o).trim().toLowerCase() === want);
+}
+
 // Inline editor that maps a Line Item (description) to one or more
 // services from the Solutions / Service Catalog. The mapping is keyed
 // by lowercase line item name so it persists across workbooks and
@@ -645,31 +733,10 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
   const [draftItem, setDraftItem] = useState('');
   const [filter, setFilter] = useState('');
 
-  // Build the row list: union of workbook descriptions and saved-mapping
-  // line items, deduped case-insensitively. Workbook ordering wins for
-  // names it knows; remaining saved entries get appended alphabetically.
-  const rows = useMemo(() => {
-    const out = [];
-    const seen = new Set();
-    for (const item of workbookItems || []) {
-      const name = String(item.description || '').trim();
-      if (!name) continue;
-      const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ key, name });
-    }
-    const savedExtras = [];
-    for (const key of Object.keys(lineItemServices || {})) {
-      if (!key || seen.has(key)) continue;
-      const services = lineItemServices[key];
-      if (!Array.isArray(services) || services.length === 0) continue;
-      seen.add(key);
-      savedExtras.push({ key, name: key });
-    }
-    savedExtras.sort((a, b) => a.name.localeCompare(b.name));
-    return out.concat(savedExtras);
-  }, [workbookItems, lineItemServices]);
+  const rows = useMemo(
+    () => lineItemMappingRows(workbookItems, lineItemServices),
+    [workbookItems, lineItemServices],
+  );
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -694,14 +761,13 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
     setLineItemIgnored(next);
   }
 
-  // Line items still missing a service mapping, excluding the ones the
-  // user has chosen to ignore. Drives the warning banner so it only
-  // flags rows that genuinely need attention.
-  const unmappedRows = useMemo(() => rows.filter(r => {
-    if (lineItemIgnored?.[r.key]) return false;
-    const svcs = lineItemServices?.[r.key];
-    return !(Array.isArray(svcs) && svcs.length > 0);
-  }), [rows, lineItemServices, lineItemIgnored]);
+  // Line items still needing an answer — nothing picked, or picks the
+  // Dropdowns catalog no longer lists. Same call the Pricing subtab's banner
+  // makes, so clicking through from there lands on exactly these rows.
+  const unmapped = useMemo(
+    () => unmappedLineItems({ workbookItems, lineItemServices, lineItemIgnored, solutionsOptions }),
+    [workbookItems, lineItemServices, lineItemIgnored, solutionsOptions],
+  );
 
   function addLineItem() {
     const name = draftItem.trim();
@@ -770,18 +836,17 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
           Solutions / Service Catalog list is empty. Add services to it on the Dropdowns tab first.
         </div>
       )}
-      {unmappedRows.length > 0 && (
-        <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            margin: '0 0 0.5rem', padding: '0.4rem 0.6rem',
-            background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 4,
-            fontSize: '0.8rem', color: '#92400E',
-          }}
-        >
-          ⚠ {unmappedRows.length} line item{unmappedRows.length === 1 ? '' : 's'} missing a service mapping. Map them below, or click <strong>Ignore</strong> to set the ones you don't need aside.
-        </div>
-      )}
+      {unmapped.all.length > 0 && (() => {
+        const n = unmapped.all.length;
+        const breakdown = unmappedBreakdown(unmapped);
+        return (
+          <div className={styles.unmappedWarning} role="alert">
+            ⚠ {n} line item{n === 1 ? '' : 's'} still need{n === 1 ? 's' : ''} a service
+            {breakdown && <> — {breakdown} (those are the red chips)</>}
+            . Map {n === 1 ? 'it' : 'them'} below, or tick <strong>Ignore</strong> to set the ones you don't need aside.
+          </div>
+        );
+      })()}
       {filteredRows.length === 0 ? (
         <div className={styles.linkedEmptyInline}>
           {rows.length === 0
@@ -864,30 +929,40 @@ function ServicesPicker({ selected, options, onChange }) {
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
-      {selected.map(s => (
-        <span
-          key={s}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '2px 6px 2px 8px',
-            background: '#DCFCE7', color: '#166534',
-            border: '1px solid #86EFAC', borderRadius: 999,
-            fontSize: '0.75rem', fontWeight: 600,
-          }}
-        >
-          {s}
-          <button
-            type="button"
-            onClick={() => removeService(s)}
-            title={`Remove ${s}`}
+      {selected.map(s => {
+        // A pick the Dropdowns catalog no longer lists — renamed or deleted
+        // there since this mapping was made. It reads as mapped but feeds
+        // the Scope picker a service that doesn't exist, so it's called out
+        // in red rather than left looking done.
+        const known = isKnownService(s, options);
+        return (
+          <span
+            key={s}
+            title={known ? undefined : `"${s}" is not in the Dropdowns tab's Solutions / Service Catalog. Remove it and pick a current service, or add it back on the Dropdowns tab.`}
             style={{
-              padding: 0, width: 14, height: 14, lineHeight: 1,
-              background: 'transparent', border: 'none',
-              color: '#166534', cursor: 'pointer', fontSize: '0.85rem',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 6px 2px 8px',
+              background: known ? '#DCFCE7' : '#FEE2E2',
+              color: known ? '#166534' : '#991B1B',
+              border: `1px solid ${known ? '#86EFAC' : '#FCA5A5'}`,
+              borderRadius: 999,
+              fontSize: '0.75rem', fontWeight: 600,
             }}
-          >×</button>
-        </span>
-      ))}
+          >
+            {known ? s : `⚠ ${s}`}
+            <button
+              type="button"
+              onClick={() => removeService(s)}
+              title={`Remove ${s}`}
+              style={{
+                padding: 0, width: 14, height: 14, lineHeight: 1,
+                background: 'transparent', border: 'none',
+                color: known ? '#166534' : '#991B1B', cursor: 'pointer', fontSize: '0.85rem',
+              }}
+            >×</button>
+          </span>
+        );
+      })}
       {remaining.length > 0 && (
         <select
           value={adding}
@@ -1818,6 +1893,22 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
   }, [linkedToPassThroughDefaults]);
+
+  // Line items on the active option that still need a service, for the
+  // banner on the Pricing subtab. Computed from the same rows and the same
+  // rule the Linked To editor runs, and off the active option for the same
+  // reason that page's table is: the banner has to name the work the table
+  // it links to will actually show.
+  const unmappedForBanner = useMemo(() => {
+    const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    const items = opt ? opt.sections.flatMap(sec => sec.items) : [];
+    return unmappedLineItems({
+      workbookItems: items,
+      lineItemServices,
+      lineItemIgnored,
+      solutionsOptions,
+    });
+  }, [workbook, activeOption, lineItemServices, lineItemIgnored, solutionsOptions]);
 
   // Persist Line Item → Services mapping on its own key and broadcast
   // a custom event so other views (Opps 2's Scope cell) can refresh
@@ -3790,6 +3881,33 @@ export function PricingView({ settings } = {}) {
       {error && (
         <div style={{ margin: '0 1.25rem 0.5rem', color: '#b91c1c' }}>{error}</div>
       )}
+
+      {/* Unmapped line items are only fixable on the Linked To subtab, which
+          means nothing says they exist until you happen to go there. Say it
+          here, where the workbook is actually being worked, and make it the
+          way in. */}
+      {pageSubtab === 'pricing' && unmappedForBanner.all.length > 0 && (() => {
+        const n = unmappedForBanner.all.length;
+        const breakdown = unmappedBreakdown(unmappedForBanner);
+        const names = unmappedForBanner.all.slice(0, 15).map(r => r.name).join(', ');
+        const more = n > 15 ? `, +${n - 15} more` : '';
+        return (
+          <button
+            type="button"
+            className={styles.unmappedBanner}
+            onClick={() => setPageSubtab('linkedTo')}
+            title={`Still to map: ${names}${more}`}
+          >
+            <span aria-hidden="true">⚠</span>
+            <span>
+              <strong>{n} line item{n === 1 ? '' : 's'}</strong>
+              {' '}on this option {n === 1 ? 'is' : 'are'} neither mapped to a service nor ignored
+              {breakdown && <> — {breakdown}</>}
+              . Open <strong>Linked To → Line Item → Services</strong> to fix {n === 1 ? 'it' : 'them'}.
+            </span>
+          </button>
+        );
+      })()}
 
       {pageSubtab === 'pricing' && <PricingConversions />}
 
