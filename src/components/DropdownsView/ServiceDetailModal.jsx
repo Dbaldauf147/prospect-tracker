@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { rolloutWeeks } from '../../data/serviceCatalog';
+import { rolloutWeeks, SERVICE_BUCKETS } from '../../data/serviceCatalog';
 import {
   TIMELINE_STAGE_OWNERS,
   makeTimelineStage,
@@ -76,6 +76,27 @@ function TextField({ label, value, placeholder, onCommit }) {
 }
 
 // Timeline Driven. Same three states as the table's cell: unset, Yes, No.
+// A picker over a fixed vocabulary. Any value that isn't in it (typed in
+// before the list existed, or a heading since renamed) is kept as an
+// option so opening the popup can't quietly wipe it.
+function SelectField({ label, value, options, onCommit }) {
+  const current = value || '';
+  const opts = current && !options.includes(current) ? [current, ...options] : options;
+  return (
+    <label className={styles.detailField}>
+      <span className={styles.detailLabel}>{label}</span>
+      <select
+        className={styles.detailInput}
+        value={current}
+        onChange={e => { if (e.target.value !== current) onCommit(e.target.value); }}
+      >
+        <option value="">—</option>
+        {opts.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function YesNoField({ label, value, onCommit }) {
   return (
     <label className={styles.detailField}>
@@ -1042,12 +1063,20 @@ export function ServiceDetailModal({
               which owns the Solutions vocabulary. */}
           <div className={styles.detailGrid}>
             <LinkField name={name} url={url} onSaveUrl={onSaveUrl} />
-            <TextField label="BFO Tag" value={meta?.bfoTag} onCommit={save('bfoTag')} />
+            {/* One field, not two: BFO Tag and Local Project Name always
+                held the same tag, and the catalog now derives the Local
+                Project Name from this value. */}
+            <TextField label="BFO Tag / Local Project Name" value={meta?.bfoTag} onCommit={save('bfoTag')} />
+            <SelectField
+              label="Service Bucket"
+              value={meta?.serviceBucket}
+              options={SERVICE_BUCKETS}
+              onCommit={save('serviceBucket')}
+            />
             <TextField label="Region" value={meta?.region} onCommit={save('region')} />
             <TextField label="Years" value={meta?.years} onCommit={save('years')} />
             <TextField label="Service Type" value={meta?.serviceType} onCommit={save('serviceType')} />
             <TextField label="Product Line" value={meta?.productLine} onCommit={save('productLine')} />
-            <TextField label="Local Project Name" value={meta?.localProjectName} onCommit={save('localProjectName')} />
             <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
             <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
