@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, tagKey, dedupeTags, planTagEdit } from '../../utils/contactTagReview';
+import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, recordKeepsTag, tagKey, dedupeTags, planTagEdit, groupTagWrites } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -360,7 +360,18 @@ const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n
 // `tagMode` is what the HubSpot half of the write does, and it follows the
 // same rule the popup does: Sold keeps the tag on (a general pull should
 // still return them), the other three take it off.
+// The bulk equivalents of the contact popup's own buttons, in the popup's
+// order: the Answer group, then the Status group.
+//
+// `tagMode` is the direction the mark takes the HubSpot tag for almost every
+// contact, and it's what decides whether the action confirms first. It is NOT
+// what performs the write: the tag each contact ends up with is decided per
+// contact from the record the mark leaves behind (recordKeepsTag), because
+// Yes is the one mark whose tag half isn't uniform — a contact already held
+// off by a Not sold records the Yes and keeps the tag off, which is the whole
+// point of a hold-off.
 const MASS_TAG_VERDICTS = [
+  { mode: 'yes', label: 'Mark Yes', verb: 'Marked Yes', tagMode: 'add' },
   { mode: 'no', label: 'Mark No', verb: 'Marked No', tagMode: 'remove' },
   { mode: 'unsure', label: 'Mark Not sure', verb: 'Marked Not sure', tagMode: 'remove' },
   { mode: 'sold', label: 'Mark Sold', verb: 'Marked Sold', tagMode: 'add' },
@@ -1349,8 +1360,14 @@ function KeyContactsViewInner({
   // without disturbing the other — recordForVerdict applies it exactly as
   // the popup's own buttons would, per contact, so a Yes already recorded
   // survives a bulk Not sold.
+  // Returns { touched, wanted } — how many contacts' answers changed, and
+  // per contact which of the chosen tags the mark leaves them wanting ON and
+  // which OFF. The caller writes the tags from `wanted` rather than from one
+  // direction for the whole batch, so a Yes marked over a Not sold records
+  // the Yes without putting the tag back.
   function saveMassTagVerdicts(ids, tags, verdict) {
-    if (!updateSettings) return 0;
+    const wanted = new Map();
+    if (!updateSettings) return { touched: 0, wanted };
     const next = { ...(settings?.contactTagReview || {}) };
     let touched = 0;
     for (const id of ids) {
@@ -1358,16 +1375,20 @@ function KeyContactsViewInner({
       if (!key) continue;
       const map = { ...(next[key] || {}) };
       let changed = false;
+      const on = [];
+      const off = [];
       for (const tag of tags) {
         const record = recordForVerdict(map[tag], verdict);
+        (recordKeepsTag(record) ? on : off).push(tag);
         if (sameTagRecord(map[tag], record)) continue;
         map[tag] = record;
         changed = true;
       }
+      wanted.set(key, { on, off });
       if (changed) { next[key] = map; touched += 1; }
     }
     if (touched > 0) updateSettings({ contactTagReview: next });
-    return touched;
+    return { touched, wanted };
   }
 
   // Bulk tag apply — the Tags field of the Mass Edit toolbar. Replace
@@ -1412,8 +1433,26 @@ function KeyContactsViewInner({
     // the tag change, so they're recorded whatever the writes below do.
     // A contact who already had the tag off still gets the answer — that
     // case IS the point of the mode.
-    const marked = verdict ? saveMassTagVerdicts(ids, tags, verdict.mode) : 0;
-    const { updated, unchanged, skipped, errors, errorMessage } = await applyTagEdit(ids, verdict ? verdict.tagMode : massTagMode, tags);
+    const { touched: marked, wanted } = verdict
+      ? saveMassTagVerdicts(ids, tags, verdict.mode)
+      : { touched: 0, wanted: null };
+    // The tag half. A plain Add / Remove / Replace is one write for the whole
+    // selection; a Mark is whatever each contact's new record asks for, which
+    // is only uniform until a Yes lands on someone held off by a Not sold.
+    const runs = wanted
+      ? groupTagWrites(ids, wanted)
+      : [{ mode: massTagMode, tags, ids }];
+    let updated = 0, unchanged = 0, skipped = 0, errors = 0, errorMessage = '';
+    let tagsAdded = 0, tagsRemoved = 0;
+    for (const run of runs) {
+      const r = await applyTagEdit(run.ids, run.mode, run.tags);
+      updated += r.updated;
+      unchanged += r.unchanged;
+      skipped += r.skipped;
+      errors += r.errors;
+      if (!errorMessage) errorMessage = r.errorMessage;
+      if (run.mode === 'add') tagsAdded += r.updated; else tagsRemoved += r.updated;
+    }
     // The API registers a tag that isn't in the Dan's Tags allowed values
     // and retries, so "go add it by hand" is only the right advice when
     // that didn't happen — and the API's own message says so when it did.
@@ -1430,9 +1469,16 @@ function KeyContactsViewInner({
     // A verdict counts the answers written, then reports the tag half
     // separately — "already up to date" against the answer count would
     // read as "nothing to do" on the run that did the most work.
+    // A verdict counts the answers written, then reports the tag half
+    // separately — and reports both directions, because a Mark Yes over a
+    // Not sold records the Yes while leaving the tag alone.
+    const tagMoves = [
+      tagsAdded > 0 ? `tag added to ${tagsAdded}` : '',
+      tagsRemoved > 0 ? `tag removed from ${tagsRemoved}` : '',
+    ].filter(Boolean).join(' · ') || 'no tag changes needed';
     const head = verdict
       ? `${verb} on ${marked || n} contact${(marked || n) === 1 ? '' : 's'} for ${tags.join(', ')}`
-        + ` · tag ${verdict.tagMode === 'add' ? 'added to' : 'removed from'} ${updated}`
+        + ` · ${tagMoves}`
       : `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
         + (unchanged > 0 ? ` · ${unchanged} already up to date in HubSpot` : '');
     // A contact HubSpot has no record of was left alone rather than written
@@ -3149,8 +3195,10 @@ function KeyContactsViewInner({
                     onChange={e => setMassTagMode(e.target.value)}
                     title={'Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list'
                       + '\n\nThe Mark options record the same answers as the contact popup, across every selected contact:'
-                      + '\nNo — doesn\'t apply to them · Not sure — haven\'t worked it out · Not sold — theirs, but their company hasn\'t bought it'
-                      + '\nSold and Not sold both record the Yes they imply. Sold keeps the tag on, so they still come back in a general pull; the other three take it off.'}
+                      + '\nYes — the area is theirs · No — doesn\'t apply to them · Not sure — haven\'t worked it out'
+                      + '\nSold — their company has bought it · Not sold — theirs, but their company hasn\'t bought it'
+                      + '\n\nYes and Sold put the tag on, so they come back in a general pull; No, Not sure and Not sold take it off.'
+                      + '\nA Yes marked over an existing Not sold records the Yes and leaves the tag off — that hold-off is the point.'}
                     style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
                   >
                     <optgroup label="Tag in HubSpot">
