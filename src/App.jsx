@@ -427,7 +427,7 @@ function App() {
           ) : view === 'pricing' ? (
             <PricingView settings={settings} />
           ) : view === 'bfo' ? (
-            <BFOActivityView prospects={prospects} />
+            <BFOActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'recordings' ? (
             <CallRecordingsView
               prospects={prospects}

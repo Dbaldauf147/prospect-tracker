@@ -12,6 +12,16 @@ import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 import { addQueuedLeads } from '../../utils/draftLeadsQueue';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import {
+  LEAD_PASTE_TARGETS as PASTE_TARGETS,
+  autoDetectLeadMapping as autoDetectMapping,
+  makeLeadId as makeId,
+  makeLeadRow,
+  normalizeLeadName,
+  leadEmailKey as emailKey,
+  planLeadImport,
+  summariseLeadNames,
+} from '../../utils/marketingLeadsImport';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -61,39 +71,10 @@ const LEGACY_COLUMN_KEYS = [
 // (and mirrored into the app's Notes column).
 const MARKETING_LEAD_NOTE = 'Marketing Lead';
 
-// Target fields the paste-mapping modal can fill. Aliases match common
-// Salesforce / Excel header conventions case- and punctuation-
-// insensitively, so "Job Title", "jobtitle", "Title" all hit jobTitle.
-const PASTE_TARGETS = [
-  { key: 'name',                label: 'Name',                       required: true,
-    aliases: ['name', 'fullname', 'leadname', 'contactname', 'contact'] },
-  { key: 'email',               label: 'Email',                      required: false,
-    aliases: ['email', 'emailaddress', 'workemail', 'e-mail'] },
-  { key: 'jobTitle',            label: 'Job Title',                  required: false,
-    aliases: ['jobtitle', 'title', 'position', 'role'] },
-  { key: 'company',             label: 'Company',                    required: false,
-    aliases: ['company', 'companyname', 'account', 'accountname', 'organization'] },
-  { key: 'status',              label: 'Status',                     required: false,
-    aliases: ['status', 'leadstatus'] },
-  { key: 'createdDate',         label: 'Created Date',               required: false,
-    aliases: ['createddate', 'created', 'datecreated', 'createdon', 'createddatetime'] },
-  { key: 'leadSource',          label: 'Last Lead Source',           required: false,
-    aliases: ['lastleadsource', 'leadsource', 'source'] },
-  { key: 'owner',               label: 'Owner',                      required: false,
-    aliases: ['owner', 'leadowner', 'ownername', 'accountowner', 'ownerfullname'] },
-  { key: 'country',             label: 'Country',                    required: false,
-    aliases: ['country', 'countrycode', 'mailingcountry', 'billingcountry'] },
-  { key: 'qualificationDetail', label: 'Qualification Source Detail', required: false,
-    aliases: ['qualificationsourcedetail', 'qualificationdetail', 'qualificationsource', 'sourcedetail'] },
-  { key: 'linkedin',            label: 'LinkedIn',                   required: false,
-    aliases: ['linkedin', 'linkedinurl', 'linkedinprofile', 'linkedinprofileurl', 'linkedinlink', 'li', 'liurl'] },
-  // Salesforce record link / id. Auto-filled from the clipboard's HTML
-  // anchors when pasting a list view; a mapped URL / Lead-ID column takes
-  // precedence. Listed last so its generic aliases (url / id / link)
-  // don't claim a header a more specific field wants.
-  { key: 'sfUrl',               label: 'Salesforce Link',            required: false,
-    aliases: ['salesforcelink', 'salesforceurl', 'sfurl', 'sflink', 'leadurl', 'recordurl', 'url', 'link', 'leadid', 'recordid', 'id'] },
-];
+// The columns a pasted table can fill (PASTE_TARGETS), the header
+// auto-detection and the import rules themselves live in
+// utils/marketingLeadsImport — the BFO Activity → Leads subtab maps its
+// own paste over through the same rules, and the two must not drift.
 
 const EDITABLE_KEYS = COLUMNS.filter(c => !c.readonly).map(c => c.key);
 
@@ -106,22 +87,8 @@ const BULK_EDIT_KEYS = [
   'jobTitle', 'country', 'createdDate', 'qualificationDetail',
 ];
 
-function makeId() {
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function emptyRow() {
-  const r = { id: makeId() };
-  for (const k of EDITABLE_KEYS) r[k] = '';
-  return r;
-}
-
-// Normalized email used as the duplicate key: trimmed + lower-cased so
-// "Chris.Kirk@CBRE.com " and "chris.kirk@cbre.com" collapse to one lead.
-// Rows without an email return '' and are never treated as duplicates of
-// each other.
-function emailKey(row) {
-  return (row?.email || '').toLowerCase().trim();
+  return makeLeadRow();
 }
 
 // How "complete" a lead row is — the count of non-empty editable fields.
@@ -165,10 +132,6 @@ function splitPasteRow(line) {
   return line.split(/,(?![^"]*"\s*(?:,|$))|;/).map(s => s.replace(/^"|"$/g, ''));
 }
 
-function normaliseHeader(s) {
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 // Turn a stored LinkedIn value into an openable URL. Accepts a full
 // http(s) URL, a bare "linkedin.com/in/…" (no scheme), or just a vanity
 // slug ("john-doe") — the last becomes a /in/ profile URL. Returns null
@@ -181,25 +144,6 @@ function linkedinHref(raw) {
   return `https://www.linkedin.com/in/${v.replace(/^\/+/, '')}`;
 }
 
-// Build a default header → target-key mapping. Each header is matched
-// case- and punctuation-insensitively against every target's aliases;
-// the first hit wins so a header can't accidentally double-map.
-function autoDetectMapping(headers) {
-  const mapping = {}; // targetKey → header
-  const used = new Set();
-  for (const t of PASTE_TARGETS) {
-    for (const h of headers) {
-      if (used.has(h)) continue;
-      if (t.aliases.includes(normaliseHeader(h))) {
-        mapping[t.key] = h;
-        used.add(h);
-        break;
-      }
-    }
-  }
-  return mapping;
-}
-
 function companyKey(s) {
   return String(s || '').toLowerCase().trim();
 }
@@ -209,18 +153,6 @@ function companyKey(s) {
 // with a red background and sunk below the active leads.
 function isClosedRecycle(row) {
   return String(row?.status || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 'closedrecycle';
-}
-
-// A lead Salesforce has moved to "Working" — someone is actively on it.
-// Matched with the same punctuation-blind normalisation as Closed-Recycle,
-// and by prefix so the sub-statuses ("Working - Contacted") count too.
-//
-// This is the one status that outranks whatever a duplicate already has:
-// a Salesforce list shows the dead copy of a lead alongside the live one
-// (Chris Kirk is Closed-Recycle from June and Working from July), and the
-// live one is the truth.
-function isWorkingStatus(status) {
-  return String(status || '').toLowerCase().replace(/[^a-z0-9]/g, '').startsWith('working');
 }
 
 // Lead-status classification for the close-rate summary. Statuses are
@@ -280,24 +212,6 @@ function extractLeadLinks(html) {
     if (!(key in map)) map[key] = href;
   }
   return Object.keys(map).length ? map : null;
-}
-
-// Salesforce lists render person names "Last, First" (e.g. "Blancarte,
-// Victor"). Flip a simple "Last, First" into "First Last" for display,
-// HubSpot matching, and the create-contact name split. Names without a
-// comma pass through untouched, and it's idempotent so re-running never
-// re-flips an already-normalised name.
-function normalizeLeadName(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return s;
-  const ci = s.indexOf(',');
-  if (ci === -1) return s;
-  const last = s.slice(0, ci).trim();
-  const first = s.slice(ci + 1).trim();
-  // Only flip a clean two-part "Last, First" — bail on empty halves or a
-  // multi-comma value so odd inputs aren't mangled.
-  if (!last || !first || first.includes(',')) return s;
-  return `${first} ${last}`;
 }
 
 function nameKey(s) {
@@ -1704,46 +1618,11 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
     const { headers, rows, mapping, linkMap } = pasteModal;
     const idxOf = {};
     headers.forEach((h, i) => { idxOf[h] = i; });
-    // Emails belonging to hidden leads. A pasted lead whose email matches
-    // one of these is blocked from import — the user hid that lead on
-    // purpose, so re-importing it (e.g. from a fresh Salesforce copy)
-    // would resurrect it. Case-insensitive, trimmed, to match how emails
-    // are compared elsewhere.
-    const hiddenEmails = new Set(
-      persistedRows
-        .filter(r => hiddenLeadIds.has(r.id))
-        .map(r => (r.email || '').toLowerCase().trim())
-        .filter(Boolean)
-    );
-    // Emails already saved (visible or hidden). A pasted lead whose email
-    // matches an existing one is a duplicate and is ignored on input — the
-    // user asked never to see the same contact twice.
-    const existingEmails = new Set(
-      persistedRows.map(r => (r.email || '').toLowerCase().trim()).filter(Boolean)
-    );
-    // Emails seen so far in THIS paste, so a block that itself repeats a
-    // contact only imports it once.
-    const seenInPaste = new Set();
-    // Saved leads by email, so a duplicate that has since gone Working can
-    // carry that status back to the lead already on the page. A Salesforce
-    // list shows both copies of a recycled-then-reworked lead, and the
-    // pasted block is usually the newer truth.
-    const savedByEmail = new Map();
-    for (const r of persistedRows) {
-      const k = emailKey(r);
-      if (k && !savedByEmail.has(k)) savedByEmail.set(k, r);
-    }
-    // id → the Working status to write onto a saved lead. Only Working is
-    // promoted: the reverse (a stale Closed-Recycle copy overwriting a
-    // lead you are actively working) is exactly what this must not do.
-    const statusUpdates = new Map();
-    // Same rule inside one paste — first row wins the import, but a later
-    // Working duplicate still sets its status.
-    const incomingByEmail = new Map();
+    // Build the pasted rows as lead rows; planLeadImport below applies the
+    // hidden / duplicate / Working-status rules, shared with the BFO
+    // Activity → Leads subtab so the two pastes can't disagree about
+    // which leads are new.
     const incoming = [];
-    let blockedByHidden = 0;
-    let blockedByDuplicate = 0;
-    let statusPromoted = 0;
     for (const cells of rows) {
       const fresh = emptyRow();
       let any = false;
@@ -1757,69 +1636,48 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
         fresh[t.key] = v;
       }
       if (!any) continue;
-      const email = (fresh.email || '').toLowerCase().trim();
-      // A Working duplicate updates the lead it duplicates before any of
-      // the skips below: the row itself is still not imported twice, but
-      // the status it carries is news. Runs for hidden leads too — the
-      // stored status stays true — without unhiding them.
-      if (email && isWorkingStatus(fresh.status)) {
-        const saved = savedByEmail.get(email);
-        const earlier = incomingByEmail.get(email);
-        if (saved && !isWorkingStatus(saved.status) && !statusUpdates.has(saved.id)) {
-          statusUpdates.set(saved.id, fresh.status);
-          statusPromoted += 1;
-        } else if (earlier && !isWorkingStatus(earlier.status)) {
-          earlier.status = fresh.status;
-          statusPromoted += 1;
-        }
-      }
-      // Skip leads that match a hidden lead's email — don't resurrect
-      // something the user deliberately hid.
-      if (email && hiddenEmails.has(email)) { blockedByHidden += 1; continue; }
-      // Skip duplicates: an email already saved, or already imported
-      // earlier in this same paste.
-      if (email && (existingEmails.has(email) || seenInPaste.has(email))) {
-        blockedByDuplicate += 1;
-        continue;
-      }
-      if (email) seenInPaste.add(email);
       // Backfill the Salesforce Link from the clipboard's HTML anchors
       // (matched by the lead's name) when no URL / Lead-ID column was
       // mapped — this is how the record link travels through a plain
-      // list-view copy.
+      // list-view copy. Done on the raw name, as it appears in the pasted
+      // HTML, before planLeadImport flips it to "First Last".
       if (!fresh.sfUrl && linkMap && fresh.name) {
         const hit = linkMap[nameKey(fresh.name)];
         if (hit) fresh.sfUrl = hit;
       }
-      // Flip "Last, First" → "First Last" AFTER the link lookup above,
-      // which matches on the raw name as it appears in the pasted HTML.
-      fresh.name = normalizeLeadName(fresh.name);
-      if (email) incomingByEmail.set(email, fresh);
       incoming.push(fresh);
     }
-    const updatedSaved = statusUpdates.size
-      ? persistedRows.map(r => (statusUpdates.has(r.id) ? { ...r, status: statusUpdates.get(r.id) } : r))
-      : persistedRows;
-    if (incoming.length || statusUpdates.size) persist([...updatedSaved, ...incoming]);
+    const plan = planLeadImport({
+      incoming,
+      saved: persistedRows,
+      hiddenIds: [...hiddenLeadIds],
+      promoteWorkingStatus: true,
+    });
+    if (plan.additions.length || plan.savedAfter !== persistedRows) {
+      persist([...plan.savedAfter, ...plan.additions]);
+    }
     setPasteModal(null);
     const notes = [];
-    if (statusPromoted > 0) {
+    if (plan.statusPromoted > 0) {
       notes.push(
-        `${statusPromoted} lead${statusPromoted === 1 ? '' : 's'} moved to Working ` +
+        `${plan.statusPromoted} lead${plan.statusPromoted === 1 ? '' : 's'} moved to Working ` +
         `from a duplicate in the paste.`
       );
     }
-    if (blockedByDuplicate > 0) {
+    if (plan.blockedDuplicate.length > 0) {
+      const n = plan.blockedDuplicate.length;
       notes.push(
-        `${blockedByDuplicate} duplicate${blockedByDuplicate === 1 ? '' : 's'} skipped ` +
-        `(email already saved).`
+        `${n} duplicate${n === 1 ? '' : 's'} skipped (email already saved): ` +
+        `${summariseLeadNames(plan.blockedDuplicate)}.`
       );
     }
-    if (blockedByHidden > 0) {
+    if (plan.blockedHidden.length > 0) {
+      const n = plan.blockedHidden.length;
       notes.push(
-        `${blockedByHidden} lead${blockedByHidden === 1 ? '' : 's'} skipped: ` +
-        `${blockedByHidden === 1 ? 'its' : 'their'} email matches a hidden lead. ` +
-        `Unhide from "Show hidden" if you want to import ${blockedByHidden === 1 ? 'it' : 'them'} again.`
+        `${n} lead${n === 1 ? '' : 's'} skipped: ` +
+        `${n === 1 ? 'its' : 'their'} email matches a hidden lead ` +
+        `(${summariseLeadNames(plan.blockedHidden)}). ` +
+        `Unhide from "Show hidden" if you want to import ${n === 1 ? 'it' : 'them'} again.`
       );
     }
     if (notes.length) window.alert(notes.join('\n'));

@@ -52,6 +52,11 @@ export function PasteTableView({
   // When set, the "Name" column is rewritten from "Last, First" to
   // "First Last" as rows are pasted in.
   flipNameColumn = false,
+  // Optional hook run with the freshly parsed { headers, rows } after a
+  // paste lands, for a page that wants to do something else with the same
+  // table (the Leads subtab maps new leads over to Marketing Leads).
+  // Whatever string it returns is appended to the paste confirmation.
+  onRowsPasted,
 }) {
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
@@ -63,6 +68,19 @@ export function PasteTableView({
   const [hiddenCols, setHiddenCols] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const hydratedRef = useRef(false);
+  // One timer for the flash line, so a longer message isn't cut short by
+  // the timeout an earlier paste left running.
+  const flashTimerRef = useRef(null);
+
+  function showFlash(message, ms) {
+    setFlash(message);
+    if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlash(''), ms);
+  }
+
+  useEffect(() => () => {
+    if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,14 +154,20 @@ export function PasteTableView({
   function importPaste(text) {
     const parsed = parseTSV(text);
     if (parsed.rows.length === 0) {
-      setFlash('Pasted text had no data rows.');
-      window.setTimeout(() => setFlash(''), 2500);
+      showFlash('Pasted text had no data rows.', 2500);
       return;
     }
     const next = flipNameColumn ? withFlippedNames(parsed) : parsed;
     setData(next);
-    setFlash(`Imported ${next.rows.length} rows · ${next.headers.length} columns.`);
-    window.setTimeout(() => setFlash(''), 2500);
+    let extra = '';
+    if (onRowsPasted) {
+      // The table is already saved above — a failure in the hook must not
+      // cost the user the paste.
+      try { extra = onRowsPasted(next) || ''; }
+      catch (err) { console.warn('paste hook failed', err); }
+    }
+    const base = `Imported ${next.rows.length} rows · ${next.headers.length} columns.`;
+    showFlash(extra ? `${base} ${extra}` : base, extra ? 12000 : 2500);
   }
 
   function handlePagePaste(e) {
