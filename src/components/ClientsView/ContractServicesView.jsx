@@ -4,6 +4,9 @@ import { buildServiceCatalog } from '../../utils/serviceCoverage';
 import { mergeExtractedServices } from '../../utils/contractServices';
 import { apiFetch } from '../../utils/apiFetch';
 import { appendContractLanguage } from '../../utils/contractLanguageStore';
+import { applyDealTerms, DEAL_TERM_FIELDS, loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
+import { loadDealClientMap, resolveClientName } from '../../utils/dealClientMap';
+import { fmtDate } from '../../utils/dealsFormat';
 
 // Vercel caps a serverless request body at 4.5 MB and base64 adds a third,
 // so this is the largest PDF that can be posted whole for Claude to read
@@ -84,6 +87,22 @@ async function buildPayload(file) {
   const text = (await file.text()).trim();
   if (!text) throw new Error('That file is empty.');
   return { fileName: file.name, text, readAs: 'text' };
+}
+
+// The commercial terms as the documents state them, merged across an
+// agreement and its amendments: later documents win field by field, so an
+// amendment that only moves the end date doesn't blank the escalator the
+// master agreement set. A field no document stated stays empty.
+function mergeContractTerms(doneFiles) {
+  const out = { termStart: '', termEnd: '', autoRenewal: '', escalator: '', paymentTerms: '' };
+  for (const f of doneFiles) {
+    const r = f.result || {};
+    for (const k of Object.keys(out)) {
+      const v = String(r[k] ?? '').trim();
+      if (v) out[k] = v;
+    }
+  }
+  return out;
 }
 
 const CONFIDENCE_STYLE = {
@@ -252,6 +271,16 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   const [languageNote, setLanguageNote] = useState('');
   const [languageError, setLanguageError] = useState({ error: '', code: '' });
   const [savingLanguage, setSavingLanguage] = useState(false);
+  // Reviewer corrections to the extracted terms, by field. Held apart from
+  // the extraction so re-reading a document doesn't silently drop a fix, and
+  // so "reset" can put the document's own wording back.
+  const [termEdits, setTermEdits] = useState(() => (saved?.termEdits && typeof saved.termEdits === 'object' ? saved.termEdits : {}));
+  const [dealIdx, setDealIdx] = useState('');
+  const [dealNote, setDealNote] = useState('');
+  const [dealError, setDealError] = useState('');
+  // The Deals roster, re-read when another tab uploads or edits it.
+  const [dealsList, setDealsList] = useState(() => loadDealsList().data);
+  const [dealClientMap, setDealClientMap] = useState(() => loadDealClientMap());
   const inputRef = useRef(null);
 
   const catalog = useMemo(() => buildServiceCatalog(settings), [settings]);
@@ -267,8 +296,18 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
   // Only the analysis is persisted; a re-render that changes nothing still
   // rewrites the same JSON, which is cheap next to re-running the model.
   useEffect(() => {
-    save({ clientId, files, overrides });
-  }, [clientId, files, overrides]);
+    save({ clientId, files, overrides, termEdits });
+  }, [clientId, files, overrides, termEdits]);
+
+  useEffect(() => {
+    const refresh = () => { setDealsList(loadDealsList().data); setDealClientMap(loadDealClientMap()); };
+    window.addEventListener(DEALS_LIST_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(DEALS_LIST_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
 
   const done = useMemo(() => files.filter(f => f.status === 'done' && f.result), [files]);
   const rows = useMemo(() => mergeExtractedServices(done, catalog), [done, catalog]);
@@ -431,6 +470,42 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
     );
   }
 
+  // What the documents said, with the reviewer's corrections on top.
+  const extractedTerms = useMemo(() => mergeContractTerms(done), [done]);
+  const terms = { ...extractedTerms, ...termEdits };
+  const termsFilled = DEAL_TERM_FIELDS.filter(f => String(terms[f.from] || '').trim()).length;
+
+  // Deals belonging to the picked client, carrying their index in the stored
+  // roster because that is how a row is addressed for writing.
+  const clientDeals = useMemo(() => {
+    const target = String(client?.company || '').trim().toLowerCase();
+    if (!target) return [];
+    return dealsList
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) =>
+        String(resolveClientName(row['Client Name'], dealClientMap) || '').trim().toLowerCase() === target);
+  }, [dealsList, dealClientMap, client]);
+
+  function setTerm(field, value) {
+    setTermEdits(prev => ({ ...prev, [field]: value }));
+    setDealNote('');
+  }
+  function resetTerms() {
+    setTermEdits({});
+    setDealNote('');
+  }
+
+  function writeTermsToDeal() {
+    const picked = clientDeals.find(d => String(d.index) === String(dealIdx));
+    if (!picked) return;
+    setDealNote('');
+    setDealError('');
+    const res = applyDealTerms(picked.index, picked.row, terms);
+    if (!res.ok) { setDealError(res.error); return; }
+    setDealsList(loadDealsList().data);
+    setDealNote(`Wrote ${res.written.length} field${res.written.length === 1 ? '' : 's'} to that deal: ${res.written.join(', ')}`);
+  }
+
   const canApply = !!client && selectedRows.length > 0 && typeof updateProspect === 'function';
   const currentStatuses = client?.servicesExplored || {};
 
@@ -584,6 +659,99 @@ export function ContractServicesView({ prospects = [], settings = {}, updatePros
               <div style={{ marginTop: 4, opacity: 0.85 }}>{languageError.error}</div>
             </div>
           )}
+
+          {/* --- commercial terms -------------------------------------- */}
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.7rem 0.8rem', marginBottom: '0.6rem', background: '#F8FAFC' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>
+                Contract terms{' '}
+                <span style={{ fontWeight: 500, color: '#94A3B8' }}>
+                  {termsFilled} of {DEAL_TERM_FIELDS.length} stated
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={resetTerms}
+                disabled={Object.keys(termEdits).length === 0}
+                title="Put the documents’ own wording back"
+                style={{
+                  padding: '0.25rem 0.6rem', borderRadius: 5, background: '#fff',
+                  border: '1px solid #E2E8F0', fontFamily: 'inherit', fontSize: '0.7rem',
+                  color: Object.keys(termEdits).length ? '#475569' : '#CBD5E1',
+                  cursor: Object.keys(termEdits).length ? 'pointer' : 'default',
+                }}
+              >Reset edits</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.5rem' }}>
+              {DEAL_TERM_FIELDS.map(f => {
+                const edited = termEdits[f.from] !== undefined
+                  && String(termEdits[f.from] ?? '') !== String(extractedTerms[f.from] ?? '');
+                return (
+                  <label key={f.from} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.66rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                    {f.label}
+                    {edited && <span style={{ fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: '#92400E' }}>edited</span>}
+                    <input
+                      type="text"
+                      value={terms[f.from] || ''}
+                      placeholder="Not stated"
+                      onChange={e => setTerm(f.from, e.target.value)}
+                      style={{
+                        padding: '0.3rem 0.45rem', border: '1px solid', borderRadius: 5,
+                        borderColor: edited ? '#FCD34D' : '#E2E8F0',
+                        background: '#fff', fontSize: '0.74rem', fontFamily: 'inherit',
+                        fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#1E293B',
+                      }}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#475569' }}>Map to deal</span>
+              <select
+                value={dealIdx}
+                onChange={e => { setDealIdx(e.target.value); setDealNote(''); setDealError(''); }}
+                disabled={!client || clientDeals.length === 0}
+                style={{ padding: '0.3rem 0.45rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 420 }}
+              >
+                <option value="">
+                  {!client ? '\u2014 pick a client first \u2014'
+                    : clientDeals.length === 0 ? `\u2014 no deals for ${client.company} \u2014`
+                    : '\u2014 pick a deal \u2014'}
+                </option>
+                {clientDeals.map(({ row, index }) => (
+                  <option key={index} value={index}>
+                    {String(row['Agreement Name'] || '').trim() || '(no agreement name)'}
+                    {row['Current Term Start Date'] ? ` \u00b7 from ${fmtDate(row['Current Term Start Date'])}` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!dealIdx || termsFilled === 0}
+                onClick={writeTermsToDeal}
+                title={termsFilled === 0
+                  ? 'None of the five terms has a value to write.'
+                  : 'Write these terms onto the picked deal on the Deals subtab. Blank terms leave the deal\u2019s existing value alone.'}
+                style={{
+                  padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid',
+                  borderColor: dealIdx && termsFilled ? '#2563EB' : '#CBD5E1',
+                  background: dealIdx && termsFilled ? '#EFF6FF' : '#F1F5F9',
+                  color: dealIdx && termsFilled ? '#1E40AF' : '#94A3B8',
+                  fontSize: '0.73rem', fontWeight: 700, fontFamily: 'inherit',
+                  cursor: dealIdx && termsFilled ? 'pointer' : 'not-allowed',
+                }}
+              >Write terms to deal</button>
+              {dealNote && <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: 600 }}>{dealNote}</span>}
+            </div>
+            {dealError && (
+              <div style={{ marginTop: '0.4rem', fontSize: '0.7rem', color: '#991B1B', fontWeight: 600 }}>{dealError}</div>
+            )}
+            <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: '0.4rem', lineHeight: 1.45 }}>
+              Read from the documents above and correctable here. Only fields with a value are written — a term the
+              contract doesn’t state leaves the deal’s existing value alone.
+            </div>
+          </div>
 
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
             {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}.

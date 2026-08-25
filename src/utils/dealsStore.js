@@ -70,3 +70,50 @@ export function renameDealsClient(oldName, newName) {
   if (count > 0) saveDealsOverride(next);
   return count;
 }
+
+// The deal columns the Contract Services subtab writes commercial terms
+// into. Keys are the canonical names DealsView normalises uploaded headers
+// onto, so a workbook that spelled a header differently still lands here.
+export const DEAL_TERM_FIELDS = [
+  { key: 'Current Term Start Date', label: 'Start date',    from: 'termStart' },
+  { key: 'End Date',                label: 'End date',      from: 'termEnd' },
+  { key: 'Auto renewal?',           label: 'Auto renewal',  from: 'autoRenewal' },
+  { key: 'Esc',                     label: 'Esc',           from: 'escalator' },
+  { key: 'Payment Terms',           label: 'Payment terms', from: 'paymentTerms' },
+];
+
+/**
+ * Write commercial terms onto one deal row.
+ *
+ * The roster is a flat array in localStorage with no row ids, so the row is
+ * addressed by index — and re-read here rather than trusted from the
+ * caller's copy, because the Deals subtab may have been re-uploaded in
+ * another tab since. `guard` is the row as the caller last saw it: if the
+ * row at that index no longer carries the same Client Name and Agreement
+ * Name, the write is refused rather than landing on somebody else's deal.
+ *
+ * Only non-empty values are written, so a term the contract didn't state
+ * leaves whatever is already on the deal alone.
+ *
+ * Returns { ok, error, written: [keys] }.
+ */
+export function applyDealTerms(index, guard, terms) {
+  const { data } = loadDealsList();
+  const row = data[index];
+  if (!row) return { ok: false, error: 'That deal is no longer in the roster — reload the Deals subtab.', written: [] };
+  const same = (k) => String(row[k] ?? '').trim() === String(guard?.[k] ?? '').trim();
+  if (!same('Client Name') || !same('Agreement Name')) {
+    return { ok: false, error: 'The Deals roster changed since this list was built — reopen the picker and try again.', written: [] };
+  }
+  const patch = {};
+  for (const f of DEAL_TERM_FIELDS) {
+    const v = String(terms?.[f.from] ?? '').trim();
+    if (v) patch[f.key] = v;
+  }
+  const written = Object.keys(patch);
+  if (written.length === 0) return { ok: false, error: 'None of the five terms has a value to write.', written: [] };
+  const next = data.slice();
+  next[index] = { ...row, ...patch };
+  saveDealsOverride(next);
+  return { ok: true, error: '', written };
+}
