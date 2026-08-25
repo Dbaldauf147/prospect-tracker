@@ -343,3 +343,70 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+/* "+ Add" split button: primary half adds one company, caret half
+   opens the menu with the bulk add. Both halves share the accent
+   background so it still reads as one button. */
+.addSplit {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.addBtnMain,
+.addBtnCaret {
+  display: flex;
+  align-items: center;
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.addBtnMain {
+  gap: 0.3rem;
+  padding: 0.45rem 0.75rem;
+}
+
+.addBtnCaret {
+  padding: 0.45rem 0.45rem;
+  font-size: 0.6rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.addBtnMain:hover,
+.addBtnCaret:hover {
+  background: var(--color-accent-hover);
+}
+
+.addDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.3rem;
+  min-width: 190px;
+  z-index: 50;
+}
+
+.addDropdownItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.addDropdownItem:hover {
+  background: var(--color-surface-alt);
+}
