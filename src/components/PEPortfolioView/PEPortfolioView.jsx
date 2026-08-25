@@ -1198,7 +1198,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span>, so the Services Not Sold column isn't repeated here. Every other PE Overview column is, and this tab keeps its own column layout.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold and Services Not Sold columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. <strong>Export Excel</strong> carries the same three colours into the file.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -2404,14 +2404,27 @@ function bucketOf(row, name) { return row._byBucket[name] || EMPTY_BUCKET; }
 // filter box matches on, so typing a service name finds the row either way.
 function bucketNames(box) { return [...box.sold, ...box.inProgress, ...box.notSold]; }
 
-// One bucket cell as a single export string. Colour doesn't survive the
-// trip to Excel, so the not-sold ones say so in words instead.
+// One outcome cell as a single export string, for an export that can only
+// carry text — the not-sold and in-flight ones say so in words there,
+// because nothing else would tell them apart.
 function bucketExport(box) {
   return [
     ...box.sold,
     ...box.inProgress.map(n => `${n} (in progress)`),
     ...box.notSold.map(n => `${n} (not sold)`),
   ].join(', ');
+}
+
+// The same cell as coloured runs, for an export that can carry colour: one
+// run per service, in the pipeline order the on-screen cell reads in. The
+// styled workbook picks these up (see exportSchneider) and the words drop
+// out — the colour is the marker there, exactly as it is on screen.
+function outcomeRuns({ sold = [], inProgress = [], notSold = [] }) {
+  return [
+    ...sold.filter(Boolean).map(text => ({ text, color: SOLD_TEXT })),
+    ...inProgress.filter(Boolean).map(text => ({ text, color: IN_PROGRESS_TEXT })),
+    ...notSold.filter(Boolean).map(text => ({ text, color: NOT_SOLD_TEXT })),
+  ];
 }
 
 function NameListCell({ items, empty }) {
@@ -2921,15 +2934,19 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       // Explored-services breakdown, pulled from each prospect's
       // servicesExplored map (service name -> status). Read-only here —
       // edit the statuses in the prospect's Services Explored panel.
-      { key: 'servicesSold', label: 'Services Sold', defaultWidth: 220,
+      //
+      // Services Sold is PE Overview's. The Services tab drops it for the
+      // same reason it drops Services Not Sold: every sold service is
+      // already in its bucket column there, in green, so a second run-on
+      // list of the same names would just cost a column's width.
+      ...(isServicesVariant ? [] : [{ key: 'servicesSold', label: 'Services Sold', defaultWidth: 220,
         getSortValue: (r) => r.servicesSold.length,
         getFilterValue: (r) => r.servicesSold.join(', '),
         exportValue: (r) => r.servicesSold.join(', '),
-        render: (r) => <ServiceOutcomeCell sold={r.servicesSold} empty="No services sold" /> },
+        exportRuns: (r) => outcomeRuns({ sold: r.servicesSold }),
+        render: (r) => <ServiceOutcomeCell sold={r.servicesSold} empty="No services sold" /> }]),
       // One column per bucket: what that box sold in dark green, what's
-      // still in flight in dark yellow, then what it lost in red. Sits right
-      // after Services Sold (the full list), so the breakdown reads left to
-      // right off the roll-up it came from.
+      // still in flight in dark yellow, then what it lost in red.
       ...bucketColumns.map(({ name, key }) => ({
         key,
         label: name,
@@ -2948,6 +2965,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
           + bucketOf(r, name).notSold.length,
         getFilterValue: (r) => bucketNames(bucketOf(r, name)).join(', '),
         exportValue: (r) => bucketExport(bucketOf(r, name)),
+        exportRuns: (r) => outcomeRuns(bucketOf(r, name)),
         render: (r) => <ServiceOutcomeCell {...bucketOf(r, name)} empty={`No ${name} services explored`} />,
       })),
       // Services no box claims — the same card the Scope picker adds. Kept
@@ -2962,6 +2980,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
           + r._noBucket.notSold.length,
         getFilterValue: (r) => bucketNames(r._noBucket).join(', '),
         exportValue: (r) => bucketExport(r._noBucket),
+        exportRuns: (r) => outcomeRuns(r._noBucket),
         render: (r) => <ServiceOutcomeCell {...r._noBucket} empty="No unfiled services explored" /> }] : []),
       // Services Not Sold has its own column on PE Overview. The Services
       // tab drops it: every not-sold service is already in its bucket
@@ -2971,6 +2990,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getSortValue: (r) => r.servicesNotSold.length,
         getFilterValue: (r) => r.servicesNotSold.join(', '),
         exportValue: (r) => r.servicesNotSold.join(', '),
+        exportRuns: (r) => outcomeRuns({ notSold: r.servicesNotSold }),
         render: (r) => <ServiceOutcomeCell notSold={r.servicesNotSold} empty="No services marked not sold" /> }]),
       // Services In Progress: in-flight explored services. When the
       // company has a matching opp in the Opps tab, the cell becomes a
@@ -2980,6 +3000,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getSortValue: (r) => r.servicesInProgress.length,
         getFilterValue: (r) => r.servicesInProgress.join(', '),
         exportValue: (r) => r.servicesInProgress.join(', '),
+        exportRuns: (r) => outcomeRuns({ inProgress: r.servicesInProgress }),
         render: (r) => {
           // Dark yellow, same as the in-flight services in the bucket
           // columns — except when the row has matching opps, where the cell
@@ -3248,6 +3269,10 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     const SE_BORDER = 'FFD4DDE1';
     const SE_TEXT = 'FF1E293B';
     const ZEBRA = 'FFF1F8F4';
+    const BODY_FONT = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT } };
+    // The screen's colours, in the ARGB ExcelJS wants — so a service reads
+    // the same green / yellow / red in the file as it does in the table.
+    const argb = (hex) => `FF${String(hex).replace('#', '').toUpperCase()}`;
     const cols = (exportCols || []).filter(c => c.key !== '_select');
     const headers = cols.map(c => colNames?.[c.key] || c.label || c.key);
 
@@ -3294,11 +3319,24 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
     exportRows.forEach((row, ri) => {
       const r = ws.getRow(4 + ri);
       cols.forEach((c, ci) => {
-        let val = typeof c.exportValue === 'function' ? c.exportValue(row) : row[c.key];
-        if (Array.isArray(val)) val = val.join(', ');
         const cell = r.getCell(ci + 1);
-        cell.value = val === '' || val == null ? null : val;
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT } };
+        // Columns whose cells colour-code their contents (the service
+        // outcome ones) hand over runs instead of a string, so each service
+        // keeps its own colour rather than the whole cell taking one.
+        const runs = typeof c.exportRuns === 'function' ? c.exportRuns(row) : null;
+        if (runs && runs.length > 0) {
+          cell.value = {
+            richText: runs.map((run, i) => ({
+              font: { ...BODY_FONT, bold: true, color: { argb: argb(run.color) } },
+              text: `${i > 0 ? ', ' : ''}${run.text}`,
+            })),
+          };
+        } else {
+          let val = typeof c.exportValue === 'function' ? c.exportValue(row) : row[c.key];
+          if (Array.isArray(val)) val = val.join(', ');
+          cell.value = val === '' || val == null ? null : val;
+        }
+        cell.font = BODY_FONT;
         cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
         if (ri % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
         cell.border = {
