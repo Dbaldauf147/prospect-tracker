@@ -100,15 +100,109 @@ function useOppsRecords(userId) {
 // Tagged row runs on (rosterTagCoverage), so the two pages read one number
 // rather than two: of every tag question askable about a group's contacts,
 // the share that has an answer.
+// How many contacts one roster lists inline before it defers to the
+// Contacts page. Long enough that a roster you can actually work through
+// fits; short enough that opening "All" on a full book doesn't paint
+// thousands of rows into a step on a ladder.
+const TAG_LIST_LIMIT = 200;
+
+// The contacts behind one Tagged chip: who is on that roster, and how far
+// through the tag questions each of them is. Least-tagged first, so the
+// names the percentage is waiting on lead.
+function TagContactList({ cell, bucket, onNavigate, onClose }) {
+  const people = Array.isArray(bucket?.people) ? bucket.people : [];
+  const shown = people.slice(0, TAG_LIST_LIMIT);
+  return (
+    <div style={{
+      marginTop: 6, border: `1px solid ${cell.border}`, borderRadius: 8,
+      background: '#fff', overflow: 'hidden', width: '100%',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        padding: '5px 9px', background: cell.bg, borderBottom: `1px solid ${cell.border}`,
+      }}>
+        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: cell.color }}>{cell.label}</span>
+        <span style={{ fontSize: '0.68rem', color: '#475569' }}>
+          {people.length} contact{people.length === 1 ? '' : 's'}
+          {bucket?.pct != null && <> · {bucket.pct}% tagged</>}
+        </span>
+        <span style={{ flex: 1 }} />
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={onNavigate}
+            style={{
+              padding: '1px 7px', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 5,
+              fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', color: '#0A66C2', cursor: 'pointer',
+            }}
+          >Open in Contacts</button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={`Close the ${cell.label} contact list`}
+          style={{
+            padding: '1px 7px', background: 'transparent', border: '1px solid transparent', borderRadius: 5,
+            fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit', color: '#64748B', cursor: 'pointer',
+          }}
+        >×</button>
+      </div>
+      {people.length === 0 ? (
+        <div style={{ padding: '7px 9px', fontSize: '0.68rem', color: '#94A3B8' }}>
+          No contacts on this roster.
+        </div>
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+          {shown.map((person, i) => (
+            <div
+              key={person.id || `${person.email}-${i}`}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 8,
+                padding: '4px 9px', borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                fontSize: '0.7rem',
+              }}
+            >
+              <span style={{ fontWeight: 700, color: '#1E293B', flexShrink: 0 }}>{person.name}</span>
+              <span style={{
+                color: '#64748B', flex: 1, minWidth: 0,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{person.company || person.email}</span>
+              {/* What this contact contributes to the percentage above. */}
+              <span
+                title={`${person.answered} of ${person.total} tag questions answered`}
+                style={{
+                  flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                  color: person.done ? '#166534' : '#B45309',
+                }}
+              >{person.done ? '✓' : `${person.answered}/${person.total}`}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {people.length > shown.length && (
+        <div style={{
+          padding: '4px 9px', borderTop: '1px solid #F1F5F9',
+          fontSize: '0.66rem', color: '#94A3B8',
+        }}>
+          Showing {shown.length} of {people.length} — open in Contacts for the rest.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
-  if (!coverage) return null;
+  // Which chip's contacts are listed underneath, if any. Local to the row:
+  // it's a look, not a setting, and it should be closed again next visit.
+  const [openKey, setOpenKey] = useState(null);
   const cells = [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
     ...ROSTER_CATEGORIES,
   ];
   // Nothing on any roster — the cache is loaded but empty. A row of "—"
-  // would just be noise.
-  if (!coverage.all.contacts) return null;
+  // would just be noise. Checked after the hook above, not before it, so
+  // the hook order stays stable across a coverage that arrives late.
+  if (!coverage || !coverage.all.contacts) return null;
   return (
     <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
@@ -119,7 +213,7 @@ function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
         const empty = pct == null;
         const title = empty
           ? `No contacts on the ${label} roster yet`
-          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer — the same figure the All Contacts page's Tagged row shows for this group${onNavigate ? '. Click to open Contacts.' : ''}`;
+          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer — the same figure the All Contacts page's Tagged row shows for this group. Click to list them.`;
         const body = (
           <>
             <span style={{ fontWeight: 700 }}>{label}</span>
@@ -136,9 +230,22 @@ function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
           color: empty ? '#94A3B8' : color,
           fontSize: '0.68rem', fontFamily: 'inherit',
         };
-        if (!onNavigate) return <span key={key} style={style} title={title}>{body}</span>;
+        // An empty roster has no list to open, so it stays a plain chip.
+        if (empty) return <span key={key} style={style} title={title}>{body}</span>;
+        const isOpen = openKey === key;
         return (
-          <button key={key} type="button" onClick={onNavigate} title={title} style={{ ...style, cursor: 'pointer' }}>
+          <button
+            key={key}
+            type="button"
+            onClick={() => setOpenKey(isOpen ? null : key)}
+            title={title}
+            aria-expanded={isOpen}
+            style={{
+              ...style,
+              cursor: 'pointer',
+              boxShadow: isOpen ? `0 0 0 2px ${border}` : 'none',
+            }}
+          >
             {body}
           </button>
         );
@@ -162,6 +269,14 @@ function TagCoverageBar({ coverage, onNavigate, missing = [] }) {
           <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
           {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
         </span>
+      )}
+      {openKey && (
+        <TagContactList
+          cell={cells.find(c => c.key === openKey)}
+          bucket={coverage[openKey]}
+          onNavigate={onNavigate}
+          onClose={() => setOpenKey(null)}
+        />
       )}
     </div>
   );
