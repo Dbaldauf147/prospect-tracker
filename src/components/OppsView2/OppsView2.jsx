@@ -3353,13 +3353,14 @@ function NewOppModal({
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
         }}
         style={{
-          width: 440, maxWidth: '92vw',
+          width: 760, maxWidth: '94vw', maxHeight: '92vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
         <div style={{
           padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+          flexShrink: 0,
         }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
             New Opp
@@ -3369,8 +3370,12 @@ function NewOppModal({
           </div>
         </div>
 
-        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
-          <div>
+        <div style={{
+          padding: '0.85rem 1rem', overflowY: 'auto', minHeight: 0,
+          display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          alignItems: 'start', columnGap: '1rem', rowGap: '0.7rem',
+        }}>
+          <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Company</label>
             <input
               autoFocus
@@ -3598,7 +3603,7 @@ function NewOppModal({
             </div>
           </div>
 
-          <div>
+          <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Notes</label>
             <textarea
               value={notes}
@@ -3610,6 +3615,7 @@ function NewOppModal({
           </div>
 
           <div style={{
+            gridColumn: '1 / -1',
             borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
           }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }}>
@@ -3658,7 +3664,7 @@ function NewOppModal({
 
         <div style={{
           display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.4rem',
-          padding: '0.6rem 1rem',
+          padding: '0.6rem 1rem', flexShrink: 0,
           borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
         }}>
           <button
