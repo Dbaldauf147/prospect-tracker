@@ -16,13 +16,13 @@ import {
   rowKey,
   isRowEmpty,
 } from './masterSiteFields';
+import { MASTER_SITE_LIST_KEY, UTILITY_SITES_KEY } from './siteListRename';
 import styles from './MasterSiteListView.module.css';
 
 // Master Site List lives in its own IDB list (mirrored to Firestore by
-// uploadedListStore), separate from the Utility Lookup sites table.
-const MASTER_STORAGE_KEY = 'master-site-list-override';
-// The key the Utility Lookup page (SitesView) reads/writes its sites from.
-const SITES_STORAGE_KEY = 'sites-list-override';
+// uploadedListStore), separate from the Utility Lookup sites table. Both
+// keys come from siteListRename, which rewrites these same rows when a
+// company is renamed, so the two agree on which lists they're touching.
 // Per-user UI preferences (column widths + hidden columns).
 const WIDTHS_LS_KEY = 'master-site-list:col-widths';
 const HIDDEN_LS_KEY = 'master-site-list:hidden-cols';
@@ -464,7 +464,7 @@ export function MasterSiteListView({ prospects = [] }) {
     let cancelled = false;
     (async () => {
       const [saved, util] = await Promise.all([
-        loadList(MASTER_STORAGE_KEY).catch(() => null),
+        loadList(MASTER_SITE_LIST_KEY).catch(() => null),
         loadUtilityRates().catch(() => null),
       ]);
       if (cancelled) return;
@@ -480,7 +480,7 @@ export function MasterSiteListView({ prospects = [] }) {
   useEffect(() => {
     if (!loaded) return;
     if (skipSave.current) { skipSave.current = false; return; }
-    saveList(MASTER_STORAGE_KEY, rows).catch(() => {});
+    saveList(MASTER_SITE_LIST_KEY, rows).catch(() => {});
   }, [rows, loaded]);
 
   // company name -> how many rows carry it. Drives both the filter's option
@@ -746,7 +746,7 @@ export function MasterSiteListView({ prospects = [] }) {
   async function importFromUtilityLookup() {
     setBusy('Importing from Utility Lookup…');
     try {
-      const sites = await loadList(SITES_STORAGE_KEY);
+      const sites = await loadList(UTILITY_SITES_KEY);
       if (!Array.isArray(sites) || !sites.length) {
         setBusy('Utility Lookup has no site data to import. Upload a sites file there first.');
         return;
@@ -778,7 +778,7 @@ export function MasterSiteListView({ prospects = [] }) {
     if (!confirm(`Add ${scopeRows.length} site${scopeRows.length === 1 ? '' : 's'} (${scope}) to the Utility Lookup page? Existing Utility Lookup sites are kept; duplicates are skipped.`)) return;
     setBusy('Exporting to Utility Lookup…');
     try {
-      const existing = await loadList(SITES_STORAGE_KEY);
+      const existing = await loadList(UTILITY_SITES_KEY);
       const hasExisting = Array.isArray(existing) && existing.length > 0;
 
       if (hasExisting) {
@@ -802,7 +802,7 @@ export function MasterSiteListView({ prospects = [] }) {
           toAppend.push(obj);
         }
         if (!toAppend.length) { setBusy('Nothing to export: all selected sites already exist in Utility Lookup.'); return; }
-        await saveList(SITES_STORAGE_KEY, [...existing, ...toAppend]);
+        await saveList(UTILITY_SITES_KEY, [...existing, ...toAppend]);
         setBusy(`Added ${toAppend.length} site${toAppend.length === 1 ? '' : 's'} to Utility Lookup. Open the Utility Lookup tab to see them.`);
       } else {
         // Empty target — seed with canonical headers.
@@ -811,7 +811,7 @@ export function MasterSiteListView({ prospects = [] }) {
           MASTER_FIELDS.forEach((f, i) => { obj[CANONICAL_HEADERS[i]] = r[f.key] || ''; });
           return obj;
         });
-        await saveList(SITES_STORAGE_KEY, out);
+        await saveList(UTILITY_SITES_KEY, out);
         setBusy(`Sent ${out.length} site${out.length === 1 ? '' : 's'} to Utility Lookup. Open the Utility Lookup tab to see them.`);
       }
     } catch (err) {
@@ -846,7 +846,7 @@ export function MasterSiteListView({ prospects = [] }) {
   function clearAll() {
     if (!confirm('Clear the entire Master Site List? This cannot be undone.')) return;
     setRows([]);
-    clearList(MASTER_STORAGE_KEY).catch(() => {});
+    clearList(MASTER_SITE_LIST_KEY).catch(() => {});
     setBusy('Cleared.');
   }
 
