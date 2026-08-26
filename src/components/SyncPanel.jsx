@@ -3,16 +3,12 @@ import { apiFetch } from '../utils/apiFetch';
 import { addProspectsIfNew, readAllProspects } from '../utils/firestoreSync';
 import { userLsGet } from '../utils/userLs';
 import { readSheetSync, SHEET_SYNC_KEY } from '../utils/sheetSyncSettings';
+import { spreadsheetIdFromUrl as extractSpreadsheetId } from '../utils/sheetCompanyRename';
 import { companyDedupeKey } from '../utils/companyKey.js';
 import { getOppsSheetDisplayUrl } from '../utils/oppsSheetUrl';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './SyncPanel.module.css';
 
-
-function extractSpreadsheetId(url) {
-  const match = url.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  return match ? match[1] : null;
-}
 
 const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 

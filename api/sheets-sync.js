@@ -120,16 +120,59 @@ async function handler(req, res) {
       if (rows.length < 2) return res.json({ prospects: [] });
 
       const prospects = [];
+      // Company names WITH their spreadsheet row numbers. The prospects
+      // array can't carry them: it skips rows with no company, so its
+      // index stops tracking the sheet after the first blank. A rename
+      // needs the real row number to write back into.
+      const names = [];
       for (let i = 1; i < rows.length; i++) {
         const company = (rows[i][0] || '').trim();
         if (!company) continue;
         prospects.push(rowToProspect(rows[i]));
+        names.push({ row: i + 1, company });
       }
-      return res.json({ prospects, rowCount: rows.length - 1 });
+      return res.json({ prospects, names, rowCount: rows.length - 1 });
     }
 
     if (req.method === 'POST') {
       const { prospects, mode } = req.body;
+
+      // Rename one row's company cell in place. Its own mode because
+      // 'merge' matches rows by exact name and APPENDS what it can't
+      // match — so pushing a renamed record through merge leaves the old
+      // spelling in the sheet next to the new one, and the additive
+      // import reads the old row as a company the site is missing.
+      //
+      // Which row is decided by the caller (utils/sheetCompanyRename), so
+      // the "same company?" rule stays in one place — nothing here can
+      // import it from src/. This re-reads the cell and refuses unless it
+      // still holds the name the caller matched, so a sheet edited between
+      // the read and the write can't get the wrong row renamed.
+      if (mode === 'rename') {
+        const { row, from, to } = req.body;
+        const rowNum = Number(row);
+        if (!Number.isInteger(rowNum) || rowNum < 2) {
+          return res.status(400).json({ error: 'rename needs a row number of 2 or more' });
+        }
+        if (!String(from || '').trim() || !String(to || '').trim()) {
+          return res.status(400).json({ error: 'rename needs both from and to' });
+        }
+        const cellRange = `${sheetName}!A${rowNum}`;
+        const current = await sheetsApi(accessToken, 'GET', `${BASE}/values/${encodeURIComponent(cellRange)}`);
+        const actual = ((current.values || [])[0] || [])[0];
+        if (String(actual || '').trim().toLowerCase() !== String(from).trim().toLowerCase()) {
+          return res.json({
+            success: true,
+            renamed: 0,
+            reason: 'row-changed',
+            found: String(actual || '').trim(),
+          });
+        }
+        await sheetsApi(accessToken, 'PUT', `${BASE}/values/${encodeURIComponent(cellRange)}?valueInputOption=RAW`,
+          { values: [[String(to).trim()]] });
+        return res.json({ success: true, renamed: 1, row: rowNum, mode: 'rename' });
+      }
+
       if (!prospects || !Array.isArray(prospects)) {
         return res.status(400).json({ error: 'Missing prospects array in body' });
       }
@@ -197,7 +240,7 @@ async function handler(req, res) {
         return res.json({ success: true, updated, added, mode: 'merge' });
       }
 
-      return res.status(400).json({ error: 'Invalid mode. Use "replace" or "merge".' });
+      return res.status(400).json({ error: 'Invalid mode. Use "replace", "merge", or "rename".' });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

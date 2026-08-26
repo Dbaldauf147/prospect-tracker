@@ -3,6 +3,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { addProspectsIfNew, usesSharedProspects } from '../utils/firestoreSync';
 import { autoSyncSchedule, readSheetSync, LEGACY_STAMP_KEY } from '../utils/sheetSyncSettings';
+import { spreadsheetIdFromUrl } from '../utils/sheetCompanyRename';
 import { userLsGet, userLsSet } from '../utils/userLs';
 
 const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
@@ -222,9 +223,8 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false, sett
 
       try {
         // Extract spreadsheet ID and build CSV URL
-        const match = sheetsUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-        if (!match) return;
-        const id = match[1];
+        const id = spreadsheetIdFromUrl(sheetsUrl);
+        if (!id) return;
         const sheetName = config.sheetName || 'Accounts';
         const csvUrl = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
 
