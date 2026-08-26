@@ -18,6 +18,11 @@ const SHARED_COL = 'prospects';
 export { normalizeCompanyName, companyQualifier, identifyingQualifier, companyDedupeKey } from './companyKey.js';
 import { companyDedupeKey } from './companyKey.js';
 import { newSheetRows } from './sheetSyncDiff.js';
+// The "richest record survives" ranking and the bulk-import plan live in
+// utils/prospectMerge — pure, so the rules can be tested directly and the
+// CSV import and the duplicate collapse cannot drift apart.
+import { planProspectReconcile, prospectScore, createdMillis, isEmptyValue, MERGE_FIELDS } from './prospectMerge.js';
+export { prospectScore, MERGE_FIELDS, planProspectReconcile } from './prospectMerge.js';
 
 // Admin uses the shared collection; everyone else gets their own
 let _userId = null;
@@ -154,83 +159,80 @@ function waitFrame() {
   return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
-export async function replaceAllProspects(existingIds, newProspects, onProgress) {
-  // Delete the *actual* current documents, not just the caller-supplied
-  // IDs. A stale in-memory list — e.g. a re-import that ran before the
-  // collection finished loading — previously left old docs behind and
-  // wrote a fresh full copy alongside them, doubling the whole
-  // collection. Reading the live IDs makes the clear complete and the
-  // import idempotent no matter what the caller passes.
+// Make the roster match an uploaded file.
+//
+// Replaces replaceAllProspects, which deleted every document and wrote
+// the rows back as new ones. Every record got a NEW document id, and
+// settings.targetMap / divisionsMap / hqRegionMap are all keyed by
+// document id — so one upload orphaned every Target Account mapping,
+// division and HQ region on the roster at once, and nothing could repair
+// it afterwards: orphaned mappings are not duplicates, so the duplicate
+// collapse had nothing to merge.
+//
+// A company in both the file and the roster now keeps its document, and
+// with it every mapping pointed at that document. See
+// planProspectReconcile for what counts as "in both".
+//
+// `confirm` is called with the counts BEFORE anything is written and can
+// abort the import — so what the user is shown is what actually happens,
+// planned against the live collection rather than a possibly-stale
+// in-memory copy. Returns the counts, plus loser-to-keeper `remaps` for
+// records that were already duplicates of each other so the caller can
+// move their id-keyed settings instead of orphaning them.
+export async function reconcileAllProspects(newProspects, { onProgress, confirm } = {}) {
   const snap = await getDocs(getCol());
-  const idsToDelete = Array.from(new Set([...(existingIds || []), ...snap.docs.map(d => d.id)]));
-  const totalSteps = idsToDelete.length + newProspects.length;
-  let completed = 0;
+  const existing = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const plan = planProspectReconcile(newProspects, existing);
 
+  if (confirm && !(await confirm(plan.counts))) {
+    return { ...plan.counts, remaps: [], cancelled: true };
+  }
+
+  const totalSteps = plan.updates.length + plan.creates.length + plan.deletes.length;
+  let completed = 0;
   async function report(phase) {
-    const pct = Math.round((completed / totalSteps) * 100);
+    const pct = totalSteps ? Math.round((completed / totalSteps) * 100) : 100;
     if (onProgress) onProgress(`${phase} · ${pct}%`);
     // Yield to browser so UI can repaint
     await waitFrame();
   }
 
-  // Delete existing in batches
-  for (let i = 0; i < idsToDelete.length; i += 400) {
+  // Writes before deletes: a failure part-way through then leaves the
+  // roster with extra records rather than missing ones.
+  //
+  // merge:true because the uploaded row only carries the columns the file
+  // has. A full overwrite would wipe everything the app knows and the CSV
+  // does not — PE stage, portfolio companies, scoping notes. The parser
+  // omits blank cells entirely, so an empty column never blanks a value.
+  for (let i = 0; i < plan.updates.length; i += 400) {
     const batch = writeBatch(db);
-    idsToDelete.slice(i, i + 400).forEach(id => batch.delete(getDoc(id)));
-    await batch.commit();
-    completed += Math.min(400, idsToDelete.length - i);
-    await report('Clearing old data');
-  }
-  // Add new in batches
-  for (let i = 0; i < newProspects.length; i += 400) {
-    const batch = writeBatch(db);
-    newProspects.slice(i, i + 400).forEach(p => {
-      const ref = doc(getCol());
-      batch.set(ref, { ...p, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    plan.updates.slice(i, i + 400).forEach(u => {
+      batch.set(getDoc(u.id), { ...u.record, updatedAt: serverTimestamp() }, { merge: true });
     });
     await batch.commit();
-    completed += Math.min(400, newProspects.length - i);
-    await report('Writing new data');
+    completed += Math.min(400, plan.updates.length - i);
+    await report('Updating existing companies');
   }
-  return { deleted: idsToDelete.length, added: newProspects.length };
-}
 
-// Fields worth preserving when collapsing duplicate prospects. If the
-// keeper is missing one, we backfill it from a duplicate so no data is
-// lost when the extra copies are deleted.
-const MERGE_FIELDS = [
-  'tier', 'status', 'notes', 'website', 'emailDomain', 'zoomCompanyName',
-  'hqRegion', 'type', 'cdm', 'geography', 'publicPrivate', 'rank',
-  'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts', 'assetTypes', 'frameworks',
-];
-
-function isEmptyValue(v) {
-  return v === undefined || v === null || v === '' || v === '-'
-    || (Array.isArray(v) && v.length === 0);
-}
-
-// Rank a prospect by how much useful data it carries so the richest
-// record survives a de-dupe. Tier and notes weigh heaviest.
-function prospectScore(p) {
-  let score = 0;
-  if (p.tier && p.tier !== '-') score += 5;
-  if (p.notes) score += 3;
-  if (p.status) score += 2;
-  for (const f of ['website', 'emailDomain', 'zoomCompanyName', 'hqRegion', 'type', 'cdm']) {
-    if (!isEmptyValue(p[f])) score += 1;
+  for (let i = 0; i < plan.creates.length; i += 400) {
+    const batch = writeBatch(db);
+    plan.creates.slice(i, i + 400).forEach(p => {
+      batch.set(doc(getCol()), { ...p, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    });
+    await batch.commit();
+    completed += Math.min(400, plan.creates.length - i);
+    await report('Adding new companies');
   }
-  if (Array.isArray(p.assetTypes) && p.assetTypes.length) score += 1;
-  if (Array.isArray(p.frameworks) && p.frameworks.length) score += 1;
-  return score;
-}
 
-function createdMillis(p) {
-  const c = p.createdAt;
-  if (!c) return 0;
-  if (typeof c.toMillis === 'function') return c.toMillis();
-  if (typeof c.seconds === 'number') return c.seconds * 1000;
-  const t = new Date(c).getTime();
-  return Number.isFinite(t) ? t : 0;
+  for (let i = 0; i < plan.deletes.length; i += 400) {
+    const batch = writeBatch(db);
+    plan.deletes.slice(i, i + 400).forEach(id => batch.delete(getDoc(id)));
+    await batch.commit();
+    completed += Math.min(400, plan.deletes.length - i);
+    await report('Removing companies not in the file');
+  }
+
+  return { ...plan.counts, remaps: plan.remaps, cancelled: false };
 }
 
 // Group an in-memory prospect array by normalized company name and

@@ -85,7 +85,7 @@ function App() {
     }
   }, [updateSettings]);
 
-  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } =
+  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, reconcileAll, findDuplicates, dedupe } =
     useProspects(user, { settingsLoaded, onDuplicatesCollapsed: handleDuplicatesCollapsed });
 
   // The CDM name to filter and default new-prospect ownership against.
@@ -585,7 +585,7 @@ function App() {
               onDelete={deleteProspect}
               onSelect={handleSelect}
               onAdd={addProspect}
-              onReplaceAll={replaceAll}
+              onReconcileAll={reconcileAll}
               settings={settings}
               updateSettings={updateSettings}
             />

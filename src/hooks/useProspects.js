@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
 // Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
@@ -136,18 +136,24 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
     return deleteDoc(id);
   }
 
-  const replaceAll = useCallback(async (newProspects, onProgress) => {
-    const existingIds = prospects.map(p => p.id);
+  // Make the roster match an uploaded file. `confirm` is handed the
+  // counts before anything is written (see reconcileAllProspects) so the
+  // user approves the real plan, not an estimate.
+  const reconcileAll = useCallback(async (newProspects, { onProgress, confirm } = {}) => {
     // Pause the onSnapshot listener so batch writes don't trigger re-renders
     pausedRef.current = true;
     try {
-      const result = await replaceAllProspects(existingIds, newProspects, onProgress);
+      const result = await reconcileAllProspects(newProspects, { onProgress, confirm });
+      // Records that were already duplicates of each other lost one copy;
+      // move its id-keyed settings onto the survivor rather than leaving
+      // them pointed at a document that no longer exists.
+      if (result?.remaps?.length && onCollapseRef.current) onCollapseRef.current(result.remaps);
       return result;
     } finally {
       // Resume listener — it will fire once with the final state
       pausedRef.current = false;
     }
-  }, [prospects]);
+  }, []);
 
   // Preview duplicate prospects (grouped by normalized company name)
   // without changing anything — used to confirm before cleanup.
@@ -162,5 +168,5 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
     return result;
   }, []);
 
-  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe };
+  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, reconcileAll, findDuplicates, dedupe };
 }
