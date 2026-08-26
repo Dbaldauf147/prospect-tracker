@@ -9,7 +9,7 @@ import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { SERVICE_MERGES, planServiceMerge } from './utils/serviceNameMerges';
 import { mergeServiceLanguage } from './utils/contractLanguageStore';
 import { useSheetSync } from './hooks/useSheetSync';
-import { planSheetSyncMigration } from './utils/sheetSyncSettings';
+import { planSheetSyncSetup } from './utils/sheetSyncSettings';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
@@ -290,17 +290,18 @@ function App() {
     })();
   }, [user, dataLoading, prospects, updateProspect]);
 
-  // One-time lift of the Google Sheets sync configuration out of this
-  // browser's localStorage and onto the settings document, so it follows
-  // the account instead of the machine (see utils/sheetSyncSettings).
+  // One-time settings work for the Google Sheets sync: lift the
+  // configuration out of this browser's localStorage onto the settings
+  // document so it follows the account instead of the machine, and set
+  // the Accounts import to manual-only (see utils/sheetSyncSettings).
   // Gated on settings having loaded: before the Firestore snapshot lands
   // `settings` is {} and the plan would read the document as having no
   // copy and overwrite a newer one from another device.
   useEffect(() => {
     if (!user || !settingsLoaded) return;
-    const patch = planSheetSyncMigration(settingsRef.current);
+    const patch = planSheetSyncSetup(settingsRef.current);
     if (!patch) return;
-    console.log('Migrating the sheet sync configuration to Firestore');
+    console.log('Updating the sheet sync configuration');
     updateSettings(patch);
   }, [user, settingsLoaded, updateSettings]);
 

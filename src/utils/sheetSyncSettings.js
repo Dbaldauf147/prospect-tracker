@@ -72,3 +72,49 @@ export function planSheetSyncMigration(settings) {
   if (!Object.keys(legacy).length) return null;
   return { [SHEET_SYNC_KEY]: legacy };
 }
+
+// Setting the Accounts sheet to manual-only, once.
+//
+// The sheet stopped being where companies are added — that happens in the
+// app now — but the additive import kept running on a timer against it,
+// and an importer nobody feeds only does one thing: put back what the app
+// removed. A renamed company came back under its old name, a company
+// spelled differently in the sheet came back as a second account. Every
+// fix in this area has been the app defending itself against a source it
+// no longer takes from.
+//
+// So the timer stops. `mainFreq: 0` is the panel's own "Manual only", not
+// a hidden mode: the Sync Panel shows it, and turning it back up to any
+// frequency is one dropdown. `autoImportRetired` records that this ran,
+// so a frequency chosen afterwards is never snapped back to 0.
+//
+// Deliberately NOT a change of default: the stored configuration already
+// has a frequency in it, so a new default would never be consulted.
+// Nothing else is touched — the manual "Sheets -> Website" pull, the
+// two-way sync, the website-to-sheet export and the rename write-through
+// all still work, and the Opps sheet is a different sheet entirely.
+export const AUTO_IMPORT_RETIRED_KEY = 'autoImportRetired';
+
+export function planAutoImportRetirement(config) {
+  if (!config || typeof config !== 'object') return null;
+  if (config[AUTO_IMPORT_RETIRED_KEY]) return null;
+  // No sheet configured means no timer to stop. Writing the flag anyway
+  // would mint a sheet-sync configuration for every account that never
+  // had one, and leave a stored `mainFreq` waiting for a sheet nobody
+  // has connected.
+  if (!config.sheetsUrl) return null;
+  return { ...config, mainFreq: 0, [AUTO_IMPORT_RETIRED_KEY]: true };
+}
+
+// The one-time settings work for the sheet sync, as a single patch:
+// lift the browser's legacy copy onto the settings document (see
+// planSheetSyncMigration), then set the Accounts import to manual-only.
+// Combined so the two never race each other with competing writes.
+// Returns null when there is nothing left to do.
+export function planSheetSyncSetup(settings) {
+  const migration = planSheetSyncMigration(settings);
+  const base = migration ? migration[SHEET_SYNC_KEY] : readSheetSync(settings);
+  const retired = planAutoImportRetirement(base);
+  if (!retired && !migration) return null;
+  return { [SHEET_SYNC_KEY]: retired || base };
+}
