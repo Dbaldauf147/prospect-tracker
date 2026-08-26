@@ -523,6 +523,33 @@
   background: var(--color-accent-light);
 }
 
+/* Company Type subtab: one firm per line under each type heading. */
+.typeList {
+  display: flex;
+  flex-direction: column;
+}
+
+.typeRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-light);
+  text-align: left;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  font-family: inherit;
+}
+
+.typeRow:last-child { border-bottom: none; }
+
+.typeRow:hover { background: var(--color-accent-light); }
+
 .summaryCard {
   flex: 1;
   background: var(--color-surface);
