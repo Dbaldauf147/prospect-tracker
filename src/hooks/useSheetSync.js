@@ -1,17 +1,26 @@
 import { useEffect, useRef } from 'react';
-import { collection, writeBatch, doc } from 'firebase/firestore';
+import { collection, writeBatch, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { usesSharedProspects } from '../utils/firestoreSync';
 import { newSheetRows } from '../utils/sheetSyncDiff';
+import { autoSyncSchedule, readSheetSync, LEGACY_STAMP_KEY } from '../utils/sheetSyncSettings';
 import { userLsGet, userLsSet } from '../utils/userLs';
 
-const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
-const LAST_AUTO_SYNC_KEY = 'prospect-last-auto-sync';
-const DEFAULT_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
-function loadSettings() {
-  try { return JSON.parse(userLsGet(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
+// When the additive import last ran, for THIS ACCOUNT rather than this
+// browser. It used to be a localStorage stamp, so a machine that had
+// never run one saw no stamp at all and imported the moment it loaded,
+// however recently another machine had already done it — and every extra
+// device added its own unthrottled timer on top.
+//
+// Its own document rather than a field on the settings document: it is
+// rewritten on every completed pass, and putting a value that churns
+// that often onto the settings document would bump the _lastWriteAt that
+// every cross-device settings save is compared against, sending ordinary
+// edits down the stale-merge path and re-rendering the app on each tick.
+function autoSyncClockRef(userId) {
+  return doc(db, 'userSettings', userId, 'syncState', 'sheetAutoSync');
 }
 
 function parseCsv(text) {
@@ -125,7 +134,7 @@ function parseProspectsFromCsv(csvText) {
 // subscription already holds the same rows, so the map is built from
 // memory and the tick costs nothing until there is genuinely a new row
 // to write.
-export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
+export function useSheetSync(user, prospects = [], prospectsLoaded = false, settings = null, settingsLoaded = false) {
   const syncingRef = useRef(false);
   // Read through refs so the effect keeps its [user] dependency: adding
   // `prospects` to the deps would tear down and re-arm the timer on every
@@ -134,14 +143,65 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
   prospectsRef.current = prospects;
   const loadedRef = useRef(prospectsLoaded);
   loadedRef.current = prospectsLoaded;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const settingsLoadedRef = useRef(settingsLoaded);
+  settingsLoadedRef.current = settingsLoaded;
+  // The shared clock, kept live by a subscription rather than re-read on
+  // each tick: the tick fires every minute, and a read per tick per tab
+  // is the shape of the full-collection read that exhausted the project's
+  // Firestore quota before. A subscription costs a read only when the
+  // value actually changes — which is once per completed pass.
+  const lastSyncAtRef = useRef(0);
+  const clockReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    clockReadyRef.current = false;
+    lastSyncAtRef.current = 0;
+    return onSnapshot(autoSyncClockRef(user.uid), (snap) => {
+      lastSyncAtRef.current = Number(snap.data()?.lastAutoSyncAt) || 0;
+      clockReadyRef.current = true;
+    }, (err) => {
+      // Can't read the shared clock (rules not released yet, offline).
+      // Fall back to this browser's old stamp rather than either running
+      // unthrottled or never running at all.
+      console.warn('Sheet auto-sync clock unavailable, using the local stamp:', err?.message || err);
+      lastSyncAtRef.current = Number(userLsGet(LEGACY_STAMP_KEY)) || 0;
+      clockReadyRef.current = true;
+    });
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
+
+    // Record that a pass just finished. The local mirror is set first so
+    // the next tick (a minute away) is throttled whether or not the
+    // subscription has echoed the write back yet.
+    async function stampRun(userId) {
+      const now = Date.now();
+      lastSyncAtRef.current = now;
+      try {
+        await setDoc(autoSyncClockRef(userId), { lastAutoSyncAt: now }, { merge: true });
+      } catch (err) {
+        // Same fallback as a failed read: keep the browser's own stamp so
+        // this device still throttles itself.
+        console.warn('Could not record the sheet auto-sync time:', err?.message || err);
+        userLsSet(LEGACY_STAMP_KEY, String(now));
+      }
+    }
 
     async function autoSync() {
       // The roster hasn't arrived yet: every sheet row would look new and
       // the import would re-add the entire sheet as duplicates.
       if (!loadedRef.current) return;
+      // Neither has the configuration, which now lives on the settings
+      // document. Running before it lands would read as "no sheet
+      // configured" and quietly skip.
+      if (!settingsLoadedRef.current) return;
+      // Nor has the shared clock. Running before it lands is exactly the
+      // unthrottled first pass this is here to prevent.
+      if (!clockReadyRef.current) return;
       // The import writes into the shared `prospects` collection, so it only
       // makes sense for the account whose roster IS that collection. On a
       // per-user roster the two are different collections, and diffing one
@@ -149,18 +209,14 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
       // this was decided by the security rules rejecting the read.)
       if (!usesSharedProspects()) return;
 
-      const settings = loadSettings();
-      const sheetsUrl = settings.sheetsUrl;
-      if (!sheetsUrl) return; // No sheet configured
+      const config = readSheetSync(settingsRef.current);
+      const { intervalMs } = autoSyncSchedule(settingsRef.current);
+      if (!intervalMs) return; // No sheet configured, paused, or manual only
+      const sheetsUrl = config.sheetsUrl;
 
-      if (settings.mainPaused) return; // Paused
-      const freqMin = settings.mainFreq ?? 5;
-      if (freqMin === 0) return; // Manual only
-      const intervalMs = freqMin * 60 * 1000;
-
-      // Check if enough time has passed
-      const lastSync = userLsGet(LAST_AUTO_SYNC_KEY);
-      if (lastSync && (Date.now() - parseInt(lastSync)) < intervalMs) return;
+      // Check if enough time has passed — on any of this account's
+      // machines, not just this one.
+      if (lastSyncAtRef.current && (Date.now() - lastSyncAtRef.current) < intervalMs) return;
 
       if (syncingRef.current) return;
       syncingRef.current = true;
@@ -170,7 +226,7 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
         const match = sheetsUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
         if (!match) return;
         const id = match[1];
-        const sheetName = settings.sheetName || 'Accounts';
+        const sheetName = config.sheetName || 'Accounts';
         const csvUrl = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
 
         const res = await fetch(csvUrl);
@@ -185,7 +241,7 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
         // Nothing new — the steady state, most of the time. Stop here so a
         // tick against an unchanged sheet costs no Firestore I/O at all.
         if (fresh.length === 0) {
-          userLsSet(LAST_AUTO_SYNC_KEY, String(Date.now()));
+          await stampRun(user.uid);
           return;
         }
 
@@ -198,7 +254,7 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false) {
           await batch.commit();
         }
 
-        userLsSet(LAST_AUTO_SYNC_KEY, String(Date.now()));
+        await stampRun(user.uid);
         console.log(`Auto-sync from Google Sheets (additive-only): ${fresh.length} added, ${sheetProspects.length - fresh.length} existing rows preserved`);
       } catch (err) {
         console.error('Auto-sync error:', err);

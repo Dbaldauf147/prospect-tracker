@@ -9,6 +9,7 @@ import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { SERVICE_MERGES, planServiceMerge } from './utils/serviceNameMerges';
 import { mergeServiceLanguage } from './utils/contractLanguageStore';
 import { useSheetSync } from './hooks/useSheetSync';
+import { planSheetSyncMigration } from './utils/sheetSyncSettings';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
@@ -142,7 +143,7 @@ function App() {
   });
   // The roster is passed in so the sheet import can diff against what the
   // app already has, instead of re-reading the whole collection on a timer.
-  useSheetSync(user, prospects, !dataLoading);
+  useSheetSync(user, prospects, !dataLoading, settings, settingsLoaded);
   // Pull new Granola calls hourly from wherever the user is. It lives here
   // rather than on the Call Recordings page because that page is lazily
   // mounted — a sync tied to it only ran while it was open, so a morning
@@ -288,6 +289,20 @@ function App() {
       }
     })();
   }, [user, dataLoading, prospects, updateProspect]);
+
+  // One-time lift of the Google Sheets sync configuration out of this
+  // browser's localStorage and onto the settings document, so it follows
+  // the account instead of the machine (see utils/sheetSyncSettings).
+  // Gated on settings having loaded: before the Firestore snapshot lands
+  // `settings` is {} and the plan would read the document as having no
+  // copy and overwrite a newer one from another device.
+  useEffect(() => {
+    if (!user || !settingsLoaded) return;
+    const patch = planSheetSyncMigration(settingsRef.current);
+    if (!patch) return;
+    console.log('Migrating the sheet sync configuration to Firestore');
+    updateSettings(patch);
+  }, [user, settingsLoaded, updateSettings]);
 
   // One-time service-name merges (see utils/serviceNameMerges.js): a service
   // that was seeded under two spellings is folded onto one name across the
@@ -620,7 +635,7 @@ function App() {
         </Suspense>
       )}
 
-      {showSync && <SyncPanel prospects={prospects} onClose={() => setShowSync(false)} />}
+      {showSync && <SyncPanel prospects={prospects} onClose={() => setShowSync(false)} settings={settings} updateSettings={updateSettings} />}
       <CdmNameModal
         open={showCdmName}
         onClose={() => setShowCdmName(false)}

@@ -1,21 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../utils/apiFetch';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { userLsGet, userLsSet } from '../utils/userLs';
+import { userLsGet } from '../utils/userLs';
+import { readSheetSync, SHEET_SYNC_KEY } from '../utils/sheetSyncSettings';
 import { companyDedupeKey } from '../utils/companyKey.js';
 import { getOppsSheetDisplayUrl } from '../utils/oppsSheetUrl';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './SyncPanel.module.css';
 
-const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
-
-function loadSettings() {
-  try { return JSON.parse(userLsGet(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
-}
-function saveSettings(s) {
-  userLsSet(SYNC_SETTINGS_KEY, JSON.stringify(s));
-}
 
 function extractSpreadsheetId(url) {
   const match = url.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
@@ -52,13 +45,32 @@ function csvFromProspects(prospects) {
   return rows.join('\n');
 }
 
-export function SyncPanel({ prospects, onClose }) {
+// The sheet configuration lives on the user's settings document (see
+// utils/sheetSyncSettings) rather than in this browser's localStorage, so
+// signing in on another computer finds the sync already set up instead of
+// a blank panel. `settings` / `updateSettings` are the app's own, which
+// makes every edit here a Firestore write that reaches the other devices.
+export function SyncPanel({ prospects, onClose, settings: userSettings, updateSettings }) {
   const { isAdmin } = useAuth();
-  const [settings, setSettings] = useState(loadSettings);
+  // Local mirror of the stored configuration, so the panel's many
+  // handlers keep editing one object. Re-seeded whenever the settings
+  // document changes, which is how an edit made on another computer
+  // shows up here.
+  const [settings, setSettings] = useState(() => readSheetSync(userSettings));
+  const storedSheetSync = userSettings?.[SHEET_SYNC_KEY];
+  // Keyed on the sheet-sync value rather than the whole settings object,
+  // which changes identity on every unrelated settings write in the app.
+  useEffect(() => { setSettings(readSheetSync(userSettings)); }, [storedSheetSync]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveSettings = useCallback((next) => {
+    if (updateSettings) updateSettings({ [SHEET_SYNC_KEY]: next });
+  }, [updateSettings]);
   // The OppsView/AgentsView/ProgressView Opps sheet URL is resolved
   // via getOppsSheetCsvUrl elsewhere — here we just display it so the
-  // user can see what's being pulled.
-  const oppsSheetDisplayUrl = getOppsSheetDisplayUrl({ isAdmin, settings });
+  // user can see what's being pulled. It is a key on the settings
+  // document (settings.oppsSheetUrl), not part of the sheet-sync config,
+  // so it reads from userSettings — passing the sync config here meant a
+  // user who had set their own URL never saw it.
+  const oppsSheetDisplayUrl = getOppsSheetDisplayUrl({ isAdmin, settings: userSettings });
   const [url, setUrl] = useState(settings.sheetsUrl || '');
   const [sheetName, setSheetName] = useState(settings.sheetName || 'Accounts');
   const [status, setStatus] = useState(null);

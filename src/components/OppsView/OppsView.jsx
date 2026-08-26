@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
+import { readSheetSync } from '../../utils/sheetSyncSettings';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './OppsView.module.css';
@@ -141,12 +142,12 @@ export function OppsView({ settings, updateSettings } = {}) {
     })();
   }, []);
 
-  // Read frequency and paused state from sync settings
+  // Read frequency and paused state from the sheet-sync config. It moved
+  // from this browser's localStorage onto the settings document, so the
+  // schedule set in the Sync Panel is the same one on every computer.
   function getOppsSettings() {
-    try {
-      const s = JSON.parse(userLsGet('prospect-sync-settings'));
-      return { freq: s?.oppsFreq ?? 5, paused: !!s?.oppsPaused };
-    } catch { return { freq: 5, paused: false }; }
+    const s = readSheetSync(settings);
+    return { freq: s.oppsFreq ?? 5, paused: !!s.oppsPaused };
   }
 
   // Auto-fetch on mount if stale. Skip silently when no Opps sheet

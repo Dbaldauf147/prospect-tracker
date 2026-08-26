@@ -119,6 +119,15 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Google Sheets auto-sync clock: when the additive import last ran for
+    // this account. Its own document rather than a field on the settings
+    // document because it is rewritten on every completed pass, and a
+    // value that churns that often would bump the _lastWriteAt every
+    // cross-device settings save is compared against.
+    match /userSettings/{userId}/syncState/{stateId} {
+      allow read, write: if owns(userId);
+    }
+
     // Contract language: the wording that goes into a contract for each
     // service, typed on the Clients view's Contract Language subtab. One
     // document per service for the same reason companySiteLists split —
