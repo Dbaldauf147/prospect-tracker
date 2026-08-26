@@ -523,10 +523,37 @@
   background: var(--color-accent-light);
 }
 
+/* Company Type subtab: the type buckets sit side by side as columns
+   rather than stacked full-width, wrapping onto another row when they
+   don't all fit. align-items: start keeps a short column short instead
+   of stretching it to match the tallest one in its row. */
+.typeColumns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0 1.25rem;
+}
+
+/* The card styling comes from .bucketList; this only drops its stacked
+   margins so the grid gap does the spacing. */
+.typeColumn {
+  margin: 0;
+}
+
 /* Company Type subtab: one firm per line under each type heading. */
 .typeList {
   display: flex;
   flex-direction: column;
+}
+
+/* A type with a hundred firms would otherwise set the height of its whole
+   grid row, pushing every neighbouring column's content off-screen. Cap
+   the list and let it scroll inside its own column; the heading stays put
+   because it lives outside this box. */
+.typeColumn .typeList {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .typeRow {
@@ -544,7 +571,14 @@
   border-right: none;
   border-top: none;
   font-family: inherit;
+  /* Columns are narrower than the old full-width blocks, so a long firm
+     name wraps onto a second line instead of spilling out of the card. */
+  overflow-wrap: anywhere;
+  line-height: 1.3;
 }
+
+/* Keep the CLIENT tag on one line next to the wrapping name. */
+.typeRow > span { flex-shrink: 0; }
 
 .typeRow:last-child { border-bottom: none; }
 
