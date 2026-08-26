@@ -2672,6 +2672,49 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
   }, [rows]);
 
+  // A hand-entered total, for the portfolio the page is working on.
+  //
+  // The per-property-type estimate is a model, and a model is no use against
+  // a real bill count someone already has — an upload with no property types
+  // estimates nothing at all, and even a fully mapped one is a typical-site
+  // figure rather than this portfolio's. So the total can be typed, and once
+  // it is, it is what the page shows and what "Save to Company" writes onto
+  // the company's Number of Accounts. The per-site column stays the estimate:
+  // a portfolio total can't be divided back over the sites.
+  //
+  // Keyed by company rather than held per upload, because the figure is a
+  // fact about the company and this page holds one file at a time — a
+  // portfolio that arrives as three regional uploads shouldn't have to be
+  // re-typed three times. Uploads with no company to file under share one
+  // reserved key, which the hover says out loud.
+  const UNFILED_ACCOUNTS_KEY = '__unfiled__';
+  const manualAccountsMap = useMemo(() => {
+    const raw = settings?.utilityLookupAccounts;
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  }, [settings?.utilityLookupAccounts]);
+  const accountsCompany = deriveExportCompanyName(null) || portfolioCompanyName;
+  const accountsKey = companySlug(accountsCompany) || UNFILED_ACCOUNTS_KEY;
+  const manualAccounts = useMemo(() => {
+    const n = Number(manualAccountsMap[accountsKey]);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }, [manualAccountsMap, accountsKey]);
+  // null clears it — back to the estimate, rather than a stored zero that
+  // reads as "this portfolio has no accounts".
+  const setManualAccounts = useCallback((value) => {
+    if (!updateSettingsPath) return;
+    updateSettingsPath({ [`utilityLookupAccounts.${accountsKey}`]: value == null ? null : value });
+  }, [updateSettingsPath, accountsKey]);
+  // null = not editing; a string = what's in the box.
+  const [accountsDraft, setAccountsDraft] = useState(null);
+  function commitAccountsDraft() {
+    const raw = String(accountsDraft ?? '').trim().replace(/,/g, '');
+    setAccountsDraft(null);
+    if (!raw) { if (manualAccounts != null) setManualAccounts(null); return; }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) return;
+    setManualAccounts(Math.round(n));
+  }
+
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
   // Sorted by how many sites carry each value so the biggest wins are
@@ -5290,10 +5333,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // accounts (bills) behind those sites, estimated from each site's
       // property type. It feeds the popup's estimated annual data deal
       // size, which is priced per account per month.
+      //
+      // A total typed on the page wins outright rather than being max'd with
+      // the estimate: it is a stated fact about the portfolio, and a model
+      // that came out higher is still a model. That also makes a correction
+      // downwards possible, which a max() would silently ignore.
       const loadedAccounts = Math.round(
         allRows.reduce((sum, r) => sum + (propertyTypeAccountTotal(r.__propertyType__) || 0), 0),
       );
-      const accountCount = Math.max(loadedAccounts, siteList.accounts || 0);
+      const accountCount = manualAccounts != null
+        ? manualAccounts
+        : Math.max(loadedAccounts, siteList.accounts || 0);
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
@@ -5307,7 +5357,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
         : '';
       const accountCountNote = accountCount > 0
-        ? ` Number of Accounts set to ${accountCount.toLocaleString()}.`
+        ? ` Number of Accounts set to ${accountCount.toLocaleString()}${manualAccounts != null ? ' (the total entered on this page)' : ''}.`
         : '';
       setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${siteList.note}` });
       setSavePickerSearch(null);
@@ -14025,46 +14075,110 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             <div className={styles.subtitle}>
             {rows.length} {rows.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
-            {/* Estimated utility accounts. Sits beside the site count
-                because it is the other unit this page is read in: a data
-                deal is priced per account per month, and the site count on
-                its own doesn't say how many bills a portfolio carries. */}
-            {rows.length > 0 && (accountStats.total > 0 ? (
-              <>
-                {' '}· Est. utility accounts{' '}
-                <strong
-                  style={{ color: '#0F766E' }}
-                  title={[
-                    `${accountStats.total.toLocaleString()} utility accounts (bills) estimated across ${accountStats.sites.toLocaleString()} site${accountStats.sites === 1 ? '' : 's'}, from each site's property type.`,
-                    accountStats.unknown > 0
-                      ? `Not counted: ${accountStats.unknown.toLocaleString()} site${accountStats.unknown === 1 ? '' : 's'} whose property type isn't mapped to one of the reference types. Map them with the Property Types button and they'll be counted here.`
-                      : '',
-                    accountStats.byType.length
-                      ? `Biggest contributors:\n${accountStats.byType.slice(0, 6).map(t => `  • ${t.name}: ${fmtAccounts(Math.round(t.accounts * 10) / 10)} across ${t.sites} site${t.sites === 1 ? '' : 's'}`).join('\n')}`
-                      : '',
-                    'This is the figure written onto a company\u2019s Number of Accounts when the analysis is saved, and what the estimated annual data deal is priced from.',
-                  ].filter(Boolean).join('\n\n')}
-                >{accountStats.total.toLocaleString()}</strong>
-                {accountStats.unknown > 0 && (
-                  <span style={{ color: '#B45309' }}>
-                    {' '}({accountStats.unknown.toLocaleString()} site{accountStats.unknown === 1 ? '' : 's'} unmapped)
-                  </span>
-                )}
-              </>
-            ) : (
-              // Nothing to add up. Said out loud rather than left off the
-              // line: an upload with no property types is the case where
-              // someone goes looking for the figure, and a headline that
-              // simply omits it can't tell them it's the property type
-              // that's missing — or which of the two fixes applies.
-              <span style={{ color: '#B45309' }} title={accountStats.withRawType > 0
-                ? 'Utility accounts are estimated per property type, and none of this upload\u2019s property types is mapped to one of the reference types. Map them with the Property Types button and the estimate appears here and in the Est. Accounts column.'
-                : 'Utility accounts are estimated per property type, and no Property Type column is mapped on this upload. Map one with Update Column Mapping — or set it on the sites with Mass edit — and the estimate appears here and in the Est. Accounts column.'}
-              >
-                {' '}· Est. utility accounts <strong>—</strong>{' '}
-                ({accountStats.withRawType > 0 ? 'property types unmapped' : 'no property type on this upload'})
-              </span>
-            ))}
+            {/* Utility accounts — the other unit this page is read in: a
+                data deal is priced per account per month, and the site count
+                on its own doesn't say how many bills a portfolio carries.
+                The estimate is per property type; the number can also be
+                typed, and a typed one wins (see manualAccounts). */}
+            {rows.length > 0 && (() => {
+              const estimated = accountStats.total;
+              const shown = manualAccounts != null ? manualAccounts : (estimated > 0 ? estimated : null);
+              const label = manualAccounts != null ? 'Utility accounts' : 'Est. utility accounts';
+              const whyNoEstimate = accountStats.withRawType > 0
+                ? 'Utility accounts are estimated per property type, and none of this upload\u2019s property types is mapped to one of the reference types. Map them with the Property Types button, or type the total here.'
+                : 'Utility accounts are estimated per property type, and no Property Type column is mapped on this upload. Map one with Update Column Mapping — or set it on the sites with Mass edit — or type the total here.';
+              const title = [
+                manualAccounts != null
+                  ? `${manualAccounts.toLocaleString()} utility accounts, entered by hand${accountsCompany ? ` for ${accountsCompany}` : ''}. This is what the page shows and what Save to Company writes onto Number of Accounts.`
+                  : estimated > 0
+                    ? `${estimated.toLocaleString()} utility accounts (bills) estimated across ${accountStats.sites.toLocaleString()} site${accountStats.sites === 1 ? '' : 's'}, from each site\u2019s property type.`
+                    : whyNoEstimate,
+                manualAccounts != null && estimated > 0
+                  ? `The property-type estimate for the sites loaded is ${estimated.toLocaleString()}.`
+                  : '',
+                manualAccounts == null && accountStats.unknown > 0
+                  ? `Not counted: ${accountStats.unknown.toLocaleString()} site${accountStats.unknown === 1 ? '' : 's'} whose property type isn\u2019t mapped to one of the reference types.`
+                  : '',
+                manualAccounts == null && accountStats.byType.length
+                  ? `Biggest contributors:\n${accountStats.byType.slice(0, 6).map(t => `  • ${t.name}: ${fmtAccounts(Math.round(t.accounts * 10) / 10)} across ${t.sites} site${t.sites === 1 ? '' : 's'}`).join('\n')}`
+                  : '',
+                accountsKey === UNFILED_ACCOUNTS_KEY
+                  ? 'Click to type the real total. Nothing here names a company yet, so a typed total is held against this page rather than a company — set the Portfolio company (or map a Company Name column) and it files itself under that company instead.'
+                  : `Click to type the real total; it is remembered for ${accountsCompany} across uploads. Clear the box to go back to the estimate.`,
+              ].filter(Boolean).join('\n\n');
+              return (
+                <>
+                  {' '}· {label}{' '}
+                  {accountsDraft !== null ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      inputMode="numeric"
+                      value={accountsDraft}
+                      onChange={(e) => setAccountsDraft(e.target.value)}
+                      onBlur={commitAccountsDraft}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitAccountsDraft(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); setAccountsDraft(null); }
+                      }}
+                      placeholder={estimated > 0 ? String(estimated) : 'accounts'}
+                      aria-label="Total utility accounts"
+                      title="Type the portfolio\u2019s real account count. Enter saves, Esc cancels, an empty box goes back to the estimate."
+                      style={{
+                        width: 90, padding: '0.1rem 0.3rem', fontFamily: 'inherit', fontSize: '0.78rem',
+                        fontWeight: 700, color: '#0F766E', border: '1px solid #0F766E', borderRadius: 4,
+                        background: 'var(--color-surface)',
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAccountsDraft(manualAccounts != null ? String(manualAccounts) : '')}
+                      disabled={!updateSettingsPath}
+                      title={title}
+                      style={{
+                        border: 'none', background: 'none', padding: 0, margin: 0, cursor: updateSettingsPath ? 'pointer' : 'default',
+                        fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700,
+                        color: shown == null ? '#B45309' : '#0F766E',
+                        textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 2,
+                      }}
+                    >{shown == null ? '—' : shown.toLocaleString()}</button>
+                  )}
+                  {manualAccounts != null ? (
+                    <>
+                      <span
+                        title="Entered by hand — the property-type estimate is not being used."
+                        style={{
+                          marginLeft: 4, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.03em', padding: '0.05rem 0.35rem', borderRadius: 999,
+                          border: '1px solid #99F6E4', background: '#F0FDFA', color: '#0F766E', whiteSpace: 'nowrap',
+                        }}
+                      >entered</span>
+                      {estimated > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setManualAccounts(null)}
+                          title={`Go back to the property-type estimate (${estimated.toLocaleString()})`}
+                          style={{
+                            marginLeft: 4, border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+                            fontFamily: 'inherit', fontSize: '0.62rem', color: 'var(--color-text-muted)',
+                            textDecoration: 'underline',
+                          }}
+                        >use estimate</button>
+                      )}
+                    </>
+                  ) : shown == null ? (
+                    <span style={{ color: '#B45309' }}>
+                      {' '}({accountStats.withRawType > 0 ? 'property types unmapped' : 'no property type on this upload'} — click to enter)
+                    </span>
+                  ) : accountStats.unknown > 0 ? (
+                    <span style={{ color: '#B45309' }}>
+                      {' '}({accountStats.unknown.toLocaleString()} site{accountStats.unknown === 1 ? '' : 's'} unmapped)
+                    </span>
+                  ) : null}
+                </>
+              );
+            })()}
             {/* Sites an N/A property-type mapping leaves without a modelled
                 usage figure. They're counted in the headline and carried
                 through every export; this says which ones are contributing
