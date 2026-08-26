@@ -12,28 +12,20 @@
 // answer: is this step clear? Steps with a real number behind them
 // (overdue Call Ins, client renewals still needing a status, services
 // under full coverage, Top PCs not yet at Qualifying) categorize
-// themselves; the rest the user marks caught up for the day. See
-// utils/prospectingStatus.js for why a manual mark expires overnight.
+// themselves; the rest the user marks caught up for the day. A hand-marked
+// step the ladder has reached — everything above it clear — goes red as
+// the work owed right now rather than waiting to be noticed, and the
+// sidebar dots Prospecting while it stands. See utils/prospectingStatus.js
+// for that rule and for why a manual mark expires overnight.
 //
 // Two steps list their work in place rather than only counting it: the
 // services still short of coverage, and the Top PC of every PE firm that
 // isn't already Qualifying — so the calls to make are on the page rather
 // than a tab away.
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { loadOpps2Newest } from '../../utils/opps2Store';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { countOverdueCallIns } from '../../utils/oppsCallIn';
-import {
-  categorizeStep,
-  caughtUpSnapshot,
-  countRenewalWork,
-  countServiceGaps,
-  isMarkedCaughtUp,
-  readCaughtUpSnapshot,
-  setStepCaughtUp,
-  subscribeCaughtUp,
-} from '../../utils/prospectingStatus';
+import { setStepCaughtUp, todayISO } from '../../utils/prospectingStatus';
 import {
   isCustomStep,
   moveStep,
@@ -45,10 +37,8 @@ import {
   STEP_VIEW_OPTIONS,
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
-import { collectTopPcIntros } from '../../utils/topPcOutreach';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
-import { useAuth } from '../../contexts/AuthContext';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -78,29 +68,12 @@ const ACTION_COL = 128;
 
 const STATUS_STYLES = {
   'caught-up': { background: '#DCFCE7', border: '#BBF7D0', color: '#166534' },
+  // 'due' wears the same red as a counted step with work on it: the
+  // ladder has reached it, so it is owed today just as literally.
   work: { background: '#FEE2E2', border: '#FECACA', color: '#991B1B' },
+  due: { background: '#FEE2E2', border: '#FECACA', color: '#991B1B' },
   open: { background: '#fff', border: '#CBD5E1', color: '#64748B' },
 };
-
-// Read the Opps 2 store the way the other consumer pages do — newest of the
-// local cache and Firestore. Kept local rather than imported from
-// KeyContactsView so this lazy chunk doesn't pull that whole page in for a
-// twelve-line hook.
-function useOppsRecords(userId) {
-  const [records, setRecords] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await loadOpps2Newest(userId);
-        const recs = Array.isArray(data?.records) ? data.records : null;
-        if (!cancelled && recs) setRecords(recs);
-      } catch { /* leave null so the step shows no count rather than a wrong one */ }
-    })();
-    return () => { cancelled = true; };
-  }, [userId]);
-  return records;
-}
 
 // The tag-review coverage, roster by roster, under the market-updates step.
 // A market update is only worth sending to someone you've placed, so how
@@ -625,33 +598,19 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, issues = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, updateSettings = null, tagCoverage = null, tagDebt = null }) {
-  const { user } = useAuth();
-  const oppsRecords = useOppsRecords(user?.uid);
-  // Tag-review coverage per roster, printed under the market-updates step —
-  // handed down from App rather than worked out here, so this row and the
-  // sidebar badge are literally the same numbers rather than two runs of the
-  // same rule over inputs that can land at different moments.
-  // The hand-marked steps, straight off localStorage: another tab's mark,
-  // the user id landing after login, and the date rolling over all reach
-  // the page this way rather than through mirrored state.
-  const snapshot = useSyncExternalStore(subscribeCaughtUp, caughtUpSnapshot);
-  const { today, map: caughtUpMap } = useMemo(() => readCaughtUpSnapshot(snapshot), [snapshot]);
-  // null until the store answers — a "0 overdue" badge shown while the read
-  // is still in flight would read as "you're all clear" when it isn't known.
-  const overdueCallIns = useMemo(
-    () => (oppsRecords ? countOverdueCallIns(oppsRecords) : null),
-    [oppsRecords],
-  );
-  // Renewal work comes from the issue rows the Issues tab already builds,
-  // so this step and that tab can't disagree. null until they arrive.
-  const renewalWork = useMemo(() => countRenewalWork(issues), [issues]);
-  // Tracked services still under 100% coverage. Same rows the list under
-  // the step prints, so the badge and the list can't disagree.
-  const serviceWork = useMemo(() => countServiceGaps(serviceGaps), [serviceGaps]);
-  // Every PE firm's Top PC that isn't at Qualifying yet — the intros still
-  // to ask for. null until the prospects load, same reasoning as above.
-  const topPcIntros = useMemo(() => collectTopPcIntros(prospects), [prospects]);
+export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, updateSettings = null, tagCoverage = null, tagDebt = null }) {
+  // The ladder's status — the steps, what each one counts, and which of
+  // them is caught up, outstanding or still loading. Computed once in App
+  // (useProspectingLadder) and handed down, so this page's Status column
+  // and the sidebar's Prospecting dot are the same answer rather than two
+  // runs of the same rule over inputs that can land at different moments —
+  // the same reason the tag coverage arrives as a prop rather than being
+  // recomputed here.
+  const stateByKey = ladder?.stateByKey || {};
+  const today = ladder?.today || todayISO();
+  // The Top PCs not yet at Qualifying, listed under their step. Comes from
+  // the ladder so the rows here and the count beside them are one list.
+  const topPcIntros = ladder?.topPcIntros || null;
   const [showAllTopPcs, setShowAllTopPcs] = useState(false);
   // Click-through for that list: id → the record itself, since the page is
   // handed prospects rather than a lookup.
@@ -707,21 +666,12 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
   const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
   const contactEditSettings = useContactEditSettings({ settings, updateSettings });
 
-  const counts = useMemo(
-    () => ({
-      opps: overdueCallIns,
-      renewals: renewalWork,
-      'targeted-services': serviceWork,
-      'pe-intros': topPcIntros ? topPcIntros.length : null,
-    }),
-    [overdueCallIns, renewalWork, serviceWork, topPcIntros],
-  );
-
-
   // The ladder itself: the defaults until the user edits it, their stored
-  // order and text after that. Editing is only offered when the page was
-  // handed an updateSettings — without one there's nowhere to save to.
-  const steps = useMemo(() => readSteps(settings), [settings]);
+  // order and text after that — off the shared hook, falling back to the
+  // same read if this page is ever rendered without one. Editing is only
+  // offered when the page was handed an updateSettings — without one
+  // there's nowhere to save to.
+  const steps = useMemo(() => ladder?.steps || readSteps(settings), [ladder, settings]);
 
   const canEdit = typeof updateSettings === 'function';
   const [editing, setEditing] = useState(false);
@@ -804,7 +754,9 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
             ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
             : `The order prospecting work gets done, ranked. Start at the top and work down —
                each step is warmer than the one below it. The Status column says whether a step
-               is clear: counted steps answer for themselves, the rest you mark caught up for the day.`}
+               is clear: counted steps answer for themselves, the rest you mark caught up for the
+               day — and the first one you haven't shows as outstanding once everything above it
+               is clear.`}
         </div>
       </div>
 
@@ -832,17 +784,23 @@ export function ProspectingView({ onNavigate, issues = null, serviceGaps = null,
           const rank = i + 1;
           const colors = RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
           const isLast = rank === steps.length;
+          const row = stateByKey[step.key];
           const tracked = typeof step.workLabel === 'function';
-          const count = tracked ? counts[step.key] : undefined;
-          const marked = isMarkedCaughtUp(caughtUpMap, step.key, today);
-          const state = categorizeStep({ count, marked });
+          const count = row?.count;
+          const state = row?.state || (tracked ? 'unknown' : 'open');
+          // A hand-marked step is caught up only because it was marked,
+          // so the toggle reads its state rather than the map again.
+          const marked = !tracked && state === 'caught-up';
           const label = state === 'work' ? step.workLabel(count)
             : state === 'caught-up' ? 'All caught up'
-              : 'Mark caught up';
+              : state === 'due' ? 'Outstanding'
+                : 'Mark caught up';
           const title = state === 'work' ? step.workTitle(count)
             : state === 'caught-up'
               ? (tracked ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
-              : 'Nothing counts this step automatically — click once you\'ve worked it today';
+              : state === 'due'
+                ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today — the mark clears tomorrow.'
+                : 'Nothing counts this step automatically — click once you\'ve worked it today';
           // Two steps print their work under the detail line rather than
           // only counting it — those rows are tall, so their right-hand
           // cells sit at the top rather than floating in the middle.

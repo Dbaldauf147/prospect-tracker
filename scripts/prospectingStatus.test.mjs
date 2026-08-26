@@ -12,9 +12,11 @@
 // The store helpers touch localStorage, which doesn't exist here; userLs
 // swallows that, so only the pure functions are exercised below.
 import {
-  categorizeStep, countRenewalWork, countServiceGaps, isMarkedCaughtUp, isRenewalWork,
-  parseCaughtUpMap, readCaughtUpSnapshot, todayISO, RENEWAL_ISSUE_TYPES,
+  categorizeStep, countDueSteps, countRenewalWork, countServiceGaps, isMarkedCaughtUp,
+  isRenewalWork, ladderStates, parseCaughtUpMap, readCaughtUpSnapshot, statesByKey,
+  todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
+import { readSteps } from '../src/utils/prospectingPlaybook.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -115,6 +117,68 @@ eq(todayISO(new Date(2026, 0, 5)), '2026-01-05', 'single-digit month and day are
 // 11pm local on the 31st is still the 31st — a UTC stamp would roll over
 // early for anyone east of Greenwich and clear their marks a day late.
 eq(todayISO(new Date(2026, 11, 31, 23, 30)), '2026-12-31', 'late-evening local time keeps the local date');
+
+// ---- the ladder as a whole --------------------------------------------------
+//
+// The market-updates step has no count, so the only thing that can say it
+// was worked is the user. Until the steps above it are clear it waits its
+// turn in grey; once they are, it is the work owed today and says so.
+// Both halves are worth guarding: a step that never goes red is the
+// feature not working, and one that goes red while there is still warmer
+// work above it sends the user down the ladder too early.
+
+const TODAY = '2026-08-26';
+const ladder = (steps, counts, map) => ladderStates({ steps, counts, caughtUpMap: map, today: TODAY });
+const stateOf = (steps, counts, map, key) => statesByKey(ladder(steps, counts, map))[key]?.state;
+
+// Built the way the page builds it, so the flags and count functions are
+// the real ones rather than a hand-written stand-in.
+const STEPS = readSteps({ prospectingSteps: [
+  { key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'cold' },
+] });
+const CLEAR = { opps: 0, renewals: 0 };
+
+eq(stateOf(STEPS, CLEAR, {}, 'market-updates'), 'due',
+  'with every step above it clear, the market-updates step is outstanding');
+eq(stateOf(STEPS, { opps: 2, renewals: 0 }, {}, 'market-updates'), 'open',
+  'overdue opps above it keep the step waiting its turn, not red');
+eq(stateOf(STEPS, { opps: 0, renewals: 3 }, {}, 'market-updates'), 'open',
+  'renewals still to work keep it waiting too');
+eq(stateOf(STEPS, { opps: 0, renewals: null }, {}, 'market-updates'), 'open',
+  'a count still loading above it is not "clear" — no red on data that has not arrived');
+eq(stateOf(STEPS, {}, {}, 'market-updates'), 'open',
+  'no counts handed over at all leaves every tracked step unknown, so nothing goes red');
+eq(stateOf(STEPS, CLEAR, { 'market-updates': TODAY }, 'market-updates'), 'caught-up',
+  'marking it caught up today clears it');
+eq(stateOf(STEPS, CLEAR, { 'market-updates': '2026-08-25' }, 'market-updates'), 'due',
+  "yesterday's mark does not hold it down today");
+
+// Only a step flagged in the playbook does this. Cold outreach is
+// hand-marked too, but it stays grey rather than adding a second red row
+// the moment the market-updates step is ticked.
+eq(stateOf(STEPS, CLEAR, { 'market-updates': TODAY }, 'cold'), 'open',
+  'an unflagged hand-marked step below it stays open, not outstanding');
+
+// The dot on the sidebar counts exactly the red-because-reached rows.
+eq(countDueSteps(ladder(STEPS, CLEAR, {})), 1, 'one dot while the step stands');
+eq(countDueSteps(ladder(STEPS, CLEAR, { 'market-updates': TODAY })), 0, 'no dot once it is marked');
+eq(countDueSteps(ladder(STEPS, { opps: 1, renewals: 0 }, {})), 0,
+  'no dot while there is still warmer work above it');
+eq(countDueSteps([]), 0, 'no steps at all means no dot');
+
+// Order is the user's, so the rule follows the ladder rather than the
+// shipped positions: moved to the top, the step is owed straight away.
+{
+  const moved = readSteps({ prospectingSteps: [
+    { key: 'market-updates' }, { key: 'opps' }, { key: 'renewals' },
+  ] });
+  eq(stateOf(moved, { opps: 5, renewals: 5 }, {}, 'market-updates'), 'due',
+    'at the top of the ladder it is outstanding whatever sits below it');
+}
+
+// A tracked step is never talked over by this: its count still decides.
+eq(stateOf(STEPS, { opps: 4 }, { opps: TODAY }, 'opps'), 'work',
+  'a real count still outranks a manual mark inside the ladder walk');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
