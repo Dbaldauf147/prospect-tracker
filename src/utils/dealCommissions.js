@@ -3,8 +3,8 @@
 // Commissions roster up by BFO opp name without importing one component
 // into another (which would also break Fast Refresh).
 
-import { asNumber, asDate, fmtDate } from './dealsFormat';
-import { COMMISSION_MONTH_NAMES } from './commissionsStore';
+import { asNumber, asDate, fmtDate } from './dealsFormat.js';
+import { COMMISSION_MONTH_NAMES } from './commissionsStore.js';
 
 // The deal column holding the BFO opp name. It's the verbose label the
 // user originally pasted from their tracker; the deal is matched against

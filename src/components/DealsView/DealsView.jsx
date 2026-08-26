@@ -22,6 +22,10 @@ import {
 } from '../../utils/soldWarningIgnore';
 import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo, dealTrackStatus, isDealTrackHealthy } from '../../utils/dealCommissions';
 import {
+  indexOppYear1ByBfo, oppYear1ForDeal, planOppYear1Fills,
+  DEAL_SETUP_KEY, DEAL_RECURRING_KEY,
+} from '../../utils/dealOppYear1';
+import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
@@ -766,6 +770,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isCheck = DEAL_CHECK_KEYS.has(k);
     const isRevenueRecorded = k === 'Revenue Recorded';
     const isPaidToDate = k === 'Paid to Date';
+    const isOppYear1Cell = k === DEAL_SETUP_KEY || k === DEAL_RECURRING_KEY;
     const isDaysPaidOn = k === 'Days/Paid on';
     const isCurrentlyBeingPaid = k === 'Currently being paid';
     const isYear = k === 'Year';
@@ -1001,9 +1006,25 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
             />
           );
         }
+        // A blank Setup / Recurring Revenue cell on a deal tied to an opp
+        // shows what that opp's saved Pricing Option would put there —
+        // greyed and in brackets, because nothing is stored yet. It is a
+        // preview of the Import above the grid, not a value: the deal's own
+        // maths (the Revenue Recorded denominator, the drill-downs, the
+        // export) keeps reading the stored cell, which is still empty.
+        const oppPreview = isOppYear1Cell && !isFilled(row[k]) && row.__oppYear1__
+          ? (k === DEAL_SETUP_KEY ? row.__oppYear1__.setup : row.__oppYear1__.recurring)
+          : null;
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
-          : renderValue;
+          : (Number.isFinite(oppPreview)
+            ? (v) => (isFilled(v) ? renderValue(v) : (
+              <span
+                title={`From the opp tied to this deal${row.__oppYear1__.optionName ? ` (option “${row.__oppYear1__.optionName}”)` : ''}: ${k === DEAL_SETUP_KEY ? 'Year 1 Setup + One Time' : 'Year 1 recurring revenue'} ${fmtCurrency(oppPreview)}. Nothing is stored yet — use “Import Year 1 figures” above the grid, or type your own.`}
+                style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F766E', fontStyle: 'italic', opacity: 0.85 }}
+              >({fmtCurrency(oppPreview)})</span>
+            ))
+            : renderValue);
         // Long contract names get clipped in narrow cells; show the
         // full value as the hover tooltip on the Agreement Name column
         // so the user can read it without expanding the column.
@@ -1356,14 +1377,30 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     setBreakdown({ rowId: idx, metric });
   }
 
+  // Opps that can hand a deal its Year-1 money, keyed by BFO opportunity
+  // name. Only opps carrying a saved Pricing Option are in here — an opp
+  // with no option has nothing to give.
+  const oppYear1ByBfo = useMemo(() => indexOppYear1ByBfo(opps2Records), [opps2Records]);
+
   const rows = useMemo(
     // A row counts as the freshly-added "new" row (and gets autofocused
     // on its Client Name cell) as long as the top row hasn't been given
     // a Client Name yet. Anchoring this to Client Name rather than the
     // raw key count lets addNewDeal seed defaults like Due Date without
     // disabling the autofocus behavior.
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __onShowCommissionBreakdown: showCommissionBreakdown, __newRow: i === 0 && !isFilled(r['Client Name']) })),
-    [data]
+    () => data.map((r, i) => ({
+      ...r,
+      id: i,
+      __onUpdate: updateCell,
+      __onShowCommissionBreakdown: showCommissionBreakdown,
+      __newRow: i === 0 && !isFilled(r['Client Name']),
+      // Year-1 Setup / Recurring from the opp this deal's BFO name ties it
+      // to, when that opp has a saved Pricing Option. Carried on the row so
+      // a blank cell can show what it would be filled with, and so the
+      // contract-value denominator can count it before anyone imports.
+      __oppYear1__: oppYear1ForDeal(oppYear1ByBfo, r),
+    })),
+    [data, oppYear1ByBfo]
   );
   // Sold Opps 2 opps that don't line up with any deal here. The link
   // between the two is the BFO opportunity name — "BFO Link" on an opp,
@@ -1425,6 +1462,29 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     () => indexCommissionsByBfo(commissionsData),
     [commissionsData]
   );
+  // Deals whose tied opp can fill a blank Setup / Recurring Revenue. Planned
+  // rather than written: money going into the roster is the user's call, and
+  // a deal whose figures were typed off the signed agreement must not have
+  // the quote pushed over them (planOppYear1Fills only ever fills blanks).
+  const oppYear1Fills = useMemo(
+    () => planOppYear1Fills(data, oppYear1ByBfo),
+    [data, oppYear1ByBfo],
+  );
+  const [oppYear1Note, setOppYear1Note] = useState('');
+  function importOppYear1() {
+    if (oppYear1Fills.length === 0) return;
+    let cells = 0;
+    for (const fill of oppYear1Fills) {
+      updateCells(fill.index, fill.patch);
+      cells += Object.keys(fill.patch).length;
+    }
+    setOppYear1Note(
+      `Imported ${cells} figure${cells === 1 ? '' : 's'} into `
+      + `${oppYear1Fills.length} deal${oppYear1Fills.length === 1 ? '' : 's'} from their opps.`
+    );
+    setTimeout(() => setOppYear1Note(''), 6000);
+  }
+
   const baseColumns = useMemo(
     () => buildColumns(rows, columnLinks, listRegistry, commissionsByBfo),
     [rows, columnLinks, listRegistry, commissionsByBfo]
@@ -1872,6 +1932,56 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       {uploadError && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
           {uploadError}
+        </div>
+      )}
+
+      {(oppYear1Fills.length > 0 || oppYear1Note) && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: 6, color: '#0F766E', fontSize: '0.8rem', flexShrink: 0 }}>
+          {oppYear1Fills.length > 0 ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: 4 }}>
+                <strong>
+                  {oppYear1Fills.length} deal{oppYear1Fills.length === 1 ? '' : 's'} can take Year 1 figures from {oppYear1Fills.length === 1 ? 'its' : 'their'} opp
+                </strong>
+                <button
+                  type="button"
+                  onClick={importOppYear1}
+                  title="Write each deal's Year 1 Setup and Year 1 recurring revenue from the Pricing Option saved on the opp its BFO opp name ties it to. Only blank cells are filled — a figure already on the deal is left alone."
+                  style={{
+                    padding: '0.15rem 0.55rem', background: '#0F766E', border: '1px solid #0F766E',
+                    borderRadius: 4, color: '#fff', fontSize: '0.72rem', fontWeight: 700,
+                    fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Import Year 1 figures</button>
+              </div>
+              <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
+                Their <strong>BFO opp name</strong> matches an opp carrying a saved Pricing Option, and the deal&apos;s
+                {' '}<strong>Setup</strong> / <strong>Recurring Revenue</strong> {oppYear1Fills.length === 1 ? 'is' : 'are'} still blank.
+                Blank cells only — anything already filled in is left alone. The bracketed figures in the grid are what would be written.
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {oppYear1Fills.slice(0, 8).map((f) => (
+                  <li key={f.index}>
+                    <strong>{f.client || 'Unnamed deal'}</strong>
+                    {f.agreement ? <> &middot; {f.agreement}</> : null}
+                    {': '}
+                    {[
+                      f.patch[DEAL_SETUP_KEY] != null ? `Setup ${fmtCurrency(f.patch[DEAL_SETUP_KEY])}` : null,
+                      f.patch[DEAL_RECURRING_KEY] != null ? `Recurring ${fmtCurrency(f.patch[DEAL_RECURRING_KEY])}` : null,
+                    ].filter(Boolean).join(' · ')}
+                    {f.optionName ? <span style={{ color: '#0D9488' }}> (option &ldquo;{f.optionName}&rdquo;)</span> : null}
+                    {f.oppCount > 1 ? <span style={{ color: '#B45309' }}> — {f.oppCount} opps share this BFO name; using the first with an option</span> : null}
+                  </li>
+                ))}
+              </ul>
+              {oppYear1Fills.length > 8 && (
+                <div style={{ fontSize: '0.7rem', marginTop: 4 }}>+{oppYear1Fills.length - 8} more</div>
+              )}
+            </>
+          ) : null}
+          {oppYear1Note && (
+            <div style={{ fontSize: '0.74rem', fontWeight: 700, marginTop: oppYear1Fills.length > 0 ? 6 : 0 }}>{oppYear1Note}</div>
+          )}
         </div>
       )}
 

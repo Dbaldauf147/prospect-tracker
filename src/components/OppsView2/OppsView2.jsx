@@ -40,7 +40,7 @@ import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT }
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
-import { fmtMarginPct, fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
+import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -1654,36 +1654,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
   // the monthly Recurring fee (sum of each recurring line's base
   // fee × unit count). Recomputed from the frozen snapshot rows so it
   // stays correct even after the Pricing tab is cleared.
-  const snapStats = useMemo(() => {
-    if (!snapshot) return null;
-    const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
-    const years = Math.max(1, Number(snapshot.years) || 1);
-    const esc = Number(snapshot.escPct) || 0;
-    let setupOneTime = 0;
-    let recurringMonthly = 0;
-    let recurringAnnual = 0;
-    for (const r of rows) {
-      if (String(r.type || '').toLowerCase().startsWith('recurring')) {
-        recurringMonthly += (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount);
-        // Year-1 recurring revenue — matches the pricing page's Year 1
-        // "Recurring" column. Uses rowYearRevenue so a line that starts
-        // after month 1 bills only its active months (not a flat ×12).
-        recurringAnnual += rowYearRevenue(r, 1, years, esc);
-      } else {
-        // Setup / One Time lines bill a single month — rowYearRevenue
-        // returns their amount only when that month lands in Year 1.
-        setupOneTime += rowYearRevenue(r, 1, years, esc);
-      }
-    }
-    const year1Total = Number(snapshot.year1Total) || 0;
-    // Deal margin over the term, frozen in by the Pricing tab. Only the
-    // SIA path can compute one, so this is null for options saved from
-    // the hand-built Options subtab and the row is skipped.
-    const finalMargin = typeof snapshot.finalMargin === 'number' && Number.isFinite(snapshot.finalMargin)
-      ? snapshot.finalMargin
-      : null;
-    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total, finalMargin };
-  }, [snapshot]);
+  const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
