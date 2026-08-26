@@ -271,6 +271,20 @@ export function propertyTypeAccounts(rawType) {
   return ACCOUNT_ESTIMATES[name];
 }
 
+// Every commodity's account estimate for a property type, added up. A
+// data deal is priced per utility account per month, so this is the unit
+// a site list has to roll up into: one site of a given type carries this
+// many bills. Labels that aren't a single number ('Multiple', '0 – 1',
+// 'N/A') contribute their `count` — the same 3 / 0.5 / 0 the export's
+// Total row uses. Returns null for an unrecognized type so callers can
+// tell "no estimate" from a genuine zero.
+export function propertyTypeAccountTotal(rawType) {
+  const acc = propertyTypeAccounts(rawType);
+  if (!acc) return null;
+  return ['electric', 'gas', 'water', 'waste', 'steam']
+    .reduce((sum, k) => sum + (Number(acc[k]?.count) || 0), 0);
+}
+
 // Estimate a site's annual electric / gas usage from its property
 // type + optional Size_ft2. When a size is provided we scale by
 // (actualSize / referenceSize) — labs at 40,000 sf get half the

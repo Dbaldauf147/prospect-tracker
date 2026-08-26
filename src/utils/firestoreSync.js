@@ -211,7 +211,7 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
 const MERGE_FIELDS = [
   'tier', 'status', 'notes', 'website', 'emailDomain', 'zoomCompanyName',
   'hqRegion', 'type', 'cdm', 'geography', 'publicPrivate', 'rank',
-  'peAum', 'reAum', 'numberOfSites', 'assetTypes', 'frameworks',
+  'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts', 'assetTypes', 'frameworks',
 ];
 
 function isEmptyValue(v) {
