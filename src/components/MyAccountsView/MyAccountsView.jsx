@@ -170,14 +170,6 @@ const TYPE2_COLORS = {
 // "Company Type" subtab. Accounts with a blank Type still get a bucket so
 // they stay visible (and fixable) instead of dropping out of the grouping.
 const UNSPECIFIED_TYPE = 'No Type Set';
-// Tier accents for the company chips — same palette as the tier summary
-// cards on the main tab, so a Tier 1 reads red in both places.
-const TIER_CHIP_COLORS = {
-  'Tier 1': { bg: '#FEE2E2', color: '#B91C1C' },
-  'Tier 2': { bg: '#DBEAFE', color: '#1D4ED8' },
-  'Tier 3': { bg: '#FEF3C7', color: '#B45309' },
-};
-const TIER_ORDER = { 'Tier 1': 0, 'Tier 2': 1, 'Tier 3': 2 };
 
 // The Master Site List (SitesView's "Master Site List" tab) persists its
 // rows under this key via uploadedListStore. We load it here to show a
@@ -2658,12 +2650,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       type2: TYPE2_MAP[type] || '',
       count: accounts.length,
       clients: accounts.filter(a => a.status === 'Client').length,
-      accounts: accounts.slice().sort((a, b) => {
-        const ta = TIER_ORDER[a.myTier] ?? 9;
-        const tb = TIER_ORDER[b.myTier] ?? 9;
-        if (ta !== tb) return ta - tb;
-        return (a.company || '').localeCompare(b.company || '');
-      }),
+      accounts: accounts.slice().sort((a, b) => (a.company || '').localeCompare(b.company || '')),
     }));
     // Biggest bucket first, with the untyped accounts pinned last so they
     // read as a to-do rather than as a category of firm.
@@ -3247,28 +3234,21 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                     {g.count} firm{g.count === 1 ? '' : 's'} · {pct(g.count)}%
                   </span>
                 </div>
-                <div className={styles.bucketGrid} style={{ maxHeight: 'none' }}>
-                  {g.accounts.map(a => {
-                    const tier = TIER_CHIP_COLORS[a.myTier];
-                    return (
-                      <span
-                        key={a.id || a.company}
-                        className={styles.bucketChip}
-                        title={`${a.company}${a.myTier ? ` · ${a.myTier}` : ''}${a.status ? ` · ${a.status}` : ''} · ${a.contactCount || 0} contact${(a.contactCount || 0) === 1 ? '' : 's'} — click to open`}
-                        onClick={() => onSelect(a)}
-                      >
-                        {tier && (
-                          <span style={{ padding: '0 5px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: tier.bg, color: tier.color }}>
-                            {a.myTier.replace('Tier ', 'T')}
-                          </span>
-                        )}
-                        {a.company}
-                        {a.status === 'Client' && (
-                          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#059669' }}>CLIENT</span>
-                        )}
-                      </span>
-                    );
-                  })}
+                <div className={styles.typeList}>
+                  {g.accounts.map(a => (
+                    <button
+                      key={a.id || a.company}
+                      type="button"
+                      className={styles.typeRow}
+                      title={`${a.company}${a.status ? ` · ${a.status}` : ''} · ${a.contactCount || 0} contact${(a.contactCount || 0) === 1 ? '' : 's'} — click to open`}
+                      onClick={() => onSelect(a)}
+                    >
+                      {a.company}
+                      {a.status === 'Client' && (
+                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#059669' }}>CLIENT</span>
+                      )}
+                    </button>
+                  ))}
                 </div>
               </div>
             );
