@@ -193,7 +193,7 @@ export const SERVICE_CATEGORIES = [
   {
     name: 'GHG Reporting',
     items: [
-      'GHG', 'Comp GHG', 'IMP', 'Rebasline project',
+      'GHG', 'Comp GHG', 'IMP', 'Rebaseline project',
       'Assurance gap assessment',
     ],
   },

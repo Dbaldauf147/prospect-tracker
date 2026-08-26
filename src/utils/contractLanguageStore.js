@@ -166,3 +166,42 @@ export async function appendContractLanguage(userId, entries) {
   }
   return tally;
 }
+
+/**
+ * Move one service's clauses onto another service and delete the source
+ * document — the library's half of folding two spellings of the same
+ * service into one (see utils/serviceNameMerges.js).
+ *
+ * Wording already on file under the surviving service is skipped, so a
+ * clause captured under both names ends up filed once. A source document
+ * that doesn't exist is a no-op, which is what makes this safe to run
+ * against an account that never had the retired spelling.
+ *
+ * Returns { ok, moved, skipped, error, code }.
+ */
+export async function mergeServiceLanguage(userId, from, to) {
+  const fromName = String(from || '').trim();
+  const toName = String(to || '').trim();
+  if (!userId || !fromName || !toName) {
+    return { ok: false, moved: 0, skipped: 0, error: 'Nothing to merge.', code: 'invalid-argument' };
+  }
+  const fromRef = doc(db, COL, userId, SUB, serviceSlug(fromName));
+  try {
+    const snap = await getDoc(fromRef);
+    if (!snap.exists()) return { ok: true, moved: 0, skipped: 0, error: '', code: '' };
+    const clauses = normalizeClauses(snap.data()?.clauses).filter(c => c.text.trim());
+    if (clauses.length) {
+      const res = await appendContractLanguage(userId, [{ service: toName, clauses }]);
+      // The source is only dropped once its wording is safely on the other
+      // document — a failed append that still deleted would lose the clauses.
+      if (!res.ok) return { ok: false, moved: res.added, skipped: res.skipped, error: res.error, code: res.code };
+      await deleteDoc(fromRef);
+      return { ok: true, moved: res.added, skipped: res.skipped, error: '', code: '' };
+    }
+    await deleteDoc(fromRef);
+    return { ok: true, moved: 0, skipped: 0, error: '', code: '' };
+  } catch (err) {
+    console.warn('contractLanguage: merge failed', err);
+    return { ok: false, moved: 0, skipped: 0, error: err?.message || String(err), code: err?.code || '' };
+  }
+}

@@ -105,7 +105,7 @@ export const SERVICE_CATALOG = [
   { name: 'RA survey',                                  bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
   { name: 'RADAR',                                      bfoTag: '#SUECO', region: 'EU',     years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
   { name: 'Rate optimization',                          bfoTag: '#SUSUP', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
-  { name: 'Rebasline project',                          bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
+  { name: 'Rebaseline project',                         bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
   { name: 'Remote assessments',                         bfoTag: '#SUESP', region: 'NAM',    years: '1 year',  productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Project' },
   { name: 'REOA',                                       bfoTag: '#SUREN', region: 'NAM',    years: '1 year',  productLine: 'SUREN - RENEWABLE ADVIS. SER',   serviceType: 'Project' },
   { name: 'Reporting gap assessment',                   bfoTag: '#SUECO', region: 'NAM',    years: '1 year',  productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Project' },
