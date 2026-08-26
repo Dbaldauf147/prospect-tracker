@@ -773,6 +773,54 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
   }, [settings, updateSettings]);
 
+  // Same one-time injection for the Sites / Accounts pair. Accounts is new,
+  // and Sites — while it has always existed — may sit under "Hidden columns"
+  // for anyone who trimmed it, which would leave the pair half-shown. Its own
+  // flag so users who already ran the earlier migrations still get it.
+  useEffect(() => {
+    if (!settings) return;
+    const nextTablePrefs = { ...(settings.tablePrefs || {}) };
+    let touchedRemote = false;
+    for (const tid of ['clients', 'oldclients']) {
+      const flag = `clients-view:mig-sites-accounts-cols-${tid}`;
+      let alreadyDone = true;
+      try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
+      if (alreadyDone) continue;
+      const remote = settings.tablePrefs?.[tid]?.visible;
+      let lsSaved = null;
+      try {
+        const raw = JSON.parse(localStorage.getItem(`prospect-col-visible-${tid}`));
+        if (Array.isArray(raw)) lsSaved = raw;
+      } catch { /* ignore malformed */ }
+      const saved = Array.isArray(remote) && remote.length > 0
+        ? remote
+        : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
+      try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
+      if (!saved) continue;
+      const next = [...saved];
+      let changed = false;
+      // Sites goes back after Services; Accounts right after Sites, matching
+      // the column order below.
+      if (!next.includes('numberOfSites')) {
+        const servicesIdx = next.indexOf('services');
+        if (servicesIdx >= 0) next.splice(servicesIdx + 1, 0, 'numberOfSites');
+        else next.push('numberOfSites');
+        changed = true;
+      }
+      if (!next.includes('numberOfAccounts')) {
+        const sitesIdx = next.indexOf('numberOfSites');
+        if (sitesIdx >= 0) next.splice(sitesIdx + 1, 0, 'numberOfAccounts');
+        else next.push('numberOfAccounts');
+        changed = true;
+      }
+      if (!changed) continue;
+      try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
+      nextTablePrefs[tid] = { ...(settings.tablePrefs?.[tid] || {}), visible: next };
+      touchedRemote = true;
+    }
+    if (touchedRemote && updateSettings) updateSettings({ tablePrefs: nextTablePrefs });
+  }, [settings, updateSettings]);
+
   // User-configurable column-to-Dropdowns-list bindings, mirroring the
   // Deals / Opps 2 "Link columns" feature. Lets the Status column on
   // this table pull picks from a Dropdowns-tab list.
@@ -1116,6 +1164,16 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       key: 'numberOfSites', label: 'Sites', defaultWidth: 90,
       render: (row) => (
         <span style={{ color: '#475569' }}>{row.numberOfSites || '-'}</span>
+      ),
+    },
+    {
+      // Utility accounts (bills) behind the client's sites. Same source as
+      // the company popup's Number of Accounts: typed there, or stamped by
+      // a Utility Lookup save. Sits next to Sites since the two are read
+      // together — sites are the portfolio, accounts are what gets billed.
+      key: 'numberOfAccounts', label: 'Accounts', defaultWidth: 100,
+      render: (row) => (
+        <span style={{ color: '#475569' }}>{row.numberOfAccounts || '-'}</span>
       ),
     },
     {
