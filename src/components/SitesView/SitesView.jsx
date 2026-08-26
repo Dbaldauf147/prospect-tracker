@@ -76,6 +76,7 @@ import {
   normalizePropertyType,
   estimateConsumption,
   propertyTypeAccounts,
+  propertyTypeAccountTotal,
   CONSUMPTION_ESTIMATES,
   ACCOUNT_ESTIMATES,
   PROPERTY_TYPE_OPTIONS,
@@ -4887,6 +4888,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ['Gas Rate ($/Dth)', r => round(typeof r.__gasRate__ === 'number' ? r.__gasRate__ * 10 : null, 2)],
     ['Total Natural Gas Cost', r => round(r.__gasCost__)],
     ['Total Energy Cost', r => round(r.__totalCost__)],
+    // Expected utility accounts (bills) for the site, from its property
+    // type. Written per site so a company's account total can be read
+    // back off the saved list the same way its site count is — by
+    // counting the list, not the one upload that happened to be open.
+    ['Est. Utility Accounts', r => round(propertyTypeAccountTotal(r.__propertyType__), 2)],
   ];
 
   // Which of those figures were MODELED rather than measured, for one
@@ -5002,16 +5008,45 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return { ok: true, shared: false, error: result.error };
   }, [personalOrdinanceOverrides, updateSettingsPath]);
 
+  // Total expected utility accounts across a saved site list. Rows this
+  // page writes carry the per-site estimate in their analysis column;
+  // rows that predate it — or came from a plain upload on the company
+  // popup — fall back to the property-type lookup, so a list assembled
+  // over several uploads still totals correctly. Headers are matched by
+  // prefix because a colliding uploaded column pushes the analysis one to
+  // "<label> (analysis)".
+  function siteListAccountTotal({ headers = [], rows = [] } = {}) {
+    const isHeader = (h, label) => typeof h === 'string' && h.startsWith(label);
+    const acctHeaders = headers.filter(h => isHeader(h, 'Est. Utility Accounts'));
+    const typeHeaders = headers.filter(h => isHeader(h, 'Property Type'));
+    let total = 0;
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      let stated = null;
+      for (const h of acctHeaders) {
+        const n = Number(row[h]);
+        if (Number.isFinite(n) && n > 0) { stated = n; break; }
+      }
+      if (stated != null) { total += stated; continue; }
+      for (const h of typeHeaders) {
+        const est = propertyTypeAccountTotal(row[h]);
+        if (est) { total += est; break; }
+      }
+    }
+    return Math.round(total);
+  }
+
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
   // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
   // Up status and the Site List Overview both read it. Returns the note
-  // to append to the save status, and how many sites the company's list
-  // holds afterwards (0 when it couldn't be written).
+  // to append to the save status, how many sites the company's list holds
+  // afterwards, and the utility accounts behind them (both 0 when it
+  // couldn't be written).
   async function saveSitesAsCompanySiteList(company) {
     const slug = companySlug(company);
-    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0 };
-    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0 };
+    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0 };
+    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0 };
     // Firestore rejects Dates / nested objects in these row maps, and the
     // popup's own upload path normalizes the same way.
     const safeCell = (v) => {
@@ -5096,6 +5131,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many to store for one company, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
           : ' Site list not updated: too many sites to store for one company.',
         total: existingRows.length,
+        accounts: siteListAccountTotal({ headers: existingHeaders, rows: existingRows }),
       };
     }
     try {
@@ -5114,10 +5150,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return {
         note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${kept}`,
         total: merged.rows.length,
+        accounts: siteListAccountTotal(merged),
       };
     } catch (e) {
       console.warn('Could not save company site list:', e);
-      return { note: ' Site list could not be updated.', total: 0 };
+      return { note: ' Site list could not be updated.', total: 0, accounts: 0 };
     }
   }
 
@@ -5181,18 +5218,30 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // whose 158 sites arrived as three uploads has 158 sites, not
       // however many were on screen for the last save.
       const siteCount = Math.max(cleanSitesData.length, siteList.total || 0);
+      // Number of Accounts rides along on the same reasoning: the utility
+      // accounts (bills) behind those sites, estimated from each site's
+      // property type. It feeds the popup's estimated annual data deal
+      // size, which is priced per account per month.
+      const loadedAccounts = Math.round(
+        allRows.reduce((sum, r) => sum + (propertyTypeAccountTotal(r.__propertyType__) || 0), 0),
+      );
+      const accountCount = Math.max(loadedAccounts, siteList.accounts || 0);
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
             indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
             ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
+            ...(accountCount > 0 ? { numberOfAccounts: accountCount } : {}),
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
       const siteCountNote = siteCount > 0
         ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${siteList.note}` });
+      const accountCountNote = accountCount > 0
+        ? ` Number of Accounts set to ${accountCount.toLocaleString()}.`
+        : '';
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${siteList.note}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {

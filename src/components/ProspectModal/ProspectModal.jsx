@@ -470,9 +470,14 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 }
 
 
+// A data-only deal is billed per utility account per month, so a company's
+// account count is most of the way to what the deal is worth in a year.
+// The Scale section shows that annualised figure beside the count.
+const DATA_DEAL_PER_ACCOUNT_MONTH = 5;
+
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
-  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 3',
+  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null, rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -4544,6 +4549,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // don't have to be counted out of it by eye.
   const siteListFacts = useMemo(() => computeSiteListFacts(currentSiteList), [currentSiteList]);
 
+  // Estimated annual value of a data deal for this company: its utility
+  // accounts at $5 each per month, for twelve months. Null — shown as a
+  // dash — until there is an account count to work from, since $0 would
+  // read as a priced deal rather than an unanswered question.
+  const estAnnualDataDeal = useMemo(() => {
+    const accounts = Number(fields.numberOfAccounts);
+    if (!Number.isFinite(accounts) || accounts <= 0) return null;
+    return Math.round(accounts * DATA_DEAL_PER_ACCOUNT_MONTH * 12);
+  }, [fields.numberOfAccounts]);
+
   // Parse an uploaded .xlsx/.xls/.csv into { headers, rows } and stash it
   // under settings.companySiteLists[slug]. Rows are plain header→cell
   // objects with Firestore-safe (string/number) values.
@@ -6172,6 +6187,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
       data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
       data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
+      data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
       delete data.id;
       delete data.createdAt;
       delete data.updatedAt;
@@ -6188,6 +6204,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
     data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
     data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
+    data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
     delete data.id;
     delete data.createdAt;
     delete data.updatedAt;
@@ -6208,6 +6225,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
         data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
         data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
+        data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
         delete data.id;
         delete data.createdAt;
         delete data.updatedAt;
@@ -6259,6 +6277,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '-'}</div></div>
         <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '-'}</div></div>
         <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Accounts</div><div class="info-val">${f.numberOfAccounts ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Est. Annual Data Deal</div><div class="info-val">${estAnnualDataDeal != null ? '$' + estAnnualDataDeal.toLocaleString() : '-'}</div></div>
         <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '-'}</div></div>
         <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '-'}</div></div>
         <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '-'}</div></div>
@@ -6861,6 +6881,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Number of Sites</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Number of Accounts</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfAccounts ?? ''} onCommit={v => set('numberOfAccounts', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Est. Annual Data Deal</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+                <input
+                  className={styles.input}
+                  style={{ background: '#F8FAFC', color: '#475569', fontWeight: 600, flex: '1 1 auto', minWidth: 0 }}
+                  value={estAnnualDataDeal != null ? `$${estAnnualDataDeal.toLocaleString()}` : ''}
+                  readOnly
+                  placeholder="-"
+                  title="Number of Accounts x $5 per account per month, over twelve months."
+                />
+                <span style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                  $5/acct/mo
+                </span>
+              </div>
             </div>
 
             <div>
