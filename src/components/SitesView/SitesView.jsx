@@ -2645,8 +2645,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     let total = 0;
     let sites = 0;
     let unknown = 0;
+    // Sites that carry SOME property-type value, mapped or not. It is the
+    // difference between "these types need mapping" and "this upload has no
+    // property type at all", which are different jobs for the user: one is
+    // the Property Types button, the other is the column mapping.
+    let withRawType = 0;
     const byType = new Map();
     for (const r of rows) {
+      if (String(r.__propertyTypeRaw__ || '').trim()) withRawType += 1;
       const est = propertyTypeAccountTotal(r.__propertyType__);
       if (est == null) { unknown += 1; continue; }
       total += est;
@@ -2661,6 +2667,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       total: Math.round(total),
       sites,
       unknown,
+      withRawType,
       byType: [...byType.values()].sort((a, b) => b.accounts - a.accounts),
     };
   }, [rows]);
@@ -14022,7 +14029,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 because it is the other unit this page is read in: a data
                 deal is priced per account per month, and the site count on
                 its own doesn't say how many bills a portfolio carries. */}
-            {accountStats.total > 0 && (
+            {rows.length > 0 && (accountStats.total > 0 ? (
               <>
                 {' '}· Est. utility accounts{' '}
                 <strong
@@ -14044,7 +14051,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   </span>
                 )}
               </>
-            )}
+            ) : (
+              // Nothing to add up. Said out loud rather than left off the
+              // line: an upload with no property types is the case where
+              // someone goes looking for the figure, and a headline that
+              // simply omits it can't tell them it's the property type
+              // that's missing — or which of the two fixes applies.
+              <span style={{ color: '#B45309' }} title={accountStats.withRawType > 0
+                ? 'Utility accounts are estimated per property type, and none of this upload\u2019s property types is mapped to one of the reference types. Map them with the Property Types button and the estimate appears here and in the Est. Accounts column.'
+                : 'Utility accounts are estimated per property type, and no Property Type column is mapped on this upload. Map one with Update Column Mapping — or set it on the sites with Mass edit — and the estimate appears here and in the Est. Accounts column.'}
+              >
+                {' '}· Est. utility accounts <strong>—</strong>{' '}
+                ({accountStats.withRawType > 0 ? 'property types unmapped' : 'no property type on this upload'})
+              </span>
+            ))}
             {/* Sites an N/A property-type mapping leaves without a modelled
                 usage figure. They're counted in the headline and carried
                 through every export; this says which ones are contributing
