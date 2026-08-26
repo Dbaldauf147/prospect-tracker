@@ -8,7 +8,7 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
-import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -2960,10 +2960,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (col.key === 'type') {
         const typeMismatchAccounts = filteredAccounts.filter(a => a.typeMismatch).map(a => a.company);
         // Source the dropdown options from the configurable "Type" list on
-        // the Dropdowns tab; fall back to the built-in enum if it's been
-        // hidden or emptied there.
-        const typeList = getEffectiveDropdownLists(settings).find(l => l.key === 'type');
-        const typeOptions = (typeList && typeList.options && typeList.options.length) ? typeList.options : TYPES;
+        // the Dropdowns tab — through the shared builder, so this picker
+        // offers exactly what the company card and Table View do: the list,
+        // then any Type already in use, then legacy customTypes, falling
+        // back to the built-in enum if the list has been hidden or emptied.
+        const typeOptions = buildTypeOptions(prospects, settings);
         return { ...col, label: typeMismatchAccounts.length > 0 ? `Type ⚠ ${typeMismatchAccounts.length}` : 'Type', headerTitle: warningHeaderTitle('Type differs from PE-partner-derived suggestion', typeMismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={typeOptions} />

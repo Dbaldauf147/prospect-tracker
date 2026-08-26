@@ -1,5 +1,5 @@
-import { DROPDOWN_LISTS, SOLUTIONS_CATALOG } from '../data/dropdownLists';
-import { boardServiceNames, sortServiceNames } from './serviceCategoriesStore';
+import { DROPDOWN_LISTS, SOLUTIONS_CATALOG } from '../data/dropdownLists.js';
+import { boardServiceNames, sortServiceNames } from './serviceCategoriesStore.js';
 
 // The Solutions / Service Catalog is shown alongside the named lists
 // on the Dropdowns page but lives in a separate constant. Surface it

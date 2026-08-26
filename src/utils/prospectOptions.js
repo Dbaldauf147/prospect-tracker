@@ -1,5 +1,5 @@
-import { TYPES } from '../data/enums';
-import { getEffectiveDropdownLists } from './dropdownListsStore';
+import { TYPES } from '../data/enums.js';
+import { getEffectiveDropdownLists } from './dropdownListsStore.js';
 
 // The Dropdowns-tab list that owns PE investment-strategy tags. Editing
 // it there is the single source of truth for what the PE firm Strategies
@@ -10,6 +10,11 @@ export const PE_STRATEGY_LIST_KEY = 'peStrategies';
 // the Asset Types multi-select in Table View, the company pop-up and the
 // PE Overview tab.
 export const ASSET_TYPES_LIST_KEY = 'assetTypes';
+
+// The Dropdowns-tab list that owns company Types — the Classification >
+// Type dropdown on the company card, and every other Type picker. Editing
+// it there is the single source of truth for what they offer.
+export const TYPE_LIST_KEY = 'type';
 
 // The Dropdowns-tab list that owns CDM names. There's no built-in CDM
 // list, so this resolves a user-created list either by the conventional
@@ -48,11 +53,25 @@ function dedupeSorted(values) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-// Type options union: built-in TYPES + values currently in use across
-// every prospect + custom types the user has added via the dropdown.
+// The effective Type list off the Dropdowns tab (built-in vocabulary plus
+// the user's edits there) — the canonical option order.
+export function getTypeListOptions(settings) {
+  const list = getEffectiveDropdownLists(settings).find(l => l.key === TYPE_LIST_KEY);
+  return Array.isArray(list?.options) ? list.options : [];
+}
+
+// Type options for every Type dropdown: the Dropdowns-tab list first (its
+// order wins), then any value already saved on a company, then the legacy
+// customTypes setting — so editing the list controls what's offered, while a
+// type removed from it never disappears off a company that still carries it.
+//
+// Falls back to the built-in TYPES only when the list has been hidden or
+// emptied on the Dropdowns tab, which is the same rule My Accounts has always
+// used: an empty picker would leave no way to set a Type at all.
 export function buildTypeOptions(prospects, settings) {
-  return dedupeSorted([
-    ...TYPES,
+  const managed = getTypeListOptions(settings);
+  return dedupeOrdered([
+    ...(managed.length ? managed : TYPES),
     ...(prospects || []).map(p => p?.type),
     ...(settings?.customTypes || []),
   ]);
@@ -158,9 +177,24 @@ export function buildAssetTypeOptions(prospects, settings) {
 // picks "+ Add new …" on the dropdown. `cdmOptions` is the live CDM
 // vocabulary, used to skip names some prospect already uses.
 export function persistCustomOption(colKey, name, settings, updateSettings, cdmOptions) {
-  if (!name) return;
-  const trimmed = name.trim();
+  // Trimmed first, and a name that's nothing but whitespace is dropped —
+  // otherwise it lands on the list as a blank option nobody can pick or
+  // tell apart from the next one.
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return;
   if (colKey === 'type') {
+    // The Dropdowns-tab Type list is where Types are managed, so that's
+    // where a new one goes — same store the Dropdowns editor writes to, so
+    // it's editable there afterwards rather than stranded in customTypes.
+    const current = getTypeListOptions(settings);
+    if (current.length) {
+      if (current.some(o => String(o).trim().toLowerCase() === trimmed.toLowerCase())) return;
+      const lists = settings?.dropdownLists || {};
+      if (updateSettings) updateSettings({ dropdownLists: { ...lists, [TYPE_LIST_KEY]: [...current, trimmed] } });
+      return;
+    }
+    // No managed list (hidden or emptied): the legacy customTypes setting
+    // still carries it, so a Type added here isn't lost.
     const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
     const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
     const builtIn = TYPES.some(t => t.toLowerCase() === trimmed.toLowerCase());

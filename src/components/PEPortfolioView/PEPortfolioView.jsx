@@ -2294,13 +2294,17 @@ const BLUE_OWL_BULK_FIELDS = [
 // selected company's Table View record. Same shape as Opps 2's
 // MassEditBar, but against prospect fields. A blank value clears the
 // field (the Apply button is explicit about which it'll do).
-function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
+function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear, typeOptions = [] }) {
   const [fieldKey, setFieldKey] = useState('status');
   const [value, setValue] = useState('');
   // Reset the value buffer when the field changes so a stale value from
   // the previous field doesn't get applied by accident.
   useEffect(() => { setValue(''); }, [fieldKey]);
   const field = BLUE_OWL_BULK_FIELDS.find(f => f.key === fieldKey) || BLUE_OWL_BULK_FIELDS[0];
+  // Type is managed on the Dropdowns tab, so its options arrive as a prop
+  // rather than from the static field list — every other field's
+  // vocabulary is fixed.
+  const fieldOptions = (field.key === 'type' && typeOptions.length) ? typeOptions : field.options;
   const inputStyle = { padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B' };
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.78rem' }}>
@@ -2313,10 +2317,10 @@ function BlueOwlBulkEditBar({ selectedCount, applying, onApply, onClear }) {
         </select>
       </label>
       <span style={{ color: '#64748B' }}>to</span>
-      {field.options ? (
+      {fieldOptions ? (
         <select value={value} onChange={e => setValue(e.target.value)} style={{ ...inputStyle, minWidth: 170 }}>
           <option value="">(blank (clear))</option>
-          {field.options.map(o => <option key={o} value={o}>{o}</option>)}
+          {fieldOptions.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (
         <input
@@ -3536,6 +3540,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
           applying={bulkApplying}
           onApply={applyBulkEdit}
           onClear={() => setSelectedIds(new Set())}
+          typeOptions={typeOptions}
         />
       )}
       {pasteOpen && (

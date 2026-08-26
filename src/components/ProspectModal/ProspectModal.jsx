@@ -22,7 +22,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -60,7 +60,7 @@ import {
   loadClientManagerMap, setClientManager as saveClientManager, CLIENT_MANAGER_EVENT,
 } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions } from '../../utils/prospectOptions';
+import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
   divisionsFor,
@@ -4177,6 +4177,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // already in use), so the pop-up offers exactly what Table View does.
   const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
 
+  // Classification > Type, from the same Dropdowns-tab list — so a Type
+  // added or renamed there shows up here, and a company keeps whatever
+  // Type it already carries even if that one has since left the list.
+  const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
+
   // Company name (lowercased) → the tracker record's status, so the
   // Portfolio Companies Status column can show where a mapped company
   // already stands without the user re-entering it. First record wins on
@@ -6774,7 +6779,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Type</label>
               <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
                 <option value="">-</option>
-                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
