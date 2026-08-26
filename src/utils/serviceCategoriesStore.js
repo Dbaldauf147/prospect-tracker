@@ -81,3 +81,65 @@ export function moveServiceToBucket(categories, name, bucket, renames) {
   }
   return next;
 }
+
+// Every service the board has filed into a box, in board order. The
+// Solutions list is unioned with this (see mergeBoardServices in
+// dropdownListsStore) so a service can never be pickable in Scope while
+// missing from the Dropdowns › Services table.
+//
+// Hidden services are included: hiding is a separate switch, applied by
+// each board on the way to the screen, and the Services subtab has its own
+// "Show N hidden" toggle to bring them back. Filtering them out here would
+// take a hidden service out of the vocabulary entirely, with no way in.
+export function boardServiceNames(settings) {
+  return getServiceCategories(settings).flatMap(c => c.items);
+}
+
+// The layout with every service not in `keepNames` taken out of its box —
+// how a service deleted from the Solutions list leaves the board too.
+// Without it the union would file the name straight back and the delete
+// would look broken.
+//
+// Emptied boxes are kept: a box is the user's own arrangement, and the
+// boards drop empty ones on the way to the screen anyway, so removing the
+// last service out of one shouldn't quietly destroy it.
+//
+// Returns null when nothing moved, so callers can skip a no-op write.
+export function pruneServicesFromCategories(categories, keepNames) {
+  const keep = new Set((keepNames || []).map(n => String(n).trim().toLowerCase()));
+  let changed = false;
+  const next = (categories || []).map(c => {
+    const items = (c.items || []).filter(i => keep.has(String(i).trim().toLowerCase()));
+    if (items.length !== (c.items || []).length) changed = true;
+    return { name: c.name, items };
+  });
+  return changed ? next : null;
+}
+
+// The layout with `from` renamed to `to`, in whatever box it sits in — the
+// board half of renaming a service on the Solutions list. The new name is
+// the same key Scope values are stored under, so it has to land on the
+// board as well; otherwise the old name survives in its box and the union
+// brings it back alongside the new one.
+//
+// Not to be confused with settings.serviceRenames, which is the company
+// card's display-only alias and leaves the underlying name alone.
+//
+// Returns null when no box holds `from`, so callers can skip the write.
+export function renameServiceInCategories(categories, from, to) {
+  const key = String(from || '').trim().toLowerCase();
+  const target = String(to || '').trim();
+  if (!key || !target) return null;
+  let found = false;
+  const next = (categories || []).map(c => {
+    if (!(c.items || []).some(i => String(i).trim().toLowerCase() === key)) return c;
+    found = true;
+    return {
+      name: c.name,
+      items: sortServiceNames(
+        c.items.map(i => (String(i).trim().toLowerCase() === key ? target : i)),
+      ),
+    };
+  });
+  return found ? next : null;
+}

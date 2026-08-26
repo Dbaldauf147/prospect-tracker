@@ -1979,3 +1979,13 @@
 .durationUnitSelect:hover {
   border-color: var(--color-border-light);
 }
+
+/* The Services subtab's note about rows that came from the services board
+   rather than the Solutions list. Sits under the search row, so it lines up
+   with the search box rather than the table's first column. */
+.servicesBoardNote {
+  margin: 0 1.25rem 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
