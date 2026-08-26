@@ -46,6 +46,8 @@ import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
+import { planSiteListRename, summarizeSiteListRename, applySiteListRename } from '../MasterSiteListView/siteListRename';
+import { renameCompanySiteListEntry } from '../MasterSiteListView/siteListRenameRules';
 import { readSheetSync } from '../../utils/sheetSyncSettings';
 import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetCompanyRename';
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
@@ -5951,7 +5953,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const slugify = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
     const oldSlug = slugify(oldName);
     const newSlug = slugify(newName);
-    if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+    if (!oldSlug || !newSlug) return;
+    if (oldSlug === newSlug) {
+      // Case- or punctuation-only edits land on the same slug, so none of
+      // the buckets need to move — but a site list also stores the company
+      // name as text, and that copy is what the Site List Overview and the
+      // Utility Lookup picker render. Carry the new spelling onto it.
+      const renamedSame = renameCompanySiteListEntry(
+        (settings.companySiteLists || {})[newSlug], oldName, newName,
+      );
+      if (renamedSame) updateSettingsPath({ [`companySiteLists.${newSlug}`]: renamedSame.entry });
+      return;
+    }
     const patches = {};
     const oldOpps = (settings.companyOpportunities || {})[oldSlug];
     const newOpps = (settings.companyOpportunities || {})[newSlug];
@@ -5975,9 +5988,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const newResearch = (settings.companyResearch || {})[newSlug];
     if (oldResearch && !newResearch) patches[`companyResearch.${newSlug}`] = oldResearch;
 
+    // The site list moves with the old name taken out of it: the entry is
+    // keyed by slug, but it also stores the company as text — as its own
+    // label, which every page listing site lists renders (Draft Emails'
+    // Site List Overview, the Utility Lookup company picker), and in the
+    // uploaded rows' company column. Copying it verbatim left the old name
+    // on screen under a new-slug key.
     const oldSiteList = (settings.companySiteLists || {})[oldSlug];
     const newSiteList = (settings.companySiteLists || {})[newSlug];
-    if (oldSiteList && !newSiteList) patches[`companySiteLists.${newSlug}`] = oldSiteList;
+    if (oldSiteList && !newSiteList) {
+      const renamed = renameCompanySiteListEntry(oldSiteList, oldName, newName);
+      patches[`companySiteLists.${newSlug}`] = renamed ? renamed.entry : oldSiteList;
+    }
 
     // Drop the old slug entries when no other prospect still maps to
     // the old company name — otherwise leave them so the other record
@@ -6045,6 +6067,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const taPlan = renameTargetAccountRows(taData, oldName, newName);
       const blockedCount = countBlockedAccountRename(oldName, newName);
 
+      // Site lists: the Master Site List and the Utility Lookup sites file
+      // both name the company on every row as free text, so a rename that
+      // skipped them would strand those sites under the old name (the
+      // Master Site List would list the company as unmapped).
+      const sitePlan = await planSiteListRename(oldName, newName);
+
       // The Google Sheet the additive import reads. Its row keeps the old
       // name unless we write through, and the importer treats a name it
       // can't find on the site as a company to add — which is how a
@@ -6067,18 +6095,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
       if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0
         && clientTotal === 0 && taPlan.count === 0 && blockedCount === 0
-        && sheetRename.row == null) return;
+        && sitePlan.count === 0 && sheetRename.row == null) return;
       const summaryLines = summarizeRenamePlan(plan);
       if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
       summaryLines.push(...summarizeClientsSubtabRename(clientCounts));
       if (taPlan.count > 0) summaryLines.push(`• ${taPlan.count} Target Account row${taPlan.count === 1 ? '' : 's'}`);
       if (blockedCount > 0) summaryLines.push('• 1 blocked-account entry');
+      summaryLines.push(...summarizeSiteListRename(sitePlan));
       if (sheetRename.row != null) summaryLines.push('• the Google Sheet row (otherwise the old name is re-imported)');
       const ok = window.confirm(
         `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
       );
       if (!ok) return;
       if (clientTotal > 0) applyClientsSubtabRename(oldName, newName);
+      if (sitePlan.count > 0) {
+        try { await applySiteListRename(sitePlan); }
+        catch (err) { console.error('Company rename: site list update failed', err); }
+      }
       if (taPlan.count > 0 && uid) {
         try { await saveTargetAccountsToDB(uid, taPlan.data); }
         catch (err) { console.error('Company rename: target accounts update failed', err); }
