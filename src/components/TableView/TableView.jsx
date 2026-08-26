@@ -445,7 +445,7 @@ function EditOptionsModal({ colKey, options, allProspects, onUpdate, settings, u
   );
 }
 
-export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll, settings, updateSettings }) {
+export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReconcileAll, settings, updateSettings }) {
   const dynamicTypeOptions = useMemo(
     () => buildTypeOptions(allProspects || prospects, settings),
     [allProspects, prospects, settings]
@@ -623,13 +623,35 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
         newProspects.push(record);
       }
 
-      setUploadStatus({ type: 'loading', message: `Replacing all data with ${newProspects.length} rows...` });
+      setUploadStatus({ type: 'loading', message: `Checking ${newProspects.length} rows against the current data...` });
 
-      await onReplaceAll(newProspects, (msg) => {
-        setUploadStatus({ type: 'loading', message: msg });
+      // The plan is built against the LIVE collection and shown before
+      // anything is written, so these numbers are what actually happens.
+      // Worth the extra click: an import that removes companies also
+      // removes what is keyed to them, and that used to happen silently
+      // to the whole roster on every upload.
+      const result = await onReconcileAll(newProspects, {
+        onProgress: (msg) => setUploadStatus({ type: 'loading', message: msg }),
+        confirm: (c) => window.confirm(
+          `Import ${newProspects.length} rows?\n\n`
+          + `• ${c.updated} existing compan${c.updated === 1 ? 'y' : 'ies'} updated — their Target Account, division and HQ mappings are kept\n`
+          + `• ${c.created} added\n`
+          + `• ${c.deleted} removed (not in the file) — anything mapped to them goes too\n`
+          + (c.collapsed ? `• ${c.collapsed} row${c.collapsed === 1 ? '' : 's'} in the file were another spelling of a company already in it\n` : '')
+          + (c.mappingsMoved ? `• ${c.mappingsMoved} mapping${c.mappingsMoved === 1 ? '' : 's'} moved off duplicate records\n` : ''),
+        ),
       });
 
-      setUploadStatus({ type: 'success', message: `Done! Replaced with ${newProspects.length} rows. ${skipped} rows skipped (no company).` });
+      if (result?.cancelled) {
+        setUploadStatus({ type: 'error', message: 'Import cancelled — nothing was changed.' });
+        return;
+      }
+
+      setUploadStatus({
+        type: 'success',
+        message: `Done! ${result.updated} updated, ${result.created} added, ${result.deleted} removed.`
+          + (skipped ? ` ${skipped} rows skipped (no company).` : ''),
+      });
       setUploadPreview(null);
     } catch (err) {
       setUploadStatus({ type: 'error', message: `Upload failed: ${err.message}` });
