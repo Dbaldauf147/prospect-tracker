@@ -17,6 +17,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
+import { tierPreferringTargetsList } from '../../utils/tierSource';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
@@ -2105,6 +2106,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
       if (targetNames.length > 0) sources.push('Target List');
+      // A tier the user chose outranks the Targets list; a tier an
+      // import wrote does not. Applied here rather than where `tier` is
+      // first resolved because that is above the point targetTier is
+      // known — and `tier` is not read in between.
+      tier = tierPreferringTargetsList({ tier, targetTier, tierSource: p.tierSource });
       const tierMismatch = targetTier && targetTier !== tier && !p.ignoreTierMismatch;
       // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;

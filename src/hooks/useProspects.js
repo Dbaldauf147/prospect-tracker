@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey, readAllProspects } from '../utils/firestoreSync';
 import { createAddProspectGuard } from '../utils/addProspectGuard';
+import { clearImportedTierOnEdit } from '../utils/tierSource';
 import seedData from '../data/seedProspects';
 
 // Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
@@ -140,7 +141,9 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
   }
 
   async function updateProspect(id, updates) {
-    let patch = updates;
+    // Setting a tier through the app makes it the user's, whatever an
+    // import wrote before (see utils/tierSource).
+    let patch = clearImportedTierOnEdit(updates);
     // When a firm's PE Stage changes, stamp the date it entered the new
     // stage so the PE Portfolio "Days in Stage" board can measure how long
     // it's been there. Only re-stamp on an actual change (comparing against
