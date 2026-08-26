@@ -6,6 +6,8 @@ import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
 import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
 import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
+import { SERVICE_MERGES, planServiceMerge } from './utils/serviceNameMerges';
+import { mergeServiceLanguage } from './utils/contractLanguageStore';
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
@@ -275,6 +277,41 @@ function App() {
       }
     })();
   }, [user, dataLoading, prospects, updateProspect]);
+
+  // One-time service-name merges (see utils/serviceNameMerges.js): a service
+  // that was seeded under two spellings is folded onto one name across the
+  // stored board layout, the Solutions list, per-service metadata, and every
+  // record's Services Explored / notes / SME maps.
+  //
+  // Gated on settings having loaded as well as prospects: before the
+  // Firestore snapshot arrives `settings` is {} and the pass would plan an
+  // empty patch, set its flag, and never look again. Silent unless it
+  // actually moves something — the correction is the app's to make, not a
+  // decision to put in front of the user like the backfills' report.
+  useEffect(() => {
+    if (!user || !settingsLoaded || dataLoading) return;
+    const pending = SERVICE_MERGES.filter(m => !userLsGet(m.flag));
+    if (pending.length === 0) return;
+    for (const m of pending) userLsSet(m.flag, new Date().toISOString());
+    (async () => {
+      for (const merge of pending) {
+        try {
+          const { settingsPatch, prospectPatches, counts } = planServiceMerge(merge, settingsRef.current, prospects);
+          if (Object.keys(settingsPatch).length) updateSettings(settingsPatch);
+          for (const { id, patch } of prospectPatches) await updateProspect(id, patch);
+          const language = await mergeServiceLanguage(user.uid, merge.from, merge.to);
+          if (counts.settingsKeys.length || counts.prospects || language.moved) {
+            console.log(
+              `Merged service "${merge.from}" into "${merge.to}":`,
+              { settings: counts.settingsKeys, prospects: counts.prospects, clausesMoved: language.moved },
+            );
+          }
+        } catch (err) {
+          console.warn(`Service merge "${merge.from}" → "${merge.to}" failed:`, err);
+        }
+      }
+    })();
+  }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettings]);
 
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     try {
