@@ -830,7 +830,10 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   };
   const dropdownLists = useMemo(
     () => getEffectiveDropdownLists(settings),
-    [settings?.dropdownLists]
+    // The Solutions list is served unioned with the services board layout
+    // (see mergeBoardServices), so it moves when a service is filed into a
+    // box as well as when a list is edited.
+    [settings?.dropdownLists, settings?.customServiceCategories]
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);

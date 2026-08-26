@@ -5,10 +5,13 @@ import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCat
 import {
   getServiceCategories,
   moveServiceToBucket,
+  pruneServicesFromCategories,
+  renameServiceInCategories,
   serviceBucketOf,
   UNGROUPED_SERVICES,
 } from '../../utils/serviceCategoriesStore';
 import {
+  boardOnlyServiceCount,
   getEffectiveDropdownLists,
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
@@ -775,10 +778,14 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
     if (adding) addInputRef.current?.focus();
   }, [adding]);
 
+  // Edits report what they did as well as the array they produced: on the
+  // Solutions list a rename has to be applied to the services board too, and
+  // the new array alone can't tell a rename from a delete-plus-add.
   function commitOption(idx, next) {
     const out = [...list.options];
+    const from = list.options[idx];
     out[idx] = next;
-    onChange(list.key, out);
+    onChange(list.key, out, { renamedFrom: from, renamedTo: next });
   }
   function removeOption(idx) {
     const out = list.options.filter((_, i) => i !== idx);
@@ -911,6 +918,10 @@ export function DropdownsView({ settings, updateSettings }) {
     settings?.dropdownListLabels,
     settings?.dropdownListsHidden,
     settings?.dropdownCustomLists,
+    // Solutions is served unioned with the services board (see
+    // mergeBoardServices), so filing a service into a box on this very page
+    // has to rebuild the list it came from.
+    settings?.customServiceCategories,
   ]);
 
   // Per-service URLs the user can paste in for hyperlinking. Stored
@@ -1016,6 +1027,14 @@ export function DropdownsView({ settings, updateSettings }) {
   );
   const hiddenCount = hiddenServices.size;
   const [showHiddenServices, setShowHiddenServices] = useState(false);
+  // Rows that reached this table through the services board rather than the
+  // Solutions list — the note under the search row explains them, since a
+  // user who never added them here would otherwise wonder where they came
+  // from. Zero for a user whose list already carries the whole board.
+  const boardOnlyCount = useMemo(
+    () => boardOnlyServiceCount(settings),
+    [settings?.dropdownLists, settings?.customServiceCategories],
+  );
 
   // The service whose popup is open, held by name rather than by the row
   // object the table handed over: every edit made in the popup rewrites
@@ -1307,10 +1326,25 @@ export function DropdownsView({ settings, updateSettings }) {
   // built-in vocabulary back in — they may want to "lock" a list to
   // freeze it from future seed changes. Empty list overrides are
   // preserved (the user explicitly emptied it).
-  function saveList(key, options) {
+  function saveList(key, options, edit) {
     const current = settings?.dropdownLists || {};
-    const next = { ...current, [key]: options };
-    updateSettings?.({ dropdownLists: next });
+    const updates = { dropdownLists: { ...current, [key]: options } };
+    // Solutions is served unioned with the services board (see
+    // mergeBoardServices), so a name taken off this list has to leave its box
+    // as well — otherwise the union files it straight back and the delete
+    // reads as broken. A rename is the same story with the old name.
+    if (key === 'solutions') {
+      let categories = getServiceCategories(settings);
+      let moved = false;
+      if (edit?.renamedFrom && edit?.renamedTo && edit.renamedFrom !== edit.renamedTo) {
+        const renamed = renameServiceInCategories(categories, edit.renamedFrom, edit.renamedTo);
+        if (renamed) { categories = renamed; moved = true; }
+      }
+      const pruned = pruneServicesFromCategories(categories, options);
+      if (pruned) { categories = pruned; moved = true; }
+      if (moved) updates.customServiceCategories = categories;
+    }
+    updateSettings?.(updates);
   }
 
   function renameList(key, newLabel) {
@@ -1539,6 +1573,18 @@ export function DropdownsView({ settings, updateSettings }) {
               title="Add a service to the Solutions list"
             >{addingService ? 'Done adding' : '+ Add service'}</button>
           </div>
+
+          {/* Why rows nobody added here are in the table. Only shown while
+              the board is actually contributing some — once the list carries
+              them all, the rule holds silently. */}
+          {boardOnlyCount > 0 && (
+            <div className={styles.servicesBoardNote}>
+              This list and the services board are one vocabulary: {boardOnlyCount} of these
+              {' '}{boardOnlyCount === 1 ? 'is' : 'are'} filed in a box on the board and were never
+              on the Solutions list. Filing a service into a box adds it here; deleting it here
+              takes it off the board.
+            </div>
+          )}
 
           {/* The name is all this asks for — a service with no name can't be
               identified, and the rest of the row is filled in from the popup
