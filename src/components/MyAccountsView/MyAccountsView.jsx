@@ -167,6 +167,18 @@ const TYPE2_COLORS = {
   'Other': { bg: '#F3F4F6', color: '#6B7280' },
 };
 
+// "Company Type" subtab. Accounts with a blank Type still get a bucket so
+// they stay visible (and fixable) instead of dropping out of the grouping.
+const UNSPECIFIED_TYPE = 'No Type Set';
+// Tier accents for the company chips — same palette as the tier summary
+// cards on the main tab, so a Tier 1 reads red in both places.
+const TIER_CHIP_COLORS = {
+  'Tier 1': { bg: '#FEE2E2', color: '#B91C1C' },
+  'Tier 2': { bg: '#DBEAFE', color: '#1D4ED8' },
+  'Tier 3': { bg: '#FEF3C7', color: '#B45309' },
+};
+const TIER_ORDER = { 'Tier 1': 0, 'Tier 2': 1, 'Tier 3': 2 };
+
 // The Master Site List (SitesView's "Master Site List" tab) persists its
 // rows under this key via uploadedListStore. We load it here to show a
 // per-company count of how many sites exist on that tab.
@@ -1017,7 +1029,7 @@ function isBulkSelectable(row) {
 // both the filtered-view logic and the Issues-flag publisher share one set.
 const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName }) {
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName, mode }) {
   const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
@@ -1038,6 +1050,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [bulkValue, setBulkValue] = useState('');
   const [bulkRunning, setBulkRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
+  // Company Type subtab: the one Type the grouping is narrowed to, or null
+  // for every type. Set by clicking a type card.
+  const [typeFocus, setTypeFocus] = useState(null);
   // companyLowerName → Set<listLabel>. Built further below once
   // allAccounts is resolved; declared here so it's available while
   // building the row entries.
@@ -2617,6 +2632,49 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return result;
   }, [allAccounts, filters, search, bucketFilter, inactiveMode]);
 
+  // Company Type subtab: the same accounts, bucketed by the Type column.
+  // Built off allAccounts (not filteredAccounts) so the column filters and
+  // tier-card buckets that only exist on the table tab can't silently
+  // shrink the grouping; the inactive toggle and the search box are the
+  // two filters this tab does honour.
+  const typeGroups = useMemo(() => {
+    let rows = allAccounts;
+    if (inactiveMode === 'hide') rows = rows.filter(a => !INACTIVE_STATUSES.has(a.status));
+    else if (inactiveMode === 'only') rows = rows.filter(a => INACTIVE_STATUSES.has(a.status));
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      rows = rows.filter(a =>
+        [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term)
+      );
+    }
+    const byType = new Map();
+    for (const a of rows) {
+      const label = (a.type || '').trim() || UNSPECIFIED_TYPE;
+      if (!byType.has(label)) byType.set(label, []);
+      byType.get(label).push(a);
+    }
+    const groups = [...byType.entries()].map(([type, accounts]) => ({
+      type,
+      type2: TYPE2_MAP[type] || '',
+      count: accounts.length,
+      clients: accounts.filter(a => a.status === 'Client').length,
+      accounts: accounts.slice().sort((a, b) => {
+        const ta = TIER_ORDER[a.myTier] ?? 9;
+        const tb = TIER_ORDER[b.myTier] ?? 9;
+        if (ta !== tb) return ta - tb;
+        return (a.company || '').localeCompare(b.company || '');
+      }),
+    }));
+    // Biggest bucket first, with the untyped accounts pinned last so they
+    // read as a to-do rather than as a category of firm.
+    groups.sort((a, b) =>
+      (a.type === UNSPECIFIED_TYPE ? 1 : 0) - (b.type === UNSPECIFIED_TYPE ? 1 : 0)
+      || b.count - a.count
+      || a.type.localeCompare(b.type)
+    );
+    return { groups, total: rows.length };
+  }, [allAccounts, inactiveMode, search]);
+
   // Publish the visible (post-filter) company list to a second
   // localStorage key so downstream features (like the Bulk Add
   // Contacts "Accounts without contacts" export) can target exactly
@@ -3110,6 +3168,114 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     } finally {
       setBulkRunning(false);
     }
+  }
+
+  // Company Type subtab — the My Accounts firms grouped by their Type
+  // column instead of listed row-by-row. It renders from the same hooks as
+  // the table below, so the two tabs can never disagree about which firms
+  // are in the list. Everything past this point is the standard table.
+  if (mode === 'companyType') {
+    const { groups, total } = typeGroups;
+    const shown = typeFocus ? groups.filter(g => g.type === typeFocus) : groups;
+    const pct = n => (total ? Math.round((n / total) * 100) : 0);
+    return (
+      <div className={styles.wrapper}>
+        <div className={styles.filterBar}>
+          <input
+            className={styles.searchInput}
+            type="text"
+            placeholder="Search accounts..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <button
+            onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
+            title="Cycle how inactive accounts (Old Client / Hold Off / Lost - Not Sold) are counted: hidden → only → all"
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+          >
+            {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
+          </button>
+          {typeFocus && (
+            <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {typeFocus}</span>
+          )}
+          {typeFocus && <button className={styles.clearBtn} onClick={() => setTypeFocus(null)}>Clear type</button>}
+          <span className={styles.resultCount}>
+            {total} account{total === 1 ? '' : 's'} · {groups.length} type{groups.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className={styles.summary} style={{ flexWrap: 'wrap', gap: '0.6rem' }}>
+          {groups.map(g => {
+            const accent = TYPE2_COLORS[g.type2]?.color || '#9CA3AF';
+            return (
+              <button
+                key={g.type}
+                className={`${styles.summaryCard} ${typeFocus === g.type ? styles.summaryCardActive : ''}`}
+                style={{ borderLeftColor: accent, cursor: 'pointer', flex: '1 1 160px', minWidth: 160, textAlign: 'left', padding: '0.7rem 0.9rem' }}
+                onClick={() => setTypeFocus(typeFocus === g.type ? null : g.type)}
+                title={`Show only ${g.type} accounts`}
+              >
+                {/* Two lines reserved for the label so a wrapping type name
+                    ("Asset Management Firm") doesn't push its count out of
+                    line with the shorter cards beside it. */}
+                <div className={styles.summaryLabel} style={{ minHeight: '2.2em', lineHeight: 1.1 }}>{g.type}</div>
+                <div className={styles.summaryValue}>{g.count}</div>
+                <div className={styles.summaryBreakdown}>
+                  {pct(g.count)}% of accounts{g.clients > 0 ? ` · ${g.clients} client${g.clients === 1 ? '' : 's'}` : ''}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: '1rem' }}>
+          {shown.length === 0 && (
+            <div className={styles.empty}>
+              {total === 0 ? 'No accounts to group yet.' : 'No accounts match the current search.'}
+            </div>
+          )}
+          {shown.map(g => {
+            const t2 = TYPE2_COLORS[g.type2];
+            return (
+              <div key={g.type} className={styles.bucketList}>
+                <div className={styles.bucketHeader}>
+                  <span className={styles.bucketTitle}>
+                    {g.type}
+                    {g.type2 && (
+                      <span style={{ marginLeft: '0.4rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: t2.bg, color: t2.color }}>{g.type2}</span>
+                    )}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                    {g.count} firm{g.count === 1 ? '' : 's'} · {pct(g.count)}%
+                  </span>
+                </div>
+                <div className={styles.bucketGrid} style={{ maxHeight: 'none' }}>
+                  {g.accounts.map(a => {
+                    const tier = TIER_CHIP_COLORS[a.myTier];
+                    return (
+                      <span
+                        key={a.id || a.company}
+                        className={styles.bucketChip}
+                        title={`${a.company}${a.myTier ? ` · ${a.myTier}` : ''}${a.status ? ` · ${a.status}` : ''} · ${a.contactCount || 0} contact${(a.contactCount || 0) === 1 ? '' : 's'} — click to open`}
+                        onClick={() => onSelect(a)}
+                      >
+                        {tier && (
+                          <span style={{ padding: '0 5px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: tier.bg, color: tier.color }}>
+                            {a.myTier.replace('Tier ', 'T')}
+                          </span>
+                        )}
+                        {a.company}
+                        {a.status === 'Client' && (
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#059669' }}>CLIENT</span>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   return (

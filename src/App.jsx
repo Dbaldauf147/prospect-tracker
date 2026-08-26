@@ -417,10 +417,12 @@ function App() {
         onCreateCompany={handleCreateCompany}
       />
       <div className="main">
-        {(view === 'accounts' || view === 'table' || view === 'kanban') && (
+        {(view === 'accounts' || view === 'companyType' || view === 'table' || view === 'kanban') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
             {[
               { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
+              // Same My Accounts set, grouped by the Type column.
+              { key: 'companyType', label: 'Company Type', active: view === 'companyType' },
               // Pipeline (kanban) is a mode of the Table experience, so the
               // Table subtab stays highlighted for both.
               { key: 'table', label: 'Table', active: view === 'table' || view === 'kanban' },
@@ -542,8 +544,9 @@ function App() {
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
-          ) : view === 'accounts' ? (
+          ) : view === 'accounts' || view === 'companyType' ? (
             <MyAccountsView
+              mode={view === 'companyType' ? 'companyType' : 'table'}
               prospects={prospects}
               onSelect={handleSelect}
               onUpdate={updateProspect}
