@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey, readAllProspects } from '../utils/firestoreSync';
+import { createAddProspectGuard } from '../utils/addProspectGuard';
 import seedData from '../data/seedProspects';
 
 // Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
@@ -9,6 +10,13 @@ import seedData from '../data/seedProspects';
 function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// A promise plus its resolver, for "has the first snapshot arrived yet".
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
 }
 
 export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapsed } = {}) {
@@ -27,11 +35,30 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
   // for an existing record without a Firestore read.
   const prospectsRef = useRef([]);
   prospectsRef.current = prospects;
+  // Resolves when the subscription has delivered at least once. The
+  // duplicate check is only meaningful against a roster that has
+  // actually arrived — before that the array is empty, and every add
+  // reads as a company we don't have.
+  const rosterReadyRef = useRef(null);
+  if (!rosterReadyRef.current) rosterReadyRef.current = deferred();
+  const addGuardRef = useRef(null);
+  if (!addGuardRef.current) {
+    addGuardRef.current = createAddProspectGuard({
+      keyOf: (p) => companyDedupeKey(p?.company),
+      getRoster: () => prospectsRef.current,
+      whenRosterReady: () => rosterReadyRef.current.promise,
+      readRoster: () => readAllProspects(),
+      create: (record) => addDoc(record),
+    });
+  }
 
   useEffect(() => {
     if (!user) { setProspects([]); setLoading(false); setProspectsUser(null, null); return; }
     setProspectsUser(user.uid, user.email);
     dedupeRanRef.current = false; // re-arm the one-time cleanup for this user
+    // A different account has a different roster, so the previous one's
+    // "it has arrived" signal must not carry over.
+    rosterReadyRef.current = deferred();
 
     async function init() {
       try {
@@ -52,8 +79,13 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
       unsubRef.current = subscribeToProspects((data) => {
         if (pausedRef.current) return; // Skip updates during bulk operations
         console.log('Firestore returned', data.length, 'prospects');
+        prospectsRef.current = data;
         setProspects(data);
         setLoading(false);
+        // Anything the roster now carries no longer needs remembering,
+        // and adds waiting on the first delivery can go ahead.
+        addGuardRef.current?.noteRoster(data);
+        rosterReadyRef.current.resolve();
       });
     }
 
@@ -92,17 +124,19 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
   }, [loading, settingsLoaded, user]);
 
   async function addProspect(prospect) {
-    // Idempotent by company name, checked against the in-memory list (no
-    // extra read): if a prospect with the same dedupe key already exists,
-    // return it instead of minting a duplicate. Uses companyDedupeKey so a
-    // regional variant like "Brookfield (Dubai)" is NOT treated as the same
-    // company as "Brookfield (NAM Multifamily)" or a bare "Brookfield".
-    const key = companyDedupeKey(prospect?.company);
-    if (key) {
-      const existing = prospectsRef.current.find(p => companyDedupeKey(p?.company) === key);
-      if (existing) return existing.id;
-    }
-    return addDoc(prospect);
+    // Idempotent by company: if a prospect with the same dedupe key
+    // already exists, return it instead of minting a duplicate. Uses
+    // companyDedupeKey so a regional variant like "Brookfield (Dubai)" is
+    // NOT treated as the same company as "Brookfield (NAM Multifamily)"
+    // or a bare "Brookfield".
+    //
+    // The guard owns the timing (see utils/addProspectGuard): it waits
+    // for the roster to have arrived before deciding, and remembers what
+    // it has created until the roster confirms it. Checking the
+    // subscription's array directly was wrong twice over — that array is
+    // empty before the first snapshot, and stale for a moment after
+    // every write, so a bulk add could create the same company twice.
+    return addGuardRef.current.add(prospect);
   }
 
   async function updateProspect(id, updates) {
