@@ -63,6 +63,7 @@ import {
   stampNfatConfig,
 } from '../../utils/nfatSchedules';
 import {
+  SCHEDULED_OPP_COLORS,
   SCHEDULED_OPP_DEFAULT_TIME,
   formatScheduledOppWhen,
   newScheduledOppId,
@@ -208,6 +209,91 @@ function saveHiddenDetailFields(set) {
 
 // Default column set, seeded so the table has columns to show / sort /
 // filter / hide / resize even before any data exists.
+// Scheduled opps shown as rows.
+//
+// A scheduled opp is a New Opp payload parked on a date — nothing exists in
+// the table until it fires. But the question "is there anything coming for
+// this account?" is asked of the Opps table, by filtering the Account
+// column, not of a toolbar modal someone has to remember is there. So the
+// queue is rendered into the table as greyed-out placeholder lines that
+// filter and sort like any other row.
+//
+// They are display-only: synthesized into the rows handed to the table, not
+// into `records`, so every count, aggregate, export and metric on this page
+// still sees only opps that exist. The `sched:` id prefix is what tells the
+// two apart wherever a row id travels (editing, selection, deletion).
+const SCHEDULED_ROW_PREFIX = 'sched:';
+
+function isScheduledRowId(id) {
+  return typeof id === 'string' && id.startsWith(SCHEDULED_ROW_PREFIX);
+}
+
+// The queued payload as a table row. Only the columns the payload actually
+// answers are filled — the rest stay blank rather than inventing a Stage
+// Date or a Quoted Amount for an opp that doesn't exist yet.
+function scheduledOppRow(entry) {
+  return {
+    _id: `${SCHEDULED_ROW_PREFIX}${entry.id}`,
+    __scheduledOpp: entry,
+    Account: entry.company || '',
+    Stage: 'Scheduled',
+    Scope: entry.scope || '',
+    Notes: entry.notes || '',
+    Source: entry.source || '',
+    Type: entry.type || '',
+  };
+}
+
+// One cell of a scheduled placeholder line. Only the columns the queued
+// payload can answer say anything; the rest are blank rather than borrowing
+// a real opp's formatting for a value that doesn't exist. Nothing here is
+// editable — the row is a notice, and the queue is edited in Scheduled Opps.
+function renderScheduledOppCell(key, row, onManage) {
+  const entry = row.__scheduledOpp;
+  const muted = { color: '#64748B', fontStyle: 'italic' };
+  const when = formatScheduledOppWhen(entry);
+  if (key === 'Account') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <span style={{ ...muted, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {entry.company || '(no company)'}
+        </span>
+        <span
+          title={`This opp hasn’t been created yet — it is queued for ${when || 'a scheduled time'}. Manage it under Scheduled Opps.`}
+          style={{
+            flex: '0 0 auto', padding: '1px 7px', borderRadius: 999, fontSize: '0.62rem',
+            fontWeight: 700, whiteSpace: 'nowrap', fontStyle: 'normal',
+            background: SCHEDULED_OPP_COLORS.bg, color: SCHEDULED_OPP_COLORS.color,
+            border: `1px solid ${SCHEDULED_OPP_COLORS.border}`,
+          }}
+        >scheduled</span>
+      </span>
+    );
+  }
+  if (key === 'Stage') return <span style={muted}>Scheduled</span>;
+  if (key === 'Next Steps') return <span style={muted}>{when ? `Creates ${when}` : 'Queued'}</span>;
+  if (key === 'Scope' || key === 'Notes' || key === 'Source' || key === 'Type') {
+    return <span style={muted}>{row[key] || ''}</span>;
+  }
+  if (key === '_info') {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onManage(); }}
+        title="Open Scheduled Opps to reschedule, create now, or cancel this queued opp"
+        style={{
+          padding: 0, width: 22, height: 22, lineHeight: 1, fontSize: '0.85rem', fontWeight: 700,
+          fontFamily: 'inherit', color: '#92400E', background: '#fff',
+          border: '1px solid #FDE68A', borderRadius: '50%', cursor: 'pointer',
+        }}
+      >i</button>
+    );
+  }
+  // Everything else — the select box, the delete button, every stored
+  // column — has nothing to act on until the opp exists.
+  return <span style={{ color: '#CBD5E1' }} />;
+}
+
 const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
@@ -8551,7 +8637,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const handleFilteredRowsChange = useCallback((rows) => {
     setFilteredRowIds(prev => {
       const next = new Set();
-      for (const r of (rows || [])) if (r?._id != null) next.add(r._id);
+      // Scheduled placeholders are not opps: "select all in this filter"
+      // must not hand mass-edit an id with no record behind it.
+      for (const r of (rows || [])) if (r?._id != null && !isScheduledRowId(r._id)) next.add(r._id);
       if (prev.size === next.size) {
         let same = true;
         for (const id of prev) if (!next.has(id)) { same = false; break; }
@@ -9627,6 +9715,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // popup's own Follow Up picker, which would otherwise re-open itself the
   // moment it saved a corrected date.
   const updateOppField = useCallback((id, field, rawValue, opts) => {
+    // A scheduled placeholder has no record behind it. Nothing on its row is
+    // editable, but a mass-edit or a stray keyboard path must not try.
+    if (isScheduledRowId(id)) return;
     // Auto-format a user-entered Quoted Amount to currency ($25,000) so
     // the stored value — and every view that reads it — stays consistent,
     // regardless of how the user typed it (25000, 25,000, $25000.50…).
@@ -9909,6 +10000,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // sentinel-checking path in resolveComputedDays only ignores the
   // stored value when the key is missing, not just empty.
   const deleteOppField = useCallback((id, field) => {
+    if (isScheduledRowId(id)) return;
     const row = (dataRef.current?.records || []).find(r => r._id === id);
     if (row && field in row) {
       pushUndoEntry({ id, fields: [{ field, hadField: true, prevValue: row[field] }] });
@@ -9929,6 +10021,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   }, [pushUndoEntry]);
 
   const deleteOpp = useCallback((id) => {
+    // Nothing to delete: the queue is cancelled from Scheduled Opps.
+    if (isScheduledRowId(id)) return;
     setData(prev => {
       const records = prev?.records || [];
       // Tombstone the id so the delete propagates across devices instead
@@ -10944,6 +11038,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // a status edited elsewhere shows up the next time the board is opened.
   }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings]);
 
+  // The same columns, taught to render a scheduled placeholder differently.
+  // Wrapping once here beats a `__scheduledOpp` check inside forty column
+  // renderers — and keeps every real row on exactly the renderer it had,
+  // including the table's own default for columns that define none.
+  const scheduledAwareColumns = useMemo(() => columns.map(col => ({
+    ...col,
+    render: (row) => (row?.__scheduledOpp
+      ? renderScheduledOppCell(col.key, row, () => setScheduledOppsOpen(true))
+      : (col.render ? col.render(row) : (row?.[col.key] ?? '-'))),
+  })), [columns]);
+
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
   // Recently-closed history the default view keeps visible: the 100
@@ -11027,6 +11132,21 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     }
     return prefiltered;
   }, [prefiltered, showOnlySelected, selectedIds]);
+
+  // The queue rendered as rows, on top of the real ones. Placed here — at
+  // the table's doorstep — rather than in `records` on purpose: the column
+  // filters and the sort are the table's own, so a placeholder answers an
+  // Account filter like any row, while every count, chip, aggregate and
+  // export upstream still sees only opps that exist.
+  //
+  // Pinned above the real rows in the default (unsorted) view: they are the
+  // soonest thing to happen for that account, and a queue you have to scroll
+  // to find is the toolbar modal again. Left out of the Closed view, where a
+  // not-yet-created opp is the one thing that can't belong.
+  const rowsForTable = useMemo(() => {
+    if (effectiveActivityFilter === 'closed' || pendingScheduledOpps.length === 0) return filtered;
+    return [...pendingScheduledOpps.map(scheduledOppRow), ...filtered];
+  }, [filtered, pendingScheduledOpps, effectiveActivityFilter]);
 
   // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On
   // column. The displayed Waiting On value is the stacked per-step
@@ -12317,8 +12437,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           ) : (
             <DataTable
               tableId="opps2"
-              columns={columns}
-              rows={filtered}
+              columns={scheduledAwareColumns}
+              rows={rowsForTable}
               sortSignal={callInSortSignal}
               alwaysVisible={['Account', '_select', '_info']}
               // No default sort — editing Follow Up / Last Client Heard From
@@ -12339,6 +12459,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               // content-visibility handle off-screen perf.
               variableRowHeight
               rowStyle={(row) => {
+                // A scheduled placeholder is greyed and italic: nothing
+                // exists yet, and it must never read as a live opp.
+                if (row?.__scheduledOpp) {
+                  return { background: '#F1F5F9', color: '#64748B', fontStyle: 'italic' };
+                }
                 // Tint closed opps so the table reads at a glance —
                 // light green for wins, light red for losses. Rows the
                 // user has marked "No Further Action Today" go light
