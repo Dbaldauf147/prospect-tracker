@@ -22,6 +22,7 @@ import { newSheetRows } from './sheetSyncDiff.js';
 // utils/prospectMerge — pure, so the rules can be tested directly and the
 // CSV import and the duplicate collapse cannot drift apart.
 import { planProspectReconcile, prospectScore, createdMillis, isEmptyValue, MERGE_FIELDS } from './prospectMerge.js';
+import { markImportedTier } from './tierSource.js';
 export { prospectScore, MERGE_FIELDS, planProspectReconcile } from './prospectMerge.js';
 
 // Admin uses the shared collection; everyone else gets their own
@@ -138,7 +139,9 @@ export async function addProspectsIfNew(rows, roster, { batchSize = 450 } = {}) 
     const batch = writeBatch(db);
     for (const p of fresh.slice(i, i + batchSize)) {
       const now = new Date().toISOString();
-      batch.set(doc(col), { ...p, createdAt: now, updatedAt: now });
+      // A tier from an import is not a choice — mark it so the Target
+      // Accounts list outranks it (see utils/tierSource).
+      batch.set(doc(col), { ...markImportedTier(p), createdAt: now, updatedAt: now });
     }
     await batch.commit();
   }
@@ -217,7 +220,11 @@ export async function reconcileAllProspects(newProspects, { onProgress, confirm 
   for (let i = 0; i < plan.creates.length; i += 400) {
     const batch = writeBatch(db);
     plan.creates.slice(i, i + 400).forEach(p => {
-      batch.set(doc(getCol()), { ...p, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      // Same as the sheet importers: a tier that arrived in a file
+      // column defers to the Targets list. Only on records being
+      // created — a company already on the roster may carry a tier
+      // someone chose, and a bulk file is no reason to demote it.
+      batch.set(doc(getCol()), { ...markImportedTier(p), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
     });
     await batch.commit();
     completed += Math.min(400, plan.creates.length - i);
