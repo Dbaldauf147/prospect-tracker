@@ -18,6 +18,7 @@ import {
   SCHEDULED_OPP_DEFAULT_TIME,
   formatScheduledOppDay,
   formatScheduledOppWhen,
+  placeScheduledRows,
   normalizeScheduledOpps,
   pendingScheduledOppsForCompany,
   pruneScheduledOpps,
@@ -101,6 +102,40 @@ check('an opp with no services books nothing',
 const shorthand = normalizeScheduledOpps([{ id: 'r', company: 'Acme', scope: 'RA', dueDate: '2026-08-14' }]);
 check('shorthand does not claim a service it merely appears inside',
   scheduledServicesForCompany('Acme', shorthand, ITEMS).size, 0);
+
+// --- where the placeholder lines sit in the Opps table ---------------------
+// The queue is rendered into the table as greyed placeholder rows. They go
+// under the opps that have a Call In — those are today's callbacks and keep
+// the top — and above the rest, where a queued opp would otherwise be lost
+// among the recently-closed history.
+{
+  const row = (id, callIn) => ({ id, callIn });
+  const hasCallIn = (r) => r.callIn != null;
+  const ghosts = [{ id: 'g1' }, { id: 'g2' }];
+  const ids = (arr) => arr.map(r => r.id);
+
+  check('placed under the call-in rows and above the rest',
+    j(ids(placeScheduledRows(
+      [row('a', -2), row('b', 0), row('c', null), row('d', null)], ghosts, hasCallIn,
+    ))),
+    j(['a', 'b', 'g1', 'g2', 'c', 'd']));
+  check('every call-in row stays above them, contiguous or not',
+    j(ids(placeScheduledRows(
+      [row('a', 1), row('c', null), row('b', 3)], ghosts, hasCallIn,
+    ))),
+    j(['a', 'c', 'b', 'g1', 'g2']));
+  check('no call-in rows at all: the placeholders lead',
+    j(ids(placeScheduledRows([row('c', null)], ghosts, hasCallIn))),
+    j(['g1', 'g2', 'c']));
+  check('every row has a call-in: the placeholders trail',
+    j(ids(placeScheduledRows([row('a', 0), row('b', 2)], ghosts, hasCallIn))),
+    j(['a', 'b', 'g1', 'g2']));
+  check('nothing queued leaves the rows exactly as they were',
+    j(ids(placeScheduledRows([row('a', 0), row('b', null)], [], hasCallIn))),
+    j(['a', 'b']));
+  check('no rows at all: just the placeholders',
+    j(ids(placeScheduledRows([], ghosts, hasCallIn))), j(['g1', 'g2']));
+}
 
 // --- housekeeping ---------------------------------------------------------
 const DAY = 24 * 60 * 60 * 1000;
