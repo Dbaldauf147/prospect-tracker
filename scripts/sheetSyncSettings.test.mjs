@@ -20,7 +20,7 @@ globalThis.localStorage = {
   get length() { return store.size; },
 };
 
-const { readSheetSync, autoSyncSchedule, planSheetSyncMigration, SHEET_SYNC_KEY, LEGACY_SETTINGS_KEY } =
+const { readSheetSync, autoSyncSchedule, planSheetSyncMigration, planAutoImportRetirement, planSheetSyncSetup, SHEET_SYNC_KEY, LEGACY_SETTINGS_KEY } =
   await import('../src/utils/sheetSyncSettings.js');
 const { setUserLsUserId } = await import('../src/utils/userLs.js');
 
@@ -85,6 +85,59 @@ const legacyRaw = (raw) => { store.clear(); globalThis.localStorage.setItem(LEGA
   eq(planSheetSyncMigration(null), null, 'and neither does no settings object');
   legacyRaw('{not json');
   eq(planSheetSyncMigration({}), null, 'nor does an unparseable legacy value');
+}
+
+// ── Retiring the automatic import ──────────────────────────────────────
+{
+  setLegacy(undefined);
+  // The sheet is no longer where companies are added, so the timer that
+  // imports from it only puts back what the app removed.
+  eq(planAutoImportRetirement({ sheetsUrl: 'x', mainFreq: 5 }),
+    { sheetsUrl: 'x', mainFreq: 0, autoImportRetired: true },
+    'the Accounts import is set to the panel\u2019s own "Manual only"');
+  eq(autoSyncSchedule({ [SHEET_SYNC_KEY]: planAutoImportRetirement({ sheetsUrl: 'x', mainFreq: 5 }) }).intervalMs, null,
+    'and nothing is scheduled afterwards');
+
+  // Runs once. A frequency the user chooses later is theirs to keep —
+  // snapping it back on every load would be a setting they cannot change.
+  const retired = planAutoImportRetirement({ sheetsUrl: 'x', mainFreq: 5 });
+  eq(planAutoImportRetirement(retired), null, 'it does not run twice');
+  eq(planAutoImportRetirement({ ...retired, mainFreq: 30 }), null,
+    'and a frequency set afterwards is left alone');
+  eq(planAutoImportRetirement(null), null, 'no config, nothing to do');
+  // No sheet connected means no timer to stop — writing the flag anyway
+  // would mint a configuration for an account that never had one.
+  eq(planAutoImportRetirement({ mainFreq: 5 }), null, 'nor is there anything to retire without a sheet');
+}
+
+{
+  // The two one-time passes as one patch, so they never race with
+  // competing writes.
+  setLegacy({ sheetsUrl: 'legacy', mainFreq: 15 });
+  eq(planSheetSyncSetup({}),
+    { [SHEET_SYNC_KEY]: { sheetsUrl: 'legacy', mainFreq: 0, autoImportRetired: true } },
+    'a browser holding the legacy copy lifts AND retires in one write');
+
+  setLegacy(undefined);
+  eq(planSheetSyncSetup({ [SHEET_SYNC_KEY]: { sheetsUrl: 'stored', mainFreq: 5 } }),
+    { [SHEET_SYNC_KEY]: { sheetsUrl: 'stored', mainFreq: 0, autoImportRetired: true } },
+    'an account already migrated just retires');
+  eq(planSheetSyncSetup({ [SHEET_SYNC_KEY]: { sheetsUrl: 'stored', mainFreq: 30, autoImportRetired: true } }), null,
+    'and an account already done plans nothing at all');
+  eq(planSheetSyncSetup({}), null, 'nothing configured anywhere is nothing to do');
+  eq(planSheetSyncSetup({ [SHEET_SYNC_KEY]: { oppsFreq: 5 } }), null,
+    'and an account with no Accounts sheet is left completely alone');
+}
+
+{
+  // Everything else the panel does is untouched — this stops the timer,
+  // it does not disconnect the sheet.
+  const done = planSheetSyncSetup({ [SHEET_SYNC_KEY]: { sheetsUrl: 'x', sheetName: 'Accounts', oppsFreq: 5, extraSheets: [{ url: 'e' }] } });
+  const cfg = done[SHEET_SYNC_KEY];
+  eq(cfg.sheetsUrl, 'x', 'the sheet stays connected');
+  eq(cfg.sheetName, 'Accounts', 'the tab is kept');
+  eq(cfg.oppsFreq, 5, 'the Opps sheet schedule is a different sheet and is not touched');
+  eq(cfg.extraSheets, [{ url: 'e' }], 'and the extra sheets are kept');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

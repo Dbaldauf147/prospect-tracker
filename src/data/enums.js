@@ -229,8 +229,8 @@ export const SERVICE_CATEGORIES = [
   {
     name: 'Climate Risk',
     items: [
-      'Climate risk gap analysis', 'Climate risk & opportunity assessment',
-      'Climate risk Scenario Analysis', 'Climate risk disclosure SUCON',
+      'Climate risk gap analysis', 'Climate risk & opportunity assessment SUCON',
+      'Climate risk scenario analysis SUCON', 'Climate risk disclosure SUCON',
       'ECLR - SUCON', 'ECLR scorecards - SUCON', 'ECLR Consulting - SUCON',
     ],
   },
@@ -259,7 +259,7 @@ export const SERVICE_CATEGORIES = [
   {
     name: 'Broader SE',
     items: [
-      'EV', 'SE metering', 'Greenstruxure', 'Sensor Audit', 'EaaS',
+      'EV', 'SE metering', 'Greenstruxure', 'Sensor Audit', 'EaaS - pull through',
       'Building Activate',
     ],
   },

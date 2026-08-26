@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { planServiceMerge, SERVICE_MERGES } from '../src/utils/serviceNameMerges.js';
 import { SERVICE_CATEGORIES } from '../src/data/enums.js';
 import { SERVICE_CATALOG } from '../src/data/serviceCatalog.js';
+import { scopeTokenMatchesService } from '../src/utils/scopeMatch.js';
 
 // dropdownLists.js imports './enums' without a file extension, which plain
 // Node ESM won't resolve (Vite does), so the Solutions list is read as text
@@ -34,20 +35,50 @@ const MERGE = { from: 'Rebasline project', to: 'Rebaseline project' };
 
 // --- the seeds agree on one spelling ---------------------------------------
 // The merge only holds if the seed lists stop re-introducing the old name on
-// a fresh account.
-const seedNames = [
-  ...SERVICE_CATEGORIES.flatMap(c => c.items),
-  ...SERVICE_CATALOG.map(s => s.name),
-];
-check('no seed still carries the retired spelling',
-  !seedNames.some(n => n === MERGE.from),
-  `found in seeds: ${seedNames.filter(n => n === MERGE.from).length} time(s)`);
-check('the surviving name is in the services board',
-  SERVICE_CATEGORIES.some(c => c.items.includes(MERGE.to)));
-check('the surviving name is in the Solutions list', solutionsHas(MERGE.to));
-check('the Solutions list has dropped the retired spelling', !solutionsHas(MERGE.from));
-check('the surviving name carries the seed metadata',
-  SERVICE_CATALOG.some(s => s.name === MERGE.to && s.bfoTag === '#SUECO'));
+// a fresh account — checked for every merge that ships, since a new entry
+// added without its seed fix would rewrite the account and then re-seed the
+// name it just retired.
+// Merges that can't keep old Scope text resolving, and why. A misspelling
+// is the one retired name no matching rule can tie back: "Rebasline" shares
+// no word with "Rebaseline project", so a Scope cell still carrying the typo
+// names nothing and needs a hand edit. Every other merge retires a wording
+// variant, which word-run matching does carry across — that is what the
+// assertion below holds them to.
+const SCOPE_MATCH_EXEMPT = new Set(['service-merge-rebaseline-2026-08']);
+
+const boardNames = SERVICE_CATEGORIES.flatMap(c => c.items);
+const seedNames = [...boardNames, ...SERVICE_CATALOG.map(s => s.name)];
+const norm = n => String(n).trim().toLowerCase();
+
+for (const merge of SERVICE_MERGES) {
+  const label = `"${merge.from}" → "${merge.to}"`;
+  const stragglers = seedNames.filter(n => norm(n) === norm(merge.from));
+  check(`${label}: no seed still carries the retired spelling`,
+    stragglers.length === 0, `found in seeds: ${stragglers.length} time(s)`);
+  check(`${label}: the surviving name is in the services board`,
+    boardNames.some(n => n === merge.to));
+  check(`${label}: the surviving name is filed in one box only`,
+    boardNames.filter(n => norm(n) === norm(merge.to)).length === 1);
+  check(`${label}: the surviving name is in the Solutions list`, solutionsHas(merge.to));
+  check(`${label}: the Solutions list has dropped the retired spelling`,
+    !solutionsHas(merge.from));
+  check(`${label}: the surviving name carries seed metadata`,
+    SERVICE_CATALOG.some(s => s.name === merge.to));
+  // Scope cells are free text and keep whatever wording was typed at the
+  // time. Nothing rewrites them, so the surviving service has to still be
+  // the one an old Scope names — otherwise the merge quietly drops a deal's
+  // service off the coverage table and the company card.
+  if (!SCOPE_MATCH_EXEMPT.has(merge.flag)) {
+    check(`${label}: an old Scope wording still names the surviving service`,
+      scopeTokenMatchesService(merge.from, merge.to));
+  }
+  check(`${label}: every merge has its own flag`,
+    typeof merge.flag === 'string' && merge.flag.length > 0);
+}
+check('flags are unique',
+  new Set(SERVICE_MERGES.map(m => m.flag)).size === SERVICE_MERGES.length);
+check('no merge retires a name another merge keeps',
+  !SERVICE_MERGES.some(a => SERVICE_MERGES.some(b => norm(a.to) === norm(b.from))));
 check('the shipped merge matches the names under test',
   SERVICE_MERGES.some(m => m.from === MERGE.from && m.to === MERGE.to));
 

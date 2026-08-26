@@ -29,6 +29,27 @@ export const SERVICE_MERGES = [
     from: 'Rebasline project',
     to: 'Rebaseline project',
   },
+  // Three services the board and the Solutions list had each seeded under
+  // their own wording — the board's shorter one and the catalogue's SUCON /
+  // pull-through one — which read as two services once the two lists were
+  // served as one vocabulary. The catalogue's spelling survives in each: it
+  // is the one carrying seed metadata (BFO tag, product line, service type)
+  // and the one BFO knows the service by.
+  {
+    flag: 'service-merge-climate-risk-opportunity-2026-08',
+    from: 'Climate risk & opportunity assessment',
+    to: 'Climate risk & opportunity assessment SUCON',
+  },
+  {
+    flag: 'service-merge-climate-risk-scenario-2026-08',
+    from: 'Climate risk Scenario Analysis',
+    to: 'Climate risk scenario analysis SUCON',
+  },
+  {
+    flag: 'service-merge-eaas-2026-08',
+    from: 'EaaS',
+    to: 'EaaS - pull through',
+  },
 ];
 
 // The prospect fields keyed by service name. Each is a plain
