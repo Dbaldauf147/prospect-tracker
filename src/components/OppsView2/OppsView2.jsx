@@ -68,6 +68,7 @@ import {
   formatScheduledOppWhen,
   newScheduledOppId,
   normalizeScheduledOpps,
+  placeScheduledRows,
   pruneScheduledOpps,
   scheduledOppDueMs,
   scheduledOppPending,
@@ -11145,7 +11146,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // not-yet-created opp is the one thing that can't belong.
   const rowsForTable = useMemo(() => {
     if (effectiveActivityFilter === 'closed' || pendingScheduledOpps.length === 0) return filtered;
-    return [...pendingScheduledOpps.map(scheduledOppRow), ...filtered];
+    // Under the opps that have a Call In, above everything else — see
+    // placeScheduledRows for why, and for how the cut is found.
+    return placeScheduledRows(
+      filtered,
+      pendingScheduledOpps.map(scheduledOppRow),
+      (r) => resolveCallIn(r) != null,
+    );
   }, [filtered, pendingScheduledOpps, effectiveActivityFilter]);
 
   // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On

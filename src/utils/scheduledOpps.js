@@ -155,6 +155,26 @@ export function scheduledServicesForCompany(company, entries, items) {
 
 // Amber, matching the "in flight" family already on these boards — a
 // queued opp is neither won, lost, nor live yet.
+/**
+ * Where the scheduled-opp placeholder lines sit among the real rows.
+ *
+ * Under the opps that have a Call In, above everything else. Those rows are
+ * the day's actual callbacks and keep the top of the table; a queued opp is
+ * the next-most-live thing on the page but nothing is owed on it today, and
+ * at the bottom it would be lost among the recently-closed history.
+ *
+ * The cut is found from the last row `hasCallIn` accepts rather than from an
+ * assumed sort order, so no row with a callback can end up beneath a
+ * placeholder — including in a view where the call-in rows aren't contiguous.
+ * With no placeholders (or no rows) this is the row list unchanged.
+ */
+export function placeScheduledRows(rows = [], placeholders = [], hasCallIn = () => false) {
+  if (!placeholders.length) return rows;
+  let cut = 0;
+  rows.forEach((r, i) => { if (hasCallIn(r)) cut = i + 1; });
+  return [...rows.slice(0, cut), ...placeholders, ...rows.slice(cut)];
+}
+
 export const SCHEDULED_OPP_COLORS = { bg: '#FEF3C7', color: '#92400E', border: '#FDE68A' };
 
 export function scheduledOppChipTitle(entry, item) {
