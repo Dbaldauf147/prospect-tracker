@@ -13,7 +13,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import {
   JURISDICTION_QUESTIONS, SCREENING_ANSWERS, REGULATIONS_BY_JURISDICTION,
-  deriveRegulationVerdict, parseRevenueUsd,
+  deriveRegulationVerdict, parseRevenueUsd, pickThresholdRevenue,
   JURISDICTION_CRITERIA_GROUPS, criterionKey,
   deriveCriterion, deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
   companyScreeningKey, ALWAYS_SHOW_REGULATIONS,
@@ -340,6 +340,7 @@ function RevenueSection({ data, fact, loading, error, disabled, onResearch, onEd
 // parent, which is the common case and needs no ceremony.
 function ParentCompanySection({
   value, onSave, disabled, revenue, revenueLoading, revenueError, onResearch, screening,
+  ownRevenue = '',
 }) {
   // Adjusted during render rather than in an effect: the saved value can
   // change underneath this input (a Master Analysis import, an edit on
@@ -417,26 +418,37 @@ function ParentCompanySection({
           </>
         )
       )}
-      {/* Which entity the thresholds below are actually measured at. Once a
-          parent's revenue is known the screening switches to it, and a card
-          that changed its own basis without saying so would be the worst
-          version of this feature. */}
-      {saved && (
-        <span
-          title={screening
-            ? 'The Compliance rows below are derived from this parent’s revenue, because every regime here tests the consolidated group.'
-            : 'Research the parent’s revenue and the Compliance rows below will be derived from it instead.'}
-          style={{
-            fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
-            padding: '0.1rem 0.4rem', borderRadius: 999, whiteSpace: 'nowrap',
-            border: `1px solid ${screening ? '#86EFAC' : 'var(--color-border)'}`,
-            background: screening ? '#DCFCE7' : 'var(--color-surface)',
-            color: screening ? '#166534' : 'var(--color-text-muted)',
-          }}
-        >
-          {screening ? 'thresholds use this' : 'not screened on yet'}
-        </span>
-      )}
+      {/* Which figure the thresholds below are actually measured against.
+          Either side can trigger a mandate, so the larger one is the test
+          subject — and a card that changed its own basis without saying so
+          would be the worst version of this feature. Three states, because
+          "not screened on" would be a lie about a researched parent whose
+          figure simply lost to the company's own. */}
+      {saved && (() => {
+        const researched = !!(revenue && revenue.revenue);
+        const label = screening ? 'thresholds use this'
+          : researched ? 'company’s own is higher'
+          : 'not screened on yet';
+        const title = screening
+          ? 'The Compliance rows below are derived from this parent’s revenue: every regime here tests the consolidated group, and the parent’s figure is the larger of the two.'
+          : researched
+            ? `Either figure can trigger a mandate, so the thresholds test the larger — this company’s own revenue${ownRevenue ? ` (${ownRevenue})` : ''}. The parent’s is on file and takes over if it ever exceeds it.`
+            : 'Research the parent’s revenue and the Compliance rows below will be derived from it whenever it exceeds this company’s own.';
+        return (
+          <span
+            title={title}
+            style={{
+              fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
+              padding: '0.1rem 0.4rem', borderRadius: 999, whiteSpace: 'nowrap',
+              border: `1px solid ${screening ? '#86EFAC' : researched ? '#BFDBFE' : 'var(--color-border)'}`,
+              background: screening ? '#DCFCE7' : researched ? '#EFF6FF' : 'var(--color-surface)',
+              color: screening ? '#166534' : researched ? '#1E40AF' : 'var(--color-text-muted)',
+            }}
+          >
+            {label}
+          </span>
+        );
+      })()}
       {revenueError && (
         <span style={{ color: '#B91C1C', fontSize: '0.65rem' }}>{revenueError}</span>
       )}
@@ -1963,23 +1975,21 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
    *
    * Every regime this page screens measures the CONSOLIDATED group — CSRD
    * catches a subsidiary through its ultimate parent, SB 253 and SB 261 are
-   * written against the parent entity's total annual revenues. So once a
-   * parent is recorded AND its revenue has been researched, that figure is
-   * the test subject and `entity` names it, so every derived verdict can say
-   * whose number cleared the bar.
-   *
-   * A parent with no revenue researched yet falls back to the company's own
-   * figure rather than screening on nothing: an unresearched parent is a gap
-   * in the working, not a reason to stop deriving. `entity` stays blank in
-   * that case, because the figure really is this company's.
+   * written against the parent entity's total annual revenues — but a
+   * company large enough on its own is caught whatever its owner turns over.
+   * Either figure can trigger a mandate, so the larger of the two is the
+   * test subject (see pickThresholdRevenue). `entity` names the parent only
+   * when the parent's number is the one under test.
    */
   const thresholdRevenueFor = useCallback((key, name, facts) => {
     const own = String(facts?.revenue?.value || '').trim()
       || String(prospectByKey.get(key)?.revenue || '').trim();
     const parent = parentOf(key);
-    if (!parent) return { label: own, entity: '' };
-    const parentRev = String(revenueResearch[revenueSlug(parent)]?.revenue || '').trim();
-    return parentRev ? { label: parentRev, entity: parent } : { label: own, entity: '' };
+    return pickThresholdRevenue({
+      own,
+      parent: parent ? String(revenueResearch[revenueSlug(parent)]?.revenue || '').trim() : '',
+      parentName: parent,
+    });
   }, [parentOf, revenueResearch, prospectByKey]);
 
   // Push a known HQ onto the matching company record — the reason this row
@@ -2508,10 +2518,11 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                     </CardRow>
 
                     {/* Parent — sits directly under Revenue because it is
-                        the same question asked of the right entity: every
-                        regime here tests its thresholds at the
-                        consolidated group, so a subsidiary's own revenue
-                        can answer the wrong one. */}
+                        the same question asked of the other entity: every
+                        regime here tests its thresholds at the consolidated
+                        group, so a small subsidiary is caught by a large
+                        parent. Either figure can trigger a mandate, so the
+                        screening runs on whichever is larger. */}
                     {(() => {
                       const parent = parentOf(c.key);
                       return (
@@ -2525,6 +2536,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                             revenueError={(parent && revState[parent]?.error) || null}
                             onResearch={() => researchRevenue(parent)}
                             screening={thresholdRevenue.entity === parent}
+                            ownRevenue={facts.revenue.value || ''}
                           />
                         </CardRow>
                       );
@@ -2583,12 +2595,13 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         //
                         // The threshold entity, not necessarily this company:
                         // every regime here measures the consolidated group,
-                        // so a recorded parent whose revenue has been
-                        // researched is what the thresholds are tested
-                        // against. Without a parent — or with one nobody has
-                        // researched yet — this is the company's own figure,
-                        // preferring the researched one and falling back to
-                        // whatever the matched company record carries.
+                        // and either side can trigger a mandate, so the
+                        // larger of this company's revenue and its parent's
+                        // is what the thresholds are tested against. Without
+                        // a parent — or with one nobody has researched yet —
+                        // this is the company's own figure, preferring the
+                        // researched one and falling back to whatever the
+                        // matched company record carries.
                         revenue={thresholdRevenue.label}
                         revenueEntity={thresholdRevenue.entity}
                         disabled={!c.key}
