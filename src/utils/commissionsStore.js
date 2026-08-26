@@ -4,7 +4,7 @@
 // on the Clients view greets a blank slate with a Paste-from-Sheets
 // prompt.
 
-import { userLsGet, userLsSet, userLsRemove } from './userLs';
+import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
 
 const KEY = 'commissions-list-override';
 

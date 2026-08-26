@@ -189,6 +189,52 @@ function normMargins(list, termYears) {
   return Array.from({ length: termYears }, (_, i) => normMargin(list[i]));
 }
 
+// The Year-1 figures a frozen Pricing-Option snapshot implies: the
+// Setup + One Time fees that bill in year 1, the recurring fee per month,
+// and the recurring revenue across year 1.
+//
+// Recomputed from the snapshot's own rows rather than read off a stored
+// total, so it stays correct after the Pricing tab is cleared — and so the
+// Opp popup, the Deals page and anything else quoting these numbers cannot
+// drift apart. `recurringAnnual` uses rowYearRevenue rather than fee × 12: a
+// line that starts in month 4 bills nine months in year 1, not twelve.
+//
+// Returns null for a missing snapshot, so callers can tell "no option saved"
+// from an option that happens to price at zero.
+export function pricingSnapshotYear1(snapshot) {
+  if (!snapshot) return null;
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+  const years = Math.max(1, Number(snapshot.years) || 1);
+  const esc = Number(snapshot.escPct) || 0;
+  let setupOneTime = 0;
+  let recurringMonthly = 0;
+  let recurringAnnual = 0;
+  for (const r of rows) {
+    if (String(r.type || '').toLowerCase().startsWith('recurring')) {
+      recurringMonthly += (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount);
+      recurringAnnual += rowYearRevenue(r, 1, years, esc);
+    } else {
+      // Setup / One Time lines bill a single month — rowYearRevenue
+      // returns their amount only when that month lands in Year 1.
+      setupOneTime += rowYearRevenue(r, 1, years, esc);
+    }
+  }
+  // Deal margin over the term, frozen in by the Pricing tab. Only the SIA
+  // path can compute one, so this is null for options saved from the
+  // hand-built Options subtab.
+  const finalMargin = typeof snapshot.finalMargin === 'number' && Number.isFinite(snapshot.finalMargin)
+    ? snapshot.finalMargin
+    : null;
+  return {
+    name: String(snapshot.name || '').trim(),
+    setupOneTime,
+    recurringMonthly,
+    recurringAnnual,
+    year1Total: Number(snapshot.year1Total) || 0,
+    finalMargin,
+  };
+}
+
 export function fmtMoneyWhole(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
