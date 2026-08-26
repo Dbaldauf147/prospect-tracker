@@ -12,6 +12,11 @@
 // that day. Prospecting is daily work, and a tick that stayed on from
 // last Tuesday would read as "done" forever — the honest default when a
 // new day starts is that the step hasn't been worked yet.
+//
+// A hand-marked step can still say something on its own once the ladder
+// reaches it: when every step above is clear, the next one down is the
+// work owed right now, and it says so in red until it is marked. See
+// ladderStates at the foot of this file.
 
 // Imported with the extension so this module also loads under plain Node
 // (scripts/prospectingStatus.test.mjs), not just through the bundler.
@@ -150,6 +155,9 @@ export function countServiceGaps(gaps) {
 //   'caught-up'  — nothing outstanding, or marked done today
 //   'work'       — a tracked count above zero
 //   'open'       — an untracked step not yet marked today
+// plus one the ladder as a whole decides (see ladderStates):
+//   'due'        — an untracked step the ladder has reached: everything
+//                  above it is clear, so it is the work owed right now
 // `count` is a number for tracked steps, null while one is still
 // loading, and undefined for steps with nothing to count.
 export function categorizeStep({ count, marked = false } = {}) {
@@ -158,3 +166,53 @@ export function categorizeStep({ count, marked = false } = {}) {
   return marked ? 'caught-up' : 'open';
 }
 
+// --- the ladder as a whole ---------------------------------------------------
+//
+// The Status column, step by step, in ladder order. This walks the list
+// rather than categorizing each row on its own because one step's state
+// can depend on the ones above it.
+//
+// A step flagged `dueWhenReached` (see prospectingPlaybook.js) is the next
+// thing owed once everything above it is clear: it turns red on its own
+// instead of sitting in the same grey "Mark caught up" it wears while
+// there is still warmer work in front of it. Marking it caught up is what
+// clears it — that's the point of the flag, since a step with no count
+// behind it has nothing else that can say it was worked.
+//
+// A step above whose count hasn't landed yet ('unknown') does not count as
+// clear: the ladder stays quiet until it knows, rather than calling a step
+// outstanding on the strength of data that hasn't arrived.
+export function ladderStates({ steps, counts = null, caughtUpMap = null, today = todayISO() } = {}) {
+  const out = [];
+  let aboveAllClear = true;
+  for (const step of (Array.isArray(steps) ? steps : [])) {
+    if (!step) continue;
+    const tracked = typeof step.workLabel === 'function';
+    // `?? null`, not `undefined`: a tracked step whose count hasn't been
+    // handed to us reads as still loading, which shows nothing, rather
+    // than as an uncounted step the user is expected to tick.
+    const count = tracked ? (counts?.[step.key] ?? null) : undefined;
+    const marked = isMarkedCaughtUp(caughtUpMap, step.key, today);
+    let state = categorizeStep({ count, marked });
+    if (state === 'open' && step.dueWhenReached && aboveAllClear) state = 'due';
+    out.push({ key: step.key, state, count, tracked });
+    if (state !== 'caught-up') aboveAllClear = false;
+  }
+  return out;
+}
+
+// The same rows keyed by step, for a caller rendering its own loop.
+export function statesByKey(states) {
+  const m = {};
+  for (const s of (Array.isArray(states) ? states : [])) if (s?.key) m[s.key] = s;
+  return m;
+}
+
+// How many steps the ladder has reached and the user hasn't marked — the
+// number behind the sidebar's Prospecting dot. Only `dueWhenReached` steps
+// can be in this state, so it is 0 or 1 with the shipped playbook.
+export function countDueSteps(states) {
+  let n = 0;
+  for (const s of (Array.isArray(states) ? states : [])) if (s?.state === 'due') n += 1;
+  return n;
+}

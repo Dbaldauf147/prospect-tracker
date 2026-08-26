@@ -200,6 +200,25 @@
   line-height: 1;
 }
 
+/* Plain red dot on a nav item (Prospecting, when a step of the ladder is
+   outstanding). No number and no label: there is only ever one of these,
+   and the page it points at names the step. Same red as .navBadge, sized
+   to sit beside one without crowding it when both are up. */
+.navDot {
+  margin-left: auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #DC2626;
+}
+
+/* The tag-debt badge already pushes itself to the far edge, so a dot that
+   follows it keeps its own gap instead of taking the whole gutter. */
+.navBadge + .navDot {
+  margin-left: 0;
+}
+
 /* Attention dot on a nav item (Agents, when the prompts are due to be run).
    Same red as .navBadge but a fixed circle — it carries a "!" rather than a
    count, and pulses briefly so it reads as an alert rather than a tally. */

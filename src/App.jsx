@@ -15,6 +15,7 @@ import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
+import { useProspectingLadder } from './hooks/useProspectingLadder';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
 import { AGENTS_SETTINGS_KEY, AGENTS_SNOOZE_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
@@ -129,6 +130,16 @@ function App() {
   // Same guard for the targeted-services step: an empty roster yields no
   // coverage rows, which would read as "every service is at 100%".
   const prospectingServiceGaps = dataLoading ? null : serviceGaps;
+  // The Prospecting ladder's status, computed once: the page's Status
+  // column and the sidebar's Prospecting dot both read it, so the dot can
+  // never flag a step the page shows as caught up.
+  const prospectingLadder = useProspectingLadder({
+    issues: prospectingIssues,
+    serviceGaps: prospectingServiceGaps,
+    prospects: dataLoading ? null : prospects,
+    settings,
+    userId: user?.uid,
+  });
   // The roster is passed in so the sheet import can diff against what the
   // app already has, instead of re-reading the whole collection on a timer.
   useSheetSync(user, prospects, !dataLoading);
@@ -397,6 +408,7 @@ function App() {
         issuesCount={openIssuesCount}
         oppsDueCount={oppsDueCount}
         prospectingTagDebt={tagDebt.count}
+        prospectingDue={prospectingLadder.dueCount}
         agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}
@@ -513,7 +525,7 @@ function App() {
           ) : view === 'prospecting' ? (
             <ProspectingView
               onNavigate={setView}
-              issues={prospectingIssues}
+              ladder={prospectingLadder}
               serviceGaps={prospectingServiceGaps}
               prospects={dataLoading ? null : prospects}
               onSelectProspect={handleSelect}

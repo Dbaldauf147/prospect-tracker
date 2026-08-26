@@ -7,9 +7,10 @@
 // and removed. This module owns the defaults and the merge, and the page
 // owns the rendering.
 //
-// What CAN'T move into settings is the behaviour attached to four of the
+// What CAN'T move into settings is the behaviour attached to five of the
 // steps — the overdue-opps count, the renewals count, the service-coverage
-// and Top-PC lists. Those are wired to a step's `key`, so a stored step is
+// and Top-PC lists, and the market-updates step going red once the ladder
+// reaches it. Those are wired to a step's `key`, so a stored step is
 // a thin overlay: it carries the key plus whatever text the user changed,
 // and the code-side default supplies the rest. Retitling "Follow up on
 // current opps" therefore keeps its count; a step the user adds has no key
@@ -78,6 +79,14 @@ export const DEFAULT_STEPS = [
     detail: 'Give the contacts you already know a reason to reply: what the market is doing right now.',
     view: 'contacts',
     viewLabel: 'Contacts',
+    // Nothing counts this step, but it is not optional either: once the
+    // steps above it are clear it is the work owed today, so it goes red
+    // rather than staying the same grey "Mark caught up" it wears while
+    // there is warmer work in front of it — and the sidebar dots
+    // Prospecting while it stands. Marking it caught up is what clears
+    // it, for the day. Behaviour, like the counts: never stored, always
+    // re-attached by key.
+    dueWhenReached: true,
   },
   {
     key: 'renewals',

@@ -232,7 +232,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, prospectingTagDebt = null, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, prospectingTagDebt = null, prospectingDue = 0, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -310,6 +310,21 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
               className={styles.navBadge}
               title={`${prospectingTagDebt} contact ${prospectingTagDebt === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags. Open Prospecting to see which — Active isn't counted.`}
             >{prospectingTagDebt > 99 ? '99+' : prospectingTagDebt}</span>
+          )}
+          {/* A step of the ladder is outstanding: everything above it is
+              caught up, so it's the work owed right now and nothing counts
+              it but the user. One dot, not a number — the page names the
+              step, and there is only ever one of these standing. It clears
+              when the step is marked caught up there (and comes back
+              tomorrow, like the mark itself). */}
+          {prospectingDue > 0 && (
+            <span
+              className={styles.navDot}
+              aria-label="A prospecting step is outstanding"
+              title={prospectingDue === 1
+                ? 'A prospecting step is outstanding: everything above it is caught up. Open Prospecting and mark it caught up once you\'ve worked it.'
+                : `${prospectingDue} prospecting steps are outstanding. Open Prospecting and mark them caught up once you've worked them.`}
+            />
           )}
         </button>
         <button
