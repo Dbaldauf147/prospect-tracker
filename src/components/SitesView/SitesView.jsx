@@ -174,6 +174,30 @@ function rowInDivision(row, divisionFilter) {
 const MAX_ANALYSIS_MB = 40;
 const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3) * 4;
 
+// Utility accounts (bills) estimated for one site, as text. Halves are
+// real — a property type whose water account is "0 – 1" contributes 0.5 —
+// so the fraction is kept rather than rounded into a number the per-site
+// breakdown beside it wouldn't add up to.
+function fmtAccounts(n) {
+  if (n == null || !Number.isFinite(n)) return '-';
+  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+// The per-commodity working behind that number, in the reference table's
+// own wording ('Multiple', '0 – 1', 'N/A') rather than the counts those
+// stand in for. A steam row reading '0' is left out: every property type
+// carries one, and a column of "Steam 0" says nothing.
+function accountBreakdownText(acc) {
+  if (!acc) return '';
+  return [
+    acc.electric ? `Elec ${acc.electric.label}` : null,
+    acc.gas ? `Gas ${acc.gas.label}` : null,
+    acc.water ? `Water ${acc.water.label}` : null,
+    acc.waste ? `Waste ${acc.waste.label}` : null,
+    acc.steam && acc.steam.label !== '0' ? `Steam ${acc.steam.label}` : null,
+  ].filter(Boolean).join(' · ');
+}
+
 // When a company's saved Master Analysis was last written, phrased the way
 // the question is actually asked — "is what's on this company still current?"
 // Recent saves read as "today" / "3 days ago"; older ones get the date, with
@@ -2608,6 +2632,39 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
   }, [allRows, divisionFilter]);
 
+  // Utility accounts (bills) behind the loaded sites, estimated from each
+  // site's property type — the unit a data deal is priced in ($/account/
+  // month), which is why it belongs beside the site count rather than only
+  // inside the export. Division-scoped like every other headline figure.
+  //
+  // Sites whose property type didn't resolve contribute nothing and are
+  // counted separately: a total that quietly skipped a third of the
+  // portfolio would read as the portfolio's, so the headline says how many
+  // sites are behind it and the hover names the types still to be mapped.
+  const accountStats = useMemo(() => {
+    let total = 0;
+    let sites = 0;
+    let unknown = 0;
+    const byType = new Map();
+    for (const r of rows) {
+      const est = propertyTypeAccountTotal(r.__propertyType__);
+      if (est == null) { unknown += 1; continue; }
+      total += est;
+      sites += 1;
+      const name = r.__propertyType__;
+      const prev = byType.get(name) || { name, sites: 0, accounts: 0 };
+      prev.sites += 1;
+      prev.accounts += est;
+      byType.set(name, prev);
+    }
+    return {
+      total: Math.round(total),
+      sites,
+      unknown,
+      byType: [...byType.values()].sort((a, b) => b.accounts - a.accounts),
+    };
+  }, [rows]);
+
   // Distinct Property Type strings from the upload that still have no
   // canonical match — the rows the mapping modal exists to resolve.
   // Sorted by how many sites carry each value so the biggest wins are
@@ -3609,34 +3666,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           {
             key: 'estAccounts',
             label: 'Est. Accounts',
-            defaultWidth: 200,
+            defaultWidth: 210,
+            // A data deal is priced per utility account per month, so the
+            // number of accounts is the figure being read off this column —
+            // the per-commodity labels are the working behind it. The total
+            // leads, the breakdown follows it.
             render: (row) => {
               const canonical = row.__propertyType__;
               if (!canonical) return dash;
               const acc = propertyTypeAccounts(canonical);
               if (!acc) return dash;
-              const text = [
-                acc.electric ? `Elec ${acc.electric.label}` : null,
-                acc.gas ? `Gas ${acc.gas.label}` : null,
-                acc.water ? `Water ${acc.water.label}` : null,
-                acc.waste ? `Waste ${acc.waste.label}` : null,
-                acc.steam && acc.steam.label !== '0' ? `Steam ${acc.steam.label}` : null,
-              ].filter(Boolean).join(' · ');
-              return <span style={{ fontSize: '0.68rem', color: 'var(--color-text-secondary)' }} title={text}>{text || '-'}</span>;
+              const total = propertyTypeAccountTotal(canonical);
+              const text = accountBreakdownText(acc);
+              return (
+                <span
+                  style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}
+                  title={`${fmtAccounts(total)} utility account${total === 1 ? '' : 's'} (bills) estimated for a ${canonical} site${text ? `: ${text}` : ''}`}
+                >
+                  <strong style={{ color: 'var(--color-text)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>{fmtAccounts(total)}</strong>
+                  {text ? <span style={{ fontSize: '0.66rem' }}> {text}</span> : null}
+                </span>
+              );
             },
+            // The number, not the labels: an exported column of
+            // "Elec 1 · Gas 1 · …" is the one thing a reader can't add up,
+            // and the labels are on the export's Property Type Estimates tab.
             exportValue: (row) => {
               const canonical = row.__propertyType__;
               if (!canonical) return '';
-              const acc = propertyTypeAccounts(canonical);
-              if (!acc) return '';
-              return [
-                acc.electric ? `Elec ${acc.electric.label}` : null,
-                acc.gas ? `Gas ${acc.gas.label}` : null,
-                acc.water ? `Water ${acc.water.label}` : null,
-                acc.waste ? `Waste ${acc.waste.label}` : null,
-                acc.steam && acc.steam.label !== '0' ? `Steam ${acc.steam.label}` : null,
-              ].filter(Boolean).join(' · ');
+              const total = propertyTypeAccountTotal(canonical);
+              return total == null ? '' : total;
             },
+            getSortValue: (row) => propertyTypeAccountTotal(row.__propertyType__) ?? -1,
           },
         ];
       })(),
@@ -13957,6 +14018,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             <div className={styles.subtitle}>
             {rows.length} {rows.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
+            {/* Estimated utility accounts. Sits beside the site count
+                because it is the other unit this page is read in: a data
+                deal is priced per account per month, and the site count on
+                its own doesn't say how many bills a portfolio carries. */}
+            {accountStats.total > 0 && (
+              <>
+                {' '}· Est. utility accounts{' '}
+                <strong
+                  style={{ color: '#0F766E' }}
+                  title={[
+                    `${accountStats.total.toLocaleString()} utility accounts (bills) estimated across ${accountStats.sites.toLocaleString()} site${accountStats.sites === 1 ? '' : 's'}, from each site's property type.`,
+                    accountStats.unknown > 0
+                      ? `Not counted: ${accountStats.unknown.toLocaleString()} site${accountStats.unknown === 1 ? '' : 's'} whose property type isn't mapped to one of the reference types. Map them with the Property Types button and they'll be counted here.`
+                      : '',
+                    accountStats.byType.length
+                      ? `Biggest contributors:\n${accountStats.byType.slice(0, 6).map(t => `  • ${t.name}: ${fmtAccounts(Math.round(t.accounts * 10) / 10)} across ${t.sites} site${t.sites === 1 ? '' : 's'}`).join('\n')}`
+                      : '',
+                    'This is the figure written onto a company\u2019s Number of Accounts when the analysis is saved, and what the estimated annual data deal is priced from.',
+                  ].filter(Boolean).join('\n\n')}
+                >{accountStats.total.toLocaleString()}</strong>
+                {accountStats.unknown > 0 && (
+                  <span style={{ color: '#B45309' }}>
+                    {' '}({accountStats.unknown.toLocaleString()} site{accountStats.unknown === 1 ? '' : 's'} unmapped)
+                  </span>
+                )}
+              </>
+            )}
             {/* Sites an N/A property-type mapping leaves without a modelled
                 usage figure. They're counted in the headline and carried
                 through every export; this says which ones are contributing
