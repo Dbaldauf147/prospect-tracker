@@ -48,6 +48,8 @@ import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSub
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
 import { planSiteListRename, summarizeSiteListRename, applySiteListRename } from '../MasterSiteListView/siteListRename';
 import { renameCompanySiteListEntry } from '../MasterSiteListView/siteListRenameRules';
+import { readSheetSync } from '../../utils/sheetSyncSettings';
+import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetCompanyRename';
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { siteListFacts as computeSiteListFacts, formatSqft } from '../../utils/siteListFacts';
@@ -6071,15 +6073,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // Master Site List would list the company as unmapped).
       const sitePlan = await planSiteListRename(oldName, newName);
 
+      // The Google Sheet the additive import reads. Its row keeps the old
+      // name unless we write through, and the importer treats a name it
+      // can't find on the site as a company to add — which is how a
+      // renamed company comes back as a second account on the next pass.
+      const sheetConfig = readSheetSync(settings);
+      const sheetId = spreadsheetIdFromUrl(sheetConfig.sheetsUrl);
+      const sheetTab = sheetConfig.sheetName || 'Accounts';
+      let sheetRename = { row: null, reason: 'not-configured', from: null };
+      if (sheetId) {
+        try {
+          const res = await apiFetch(
+            `/api/sheets-sync?spreadsheetId=${sheetId}&sheetName=${encodeURIComponent(sheetTab)}&_t=${Date.now()}`,
+          );
+          const data = await res.json();
+          if (!data.error) sheetRename = planSheetCompanyRename(data.names, oldName, newName);
+        } catch (err) {
+          console.warn('Company rename: could not read the Google Sheet', err?.message || err);
+        }
+      }
+
       if (!planHasWork(plan) && contactCount === 0 && pinnedIds.length === 0
         && clientTotal === 0 && taPlan.count === 0 && blockedCount === 0
-        && sitePlan.count === 0) return;
+        && sitePlan.count === 0 && sheetRename.row == null) return;
       const summaryLines = summarizeRenamePlan(plan);
       if (contactCount > 0) summaryLines.push(`• ${contactCount} HubSpot contact${contactCount === 1 ? '' : 's'} (Company)`);
       summaryLines.push(...summarizeClientsSubtabRename(clientCounts));
       if (taPlan.count > 0) summaryLines.push(`• ${taPlan.count} Target Account row${taPlan.count === 1 ? '' : 's'}`);
       if (blockedCount > 0) summaryLines.push('• 1 blocked-account entry');
       summaryLines.push(...summarizeSiteListRename(sitePlan));
+      if (sheetRename.row != null) summaryLines.push('• the Google Sheet row (otherwise the old name is re-imported)');
       const ok = window.confirm(
         `Renamed to "${newName}".\n\nAlso update these references to "${oldName}"?\n\n${summaryLines.join('\n')}`
       );
@@ -6094,6 +6117,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         catch (err) { console.error('Company rename: target accounts update failed', err); }
       }
       if (blockedCount > 0) renameBlockedAccountName(oldName, newName);
+      if (sheetRename.row != null && sheetId) {
+        try {
+          const res = await apiFetch('/api/sheets-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              spreadsheetId: sheetId, sheetName: sheetTab, mode: 'rename',
+              // The sheet's own current text for that cell, which is what
+              // the server re-checks — not the app's old name, which on a
+              // key match is a different spelling.
+              row: sheetRename.row, from: sheetRename.from, to: newName,
+            }),
+          });
+          const out = await res.json();
+          // The server re-checks the cell and declines rather than
+          // renaming the wrong row if the sheet moved under us.
+          if (out.error) throw new Error(out.error);
+          if (!out.renamed) {
+            console.warn(`Company rename: the Google Sheet row now reads "${out.found}" — left alone`);
+          }
+        } catch (err) { console.error('Company rename: Google Sheet update failed', err); }
+      }
       if (plan.oppIds.length && uid) {
         try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
         catch (err) { console.error('Company rename: opps Account update failed', err); }
