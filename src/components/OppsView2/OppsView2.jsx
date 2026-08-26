@@ -76,7 +76,8 @@ import {
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
-import { TYPES, FRAMEWORKS } from '../../data/enums';
+import { FRAMEWORKS } from '../../data/enums';
+import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import {
   TRACKED_STAGES,
@@ -3235,6 +3236,9 @@ function NewOppModal({
   // Same touched-buffer pattern for the company Type.
   const [typeInput, setTypeInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
+  // Company Types come from the Dropdowns-tab list, same as the company
+  // card's Classification > Type — one vocabulary, edited in one place.
+  const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
   const [addToTableView, setAddToTableView] = useState(true);
   // Scope + Notes, in the same format the row's own cells store them, so
   // committing is a copy rather than a translation. Scope is picked from
@@ -3553,8 +3557,8 @@ function NewOppModal({
               <option value="">(Select a Type)</option>
               {/* Keep a saved non-standard type selectable so reviewing it
                   doesn't silently blank the dropdown. */}
-              {type && !TYPES.includes(type) && <option value={type}>{type}</option>}
-              {TYPES.map(t => (
+              {type && !typeOptions.includes(type) && <option value={type}>{type}</option>}
+              {typeOptions.map(t => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>

@@ -10,7 +10,7 @@
 // settings.customServiceCategories and that copy takes over. That's how the
 // board has always worked; the Services subtab is just a second way in.
 
-import { SERVICE_CATEGORIES } from '../data/enums';
+import { SERVICE_CATEGORIES } from '../data/enums.js';
 
 // The card the Scope picker adds for services no box claims. Not a real box:
 // nothing is stored under it, and choosing it on the Services subtab takes

@@ -1,7 +1,7 @@
 // Reference dropdown lists for the Opps workflow. Lifted from the
 // shared spreadsheet so the same option vocabulary surfaces inside
 // the app — used by the Dropdowns reference tab.
-import { PE_STRATEGIES, ASSET_TYPES } from './enums';
+import { PE_STRATEGIES, ASSET_TYPES } from './enums.js';
 
 export const DROPDOWN_LISTS = [
   {
@@ -71,6 +71,10 @@ export const DROPDOWN_LISTS = [
       'Portfolio Company',
       'Facility Manager',
       'Private Equity',
+      // The one entry the company card's built-in vocabulary had and this
+      // list didn't, back when the card ignored this list. The card reads
+      // it now, so a company can still be filed as Other.
+      'Other',
     ],
   },
   {

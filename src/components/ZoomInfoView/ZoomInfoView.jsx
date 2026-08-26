@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { TYPES } from '../../data/enums';
+import { buildTypeOptions, persistCustomOption } from '../../utils/prospectOptions';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 
 // Same fuzzy company match the Portfolio Companies analysis uses for
@@ -465,35 +465,20 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
     return out.sort((a, b) => a.localeCompare(b));
   }, [prospects]);
 
-  // Same union the Table View uses for the Type dropdown — built-in
-  // TYPES + every distinct value across prospects + user-added customs.
-  // Sorted case-insensitively. Drives the Type cell's <select> on this
-  // page so both views surface the same set of choices.
-  const dynamicTypeOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    const push = (t) => {
-      const v = String(t || '').trim();
-      if (!v) return;
-      const k = v.toLowerCase();
-      if (seen.has(k)) return;
-      seen.add(k);
-      out.push(v);
-    };
-    for (const t of TYPES) push(t);
-    for (const p of prospects) push(p?.type);
-    for (const t of (settings?.customTypes || [])) push(t);
-    return out.sort((a, b) => a.localeCompare(b));
-  }, [prospects, settings]);
+  // The same union the Table View and the company card use: the
+  // Dropdowns-tab Type list, then every Type already in use, then legacy
+  // customTypes. Shared rather than rebuilt here, so a Type added on the
+  // Dropdowns tab reaches this page too.
+  const dynamicTypeOptions = useMemo(
+    () => buildTypeOptions(prospects, settings),
+    [prospects, settings],
+  );
 
+  // A Type added from this page's dropdown lands on the Dropdowns-tab Type
+  // list, the same place Table View's "+ Add new" writes it — so it's
+  // editable there afterwards instead of stranded in a hidden setting.
   function addCustomType(name) {
-    const v = String(name || '').trim();
-    if (!v) return;
-    const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
-    const exists = list.some(t => String(t).trim().toLowerCase() === v.toLowerCase());
-    const builtIn = TYPES.some(t => t.toLowerCase() === v.toLowerCase());
-    if (exists || builtIn) return;
-    updateSettings({ customTypes: [...list, v] });
+    persistCustomOption('type', name, settings, updateSettings);
   }
 
   function findProspectByCompany(company) {

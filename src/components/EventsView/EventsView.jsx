@@ -15,22 +15,27 @@ import { apiFetch } from '../../utils/apiFetch';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
-import { TYPES } from '../../data/enums';
+import { buildTypeOptions } from '../../utils/prospectOptions';
 import styles from './EventsView.module.css';
 
-// Inline Type dropdown for a matched Table View prospect — same enum
-// options as the Table View's Type column. Commits immediately on
-// change so the lookup list can set/correct Type without leaving Events.
-function TypeCell({ prospect, onCommit }) {
+// Inline Type dropdown for a matched Table View prospect — the same
+// options as the Table View's Type column, off the Dropdowns-tab list.
+// Commits immediately on change so the lookup list can set/correct Type
+// without leaving Events.
+function TypeCell({ prospect, options = [], onCommit }) {
   if (!prospect) return <span className={styles.tvMuted}>-</span>;
+  const value = prospect.type || '';
   return (
     <select
       className={styles.cdmInput}
-      value={prospect.type || ''}
+      value={value}
       onChange={e => onCommit(e.target.value)}
     >
       <option value="">-</option>
-      {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+      {/* A Type this company carries that has since left the list stays
+          selectable, so opening the cell can't silently blank it. */}
+      {value && !options.includes(value) && <option value={value}>{value}</option>}
+      {options.map(t => <option key={t} value={t}>{t}</option>)}
     </select>
   );
 }
@@ -999,6 +1004,9 @@ export function EventsView({
     () => (Array.isArray(settings?.events) ? settings.events : []),
     [settings?.events],
   );
+  // Company Types for the lookup list's inline Type cell, off the
+  // Dropdowns-tab list every other Type picker reads.
+  const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
   const [selectedId, setSelectedId] = useState(null);
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
@@ -2009,7 +2017,7 @@ export function EventsView({
       )
     ) },
     { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
-      <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
+      <TypeCell prospect={prospect} options={typeOptions} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
     ) },
     { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
       <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
