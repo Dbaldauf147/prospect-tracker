@@ -11,66 +11,12 @@ const ANALYSIS_DOC_ID = 'main';
 
 const SHARED_COL = 'prospects';
 
-// Corporate suffixes / structural tokens stripped before comparing two
-// company names. Mirrors the normalization used by the My Accounts
-// "similar names" detector so the de-dupe collapses exactly the
-// records the UI already flags as the same company.
-const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-
-// Normalize a company name to a comparison key: lowercase, drop
-// diacritics, strip parentheticals/brackets and corporate suffixes,
-// then collapse punctuation to single spaces. "Affinius Capital" and
-// "Affinius Capital, a USAA Co." both reduce to "affinius capital".
-export function normalizeCompanyName(s) {
-  return String(s || '')
-    .toLowerCase()
-    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-    .replace(/\(.*?\)/g, ' ')
-    .replace(/\[.*?\]/g, ' ')
-    .replace(/&/g, ' and ')
-    .replace(CORP_SUFFIXES, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Pull out and normalize any parenthetical / bracketed qualifier so it can
-// be kept as part of a record's identity. normalizeCompanyName() throws
-// these away — which is right for stripping noise like "(a USAA Co.)" but
-// wrong when the qualifier is the ONLY thing distinguishing two records,
-// e.g. "Brookfield (Dubai)" vs "Brookfield (NAM Multifamily)". Corporate
-// suffixes inside the qualifier are still removed so an ownership note like
-// "(a Brookfield Co.)" collapses to "brookfield" rather than surviving as
-// junk. Returns '' when there is no meaningful qualifier.
-export function companyQualifier(s) {
-  const parts = [];
-  const re = /[([]([^)\]]*)[)\]]/g;
-  let m;
-  while ((m = re.exec(String(s || ''))) !== null) {
-    const tag = String(m[1] || '')
-      .toLowerCase()
-      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-      .replace(/&/g, ' and ')
-      .replace(CORP_SUFFIXES, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (tag) parts.push(tag);
-  }
-  return parts.sort().join(' ');
-}
-
-// The key two records must share to be treated as the SAME company. It is
-// the normalized base name plus any parenthetical qualifier, so records
-// that differ only by a corporate suffix still merge ("Brookfield Inc." ==
-// "Brookfield"), but records distinguished solely by a region/segment tag
-// stay separate ("Brookfield (Dubai)" != "Brookfield (NAM Multifamily)").
-export function companyDedupeKey(s) {
-  const base = normalizeCompanyName(s);
-  if (!base) return '';
-  const qual = companyQualifier(s);
-  return qual ? `${base}|${qual}` : base;
-}
+// How two names are compared to decide they are the same company lives in
+// utils/companyKey — pure, so the Google Sheets diff can share it without
+// pulling the firebase SDK into that module. Re-exported here because this
+// is where every caller already imports it from.
+export { normalizeCompanyName, companyQualifier, identifyingQualifier, companyDedupeKey } from './companyKey.js';
+import { companyDedupeKey } from './companyKey.js';
 
 // Admin uses the shared collection; everyone else gets their own
 let _userId = null;

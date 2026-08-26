@@ -3,6 +3,7 @@ import { apiFetch } from '../utils/apiFetch';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { userLsGet, userLsSet } from '../utils/userLs';
+import { companyDedupeKey } from '../utils/companyKey.js';
 import { getOppsSheetDisplayUrl } from '../utils/oppsSheetUrl';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './SyncPanel.module.css';
@@ -200,11 +201,26 @@ export function SyncPanel({ prospects, onClose }) {
       // 2. Merge: build a combined list keyed by company name (lowercase)
       // Website data is the source of truth for matching records; sheet fills gaps
       const merged = new Map();
+      // Second index over the same entries, keyed by companyDedupeKey —
+      // the key the app uses everywhere else to decide two names are one
+      // company. Matching on the lowercased name alone read every
+      // spelling variant as a company the site was missing ("Lend Lease"
+      // against a roster holding "LendLease"), and each one it "added"
+      // became a second account with none of the first one's Target
+      // Account / divisions / HQ mappings. The exact-name index stays the
+      // first thing consulted so an unambiguous match is never routed
+      // through the fuzzier one.
+      const byDedupeKey = new Map();
+      const indexEntry = (key, entry) => {
+        const dk = companyDedupeKey(entry.company);
+        if (dk && !byDedupeKey.has(dk)) byDedupeKey.set(dk, entry);
+        merged.set(key, entry);
+      };
 
       // Start with website data
       for (const p of prospects) {
         const key = (p.company || '').toLowerCase();
-        if (key) merged.set(key, { ...p });
+        if (key) indexEntry(key, { ...p });
       }
 
       // Merge in sheet data: add new records, update fields that are empty on website
@@ -213,9 +229,9 @@ export function SyncPanel({ prospects, onClose }) {
       for (const sp of sheetProspects) {
         const key = (sp.company || '').toLowerCase();
         if (!key) continue;
-        if (merged.has(key)) {
+        const existing = merged.get(key) || byDedupeKey.get(companyDedupeKey(sp.company));
+        if (existing) {
           // Merge: for each field, if website version is empty but sheet has data, use sheet
-          const existing = merged.get(key);
           let changed = false;
           for (const field of ['cdm', 'status', 'type', 'geography', 'publicPrivate', 'tier', 'hqRegion', 'rank', 'notes']) {
             if (!existing[field] && sp[field]) {
@@ -237,7 +253,7 @@ export function SyncPanel({ prospects, onClose }) {
           }
           if (changed) sheetsUpdated++;
         } else {
-          merged.set(key, { ...sp });
+          indexEntry(key, { ...sp });
           sheetsAdded++;
         }
       }

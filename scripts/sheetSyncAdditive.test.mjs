@@ -65,12 +65,53 @@ const names = (rows) => rows.map((r) => r.company);
 }
 
 {
-  // Two sheet rows for the same missing company both come back: the
-  // comparison is against the roster, not against rows accepted earlier
-  // in this pass. Long-standing behaviour, and the app's duplicate
-  // collapse cleans up after it — pinned so it doesn't change by accident.
+  // Two sheet rows for the same missing company now yield ONE row. This
+  // used to return both and leave the app's duplicate collapse to clean
+  // up, which only worked when the collapse agreed the two names were the
+  // same company — the case that was failing.
   const sheet = [{ company: 'Ara Partners' }, { company: 'Ara Partners' }];
-  eq(newSheetRows(sheet, []).length, 2, 'duplicate sheet rows are not collapsed here');
+  eq(newSheetRows(sheet, []).length, 1, 'duplicate sheet rows collapse within the pass');
+  eq(newSheetRows([{ company: 'HIG Capital' }, { company: 'H.I.G. Capital' }], []).length, 1,
+    'and so do two spellings of one company');
+}
+
+{
+  // The whole point of the change: a sheet row whose name is a spelling
+  // variant of a roster company is NOT a company the site is missing.
+  // Each of these minted a second account, with a fresh document id and
+  // so none of the Target Account / divisions / HQ mappings keyed to the
+  // first one.
+  const same = [
+    ['H.I.G Capital', 'HIG Capital, LLC'],
+    ['Lend Lease', 'LendLease'],
+    ['Citi Bank', 'Citibank'],
+    ['Clayton, Dubilier & Rice (CD&R)', 'Clayton, Dubilier & Rice'],
+    ['Edens (a Blackstone co.)', 'Edens'],
+    ['Chamberlain (BX-PC)', 'Chamberlain'],
+    ['Extended Stay America Inc', 'Extended Stay America (a Blackstone co.)'],
+  ];
+  for (const [sheetName, rosterName] of same) {
+    eq(newSheetRows([{ company: sheetName }], [{ company: rosterName }]).length, 0,
+      `"${sheetName}" is already on the site as "${rosterName}"`);
+  }
+}
+
+{
+  // ...and the other direction, which is just as expensive to get wrong.
+  // A regional or segment qualifier is what makes these separate
+  // accounts, so they must still import.
+  const distinct = [
+    ['Brookfield (Dubai)', 'Brookfield (Self Storage)'],
+    ['Prologis (Data Centers)', 'Prologis'],
+    ['Brookfield Logistics (France)', 'Brookfield Logistics (US)'],
+    ['Edmond de Rothschild REIM (UK) Limited', 'Edmond de Rothschild REIM (Suisse) SA'],
+    ['CH Guenther', 'C.H. Guenther & Son (a Pritzker Private Capital co.)'],
+    ['Fund A', 'Fund B'],
+  ];
+  for (const [sheetName, rosterName] of distinct) {
+    eq(newSheetRows([{ company: sheetName }], [{ company: rosterName }]).length, 1,
+      `"${sheetName}" is a different account from "${rosterName}"`);
+  }
 }
 
 {
