@@ -17,6 +17,7 @@ const SHARED_COL = 'prospects';
 // is where every caller already imports it from.
 export { normalizeCompanyName, companyQualifier, identifyingQualifier, companyDedupeKey } from './companyKey.js';
 import { companyDedupeKey } from './companyKey.js';
+import { newSheetRows } from './sheetSyncDiff.js';
 
 // Admin uses the shared collection; everyone else gets their own
 let _userId = null;
@@ -104,6 +105,49 @@ export async function updateProspect(id, updates) {
 
 export async function deleteProspect(id) {
   await deleteDoc(getDoc(id));
+}
+
+// The ONE place an import may create prospect documents.
+//
+// Every importer used to hand-roll this — read the roster, decide what is
+// missing, mint documents in batches — which meant each one answered "do
+// we already have this company?" for itself. addProspect used
+// companyDedupeKey while the two Google Sheets importers compared
+// lowercased names character for character, so the timer-driven import
+// minted a second account for every spelling variant, and the duplicate
+// collapse (which uses the key) could not merge what it had made. The
+// guard existed; the biggest writer went around it.
+//
+// Routing every importer through here is what keeps the rule single.
+// scripts/prospectWrites.test.mjs fails the moment a module outside this
+// one addresses the prospects collection again.
+//
+// `roster` is what the caller already has in memory (or via
+// readAllProspects) — deliberately not read here, because a full
+// collection read per import is what exhausted the project's Firestore
+// quota before. Costs no writes at all when nothing is new.
+export async function addProspectsIfNew(rows, roster, { batchSize = 450 } = {}) {
+  const fresh = newSheetRows(rows, roster);
+  const col = getCol();
+  for (let i = 0; i < fresh.length; i += batchSize) {
+    const batch = writeBatch(db);
+    for (const p of fresh.slice(i, i + batchSize)) {
+      const now = new Date().toISOString();
+      batch.set(doc(col), { ...p, createdAt: now, updatedAt: now });
+    }
+    await batch.commit();
+  }
+  return { added: fresh.length, skipped: (rows?.length || 0) - fresh.length, fresh };
+}
+
+// The whole roster, straight from Firestore. For the one caller that
+// needs an authoritative answer rather than the subscription's copy: the
+// manual "Sheets -> Website" pull can be pressed before the subscription
+// has delivered, and an empty in-memory roster would read every sheet row
+// as missing.
+export async function readAllProspects() {
+  const snap = await getDocs(getCol());
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 function waitFrame() {

@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { collection, writeBatch, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { usesSharedProspects } from '../utils/firestoreSync';
-import { newSheetRows } from '../utils/sheetSyncDiff';
+import { addProspectsIfNew, usesSharedProspects } from '../utils/firestoreSync';
 import { autoSyncSchedule, readSheetSync, LEGACY_STAMP_KEY } from '../utils/sheetSyncSettings';
 import { userLsGet, userLsSet } from '../utils/userLs';
 
@@ -235,27 +234,17 @@ export function useSheetSync(user, prospects = [], prospectsLoaded = false, sett
         const sheetProspects = parseProspectsFromCsv(csvText);
         if (sheetProspects.length === 0) return;
 
-        const roster = prospectsRef.current || [];
-        const fresh = newSheetRows(sheetProspects, roster);
-
-        // Nothing new — the steady state, most of the time. Stop here so a
-        // tick against an unchanged sheet costs no Firestore I/O at all.
-        if (fresh.length === 0) {
-          await stampRun(user.uid);
-          return;
-        }
-
-        for (let i = 0; i < fresh.length; i += 450) {
-          const batch = writeBatch(db);
-          for (const p of fresh.slice(i, i + 450)) {
-            const ref = doc(collection(db, 'prospects'));
-            batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-          }
-          await batch.commit();
-        }
+        // addProspectsIfNew owns both the "do we already have this
+        // company?" rule and the writes, so this importer cannot drift
+        // away from the one the duplicate collapse uses. It costs no
+        // Firestore I/O when nothing is new — the steady state, most of
+        // the time — so an unchanged sheet is just this diff.
+        const { added, skipped } = await addProspectsIfNew(sheetProspects, prospectsRef.current || []);
 
         await stampRun(user.uid);
-        console.log(`Auto-sync from Google Sheets (additive-only): ${fresh.length} added, ${sheetProspects.length - fresh.length} existing rows preserved`);
+        if (added > 0) {
+          console.log(`Auto-sync from Google Sheets (additive-only): ${added} added, ${skipped} existing rows preserved`);
+        }
       } catch (err) {
         console.error('Auto-sync error:', err);
       } finally {
