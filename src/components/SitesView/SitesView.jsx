@@ -49,7 +49,7 @@ import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
   JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
-  deriveRegulationVerdict, parseRevenueUsd,
+  deriveRegulationVerdict, parseRevenueUsd, pickThresholdRevenue,
   JURISDICTION_CRITERIA_GROUPS, criterionKey, deriveCriterion,
   deriveDoingBusinessInCA, deriveCsrdWaveVerdict, californiaRevenueScreen,
   ALWAYS_SHOW_REGULATIONS,
@@ -5495,15 +5495,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // The entity the thresholds are measured at, resolved exactly as the
       // card's thresholdRevenueFor does. Every regime in this section tests
-      // the CONSOLIDATED group, so a recorded parent whose revenue has been
-      // researched IS the test subject; an unresearched parent falls back to
-      // the company's own figure rather than screening on nothing.
+      // the CONSOLIDATED group, and either side can trigger a mandate, so
+      // the larger of the company's own figure and its parent's is the test
+      // subject; an unresearched parent falls back to the company's own
+      // rather than screening on nothing.
       const parentName = String(parentCompanies[e.key] || '').trim();
       const parentRev = parentName ? (revenueResearch[revSlug(parentName)] || null) : null;
       const parentRevenueLabel = String(parentRev?.revenue || '').trim();
-      const useParentRevenue = !!(parentName && parentRevenueLabel);
-      const revenueLabel = useParentRevenue ? parentRevenueLabel : ownRevenueLabel;
-      const revenueEntity = useParentRevenue ? parentName : '';
+      const { label: revenueLabel, entity: revenueEntity } = pickThresholdRevenue({
+        own: ownRevenueLabel,
+        parent: parentRevenueLabel,
+        parentName,
+      });
       const revenueUsd = parseRevenueUsd(revenueLabel);
       const research = complianceResearch[e.key] || null;
       const employees = Number.isFinite(Number(revData?.employees)) && Number(revData.employees) > 0

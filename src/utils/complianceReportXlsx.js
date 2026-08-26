@@ -1060,10 +1060,12 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
       // travels with it — a verdict reached on the parent's numbers reads
       // as unsupported when only the subsidiary's figure is on the page.
       if (co.parent) {
-        // Say outright whether the thresholds were tested at the parent, and
-        // carry the company's own figure alongside when they were. A reader
-        // checking a Yes against a subsidiary that turns over a fraction of
-        // the quoted revenue has to be able to see why that is not an error.
+        // Say outright which figure the thresholds were tested against, and
+        // carry the other one alongside. A reader checking a Yes against a
+        // subsidiary that turns over a fraction of the quoted revenue has to
+        // be able to see why that is not an error — and a reader checking a
+        // Yes reached on the subsidiary's own larger figure has to be able to
+        // see that the parent's smaller one didn't decide it.
         const screenedAtParent = !!co.revenueEntity;
         trailing.push({
           label: 'Parent',
@@ -1073,8 +1075,10 @@ export function buildCorporateComplianceSheet(wb, sites, meta = {}) {
               ? `revenue ${co.parentRevenueLabel}${co.parentRevenueFiscalYear ? ` (${co.parentRevenueFiscalYear})` : ''}`
               : 'revenue not researched',
             screenedAtParent
-              ? `thresholds below tested at the parent${co.ownRevenueLabel ? `; ${co.name}'s own revenue ${co.ownRevenueLabel}` : ''}`
-              : 'thresholds below tested at this company (no parent revenue researched)',
+              ? `thresholds below tested at the parent, the larger figure${co.ownRevenueLabel ? `; ${co.name}'s own revenue ${co.ownRevenueLabel}` : ''}`
+              : co.parentRevenueLabel
+                ? `thresholds below tested at ${co.name}${co.ownRevenueLabel ? `, whose own revenue ${co.ownRevenueLabel} is the larger figure` : ', the larger figure'}`
+                : 'thresholds below tested at this company (no parent revenue researched)',
           ].filter(Boolean).join('  ·  '),
         });
       }

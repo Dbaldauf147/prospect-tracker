@@ -527,6 +527,48 @@ export function parseRevenueUsd(raw) {
   return n * mult;
 }
 
+/**
+ * Which revenue figure the thresholds are tested against, and whose it is.
+ *
+ * Every regime on this page measures the CONSOLIDATED group, so a small
+ * subsidiary is caught by a large parent. The reverse is just as true: a
+ * company big enough in its own right is caught whatever its owner turns
+ * over — a $1.2B manufacturer owned by a private-equity firm whose own
+ * management-company revenue is $35M is squarely inside SB 253, and
+ * screening it on the owner's $35M rules out a mandate that plainly applies.
+ *
+ * Either figure can trigger a mandate, so the test subject is whichever is
+ * LARGER. `entity` names the parent only when the parent's figure is the one
+ * under test, so a basis string says whose number cleared the bar; it stays
+ * blank when the company's own figure wins, because the number really is
+ * this company's.
+ *
+ * `source` says which way it went — 'parent', 'own', or 'none' when there is
+ * no figure at all — so a card can show what it screened on rather than
+ * leaving the reader to compare two numbers themselves.
+ *
+ * A parent nobody has researched yet falls back to the company's own figure
+ * rather than screening on nothing: an unresearched parent is a gap in the
+ * working, not a reason to stop deriving. Where neither figure carries a
+ * readable number the parent's wording still wins, since the consolidated
+ * group is the entity the regimes name.
+ */
+export function pickThresholdRevenue({ own = '', parent = '', parentName = '' } = {}) {
+  const ownLabel = String(own || '').trim();
+  const parentLabel = String(parent || '').trim();
+  const name = String(parentName || '').trim();
+  if (!name || !parentLabel) {
+    return { label: ownLabel, entity: '', source: ownLabel ? 'own' : 'none' };
+  }
+  const ownUsd = parseRevenueUsd(ownLabel);
+  const parentUsd = parseRevenueUsd(parentLabel);
+  const ownWins = Number.isFinite(ownUsd)
+    && (!Number.isFinite(parentUsd) || ownUsd >= parentUsd);
+  return ownWins
+    ? { label: ownLabel, entity: '', source: 'own' }
+    : { label: parentLabel, entity: name, source: 'parent' };
+}
+
 function fmtUsd(n) {
   if (n >= 1e9) return `$${+(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${+(n / 1e6).toFixed(2)}M`;
