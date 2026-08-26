@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../utils/apiFetch';
-import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { addProspectsIfNew, readAllProspects } from '../utils/firestoreSync';
 import { userLsGet } from '../utils/userLs';
 import { readSheetSync, SHEET_SYNC_KEY } from '../utils/sheetSyncSettings';
 import { companyDedupeKey } from '../utils/companyKey.js';
@@ -367,29 +366,18 @@ export function SyncPanel({ prospects, onClose, settings: userSettings, updateSe
 
       setStatus({ type: 'loading', message: `Merging ${parsed.length} rows into database...` });
 
-      const existing = await getDocs(collection(db, 'prospects'));
-      const existingMap = new Map();
-      for (const d of existing.docs) existingMap.set((d.data().company || '').toLowerCase(), d);
-
-      // Additive-only: never overwrite existing Table View rows from Sheets.
-      let added = 0, skipped = 0;
-      for (let i = 0; i < parsed.length; i += 450) {
-        const batch = writeBatch(db);
-        const chunk = parsed.slice(i, i + 450);
-        let inBatch = 0;
-        for (const p of chunk) {
-          const key = (p.company || '').toLowerCase();
-          if (existingMap.has(key)) {
-            skipped++;
-            continue;
-          }
-          const ref = doc(collection(db, 'prospects'));
-          batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-          added++;
-          inBatch++;
-        }
-        if (inBatch > 0) await batch.commit();
-      }
+      // Read the roster straight from Firestore rather than trusting the
+      // subscription's copy: this button can be pressed before that has
+      // delivered, and an empty roster would read every sheet row as
+      // missing. Additive-only — an existing row is never overwritten
+      // from Sheets.
+      //
+      // The decision and the writes both belong to addProspectsIfNew, so
+      // this button uses the same "same company?" rule as everything else.
+      // It used to compare lowercased names character for character here,
+      // which made a second account out of every spelling variant.
+      const roster = await readAllProspects();
+      const { added, skipped } = await addProspectsIfNew(parsed, roster);
 
       const now = new Date().toISOString();
       saveSettings({ ...settings, lastSync: now });
