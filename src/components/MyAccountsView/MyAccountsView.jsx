@@ -3219,10 +3219,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
               {total === 0 ? 'No accounts to group yet.' : 'No accounts match the current search.'}
             </div>
           )}
+          {/* One column per type, side by side, so several types read at
+              once instead of scrolling past a stack of full-width blocks.
+              Columns wrap onto the next row when the window can't fit them
+              all; each column scrolls internally once its firm list runs
+              long, so a single big type can't stretch the whole row. */}
+          <div className={styles.typeColumns}>
           {shown.map(g => {
             const t2 = TYPE2_COLORS[g.type2];
             return (
-              <div key={g.type} className={styles.bucketList}>
+              <div key={g.type} className={`${styles.bucketList} ${styles.typeColumn}`}>
                 <div className={styles.bucketHeader}>
                   <span className={styles.bucketTitle}>
                     {g.type}
@@ -3253,6 +3259,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
               </div>
             );
           })}
+          </div>
         </div>
       </div>
     );
