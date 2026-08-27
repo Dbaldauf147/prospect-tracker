@@ -97,6 +97,10 @@ export function isoLabel(iso) {
   return ISO_SHORT[s] || s;
 }
 
+function emptyStateBucket() {
+  return { sites: 0, kwh: 0, therms: 0, kwhDereg: 0, thermsDereg: 0 };
+}
+
 function emptyDivision(name) {
   return {
     name,
@@ -116,11 +120,19 @@ function emptyDivision(name) {
     // property-type estimate rather than off the uploaded file.
     kwh: 0, kwhModelled: 0, kwhSites: 0,
     therms: 0, thermsModelled: 0, thermsSites: 0,
+    // The part of that volume sitting in a competitive market, on the same
+    // per-site verdict the procurement section counts its Deregulated Sites
+    // on — so the two sections can't disagree about which sites those are.
+    // Volume the classifier couldn't place (a competitive state with no
+    // utility and no supplier on file) is not counted here: unconfirmed is
+    // not deregulated, and the note under the section says so.
+    kwhDereg: 0, thermsDereg: 0,
     // Sites by market.
     iso: {},
     // The same consumption again, split by state: label -> { sites, kwh,
-    // therms }. Held in the page's native units like the totals above it and
-    // converted where it is written, so the two can't round differently.
+    // therms, kwhDereg, thermsDereg }. Held in the page's native units like
+    // the totals above it and converted where it is written, so the two
+    // can't round differently.
     byState: {},
   };
 }
@@ -139,13 +151,20 @@ function emptyDivision(name) {
 //                 A site out of scope still counts in `sites` — it is in the
 //                 division, it just isn't screened — so the compliance
 //                 section reports against `screened`, not the site total.
-//     energy      { kwh, therms, kwhModelled, thermsModelled } — annual
+//     energy      { kwh, therms, kwhModelled, thermsModelled,
+//                 electricDeregulated, gasDeregulated } — annual
 //                 consumption, null on either commodity where the site has
 //                 no figure at all. The counts of sites that DO carry one
 //                 are reported beside the totals: a division whose gas
 //                 volume comes from two of its ninety sites has a total
 //                 that means something quite different from one whose
 //                 ninety all reported.
+//                 The two deregulated flags are the page's own market
+//                 classifier, tri-state: true, false, or null where a
+//                 competitive state has no utility or supplier on file to
+//                 confirm the site either way. Only a true counts volume as
+//                 deregulated — the same rule the Deregulated Sites column
+//                 in the procurement section counts on.
 //     state       'ST / Prov / Country' the site's consumption files under,
 //                 blank where neither a state nor a country resolved.
 //
@@ -180,11 +199,13 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
         d.kwh += e.kwh;
         d.kwhSites += 1;
         if (e.kwhModelled) d.kwhModelled += e.kwh;
+        if (e.electricDeregulated === true) d.kwhDereg += e.kwh;
       }
       if (isNum(e.therms)) {
         d.therms += e.therms;
         d.thermsSites += 1;
         if (e.thermsModelled) d.thermsModelled += e.therms;
+        if (e.gasDeregulated === true) d.thermsDereg += e.therms;
       }
     }
 
@@ -195,10 +216,14 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
     const st = stateLabel(f?.state);
     const kwh = num(e?.kwh);
     const therms = num(e?.therms);
-    const bucket = d.byState[st] || (d.byState[st] = { sites: 0, kwh: 0, therms: 0 });
+    const kwhDereg = e?.electricDeregulated === true ? kwh : 0;
+    const thermsDereg = e?.gasDeregulated === true ? therms : 0;
+    const bucket = d.byState[st] || (d.byState[st] = emptyStateBucket());
     bucket.sites += 1; bucket.kwh += kwh; bucket.therms += therms;
-    const stTotal = stateTotals.get(st) || { sites: 0, kwh: 0, therms: 0 };
+    bucket.kwhDereg += kwhDereg; bucket.thermsDereg += thermsDereg;
+    const stTotal = stateTotals.get(st) || emptyStateBucket();
     stTotal.sites += 1; stTotal.kwh += kwh; stTotal.therms += therms;
+    stTotal.kwhDereg += kwhDereg; stTotal.thermsDereg += thermsDereg;
     stateTotals.set(st, stTotal);
 
     const c = f?.compliance;
@@ -275,12 +300,14 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
       'electricDeregSites', 'electricSpend', 'electricLow', 'electricHigh',
       'gasDeregSites', 'gasSpend', 'gasLow', 'gasHigh',
       'kwh', 'kwhModelled', 'kwhSites', 'therms', 'thermsModelled', 'thermsSites',
+      'kwhDereg', 'thermsDereg',
     ]) totals[k] += d[k];
     if (d.penaltyKnown) totals.penaltyKnown = true;
     for (const [m, n] of Object.entries(d.iso)) totals.iso[m] = (totals.iso[m] || 0) + n;
     for (const [st, b] of Object.entries(d.byState)) {
-      const t = totals.byState[st] || (totals.byState[st] = { sites: 0, kwh: 0, therms: 0 });
+      const t = totals.byState[st] || (totals.byState[st] = emptyStateBucket());
       t.sites += b.sites; t.kwh += b.kwh; t.therms += b.therms;
+      t.kwhDereg += b.kwhDereg; t.thermsDereg += b.thermsDereg;
     }
   }
   totals.deregSpend = totals.electricSpend + totals.gasSpend;
@@ -318,8 +345,12 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
     divisions = [], isoLabels = [], stateLabels = [],
     totals = emptyDivision(ALL_DIVISIONS_LABEL),
   } = summary || {};
-  // Ten figures per table plus the bar column that charts one of them.
-  const NC = 11;
+  // As wide as the widest table on the tab — the consumption section, which
+  // runs both commodities out across volume, how much of it is modelled, how
+  // much sits in a competitive market, and the portfolio share, plus the bar
+  // column that charts one of them. The narrower tables pad to it so every
+  // header band ends where the section banner above it does.
+  const NC = 15;
   // The two matrices run wider than the tables above them when a portfolio
   // spans a lot of ISOs — or is split into a lot of divisions — so the sheet
   // is as wide as the widest thing on it.
@@ -372,6 +403,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Indicative Savings High', key: 'savingsHigh', numFmt: '"$"#,##0', emphasis: true },
       { label: 'Savings Scale', key: 'savingsHigh', bar: true },
       { label: '% of Portfolio Savings', key: 'shareOfSavings', numFmt: '0%' },
+      ...padColumns(4),
     ],
     rows: divisions.map(d => ({
       ...d,
@@ -387,7 +419,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
   // be read across — the spend column above covers a subset of the sites
   // this volume covers, so dividing one by the other is not a rate.
   r = section(ws, r, NC, 'Energy Consumption by Division',
-    'Annual electric and gas volume across EVERY site in the division, regulated and deregulated alike — unlike the spend above, which covers deregulated sites only. "Sites with data" is how many sites carry a consumption figure at all; the rest contribute nothing to the total. "Modelled" is the part of the total that came from the property-type estimate rather than off the uploaded file — a total that is largely modelled is an indication of size, not a meter reading. Gas is reported in Dth (1 Dth = 10 therms), as on the Site Detail tab.');
+    'Annual electric and gas volume across EVERY site in the division, regulated and deregulated alike — unlike the spend above, which covers deregulated sites only. "Sites with data" is how many sites carry a consumption figure at all; the rest contribute nothing to the total. "Modelled" is the part of the total that came from the property-type estimate rather than off the uploaded file — a total that is largely modelled is an indication of size, not a meter reading. "Deregulated" is the volume at sites the market classifier places in a competitive market, the same per-site verdict the Deregulated Sites column above counts on: a site in a competitive state with no utility and no supplier on file can\'t be confirmed either way and is NOT counted, so this reads as a floor rather than an estimate. Gas is reported in Dth (1 Dth = 10 therms), as on the Site Detail tab.');
   r = table(ws, r, {
     columns: [
       { label: 'Division', key: 'name', align: 'left', width: 30 },
@@ -396,16 +428,23 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Annual Electric (kWh)', key: 'kwh', numFmt: '#,##0', emphasis: true },
       { label: 'kWh Scale', key: 'kwh', bar: true },
       { label: 'of which Modelled (kWh)', key: 'kwhModelled', numFmt: '#,##0' },
+      { label: 'Deregulated (kWh)', key: 'kwhDereg', numFmt: '#,##0' },
+      { label: '% of kWh Deregulated', key: 'shareKwhDereg', numFmt: '0%' },
       { label: '% of Portfolio kWh', key: 'shareKwh', numFmt: '0%' },
       { label: 'Sites with Gas Data', key: 'thermsSites', numFmt: '#,##0' },
       { label: 'Annual Gas (Dth)', key: 'gasDth', numFmt: '#,##0', emphasis: true },
       { label: 'of which Modelled (Dth)', key: 'gasModelledDth', numFmt: '#,##0' },
+      { label: 'Deregulated (Dth)', key: 'gasDeregDth', numFmt: '#,##0' },
+      { label: '% of Dth Deregulated', key: 'shareDthDereg', numFmt: '0%' },
       { label: '% of Portfolio Dth', key: 'shareDth', numFmt: '0%' },
     ],
     rows: divisions.map(d => ({
       ...d,
       gasDth: toDth(d.therms),
       gasModelledDth: toDth(d.thermsModelled),
+      gasDeregDth: toDth(d.thermsDereg),
+      shareKwhDereg: d.kwh ? d.kwhDereg / d.kwh : 0,
+      shareDthDereg: d.therms ? d.thermsDereg / d.therms : 0,
       shareKwh: totals.kwh ? d.kwh / totals.kwh : 0,
       shareDth: totals.therms ? d.therms / totals.therms : 0,
     })),
@@ -414,6 +453,9 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       name: 'All divisions',
       gasDth: toDth(totals.therms),
       gasModelledDth: toDth(totals.thermsModelled),
+      gasDeregDth: toDth(totals.thermsDereg),
+      shareKwhDereg: totals.kwh ? totals.kwhDereg / totals.kwh : 0,
+      shareDthDereg: totals.therms ? totals.thermsDereg / totals.therms : 0,
       shareKwh: totals.kwh ? 1 : 0,
       shareDth: totals.therms ? 1 : 0,
     },
@@ -435,6 +477,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Est. Annual Penalty Exposure', key: 'penaltyCell', numFmt: '"$"#,##0', emphasis: true },
       { label: 'Exposure Scale', key: 'penalty', bar: true },
       { label: '% of Portfolio Exposure', key: 'shareOfPenalty', numFmt: '0%' },
+      ...padColumns(4),
     ],
     rows: divisions.map(d => ({
       ...d,
@@ -467,8 +510,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: '% with Interval Data', key: 'shareInterval', numFmt: '0%' },
       { label: 'Interval Data: No', key: 'intervalNo', numFmt: '#,##0' },
       { label: 'Interval Data: Unknown', key: 'intervalUnknown', numFmt: '#,##0' },
-      { label: '', key: '__blank1', numFmt: null },
-      { label: '', key: '__blank2', numFmt: null },
+      ...padColumns(6),
     ],
     rows: divisions.map(d => ({
       ...d,
@@ -668,7 +710,7 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
 // recalculate on open.
 function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, totals) {
   let r = section(ws, startRow, NC, 'Consumption by State, by Division',
-    'Pick a division from the dropdown: the table under it reports that division\'s annual electric and gas volume in every state the portfolio touches. Same figures as the Energy Consumption section above, split by state instead of totalled — every site, regulated and deregulated alike, so these will read higher than the deregulated spend the savings run on. The two matrices below are what the table reads. Electric is kWh/yr and gas is Dth/yr, as on the Site Detail tab.');
+    'Pick a division from the dropdown: the table under it reports that division\'s annual electric and gas volume in every state the portfolio touches, and how much of each sits in a competitive market. Same figures as the Energy Consumption section above, split by state instead of totalled — every site, regulated and deregulated alike, so the volume columns read higher than the deregulated spend the savings run on. "Deregulated" counts only sites the market classifier confirms, so a competitive state with no utility or supplier on file reads low rather than assumed. The four matrices below are what the table reads. Electric is kWh/yr and gas is Dth/yr, as on the Site Detail tab.');
 
   if (!divisions.length || !stateLabels.length) {
     ws.mergeCells(r, 1, r, NC);
@@ -687,12 +729,13 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
   // would show one number before a recalculation and another after. Gas
   // converts to Dth at this one point, like every other gas figure on the
   // sheet, so nothing is rounded twice.
-  const cellValue = (src, state, key) => {
-    const b = src?.byState?.[state];
-    return Math.round(key === 'therms' ? toDth(b?.therms) : num(b?.kwh));
-  };
+  // Every gas key — the volume and the deregulated part of it — converts to
+  // Dth here, the one place, like every other gas figure on the sheet.
+  const inSheetUnits = (key, raw) => (key.startsWith('therms') ? toDth(raw) : num(raw));
+  const cellValue = (src, state, key) =>
+    Math.round(inSheetUnits(key, src?.byState?.[state]?.[key]));
   const columnTotal = (src, key) => Math.round(stateLabels.reduce(
-    (sum, st) => sum + (key === 'therms' ? toDth(src?.byState?.[st]?.therms) : num(src?.byState?.[st]?.kwh)), 0));
+    (sum, st) => sum + inSheetUnits(key, src?.byState?.[st]?.[key]), 0));
   // Opens on the largest named division so the picker is visibly doing
   // something; a portfolio with nothing but unassigned sites opens on the
   // roll-up, which is the only reading that means anything there.
@@ -706,24 +749,39 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
   const selectedHeaderRow = r + 2;
   const selectedFirstRow = selectedHeaderRow + 1;
   const selectedTotalRow = selectedFirstRow + stateLabels.length;
-  const elecTitleRow = selectedTotalRow + 2;
-  const elecHeaderRow = elecTitleRow + 1;
-  const elecFirstRow = elecHeaderRow + 1;
-  const elecTotalRow = elecFirstRow + stateLabels.length;
-  const gasTitleRow = elecTotalRow + 2;
-  const gasHeaderRow = gasTitleRow + 1;
-  const gasFirstRow = gasHeaderRow + 1;
-  const gasTotalRow = gasFirstRow + stateLabels.length;
+  // Four matrices, stacked: each is a header row, one row per state and a
+  // totals row, with a title above and a blank line between. Laid out from
+  // one description so the ranges and the row indexes the table's formulas
+  // use can't drift apart as they did when they were spelled out twice.
+  const MATRICES = [
+    { key: 'kwh', title: 'State × division matrix — electric consumption (kWh/yr)' },
+    { key: 'kwhDereg', title: 'State × division matrix — deregulated electric consumption (kWh/yr)' },
+    { key: 'therms', title: 'State × division matrix — gas consumption (Dth/yr)' },
+    { key: 'thermsDereg', title: 'State × division matrix — deregulated gas consumption (Dth/yr)' },
+  ];
+  let cursor = selectedTotalRow + 2;
+  for (const m of MATRICES) {
+    m.titleRow = cursor;
+    m.headerRow = cursor + 1;
+    m.firstRow = cursor + 2;
+    m.totalRow = m.firstRow + stateLabels.length;
+    cursor = m.totalRow + 2;
+  }
+  const lastMatrixRow = cursor - 2;
   const lastCol = 1 + headers.length;
   const L = colLetter(lastCol);
-  const elecRange = `$${colLetter(2)}$${elecHeaderRow}:$${L}$${elecTotalRow}`;
-  const gasRange = `$${colLetter(2)}$${gasHeaderRow}:$${L}$${gasTotalRow}`;
-  // The two matrices carry identical headers, so one of them is the whole
+  const rangeOf = (m) => `$${colLetter(2)}$${m.headerRow}:$${L}$${m.totalRow}`;
+  const [elec, elecDereg, gas, gasDereg] = MATRICES;
+  const elecRange = rangeOf(elec);
+  const elecDeregRange = rangeOf(elecDereg);
+  const gasRange = rangeOf(gas);
+  const gasDeregRange = rangeOf(gasDereg);
+  // The four matrices carry identical headers, so one of them is the whole
   // dropdown. Validated against the range rather than an inline list for the
   // same two reasons as the market picker: Excel caps an inline list at 255
   // characters, which division names blow past on a sizeable portfolio, and
   // a range can't fall out of step with the columns it picks from.
-  const headerRange = `$${colLetter(2)}$${elecHeaderRow}:$${L}$${elecHeaderRow}`;
+  const headerRange = `$${colLetter(2)}$${elec.headerRow}:$${L}$${elec.headerRow}`;
 
   // ---- the picker ----
   const label = ws.getCell(pickerRow, 1);
@@ -760,60 +818,85 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
     { label: 'ST / Prov / Country', align: 'left' },
     { label: 'Electric kWh/yr', align: 'center' },
     { label: 'kWh Scale', align: 'center' },
+    { label: 'Deregulated kWh/yr', align: 'center' },
+    { label: '% of kWh Deregulated', align: 'center' },
     { label: '% of Division kWh', align: 'center' },
     { label: 'Gas Dth/yr', align: 'center' },
+    { label: 'Deregulated Dth/yr', align: 'center' },
+    { label: '% of Dth Deregulated', align: 'center' },
     { label: '% of Division Dth', align: 'center' },
   ]);
 
   const elecTotalCached = columnTotal(defaultSource, 'kwh');
+  const elecDeregTotalCached = columnTotal(defaultSource, 'kwhDereg');
   const gasTotalCached = columnTotal(defaultSource, 'therms');
+  const gasDeregTotalCached = columnTotal(defaultSource, 'thermsDereg');
+  // The columns the formulas point at, by letter, so a column added to the
+  // table doesn't leave a formula reading its neighbour.
+  const KWH = colLetter(2), KWH_DEREG = colLetter(4);
+  const DTH = colLetter(7), DTH_DEREG = colLetter(8);
   stateLabels.forEach((st, i) => {
     const rowNo = selectedFirstRow + i;
     // Row 1 of each range is the header, so this state's row inside it is
-    // its matrix row minus the header row, plus one. The two matrices are
-    // laid out in step, so one index serves both.
+    // its matrix row minus the header row, plus one. The matrices are laid
+    // out in step, so one index serves all four.
     const idx = i + 2;
     const kwh = cellValue(defaultSource, st, 'kwh');
+    const kwhDereg = cellValue(defaultSource, st, 'kwhDereg');
     const dth = cellValue(defaultSource, st, 'therms');
+    const dthDereg = cellValue(defaultSource, st, 'thermsDereg');
+    const lookup = (range) => `IFERROR(HLOOKUP($B$${pickerRow},${range},${idx},FALSE),0)`;
     writeRow(ws, rowNo, i, [
       { v: st, align: 'left', bold: true, color: INK },
-      {
-        v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${elecRange},${idx},FALSE),0)`, result: kwh },
-        numFmt: '#,##0', bold: true, color: SE_DARK,
-      },
+      { v: { formula: lookup(elecRange), result: kwh }, numFmt: '#,##0', bold: true, color: SE_DARK },
       // The bar's own cell mirrors the figure so it moves with the picker,
       // and hides the repeat behind the bar.
+      { v: { formula: `${KWH}${rowNo}`, result: kwh }, numFmt: HIDDEN_NUM },
+      { v: { formula: lookup(elecDeregRange), result: kwhDereg }, numFmt: '#,##0' },
       {
-        v: { formula: `${colLetter(2)}${rowNo}`, result: kwh },
-        numFmt: HIDDEN_NUM,
-      },
-      {
-        v: { formula: `IFERROR(${colLetter(2)}${rowNo}/$${colLetter(2)}$${selectedTotalRow},0)`, result: elecTotalCached ? kwh / elecTotalCached : 0 },
+        v: { formula: `IFERROR(${KWH_DEREG}${rowNo}/${KWH}${rowNo},0)`, result: kwh ? kwhDereg / kwh : 0 },
         numFmt: '0%',
       },
       {
-        v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${gasRange},${idx},FALSE),0)`, result: dth },
-        numFmt: '#,##0', bold: true, color: SE_DARK,
+        v: { formula: `IFERROR(${KWH}${rowNo}/$${KWH}$${selectedTotalRow},0)`, result: elecTotalCached ? kwh / elecTotalCached : 0 },
+        numFmt: '0%',
+      },
+      { v: { formula: lookup(gasRange), result: dth }, numFmt: '#,##0', bold: true, color: SE_DARK },
+      { v: { formula: lookup(gasDeregRange), result: dthDereg }, numFmt: '#,##0' },
+      {
+        v: { formula: `IFERROR(${DTH_DEREG}${rowNo}/${DTH}${rowNo},0)`, result: dth ? dthDereg / dth : 0 },
+        numFmt: '0%',
       },
       {
-        v: { formula: `IFERROR(${colLetter(5)}${rowNo}/$${colLetter(5)}$${selectedTotalRow},0)`, result: gasTotalCached ? dth / gasTotalCached : 0 },
+        v: { formula: `IFERROR(${DTH}${rowNo}/$${DTH}$${selectedTotalRow},0)`, result: gasTotalCached ? dth / gasTotalCached : 0 },
         numFmt: '0%',
       },
     ]);
   });
   const totalIdx = stateLabels.length + 2;
+  const totalLookup = (range) => `IFERROR(HLOOKUP($B$${pickerRow},${range},${totalIdx},FALSE),0)`;
   totalsRow(ws, selectedTotalRow, [
     { v: 'All states', align: 'left' },
-    {
-      v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${elecRange},${totalIdx},FALSE),0)`, result: elecTotalCached },
-      numFmt: '#,##0',
-    },
+    { v: { formula: totalLookup(elecRange), result: elecTotalCached }, numFmt: '#,##0' },
     // Outside the bar's range, like every other totals row on the sheet.
     { v: null, numFmt: HIDDEN_NUM },
-    { v: elecTotalCached ? 1 : 0, numFmt: '0%' },
+    { v: { formula: totalLookup(elecDeregRange), result: elecDeregTotalCached }, numFmt: '#,##0' },
     {
-      v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${gasRange},${totalIdx},FALSE),0)`, result: gasTotalCached },
-      numFmt: '#,##0',
+      v: {
+        formula: `IFERROR(${KWH_DEREG}${selectedTotalRow}/${KWH}${selectedTotalRow},0)`,
+        result: elecTotalCached ? elecDeregTotalCached / elecTotalCached : 0,
+      },
+      numFmt: '0%',
+    },
+    { v: elecTotalCached ? 1 : 0, numFmt: '0%' },
+    { v: { formula: totalLookup(gasRange), result: gasTotalCached }, numFmt: '#,##0' },
+    { v: { formula: totalLookup(gasDeregRange), result: gasDeregTotalCached }, numFmt: '#,##0' },
+    {
+      v: {
+        formula: `IFERROR(${DTH_DEREG}${selectedTotalRow}/${DTH}${selectedTotalRow},0)`,
+        result: gasTotalCached ? gasDeregTotalCached / gasTotalCached : 0,
+      },
+      numFmt: '0%',
     },
     { v: gasTotalCached ? 1 : 0, numFmt: '0%' },
   ]);
@@ -826,7 +909,7 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
   });
 
   // ---- the matrices ----
-  const writeMatrix = (titleRow, hdrRow, firstRow, totalRow, key, title) => {
+  const writeMatrix = ({ titleRow, headerRow: hdrRow, firstRow, totalRow, key, title }) => {
     const t = ws.getCell(titleRow, 1);
     t.value = title;
     t.font = { name: FONT, bold: true, size: 10, color: { argb: SLATE } };
@@ -849,15 +932,12 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
       ...sources.map(src => ({ v: columnTotal(src, key), numFmt: '#,##0' })),
     ]);
   };
-  writeMatrix(elecTitleRow, elecHeaderRow, elecFirstRow, elecTotalRow, 'kwh',
-    'State × division matrix — electric consumption (kWh/yr)');
-  writeMatrix(gasTitleRow, gasHeaderRow, gasFirstRow, gasTotalRow, 'therms',
-    'State × division matrix — gas consumption (Dth/yr)');
+  MATRICES.forEach(writeMatrix);
 
-  const after = gasTotalRow + 2;
+  const after = lastMatrixRow + 2;
   ws.mergeCells(after, 1, after, NC);
   const note = ws.getCell(after, 1);
-  note.value = `A state a division has sites in but no consumption figures for reads as a zero rather than dropping out — the "Sites with data" columns in the Energy Consumption section say how much of each total is measured at all. A site whose State / Province and Country both came through blank files under "${UNKNOWN_STATE_LABEL}".`;
+  note.value = `A state a division has sites in but no consumption figures for reads as a zero rather than dropping out — the "Sites with data" columns in the Energy Consumption section say how much of each total is measured at all. The deregulated matrices count only sites the market classifier confirms as competitive, so a state can carry load with none of it deregulated either because it is a regulated market or because no utility or supplier is on file to place its sites. A site whose State / Province and Country both came through blank files under "${UNKNOWN_STATE_LABEL}".`;
   note.font = { name: FONT, italic: true, size: 9, color: { argb: 'FF94A3B8' } };
   note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
   ws.getRow(after).height = 26;
@@ -936,6 +1016,13 @@ function totalsRow(ws, row, cells) {
     cell.border = { top: { style: 'medium', color: { argb: argb('#3DCD58') } } };
   });
   rr.height = 19;
+}
+
+// Blank columns that carry a table out to the sheet's full width, so its
+// header band ends where the section banner above it does rather than
+// stopping short. They hold no key, so every row writes them empty.
+function padColumns(n) {
+  return Array.from({ length: n }, (_, i) => ({ label: '', key: `__pad${i}`, numFmt: null }));
 }
 
 // One section's table: header, a row per division, a totals row, and a live

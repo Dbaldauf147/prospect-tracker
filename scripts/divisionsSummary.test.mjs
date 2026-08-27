@@ -107,21 +107,22 @@ const screened = (over = {}) => ({
     'states run heaviest electric load first with the unresolved bucket last');
 
   const retail = s.divisions.find(d => d.name === 'Retail');
-  eq(retail.byState.TX, { sites: 2, kwh: 1_500_000, therms: 5_000 },
+  eq(retail.byState.TX, { sites: 2, kwh: 1_500_000, therms: 5_000, kwhDereg: 0, thermsDereg: 0 },
     'a state bucket sums every site in it, deregulated or not');
-  eq(retail.byState.OH, { sites: 1, kwh: 200_000, therms: 9_000 }, 'each state keeps its own bucket');
+  eq(retail.byState.OH, { sites: 1, kwh: 200_000, therms: 9_000, kwhDereg: 0, thermsDereg: 0 },
+    'each state keeps its own bucket');
   eq(retail.byState[UNKNOWN_STATE_LABEL], undefined,
     'a division with no unresolved site carries no unresolved bucket');
 
   const industrial = s.divisions.find(d => d.name === 'Industrial');
-  eq(industrial.byState.OH, { sites: 1, kwh: 0, therms: 0 },
+  eq(industrial.byState.OH, { sites: 1, kwh: 0, therms: 0, kwhDereg: 0, thermsDereg: 0 },
     'a site with no consumption figures still opens its state bucket');
-  eq(industrial.byState.TX, { sites: 1, kwh: 3_000_000, therms: 0 },
+  eq(industrial.byState.TX, { sites: 1, kwh: 3_000_000, therms: 0, kwhDereg: 0, thermsDereg: 0 },
     'a null on one commodity contributes nothing rather than breaking the sum');
 
-  eq(s.totals.byState.TX, { sites: 3, kwh: 4_500_000, therms: 5_000 },
+  eq(s.totals.byState.TX, { sites: 3, kwh: 4_500_000, therms: 5_000, kwhDereg: 0, thermsDereg: 0 },
     'the totals row sums each state across divisions');
-  eq(s.totals.byState[UNKNOWN_STATE_LABEL], { sites: 1, kwh: 10, therms: 0 },
+  eq(s.totals.byState[UNKNOWN_STATE_LABEL], { sites: 1, kwh: 10, therms: 0, kwhDereg: 0, thermsDereg: 0 },
     'a site with neither a state nor a country still lands somewhere');
 
   // The by-state split and the by-division totals are the same figures read
@@ -294,10 +295,10 @@ function build(facts, savings) {
   eq(txElec.value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${elecHeaderRow}:$D$${elecHeaderRow + 3},2,FALSE),0)`,
     "electric is an HLOOKUP into this state's row of the electric matrix");
   eq(txElec.value.result, 1_000_000, "the cached figure matches the matrix for the picker's division");
-  eq(ws.getCell(selFirstRow, 5).value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${gasHeaderRow}:$D$${gasHeaderRow + 3},2,FALSE),0)`,
+  eq(ws.getCell(selFirstRow, 7).value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${gasHeaderRow}:$D$${gasHeaderRow + 3},2,FALSE),0)`,
     'gas reads the gas matrix at the same row index');
-  eq(ws.getCell(selFirstRow, 5).value.result, toDth(4_000), 'the cached gas figure matches the gas matrix');
-  eq(ws.getCell(selFirstRow, 4).value.result, 1_000_000 / 1_200_000,
+  eq(ws.getCell(selFirstRow, 7).value.result, toDth(4_000), 'the cached gas figure matches the gas matrix');
+  eq(ws.getCell(selFirstRow, 6).value.result, 1_000_000 / 1_200_000,
     "the share is the state over the division's own total, not the portfolio's");
   eq(ws.getCell(selFirstRow + 1, 2).value.result, 200_000, 'the second state reads its own matrix row');
 
@@ -390,26 +391,27 @@ function build(facts, savings) {
     if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
   });
   ok(headerRow > 0, 'the consumption section has a header row');
-  eq([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(c => ws.getCell(headerRow, c).value), [
+  eq(Array.from({ length: 15 }, (_, i) => ws.getCell(headerRow, i + 1).value), [
     'Division', 'Sites', 'Sites with Electric Data', 'Annual Electric (kWh)',
-    'kWh Scale', 'of which Modelled (kWh)', '% of Portfolio kWh',
+    'kWh Scale', 'of which Modelled (kWh)', 'Deregulated (kWh)',
+    '% of kWh Deregulated', '% of Portfolio kWh',
     'Sites with Gas Data', 'Annual Gas (Dth)', 'of which Modelled (Dth)',
-    '% of Portfolio Dth',
+    'Deregulated (Dth)', '% of Dth Deregulated', '% of Portfolio Dth',
   ], 'the consumption columns name their units, with the bar in one of its own');
 
   const retailRow = headerRow + 1;
   eq(ws.getCell(retailRow, 1).value, 'Retail', 'the biggest division leads');
   eq(ws.getCell(retailRow, 4).value, 4_000_000, "the division's electric volume is its sites' summed");
   eq(ws.getCell(retailRow, 6).value, 1_000_000, 'the modelled column carries the estimated part only');
-  eq(ws.getCell(retailRow, 7).value, 0.8, 'the share is against the portfolio total');
-  eq(ws.getCell(retailRow, 9).value, 2_000, 'gas is written in Dth, not therms');
-  eq(ws.getCell(retailRow, 10).value, 0, 'a measured division shows no modelled gas');
+  eq(ws.getCell(retailRow, 9).value, 0.8, 'the share is against the portfolio total');
+  eq(ws.getCell(retailRow, 11).value, 2_000, 'gas is written in Dth, not therms');
+  eq(ws.getCell(retailRow, 12).value, 0, 'a measured division shows no modelled gas');
 
   const totalRow = headerRow + 3;
   eq(ws.getCell(totalRow, 1).value, 'All divisions', 'the section totals every division');
   eq(ws.getCell(totalRow, 4).value, 5_000_000, 'the totals row adds the electric volume up');
-  eq(ws.getCell(totalRow, 9).value, 2_500, 'and the gas volume, in Dth');
-  eq(ws.getCell(totalRow, 7).value, 1, 'the portfolio is 100% of itself');
+  eq(ws.getCell(totalRow, 11).value, 2_500, 'and the gas volume, in Dth');
+  eq(ws.getCell(totalRow, 9).value, 1, 'the portfolio is 100% of itself');
 }
 
 {
@@ -420,7 +422,8 @@ function build(facts, savings) {
     if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
   });
   eq(ws.getCell(headerRow + 1, 4).value, 0, 'no consumption reads as zero volume');
-  eq(ws.getCell(headerRow + 1, 7).value, 0, 'and as a zero share rather than a divide by zero');
+  eq(ws.getCell(headerRow + 1, 9).value, 0, 'and as a zero share rather than a divide by zero');
+  eq(ws.getCell(headerRow + 1, 8).value, 0, 'and a zero deregulated share, not a divide by zero');
 }
 
 // ---- bars in a column of their own --------------------------------------
@@ -497,6 +500,103 @@ function build(facts, savings) {
   eq(ws.getCell(consumptionHeader + 1, 4).value, 5_000_000, 'the figure cell holds the number');
   eq(ws.getCell(consumptionHeader + 1, 4).numFmt, '#,##0', 'formatted to be read');
   eq(ws.getCell(consumptionHeader + 1, 5).value, 5_000_000, 'the bar cell holds the same number');
+}
+
+// ---- how much of the volume is in a competitive market -----------------
+// The volume columns count every site; these count the part of it the market
+// classifier confirms as deregulated. Unconfirmed (a competitive state with
+// no utility and no supplier on file, which classifyMarket answers null to)
+// is NOT counted — the figure is a floor, and the section note says so.
+{
+  const e = (kwh, therms, over = {}) => ({
+    kwh, therms, kwhModelled: false, thermsModelled: false, ...over,
+  });
+  const facts = [
+    site('Retail', 'PJM', { state: 'TX', energy: e(1_000_000, 4_000, { electricDeregulated: true, gasDeregulated: true }) }),
+    site('Retail', 'PJM', { state: 'TX', energy: e(600_000, 2_000, { electricDeregulated: false, gasDeregulated: false }) }),
+    // Competitive state, nothing on file to place it: counted in the volume,
+    // not in the deregulated part of it.
+    site('Retail', 'ERCOT', { state: 'OH', energy: e(400_000, 1_000, { electricDeregulated: null, gasDeregulated: null }) }),
+    site('Industrial', 'ERCOT', { state: 'TX', energy: e(2_000_000, 10_000, { electricDeregulated: true, gasDeregulated: false }) }),
+  ];
+  const s = summarizeDivisions(facts, {});
+  const retail = s.divisions.find(d => d.name === 'Retail');
+  const industrial = s.divisions.find(d => d.name === 'Industrial');
+
+  eq(retail.kwh, 2_000_000, 'the volume column still counts every site');
+  eq(retail.kwhDereg, 1_000_000, 'only the confirmed deregulated volume counts');
+  eq(retail.thermsDereg, 4_000, 'and the same for gas');
+  eq(industrial.kwhDereg, 2_000_000, 'a division can be wholly deregulated on one commodity');
+  eq(industrial.thermsDereg, 0, 'and wholly regulated on the other');
+  eq(s.totals.kwhDereg, 3_000_000, 'the portfolio total adds the divisions up');
+  eq(s.totals.thermsDereg, 4_000, 'and the same for gas');
+
+  // Split by state as well, on the same rule.
+  eq(retail.byState.TX.kwhDereg, 1_000_000, 'a state bucket carries its own deregulated volume');
+  eq(retail.byState.TX.kwh, 1_600_000, 'beside the whole of it');
+  eq(retail.byState.OH.kwhDereg, 0, 'an unconfirmed site adds nothing to the deregulated volume');
+  eq(retail.byState.OH.kwh, 400_000, 'but its load is still there to be seen');
+  eq(s.totals.byState.TX.kwhDereg, 3_000_000, 'the state totals add the divisions up');
+  const acrossStates = Object.values(retail.byState).reduce((n, b) => n + b.kwhDereg, 0);
+  eq(acrossStates, retail.kwhDereg, "a division's states sum to its deregulated total");
+
+  // ---- and as written to the sheet ----
+  const { ws } = build(facts, {});
+  let headerRow = 0;
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
+  });
+  const retailRow = headerRow + 1;   // Retail leads: 3 sites to Industrial's 1
+  eq(ws.getCell(retailRow, 1).value, 'Retail', 'the consumption section leads with Retail');
+  eq(ws.getCell(retailRow, 4).value, 2_000_000, 'the volume column is unchanged');
+  eq(ws.getCell(retailRow, 7).value, 1_000_000, 'the deregulated column sits beside it');
+  eq(ws.getCell(retailRow, 8).value, 0.5, 'with the share of the volume it is');
+  eq(ws.getCell(retailRow, 13).value, toDth(4_000), 'gas deregulated volume is in Dth');
+  eq(ws.getCell(retailRow, 14).value, 4_000 / 7_000, 'and its share is off the therms, not the Dth');
+  const totalRow = headerRow + 3;
+  eq(ws.getCell(totalRow, 7).value, 3_000_000, 'the totals row adds the deregulated volume up');
+  eq(ws.getCell(totalRow, 8).value, 3_000_000 / 4_000_000, 'and reports the portfolio share of it');
+
+  // ---- the by-state section reads it through matrices of its own ----
+  const rowOf = (predicate) => {
+    let found = 0;
+    ws.eachRow({ includeEmpty: false }, (row, n) => { if (!found && predicate(row, n)) found = n; });
+    return found;
+  };
+  const titleRow = (title) => rowOf(row => row.getCell(1).value === title);
+  const elecHeader = titleRow('State × division matrix — electric consumption (kWh/yr)') + 1;
+  const elecDeregHeader = titleRow('State × division matrix — deregulated electric consumption (kWh/yr)') + 1;
+  const gasHeader = titleRow('State × division matrix — gas consumption (Dth/yr)') + 1;
+  const gasDeregHeader = titleRow('State × division matrix — deregulated gas consumption (Dth/yr)') + 1;
+  ok(elecHeader > 1 && elecDeregHeader > elecHeader && gasHeader > elecDeregHeader && gasDeregHeader > gasHeader,
+    'all four matrices are written, in order');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecDeregHeader, c).value),
+    ['ST / Prov / Country', 'Retail', 'Industrial', ALL_DIVISIONS_LABEL],
+    'the deregulated matrix shares the header the dropdown reads');
+  // TX leads on load. Retail's TX deregulated volume is the one confirmed
+  // site, against 1.6M of total TX load.
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecDeregHeader + 1, c).value), ['TX', 1_000_000, 2_000_000, 3_000_000],
+    'the deregulated matrix carries the confirmed volume by state and division');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecHeader + 2, c).value), ['OH', 400_000, 0, 400_000],
+    'the volume matrix still carries the unconfirmed load');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecDeregHeader + 2, c).value), ['OH', 0, 0, 0],
+    'and the deregulated matrix leaves it out');
+  eq([1, 2, 3, 4].map(c => ws.getCell(gasDeregHeader + 1, c).value), ['TX', toDth(4_000), 0, toDth(4_000)],
+    'the deregulated gas matrix is in Dth like its volume matrix');
+
+  const pickerRow = rowOf(row => row.getCell(1).value === 'Division'
+    && row.getCell(2).dataValidation?.type === 'list');
+  const selFirst = pickerRow + 3;
+  eq(ws.getCell(selFirst, 1).value, 'TX', 'the selected-division table leads with the heaviest state');
+  eq(ws.getCell(selFirst, 4).value.formula,
+    `IFERROR(HLOOKUP($B$${pickerRow},$B$${elecDeregHeader}:$D$${elecDeregHeader + 3},2,FALSE),0)`,
+    'the deregulated column is an HLOOKUP into the deregulated matrix');
+  eq(ws.getCell(selFirst, 4).value.result, 1_000_000, 'and its cached figure matches that matrix');
+  eq(ws.getCell(selFirst, 5).value.formula, `IFERROR(D${selFirst}/B${selFirst},0)`,
+    'the deregulated share divides the two columns beside it, so it moves with the picker');
+  eq(ws.getCell(selFirst, 5).value.result, 1_000_000 / 1_600_000, 'cached against this state, not the division');
+  eq(ws.getCell(selFirst, 8).value.result, toDth(4_000), 'gas reads its own deregulated matrix');
+  eq(ws.getCell(selFirst, 9).value.result, 4_000 / 6_000, 'and its share is of that state\'s gas');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
