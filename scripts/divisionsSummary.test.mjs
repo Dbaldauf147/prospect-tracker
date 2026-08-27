@@ -11,7 +11,7 @@
 // disagrees with the matrix under it) only show up in the file.
 import ExcelJS from 'exceljs';
 import {
-  summarizeDivisions, buildDivisionsSheet, divisionLabel, isoLabel,
+  summarizeDivisions, buildDivisionsSheet, divisionLabel, isoLabel, toDth,
   NO_DIVISION_LABEL, ALL_ISO_LABEL, UNKNOWN_ISO_LABEL,
 } from '../src/utils/divisionsSummary.js';
 import { NONE_WECC } from '../src/utils/isoLookup.js';
@@ -118,10 +118,11 @@ function build(facts, savings) {
   });
   eq(banners.map(b => b.v), [
     'Energy Procurement Savings Opportunity by Division',
+    'Energy Consumption by Division',
     'Building Compliance by Division',
     'Interval Data by Division',
     'Sites by ISO / RTO Market, by Division',
-  ], 'the four sections are written in order');
+  ], 'the five sections are written in order');
 
   // Find the market matrix by its caption — the picker cell above it also
   // holds a market name, so matching on the market alone finds the wrong row.
@@ -197,6 +198,100 @@ function build(facts, savings) {
     if (row.getCell(1).value === 'No sites in scope.') sawEmptyNotice = true;
   });
   ok(sawEmptyNotice, 'an empty portfolio writes the tab with a notice rather than blank rows');
+}
+
+// ---- energy consumption -------------------------------------------------
+
+{
+  // Consumption sums over EVERY site, not just the deregulated ones the
+  // savings section prices — a regulated site still uses power, and a
+  // division total that quietly dropped it would understate the estate.
+  const energy = (kwh, therms, over = {}) => ({
+    kwh, therms, kwhModelled: false, thermsModelled: false, ...over,
+  });
+  const facts = [
+    site('Retail', 'PJM', { energy: energy(1_000_000, 5_000) }),
+    site('Retail', 'PJM', { energy: energy(500_000, 2_500, { kwhModelled: true, thermsModelled: true }) }),
+    // No gas figure at all: counts as a site, contributes no volume, and is
+    // not counted among the sites that have gas data.
+    site('Retail', 'ERCOT', { energy: energy(250_000, null) }),
+    // A site the upload said nothing about on either commodity.
+    site('Industrial', 'ERCOT', { energy: energy(null, null) }),
+    site('Industrial', 'ERCOT', { energy: energy(2_000_000, 10_000, { kwhModelled: true }) }),
+    // Facts with no energy block at all (an older caller) must not throw.
+    site('Industrial', 'ERCOT'),
+  ];
+  const s = summarizeDivisions(facts, {});
+  const retail = s.divisions.find(d => d.name === 'Retail');
+  const industrial = s.divisions.find(d => d.name === 'Industrial');
+
+  eq(retail.kwh, 1_750_000, 'electric volume sums across the division');
+  eq(retail.kwhSites, 3, 'every site with a kWh figure is counted');
+  eq(retail.therms, 7_500, 'gas volume sums across the division');
+  eq(retail.thermsSites, 2, 'a site with no gas figure is not counted as having one');
+  eq(retail.kwhModelled, 500_000, 'the modelled share is the part that came from the estimate');
+  eq(retail.thermsModelled, 2_500, 'and the same for gas');
+  eq(industrial.kwh, 2_000_000, 'a division with sites carrying no figures still totals the ones that do');
+  eq(industrial.kwhSites, 1, 'sites without a figure are left out of the with-data count');
+  eq(industrial.sites, 3, 'but they still count as sites in the division');
+  eq(industrial.kwhModelled, 2_000_000, 'a wholly modelled division says so');
+  eq(industrial.thermsModelled, 0, 'a measured gas figure is not counted as modelled');
+
+  eq(s.totals.kwh, 3_750_000, 'the portfolio total adds the divisions up');
+  eq(s.totals.therms, 17_500, 'and the same for gas');
+  eq(s.totals.kwhSites, 4, 'as do the with-data counts');
+  eq(s.totals.thermsSites, 3, 'as do the with-data counts for gas');
+
+  eq(toDth(17_500), 1_750, 'therms convert to Dth at ten to one');
+  eq(toDth(null), 0, 'a missing figure converts to zero rather than NaN');
+}
+
+{
+  // The section as written: units, the conversion, the shares, and the
+  // totals row.
+  const withEnergy = (division, kwh, therms, over = {}) =>
+    site(division, 'PJM', { energy: { kwh, therms, kwhModelled: false, thermsModelled: false, ...over } });
+  const { ws } = build([
+    withEnergy('Retail', 3_000_000, 15_000),
+    withEnergy('Retail', 1_000_000, 5_000, { kwhModelled: true }),
+    withEnergy('Industrial', 1_000_000, 5_000),
+  ], {});
+
+  let headerRow = 0;
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
+  });
+  ok(headerRow > 0, 'the consumption section has a header row');
+  eq([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => ws.getCell(headerRow, c).value), [
+    'Division', 'Sites', 'Sites with Electric Data', 'Annual Electric (kWh)',
+    'of which Modelled (kWh)', '% of Portfolio kWh', 'Sites with Gas Data',
+    'Annual Gas (Dth)', 'of which Modelled (Dth)', '% of Portfolio Dth',
+  ], 'the consumption columns name their units');
+
+  const retailRow = headerRow + 1;
+  eq(ws.getCell(retailRow, 1).value, 'Retail', 'the biggest division leads');
+  eq(ws.getCell(retailRow, 4).value, 4_000_000, "the division's electric volume is its sites' summed");
+  eq(ws.getCell(retailRow, 5).value, 1_000_000, 'the modelled column carries the estimated part only');
+  eq(ws.getCell(retailRow, 6).value, 0.8, 'the share is against the portfolio total');
+  eq(ws.getCell(retailRow, 8).value, 2_000, 'gas is written in Dth, not therms');
+  eq(ws.getCell(retailRow, 9).value, 0, 'a measured division shows no modelled gas');
+
+  const totalRow = headerRow + 3;
+  eq(ws.getCell(totalRow, 1).value, 'All divisions', 'the section totals every division');
+  eq(ws.getCell(totalRow, 4).value, 5_000_000, 'the totals row adds the electric volume up');
+  eq(ws.getCell(totalRow, 8).value, 2_500, 'and the gas volume, in Dth');
+  eq(ws.getCell(totalRow, 6).value, 1, 'the portfolio is 100% of itself');
+}
+
+{
+  // A portfolio with no consumption anywhere: zeros, not #DIV/0! or NaN.
+  const { ws } = build([site('Retail', 'PJM')], {});
+  let headerRow = 0;
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
+  });
+  eq(ws.getCell(headerRow + 1, 4).value, 0, 'no consumption reads as zero volume');
+  eq(ws.getCell(headerRow + 1, 6).value, 0, 'and as a zero share rather than a divide by zero');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
