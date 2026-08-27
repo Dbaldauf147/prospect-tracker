@@ -9,12 +9,16 @@
 //
 //   1. Energy procurement savings opportunity — deregulated sites, spend
 //      and the indicative savings range, by division.
-//   2. Compliance — screened sites, mandates that land, and the estimated
+//   2. Energy consumption — electric and gas volume, by division. Every
+//      site, not just the deregulated ones section 1 prices: it is how big
+//      each division's estate is in energy terms, which is the question a
+//      spend figure alone can't answer.
+//   3. Compliance — screened sites, mandates that land, and the estimated
 //      annual non-reporting exposure, by division.
-//   3. Interval data — the share of each division's sites mapped to a
+//   4. Interval data — the share of each division's sites mapped to a
 //      known utility and confirmed for interval data. This is the "how
 //      good are the numbers above" section, per division.
-//   4. Sites by ISO / RTO — a live dropdown that picks a market, with each
+//   5. Sites by ISO / RTO — a live dropdown that picks a market, with each
 //      division's site count in it, over the full division × market matrix.
 //
 // The aggregation (summarizeDivisions) is pure and takes one flat record
@@ -82,6 +86,13 @@ function emptyDivision(name) {
     // Energy procurement (filled from savingsByDivision).
     electricDeregSites: 0, electricSpend: 0, electricLow: 0, electricHigh: 0,
     gasDeregSites: 0, gasSpend: 0, gasLow: 0, gasHigh: 0,
+    // Energy consumption, over every site rather than the deregulated ones.
+    // Carried in the units the page holds natively — kWh and therms — and
+    // converted where it is written, so nothing is rounded twice. The
+    // "modelled" halves are the part of each total that came from the
+    // property-type estimate rather than off the uploaded file.
+    kwh: 0, kwhModelled: 0, kwhSites: 0,
+    therms: 0, thermsModelled: 0, thermsSites: 0,
     // Sites by market.
     iso: {},
   };
@@ -101,6 +112,13 @@ function emptyDivision(name) {
 //                 A site out of scope still counts in `sites` — it is in the
 //                 division, it just isn't screened — so the compliance
 //                 section reports against `screened`, not the site total.
+//     energy      { kwh, therms, kwhModelled, thermsModelled } — annual
+//                 consumption, null on either commodity where the site has
+//                 no figure at all. The counts of sites that DO carry one
+//                 are reported beside the totals: a division whose gas
+//                 volume comes from two of its ninety sites has a total
+//                 that means something quite different from one whose
+//                 ninety all reported.
 //
 // `savingsByDivision` is keyed by the same divisionLabel(): the per-division
 // procurement rollup, computed on the page against its per-state
@@ -125,6 +143,20 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
     if (f?.interval === true) d.intervalYes += 1;
     else if (f?.interval === false) d.intervalNo += 1;
     else d.intervalUnknown += 1;
+
+    const e = f?.energy;
+    if (e) {
+      if (isNum(e.kwh)) {
+        d.kwh += e.kwh;
+        d.kwhSites += 1;
+        if (e.kwhModelled) d.kwhModelled += e.kwh;
+      }
+      if (isNum(e.therms)) {
+        d.therms += e.therms;
+        d.thermsSites += 1;
+        if (e.thermsModelled) d.thermsModelled += e.therms;
+      }
+    }
 
     const c = f?.compliance;
     if (c) {
@@ -186,6 +218,7 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
       'screened', 'jurisdiction', 'bbs', 'audits', 'bps', 'anyMandate', 'penalty',
       'electricDeregSites', 'electricSpend', 'electricLow', 'electricHigh',
       'gasDeregSites', 'gasSpend', 'gasLow', 'gasHigh',
+      'kwh', 'kwhModelled', 'kwhSites', 'therms', 'thermsModelled', 'thermsSites',
     ]) totals[k] += d[k];
     if (d.penaltyKnown) totals.penaltyKnown = true;
     for (const [m, n] of Object.entries(d.iso)) totals.iso[m] = (totals.iso[m] || 0) + n;
@@ -200,6 +233,17 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
 function num(v) {
   return (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
 }
+
+function isNum(v) {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+// 1 Dth = 10 therms. Consumption is held in therms — the unit the page
+// reads gas in and the unit the rates are per — and reported in Dth, which
+// is what the Site Detail and the tier / market roll-ups in this same
+// workbook are written in.
+const THERMS_PER_DTH = 10;
+export const toDth = (therms) => num(therms) / THERMS_PER_DTH;
 
 // 1 -> 'A'. Data-validation and formula refs are A1-style; everything else
 // on the sheet is written by column number.
@@ -270,7 +314,46 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
     barColumn: 9,
   });
 
-  // ---- 2. Compliance -----------------------------------------------------
+  // ---- 2. Energy consumption ---------------------------------------------
+  // Every site, not just the deregulated ones priced above: this is the size
+  // of each division's estate in energy terms, and a division that is mostly
+  // regulated still uses power. Which is also why the two sections must not
+  // be read across — the spend column above covers a subset of the sites
+  // this volume covers, so dividing one by the other is not a rate.
+  r = section(ws, r, NC, 'Energy Consumption by Division',
+    'Annual electric and gas volume across EVERY site in the division, regulated and deregulated alike — unlike the spend above, which covers deregulated sites only. "Sites with data" is how many sites carry a consumption figure at all; the rest contribute nothing to the total. "Modelled" is the part of the total that came from the property-type estimate rather than off the uploaded file — a total that is largely modelled is an indication of size, not a meter reading. Gas is reported in Dth (1 Dth = 10 therms), as on the Site Detail tab.');
+  r = table(ws, r, {
+    columns: [
+      { label: 'Division', key: 'name', align: 'left', width: 30 },
+      { label: 'Sites', key: 'sites', numFmt: '#,##0' },
+      { label: 'Sites with Electric Data', key: 'kwhSites', numFmt: '#,##0' },
+      { label: 'Annual Electric (kWh)', key: 'kwh', numFmt: '#,##0', emphasis: true },
+      { label: 'of which Modelled (kWh)', key: 'kwhModelled', numFmt: '#,##0' },
+      { label: '% of Portfolio kWh', key: 'shareKwh', numFmt: '0%' },
+      { label: 'Sites with Gas Data', key: 'thermsSites', numFmt: '#,##0' },
+      { label: 'Annual Gas (Dth)', key: 'gasDth', numFmt: '#,##0', emphasis: true },
+      { label: 'of which Modelled (Dth)', key: 'gasModelledDth', numFmt: '#,##0' },
+      { label: '% of Portfolio Dth', key: 'shareDth', numFmt: '0%' },
+    ],
+    rows: divisions.map(d => ({
+      ...d,
+      gasDth: toDth(d.therms),
+      gasModelledDth: toDth(d.thermsModelled),
+      shareKwh: totals.kwh ? d.kwh / totals.kwh : 0,
+      shareDth: totals.therms ? d.therms / totals.therms : 0,
+    })),
+    totals: {
+      ...totals,
+      name: 'All divisions',
+      gasDth: toDth(totals.therms),
+      gasModelledDth: toDth(totals.thermsModelled),
+      shareKwh: totals.kwh ? 1 : 0,
+      shareDth: totals.therms ? 1 : 0,
+    },
+    barColumn: 4,
+  });
+
+  // ---- 3. Compliance -----------------------------------------------------
   r = section(ws, r, NC, 'Building Compliance by Division',
     'Sites screened against the building-performance ordinances, the mandates that land on them, and the estimated annual non-reporting exposure. Screened counts follow the Building Compliance tab\'s Owned / All-sites scope, so a division\'s screened total can be lower than its site count.');
   r = table(ws, r, {
@@ -304,7 +387,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
     barColumn: 9,
   });
 
-  // ---- 3. Interval data --------------------------------------------------
+  // ---- 4. Interval data --------------------------------------------------
   r = section(ws, r, NC, 'Interval Data by Division',
     'How good the numbers above are, per division: the share of sites whose electric utility is mapped to a known utility, and the share confirmed to have utility interval data. "Unknown" is a utility with a blank Status or one absent from the Utility Name Mapping table — neither confirmed nor ruled out.');
   r = table(ws, r, {
@@ -334,7 +417,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
     barColumn: 5,
   });
 
-  // ---- 4. Sites by ISO / RTO --------------------------------------------
+  // ---- 5. Sites by ISO / RTO --------------------------------------------
   isoSection(ws, r, NC, divisions, isoLabels, totals);
 
   return ws;

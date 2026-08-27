@@ -12797,9 +12797,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // exactly as it left.
 
   // One flat record per site for the Master Analysis' Divisions tab: the
-  // division it belongs to, the ISO / RTO its zip resolves to, and the two
-  // per-site verdicts the tab breaks down — its utility-mapping / interval
-  // classification and its building-compliance screening.
+  // division it belongs to, the ISO / RTO its zip resolves to, its annual
+  // consumption, and the two per-site verdicts the tab breaks down — its
+  // utility-mapping / interval classification and its building-compliance
+  // screening.
+  //
+  // Consumption travels per site rather than pre-rolled like the savings do,
+  // because it needs no per-state table to work out: it is the same
+  // __kwh__ / __therms__ every other sheet reports, summed. That also means
+  // the consumption section fills in on a portfolio with no utility rates
+  // file loaded, where the savings section can't.
   //
   // Both are joined onto `rows` by site id rather than recomputed, so the
   // Divisions tab reports the same answer for a site as the Utility Mapping
@@ -12833,12 +12840,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           penalty,
         };
       }
+      // Modelled means the figure came from the property-type estimate
+      // rather than off the file — the same test the Site Detail sheet marks
+      // its estimated cells with, so the two agree about which numbers are
+      // measured.
+      const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : null;
+      const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : null;
       return {
         division: r.__division__ || '',
         iso: r.__iso__?.iso || null,
         mapped: m?.status === 'Mapped',
         interval: m?.intervalData === 'Yes' ? true : (m?.intervalData === 'No' ? false : null),
         compliance,
+        energy: {
+          kwh,
+          therms,
+          kwhModelled: kwh != null && !!r.__kwhFromEstimate__,
+          thermsModelled: therms != null && !!r.__thermsFromEstimate__,
+        },
       };
     });
   }
