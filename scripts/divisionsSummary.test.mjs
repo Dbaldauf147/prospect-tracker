@@ -166,7 +166,10 @@ function build(facts, savings) {
   eq(retailCell.value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${matrixHeaderRow}:$E$${matrixHeaderRow + 3},2,FALSE),0)`,
     "the count is an HLOOKUP into this division's matrix row");
   eq(retailCell.value.result, 1, 'the cached count matches the matrix for the default market');
-  eq(ws.getCell(selFirstRow, 3).value.result, 1 / 3, "the share is the count over the division's site total");
+  eq(ws.getCell(selFirstRow, 3).value.formula, `B${selFirstRow}`,
+    'the bar column mirrors the count so it moves with the picker');
+  eq(ws.getCell(selFirstRow, 3).numFmt, ';;;', 'and shows the bar rather than repeating the number');
+  eq(ws.getCell(selFirstRow, 4).value.result, 1 / 3, "the share is the count over the division's site total");
   eq(ws.getCell(selFirstRow + 1, 2).value.result, 1, 'the second division reads its own matrix row');
   eq(ws.getCell(selFirstRow + 2, 2).value.result, 2, 'the totals row reads the matrix totals row');
 
@@ -262,25 +265,26 @@ function build(facts, savings) {
     if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
   });
   ok(headerRow > 0, 'the consumption section has a header row');
-  eq([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => ws.getCell(headerRow, c).value), [
+  eq([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(c => ws.getCell(headerRow, c).value), [
     'Division', 'Sites', 'Sites with Electric Data', 'Annual Electric (kWh)',
-    'of which Modelled (kWh)', '% of Portfolio kWh', 'Sites with Gas Data',
-    'Annual Gas (Dth)', 'of which Modelled (Dth)', '% of Portfolio Dth',
-  ], 'the consumption columns name their units');
+    'kWh Scale', 'of which Modelled (kWh)', '% of Portfolio kWh',
+    'Sites with Gas Data', 'Annual Gas (Dth)', 'of which Modelled (Dth)',
+    '% of Portfolio Dth',
+  ], 'the consumption columns name their units, with the bar in one of its own');
 
   const retailRow = headerRow + 1;
   eq(ws.getCell(retailRow, 1).value, 'Retail', 'the biggest division leads');
   eq(ws.getCell(retailRow, 4).value, 4_000_000, "the division's electric volume is its sites' summed");
-  eq(ws.getCell(retailRow, 5).value, 1_000_000, 'the modelled column carries the estimated part only');
-  eq(ws.getCell(retailRow, 6).value, 0.8, 'the share is against the portfolio total');
-  eq(ws.getCell(retailRow, 8).value, 2_000, 'gas is written in Dth, not therms');
-  eq(ws.getCell(retailRow, 9).value, 0, 'a measured division shows no modelled gas');
+  eq(ws.getCell(retailRow, 6).value, 1_000_000, 'the modelled column carries the estimated part only');
+  eq(ws.getCell(retailRow, 7).value, 0.8, 'the share is against the portfolio total');
+  eq(ws.getCell(retailRow, 9).value, 2_000, 'gas is written in Dth, not therms');
+  eq(ws.getCell(retailRow, 10).value, 0, 'a measured division shows no modelled gas');
 
   const totalRow = headerRow + 3;
   eq(ws.getCell(totalRow, 1).value, 'All divisions', 'the section totals every division');
   eq(ws.getCell(totalRow, 4).value, 5_000_000, 'the totals row adds the electric volume up');
-  eq(ws.getCell(totalRow, 8).value, 2_500, 'and the gas volume, in Dth');
-  eq(ws.getCell(totalRow, 6).value, 1, 'the portfolio is 100% of itself');
+  eq(ws.getCell(totalRow, 9).value, 2_500, 'and the gas volume, in Dth');
+  eq(ws.getCell(totalRow, 7).value, 1, 'the portfolio is 100% of itself');
 }
 
 {
@@ -291,7 +295,83 @@ function build(facts, savings) {
     if (row.getCell(1).value === 'Energy Consumption by Division') headerRow = n + 2;
   });
   eq(ws.getCell(headerRow + 1, 4).value, 0, 'no consumption reads as zero volume');
-  eq(ws.getCell(headerRow + 1, 6).value, 0, 'and as a zero share rather than a divide by zero');
+  eq(ws.getCell(headerRow + 1, 7).value, 0, 'and as a zero share rather than a divide by zero');
+}
+
+// ---- bars in a column of their own --------------------------------------
+// A data bar is painted behind the cell it is applied to, so a bar on the
+// figure runs straight through the digits — which on a portfolio whose
+// largest division sets the scale hid the biggest numbers on the tab behind
+// a block of green. Every bar now sits in its own column beside the figure
+// it charts.
+{
+  const facts = [
+    site('Retail', 'PJM', {
+      mapped: true, interval: true,
+      compliance: screened({ eligible: { bbs: true, audits: false, bps: false }, penalty: 9000 }),
+      energy: { kwh: 4_000_000, therms: 20_000, kwhModelled: false, thermsModelled: false },
+    }),
+    site('Retail', 'PJM', {
+      mapped: true, interval: true,
+      compliance: screened({ eligible: { bbs: true, audits: false, bps: false }, penalty: 3000 }),
+      energy: { kwh: 1_000_000, therms: 5_000, kwhModelled: false, thermsModelled: false },
+    }),
+    site('Industrial', 'ERCOT', {
+      compliance: screened({ penalty: 1000 }),
+      energy: { kwh: 500_000, therms: 2_000, kwhModelled: false, thermsModelled: false },
+    }),
+  ];
+  const { ws } = build(facts, {
+    Retail: { electricDeregSites: 2, electricSpend: 100000, electricLow: 2000, electricHigh: 4000 },
+    Industrial: { electricDeregSites: 1, electricSpend: 20000, electricLow: 400, electricHigh: 800 },
+  });
+
+  const bars = ws.conditionalFormattings.filter(cf => cf.rules.some(r => r.type === 'dataBar'));
+  eq(bars.length, 5, 'every table on the tab charts one figure');
+
+  const colOf = (ref) => ref.match(/^([A-Z]+)/)[1];
+  const rowsOf = (ref) => ref.match(/(\d+):[A-Z]+(\d+)/).slice(1).map(Number);
+  const colNum = (letters) => [...letters].reduce((n, c) => n * 26 + (c.charCodeAt(0) - 64), 0);
+
+  for (const cf of bars) {
+    const col = colNum(colOf(cf.ref));
+    const [firstRow, lastRow] = rowsOf(cf.ref);
+    // The bar column is a column of its own: its header names it a scale and
+    // it shows nothing but the bar.
+    const header = String(ws.getCell(firstRow - 1, col).value || '');
+    ok(header.endsWith('Scale'), `the bar column is headed as a scale (${header || 'blank'})`);
+    eq(ws.getCell(firstRow, col).numFmt, ';;;', `${header}: the bar cell displays no number`);
+    // It still HOLDS the figure — the bar is scaled from it.
+    const held = ws.getCell(firstRow, col).value;
+    ok(typeof held === 'number' ? held > 0 : !!held?.formula,
+      `${header}: the bar cell carries the value the bar is drawn from`);
+    // And the figure it charts is readable in the column to its left, with
+    // no bar of its own over it.
+    const figure = ws.getCell(firstRow, col - 1);
+    ok(figure.numFmt !== ';;;', `${header}: the figure beside it is displayed`);
+    // Compared within this table's own rows: the tabs are stacked, so the
+    // same sheet column carries a bar in one table and a figure in another.
+    ok(!bars.some(b => {
+      if (colNum(colOf(b.ref)) !== col - 1) return false;
+      const [bFirst, bLast] = rowsOf(b.ref);
+      return bFirst <= lastRow && bLast >= firstRow;
+    }), `${header}: nothing is charted over the figure column`);
+    // The totals row sits outside the range — a bar scaled against the
+    // total would draw every division as a sliver — and is left empty.
+    eq(ws.getCell(lastRow + 1, col).value, null, `${header}: the totals row carries no bar`);
+  }
+
+  // The two the reader asked about, spelled out: the big numbers are plain
+  // numeric cells, and the bar is the column after each.
+  let consumptionHeader = 0;
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (row.getCell(1).value === 'Energy Consumption by Division') consumptionHeader = n + 2;
+  });
+  eq(ws.getCell(consumptionHeader, 4).value, 'Annual Electric (kWh)', 'the kWh figure keeps its column');
+  eq(ws.getCell(consumptionHeader, 5).value, 'kWh Scale', 'and the bar has the next one');
+  eq(ws.getCell(consumptionHeader + 1, 4).value, 5_000_000, 'the figure cell holds the number');
+  eq(ws.getCell(consumptionHeader + 1, 4).numFmt, '#,##0', 'formatted to be read');
+  eq(ws.getCell(consumptionHeader + 1, 5).value, 5_000_000, 'the bar cell holds the same number');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

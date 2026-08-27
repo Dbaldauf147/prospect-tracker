@@ -40,6 +40,10 @@ const LINE = 'FFE2E8F0';
 const ZEBRA = 'FFFAFCFB';
 const FONT = 'Nunito Sans';
 const AMBER = 'FF92400E';
+// Excel's "show nothing" number format: positive, negative and zero
+// sections all empty. The cell keeps its value — which is what the data bar
+// is drawn from — and displays none of it.
+const HIDDEN_NUM = ';;;';
 
 export const NO_DIVISION_LABEL = '(No division)';
 export const UNKNOWN_ISO_LABEL = 'Unknown';
@@ -255,7 +259,8 @@ const colLetter = (n) => { let s = ''; let i = n; while (i > 0) { const m = (i -
 // a fixed tab set, and a sheet that says why it's empty beats a missing one.
 export function buildDivisionsSheet(wb, summary, meta = {}) {
   const { divisions = [], isoLabels = [], totals = emptyDivision('All divisions') } = summary || {};
-  const NC = 10;
+  // Ten figures per table plus the bar column that charts one of them.
+  const NC = 11;
   // The market matrix runs wider than the tables above it when a portfolio
   // spans a lot of ISOs, so the sheet is as wide as the widest thing on it.
   const matrixCols = 2 + isoLabels.length; // Division + one per market + total
@@ -304,6 +309,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Total Dereg. Spend', key: 'deregSpend', numFmt: '"$"#,##0' },
       { label: 'Indicative Savings Low', key: 'savingsLow', numFmt: '"$"#,##0' },
       { label: 'Indicative Savings High', key: 'savingsHigh', numFmt: '"$"#,##0', emphasis: true },
+      { label: 'Savings Scale', key: 'savingsHigh', bar: true },
       { label: '% of Portfolio Savings', key: 'shareOfSavings', numFmt: '0%' },
     ],
     rows: divisions.map(d => ({
@@ -311,7 +317,6 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       shareOfSavings: totals.savingsHigh ? d.savingsHigh / totals.savingsHigh : 0,
     })),
     totals: { ...totals, name: 'All divisions', shareOfSavings: totals.savingsHigh ? 1 : 0 },
-    barColumn: 9,
   });
 
   // ---- 2. Energy consumption ---------------------------------------------
@@ -328,6 +333,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Sites', key: 'sites', numFmt: '#,##0' },
       { label: 'Sites with Electric Data', key: 'kwhSites', numFmt: '#,##0' },
       { label: 'Annual Electric (kWh)', key: 'kwh', numFmt: '#,##0', emphasis: true },
+      { label: 'kWh Scale', key: 'kwh', bar: true },
       { label: 'of which Modelled (kWh)', key: 'kwhModelled', numFmt: '#,##0' },
       { label: '% of Portfolio kWh', key: 'shareKwh', numFmt: '0%' },
       { label: 'Sites with Gas Data', key: 'thermsSites', numFmt: '#,##0' },
@@ -350,7 +356,6 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       shareKwh: totals.kwh ? 1 : 0,
       shareDth: totals.therms ? 1 : 0,
     },
-    barColumn: 4,
   });
 
   // ---- 3. Compliance -----------------------------------------------------
@@ -367,6 +372,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Sites with ≥1 Mandate', key: 'anyMandate', numFmt: '#,##0' },
       { label: '% of Screened Sites', key: 'shareMandated', numFmt: '0%' },
       { label: 'Est. Annual Penalty Exposure', key: 'penaltyCell', numFmt: '"$"#,##0', emphasis: true },
+      { label: 'Exposure Scale', key: 'penalty', bar: true },
       { label: '% of Portfolio Exposure', key: 'shareOfPenalty', numFmt: '0%' },
     ],
     rows: divisions.map(d => ({
@@ -384,7 +390,6 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       penaltyCell: totals.penaltyKnown ? totals.penalty : '-',
       shareOfPenalty: totals.penalty ? 1 : 0,
     },
-    barColumn: 9,
   });
 
   // ---- 4. Interval data --------------------------------------------------
@@ -397,6 +402,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       { label: 'Mapped to a Known Utility', key: 'mapped', numFmt: '#,##0' },
       { label: '% Mapped', key: 'shareMapped', numFmt: '0%' },
       { label: 'Interval Data: Yes', key: 'intervalYes', numFmt: '#,##0', emphasis: true },
+      { label: 'Interval Scale', key: 'intervalYes', bar: true },
       { label: '% with Interval Data', key: 'shareInterval', numFmt: '0%' },
       { label: 'Interval Data: No', key: 'intervalNo', numFmt: '#,##0' },
       { label: 'Interval Data: Unknown', key: 'intervalUnknown', numFmt: '#,##0' },
@@ -414,7 +420,6 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
       shareMapped: totals.sites ? totals.mapped / totals.sites : 0,
       shareInterval: totals.sites ? totals.intervalYes / totals.sites : 0,
     },
-    barColumn: 5,
   });
 
   // ---- 5. Sites by ISO / RTO --------------------------------------------
@@ -487,7 +492,9 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
   ws.getRow(pickerRow).height = 22;
 
   // ---- the selected-market table ----
-  const selCols = ['Division', 'Sites in Selected Market', "% of Division's Sites"];
+  // Same shape as the tables above: the count is read, the bar beside it is
+  // looked at, and neither is drawn on top of the other.
+  const selCols = ['Division', 'Sites in Selected Market', 'Sites Scale', "% of Division's Sites"];
   headerRow(ws, selectedHeaderRow, selCols.map((l, i) => ({ label: l, align: i === 0 ? 'left' : 'center' })));
 
   const countOf = (d, market) => (market === ALL_ISO_LABEL ? d.sites : (d.iso[market] || 0));
@@ -506,6 +513,12 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
         v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${matrixRange},${idx},FALSE),0)`, result: count },
         numFmt: '#,##0', bold: true, color: SE_DARK,
       },
+      // The bar's own cell mirrors the count so it moves with the picker,
+      // and hides the repeat behind the bar.
+      {
+        v: { formula: `${colLetter(2)}${rowNo}`, result: count },
+        numFmt: HIDDEN_NUM,
+      },
       {
         v: { formula: `IFERROR(${colLetter(2)}${rowNo}/${totalCell},0)`, result: d.sites ? count / d.sites : 0 },
         numFmt: '0%',
@@ -521,6 +534,8 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
       },
       numFmt: '#,##0',
     },
+    // Outside the bar's range, like every other totals row on the sheet.
+    { v: null, numFmt: HIDDEN_NUM },
     {
       v: {
         formula: `IFERROR(${colLetter(2)}${selectedTotalRow}/$${colLetter(lastMatrixCol)}$${matrixTotalRow},0)`,
@@ -529,12 +544,12 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
       numFmt: '0%',
     },
   ]);
-  // A live bar down the count column, scaled to the largest division rather
-  // than to itself, so the split reads at a glance and stays right when the
-  // picker moves.
+  // A live bar beside the count column, scaled to the largest division
+  // rather than to itself, so the split reads at a glance and stays right
+  // when the picker moves.
   if (divisions.length) {
     ws.addConditionalFormatting({
-      ref: `${colLetter(2)}${selectedFirstRow}:${colLetter(2)}${selectedTotalRow - 1}`,
+      ref: `${colLetter(3)}${selectedFirstRow}:${colLetter(3)}${selectedTotalRow - 1}`,
       rules: [{ type: 'dataBar', gradient: false, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: SE_DARK } }],
     });
   }
@@ -652,9 +667,19 @@ function totalsRow(ws, row, cells) {
 }
 
 // One section's table: header, a row per division, a totals row, and a live
-// data bar down the column the section is really about. Returns the next
-// free row, two below the table.
-function table(ws, startRow, { columns, rows, totals, barColumn }) {
+// data bar in a column of its own. Returns the next free row, two below the
+// table.
+//
+// The bar gets its own column because a data bar is painted BEHIND the cell
+// it is applied to: put it on the figure and the bar runs straight through
+// the digits, which on a portfolio whose largest division sets the scale
+// left the big numbers — the ones the reader came for — unreadable behind a
+// block of green.
+//
+// A bar column is `{ bar: true }` and carries the same value as the figure
+// it sits beside, formatted ';;;' so the cell shows the bar and nothing
+// else. The value has to be there: the bar is scaled from it.
+function table(ws, startRow, { columns, rows, totals }) {
   headerRow(ws, startRow, columns);
   const first = startRow + 1;
 
@@ -669,8 +694,11 @@ function table(ws, startRow, { columns, rows, totals, barColumn }) {
 
   rows.forEach((d, i) => {
     writeRow(ws, first + i, i, columns.map((col, ci) => ({
-      v: d[col.key],
-      numFmt: col.numFmt,
+      // A bar column's figure is drawn, not read: a dash would leave the
+      // cell with text in it that the ';;;' format then hides, and a bar
+      // scaled off nothing. Non-numbers chart as zero.
+      v: col.bar ? (typeof d[col.key] === 'number' ? d[col.key] : 0) : d[col.key],
+      numFmt: col.bar ? HIDDEN_NUM : col.numFmt,
       align: col.align,
       bold: ci === 0 || col.emphasis,
       // A dash where a figure couldn't be worked out reads as a caveat, not
@@ -681,18 +709,22 @@ function table(ws, startRow, { columns, rows, totals, barColumn }) {
 
   const totalRow = first + rows.length;
   totalsRow(ws, totalRow, columns.map(col => ({
-    v: col.key === 'name' ? totals.name : totals[col.key],
-    numFmt: col.numFmt,
+    // The totals row is outside the bar's range — every division bar would
+    // otherwise be scaled against the total and read as a sliver — so its
+    // bar cell is left empty rather than carrying a value nothing draws.
+    v: col.bar ? null : (col.key === 'name' ? totals.name : totals[col.key]),
+    numFmt: col.bar ? HIDDEN_NUM : col.numFmt,
     align: col.align,
   })));
 
-  if (barColumn) {
-    const L = colLetter(barColumn);
+  columns.forEach((col, ci) => {
+    if (!col.bar) return;
+    const L = colLetter(ci + 1);
     ws.addConditionalFormatting({
       ref: `${L}${first}:${L}${totalRow - 1}`,
       rules: [{ type: 'dataBar', gradient: false, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: SE_DARK } }],
     });
-  }
+  });
   return totalRow + 2;
 }
 
