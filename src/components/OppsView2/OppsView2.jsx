@@ -12340,6 +12340,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onSaveMetInPerson={saveContactMetInPerson}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={saveContactInvitedToLouisville}
+          contactSentiment={settings?.contactSentiment || {}}
+          onSaveSentiment={(cid, v) => {
+            if (cid == null) return;
+            const next = { ...(settings?.contactSentiment || {}) };
+            if (v) next[cid] = v; else delete next[cid];
+            updateSettings({ contactSentiment: next });
+          }}
           contactTagReview={settings?.contactTagReview || {}}
           onSaveTagReview={(cid, map) => {
             if (cid == null) return;

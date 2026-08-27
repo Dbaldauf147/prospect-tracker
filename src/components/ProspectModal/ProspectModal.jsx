@@ -82,6 +82,7 @@ import {
   nameKey,
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { userLsGet } from '../../utils/userLs';
@@ -710,7 +711,7 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -792,6 +793,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
     metCid != null ? !!contactInvitedToLouisville[metCid] : false
   );
+  // Champion / neutral / detractor — local-only as well, and the thing the
+  // Divisions chart marks people with. Neutral is the stored absence, so a
+  // contact nobody has judged starts here and leaves no key behind.
+  const [sentiment, setSentiment] = useState(() => sentimentFor(contactSentiment, metCid));
   // Per-tag records: { tag: { answer, status } }. The tag itself is still
   // where a Yes lives, so a stored answer of "yes" only counts while it's
   // backed by the tag or held off by a Not sold — see tagStateFrom.
@@ -1187,6 +1192,17 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
+  // Clicking the choice a contact already has clears it back to neutral, so
+  // the picker can undo itself without a fourth button.
+  function chooseSentiment(value) {
+    setSentiment(prev => {
+      const next = prev === value ? '' : value;
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveSentiment) onSaveSentiment(cid, next);
+      return next;
+    });
+  }
+
   function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
 
   // Autosave fires from a debounce timer (and from the unmount flush), so it
@@ -1194,7 +1210,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // usually typed more. Keep the editable state on a ref that every render
   // refreshes and have handleSave read from that instead.
   const stateRef = useRef(null);
-  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville };
+  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, sentiment };
 
   // `auto` marks a background (debounced) save: the modal stays open and any
   // status is reported inline rather than by handing control back to the
@@ -1318,6 +1334,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveInvitedToLouisville) {
         onSaveInvitedToLouisville(savedCid, snap.invitedToLouisville);
       }
+      // A contact created here has no id until HubSpot hands one back, so the
+      // click-time save above was a no-op — persist it under the real id now.
+      if (savedCid && onSaveSentiment) {
+        onSaveSentiment(savedCid, snap.sentiment);
+      }
       // Company edits behave the same here as on the HubSpot Contacts
       // page: the API renames the Company record this contact is linked to,
       // so the new name lands in HubSpot and cascades to every contact at
@@ -1384,8 +1405,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // unfinished form shouldn't mint a HubSpot record, so those still go
   // through the explicit "Create in HubSpot" click.
   //
-  // Tags, Met In Person, Invited to Louisville, Reports To and Events already
-  // persist the moment they're toggled, so the signature below only covers the
+  // Tags, Met In Person, Invited to Louisville, Champion/Detractor, Reports To
+  // and Events already persist the moment they're toggled, so the signature below only covers the
   // fields that used to need the button: the text inputs plus CC / To Also.
   const AUTOSAVE_DELAY_MS = 900;
   // The Company field is special: saving it renames the linked HubSpot Company
@@ -1489,6 +1510,44 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             />
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: invitedToLouisville ? '#0369A1' : '#374151' }}>Invited to Louisville</span>
           </label>
+          {/* Where this person stands on us. The chosen button carries the
+              same mark the Divisions chart draws, so the two read as one
+              setting rather than a field and an unexplained icon. */}
+          <div
+            role="group"
+            aria-label="Standing"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '8px', background: '#fff' }}
+          >
+            <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Standing</span>
+            <div style={{ display: 'inline-flex', gap: '0.25rem' }}>
+              {SENTIMENT_OPTIONS.map(opt => {
+                const on = sentiment === opt.value;
+                const mark = sentimentMark(opt.value);
+                return (
+                  <button
+                    key={opt.value || 'neutral'}
+                    type="button"
+                    onClick={() => chooseSentiment(opt.value)}
+                    aria-pressed={on}
+                    title={opt.value
+                      ? `Mark ${opt.label.toLowerCase()} — shows on the Divisions chart`
+                      : 'No mark on the Divisions chart'}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                      padding: '0.22rem 0.55rem', borderRadius: '999px', cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600,
+                      border: `1px solid ${on ? (mark?.color || '#94A3B8') : '#E2E8F0'}`,
+                      background: on ? (mark ? `${mark.color}14` : '#F1F5F9') : '#fff',
+                      color: on ? (mark?.color || '#334155') : '#64748B',
+                    }}
+                  >
+                    {mark && <span aria-hidden="true">{mark.symbol}</span>}
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
@@ -2814,7 +2873,7 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
 // and pointer-transparent so it can't come between the cursor and the
 // chip it belongs to. A long note is clipped here — the click that opens
 // the contact popup is where the whole of it lives.
-function DivisionContactCard({ rect, contact, info, managers, gone, openable }) {
+function DivisionContactCard({ rect, contact, info, managers, gone, mark, openable }) {
   const WIDTH = 300;
   const GAP = 6;
   const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8));
@@ -2845,6 +2904,13 @@ function DivisionContactCard({ rect, contact, info, managers, gone, openable }) 
         {gone && (
           <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#64748B', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0 5px' }}>
             Left
+          </span>
+        )}
+        {/* Says in words what the chip's symbol means, so nobody has to
+            guess what a red ! is. */}
+        {mark && (
+          <span style={{ fontSize: '0.55rem', fontWeight: 700, color: mark.color, background: `${mark.color}14`, border: `1px solid ${mark.color}55`, borderRadius: 999, padding: '0 5px' }}>
+            {mark.symbol} {mark.label}
           </span>
         )}
       </div>
@@ -2883,9 +2949,13 @@ function DivisionContactCard({ rect, contact, info, managers, gone, openable }) 
 // once they're tagged Left. A leaver is never dropped from the chart —
 // who used to cover a division is worth knowing, and quietly removing
 // them would look like the mapping was never made.
-function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, actions }) {
+function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf, actions }) {
   const c = node.contact;
   const gone = hasLeft(c);
+  // Champion or detractor, from the contact popup. Neutral draws nothing —
+  // most people are neutral, so marking them would drown the two that
+  // aren't.
+  const mark = sentimentMark(sentimentOf ? sentimentOf(c) : '');
   const tone = gone
     ? { bg: '#F1F5F9', border: '#E2E8F0', text: '#94A3B8' }
     : { bg: '#ECFDF5', border: '#A7F3D0', text: '#065F46' };
@@ -2940,6 +3010,19 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, actions }) 
         >
           {c.name}
         </span>
+        {mark && (
+          <span
+            title={`${c.name} — ${mark.label}`}
+            aria-label={mark.label}
+            style={{
+              flex: 'none', fontSize: '0.72rem', lineHeight: 1, fontWeight: 700,
+              // A leaver's chip is grey all through; their standing is
+              // history, so it greys with it rather than shouting from a
+              // row that no longer applies.
+              color: gone ? '#94A3B8' : mark.color,
+            }}
+          >{mark.symbol}</span>
+        )}
         <button
           type="button"
           onClick={() => actions.removeContact(boxId, divisionContactKey(c))}
@@ -2955,6 +3038,7 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, actions }) 
           info={info}
           managers={managers}
           gone={gone}
+          mark={mark}
           openable={openable}
         />
       )}
@@ -2984,6 +3068,7 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, actions }) 
               boxName={boxName}
               hasLeft={hasLeft}
               infoOf={infoOf}
+              sentimentOf={sentimentOf}
               actions={actions}
             />
           ))}
@@ -3056,6 +3141,7 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, pic
                     boxName={boxName}
                     hasLeft={hasLeft}
                     infoOf={contactBook.infoOf}
+                    sentimentOf={contactBook.sentimentOf}
                     actions={actions}
                   />
                 ))}
@@ -3544,6 +3630,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   // contact popup read it: the locally saved note wins, and the HubSpot
   // fields are the fallback for a contact that never had one typed here.
   const contactNotes = useMemo(() => settings?.contactNotes || {}, [settings?.contactNotes]);
+  // Champion / detractor, set on the contact popup — what the chart marks
+  // people with. Memoized for the same reason teamNames is.
+  const sentimentMap = useMemo(() => settings?.contactSentiment || {}, [settings?.contactSentiment]);
   const contactOptions = useMemo(() => (contacts || []).map(c => ({
     id: String(c.id || c.vid || c.email || ''),
     name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || '(no name)',
@@ -3552,11 +3641,12 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     left: contactHasTag(c, 'left'),
     // Keyed on id||vid, the same key the contact editor saves under.
     team: String(teamNames[String(c.id || c.vid || '')] || '').trim(),
+    sentiment: sentimentFor(sentimentMap, c.id || c.vid),
     notes: String(contactNotes[String(c.id || c.vid || '')] || c.notes || c.hs_content_membership_notes || c.message || ''),
     // The contact record itself, so clicking a chip can hand the whole
     // thing to the contact popup rather than the trimmed-down shape here.
     raw: c,
-  })).filter(c => c.name), [contacts, teamNames, contactNotes]);
+  })).filter(c => c.name), [contacts, teamNames, contactNotes, sentimentMap]);
 
   // A division chip carries only what was stored when the person was put
   // on the box, so everything live about them — note, title, team, and
@@ -3587,8 +3677,11 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     const contactNames = new Map();
     // Team by normalized name, for the fallback below.
     const teamByName = new Map();
+    // Standing by normalized name, for the same fallback.
+    const sentimentByName = new Map();
     for (const c of contactOptions) {
       if (c.team && c.name && !teamByName.has(nameKey(c.name))) teamByName.set(nameKey(c.name), c.team);
+      if (c.sentiment && c.name && !sentimentByName.has(nameKey(c.name))) sentimentByName.set(nameKey(c.name), c.sentiment);
       if (!c.id) continue;
       contactNames.set(c.id, c.name);
       if (c.left) leftIds.add(c.id);
@@ -3615,11 +3708,19 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
         const byId = c?.id ? String(teamNames[String(c.id)] || '').trim() : '';
         return byId || teamByName.get(nameKey(c?.name)) || '';
       },
+      // Where a chip's person stands, looked up the same way their team is:
+      // by the id they were assigned under, and by name for someone typed
+      // straight onto a box.
+      sentimentOf: (c) => (
+        (c?.id ? sentimentFor(sentimentMap, c.id) : '')
+        || sentimentByName.get(nameKey(c?.name))
+        || ''
+      ),
       // What the hover card reads: the live contact behind a chip, or
       // null when this company's list no longer carries them.
       infoOf,
     };
-  }, [contactOptions, teamNames, settings?.divisionContacts, settings?.contactReportsTo, infoOf]);
+  }, [contactOptions, teamNames, sentimentMap, settings?.divisionContacts, settings?.contactReportsTo, infoOf]);
 
   const contactsByBox = useCallback(
     (boxId) => divisionContactsFor(settings, boxId), [settings]);
@@ -5020,6 +5121,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const next = { ...current, [contactId]: !!invited };
     updateSettings({ contactInvitedToLouisville: next });
   }, [settings.contactInvitedToLouisville, updateSettings]);
+
+  // Champion / detractor. Neutral removes the key rather than storing an
+  // empty string, so the map only carries contacts anyone has judged.
+  const handleSaveContactSentiment = useCallback((contactId, value) => {
+    const current = settings.contactSentiment || {};
+    const next = { ...current };
+    if (value) next[contactId] = value; else delete next[contactId];
+    updateSettings({ contactSentiment: next });
+  }, [settings.contactSentiment, updateSettings]);
 
   const handleSaveContactReportsTo = useCallback((contactId, managerIds) => {
     const current = settings.contactReportsTo || {};
@@ -10266,6 +10376,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveMetInPerson={handleSaveContactMetInPerson}
           contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
+          contactSentiment={settings.contactSentiment || {}}
+          onSaveSentiment={handleSaveContactSentiment}
           contactTagReview={settings.contactTagReview || {}}
           onSaveTagReview={(cid, map) => {
             if (cid == null) return;
