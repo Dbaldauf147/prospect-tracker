@@ -12848,6 +12848,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // null for a site the screening didn't cover — the screening runs on owned
   // buildings by default, and counting a leased site as screened-with-no-
   // mandates would read as a clean bill of health it was never given.
+  // classifyMarket's answer as a tri-state boolean: true deregulated, false
+  // regulated, null where it couldn't say.
+  function marketVerdict(row, commodity) {
+    const verdict = classifyMarket(row, commodity);
+    if (verdict === 'Deregulated') return true;
+    if (verdict === 'Regulated') return false;
+    return null;
+  }
+
   function collectDivisionSiteFacts(complianceResults, mappingSiteRows) {
     const mappingById = new Map();
     for (const m of (mappingSiteRows || [])) {
@@ -12891,6 +12900,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           therms,
           kwhModelled: kwh != null && !!r.__kwhFromEstimate__,
           thermsModelled: therms != null && !!r.__thermsFromEstimate__,
+          // The page's own market classifier, per commodity, so the volume
+          // the Divisions tab calls deregulated sits at exactly the sites
+          // its Deregulated Sites column counts. Tri-state: classifyMarket
+          // returns null for a site in a competitive state with no utility
+          // and no supplier on file — an open question, not a No — and the
+          // tab counts only a confirmed Deregulated.
+          electricDeregulated: marketVerdict(r, 'electric'),
+          gasDeregulated: marketVerdict(r, 'gas'),
         },
         // Where that consumption sits, in the same 'ST / Prov / Country'
         // spelling the Site Detail sheet uses: the 2-letter code in the US
