@@ -10065,6 +10065,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         const isDM = contactHasTag(c, 'decision maker');
+                        // Champion / detractor, set on the contact popup — the
+                        // same mark the Divisions chart draws, so a row and a
+                        // chip for one person read the same way.
+                        const standing = sentimentMark(sentimentFor(settings.contactSentiment, c.id || c.vid));
                         const source = getContactSource(c);
                         const sourceStyle = source === 'manual'
                           ? { bg: '#EDE9FE', color: '#5B21B6', label: 'Manual' }
@@ -10095,6 +10099,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
                               {name || '-'}
+                              {standing && (
+                                <span
+                                  title={`${name || 'This contact'} - ${standing.label}`}
+                                  aria-label={standing.label}
+                                  style={{ marginLeft: '0.3rem', fontSize: '0.8rem', fontWeight: 700, color: standing.color }}
+                                >{standing.symbol}</span>
+                              )}
                               {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', whiteSpace: 'nowrap' }}>
