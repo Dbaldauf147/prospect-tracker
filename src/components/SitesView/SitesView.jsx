@@ -9872,6 +9872,60 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         let sumRow = 8;
         summarySheet.getRow(sumRow++).height = 6; // spacer
 
+        // Merged cells don't auto-fit in Excel, so a wrapped value in a
+        // fixed-height row just gets clipped — which is what buried the
+        // regimes list. Estimate the wrapped line count from the merged
+        // width and size each row to fit. `chars` is the usable width in
+        // characters (column width units ≈ characters, less the indent).
+        // Shared by the findings bullets and the company sections below,
+        // which all merge cells.
+        const wrapLines = (text, chars) => String(text == null ? '' : text)
+          .split('\n')
+          .reduce((total, line) => {
+            const words = line.split(/\s+/).filter(Boolean);
+            if (!words.length) return total + 1;
+            let lines = 1, len = 0;
+            for (const w of words) {
+              const next = len ? len + 1 + w.length : w.length;
+              if (next <= chars) { len = next; continue; }
+              lines++; len = w.length;
+            }
+            return total + lines;
+          }, 0);
+
+        // Section 1a: Findings & Recommendations — the same roll-up written
+        // into the band on the Indicative Savings tab, repeated directly
+        // under the headline figures so the first tab carries the "so what"
+        // alongside the dollars instead of making the reader jump tabs for
+        // it. Same `summaryFindings` array, so the two can't drift; skipped
+        // entirely when no alert fired, exactly like the band.
+        if (summaryFindings.length) {
+          // Usable width of the merged row: the 8 column widths less the
+          // bullet's indent, so a long state list wraps into a tall enough
+          // row instead of being clipped.
+          const findChars = (32 + 15 * (SUM_NCOLS - 1)) - 4;
+          sumSection(sumRow++, 'Findings & Recommendations');
+          for (const text of summaryFindings) {
+            const rowNum = sumRow++;
+            summarySheet.mergeCells(rowNum, 1, rowNum, SUM_NCOLS);
+            const cell = summarySheet.getCell(rowNum, 1);
+            cell.value = `•  ${text}`;
+            cell.font = { name: 'Nunito Sans', size: 10.5, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 2, wrapText: true };
+            cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+            summarySheet.getRow(rowNum).height = Math.max(20, wrapLines(`•  ${text}`, findChars) * 15);
+          }
+          summarySheet.mergeCells(sumRow, 1, sumRow, SUM_NCOLS);
+          const findNote = summarySheet.getCell(sumRow, 1);
+          findNote.value = 'Mirrors the Findings & Recommendations band on the Indicative Savings tab. The Alerts Catalog tab (hidden: right-click a tab → Unhide) documents every alert\'s trigger and threshold.';
+          findNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
+          findNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+          // Sized like the bullets: the note runs past one merged line, and
+          // a fixed 18pt row would clip its second line.
+          summarySheet.getRow(sumRow++).height = Math.max(18, wrapLines(findNote.value, findChars) * 13);
+          summarySheet.getRow(sumRow++).height = 6; // spacer
+        }
+
         // Section 1b: Top 5 States by Indicative Savings — the five
         // highest-savings states / provinces / countries for electric and
         // for natural gas, side by side. Ranked by the Base (mid) Year 1
@@ -10058,26 +10112,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           }
           summarySheet.getRow(sumRow++).height = 6; // spacer
         }
-
-        // Merged cells don't auto-fit in Excel, so a wrapped value in a
-        // fixed-height row just gets clipped — which is what buried the
-        // regimes list. Estimate the wrapped line count from the merged
-        // width and size each row to fit. `chars` is the usable width in
-        // characters (column width units ≈ characters, less the indent).
-        // Shared by both company sections below, which both merge cells.
-        const wrapLines = (text, chars) => String(text == null ? '' : text)
-          .split('\n')
-          .reduce((total, line) => {
-            const words = line.split(/\s+/).filter(Boolean);
-            if (!words.length) return total + 1;
-            let lines = 1, len = 0;
-            for (const w of words) {
-              const next = len ? len + 1 + w.length : w.length;
-              if (next <= chars) { len = next; continue; }
-              lines++; len = w.length;
-            }
-            return total + lines;
-          }, 0);
 
         // The company-level rollup, built once and read by the two sections
         // below — the screening verdicts and the sustainability commitments
