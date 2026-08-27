@@ -5,7 +5,7 @@
 // Every other tab answers "how big is the opportunity / the exposure /
 // the data gap for this company"; this one answers it per operating
 // division, so the numbers can be handed to the person who actually owns
-// that estate. Four sections, in the order a conversation runs:
+// that estate. Six sections, in the order a conversation runs:
 //
 //   1. Energy procurement savings opportunity — deregulated sites, spend
 //      and the indicative savings range, by division.
@@ -20,6 +20,10 @@
 //      good are the numbers above" section, per division.
 //   5. Sites by ISO / RTO — a live dropdown that picks a market, with each
 //      division's site count in it, over the full division × market matrix.
+//   6. Consumption by state — a live dropdown that picks a division, with
+//      its electric and gas volume in every state, over the full
+//      state × division matrices. Section 2 read the other way round: that
+//      one asks how big each division is, this one asks where its load is.
 //
 // The aggregation (summarizeDivisions) is pure and takes one flat record
 // per site, so it can be tested without a browser. The savings figures come
@@ -51,6 +55,13 @@ export const UNKNOWN_ISO_LABEL = 'Unknown';
 // dropdown — selecting it puts every division's whole site count in the
 // selected-market table, which is the natural "show me everything" answer.
 export const ALL_ISO_LABEL = 'All markets';
+// The same idea for the consumption-by-state section's roll-up column, and a
+// valid pick in its division dropdown: every division's load, added up.
+export const ALL_DIVISIONS_LABEL = 'All divisions';
+// A site whose State / Province column is blank and whose country didn't
+// resolve either. Same treatment as an unresolved market: a real bucket that
+// sorts last, never a blank row label.
+export const UNKNOWN_STATE_LABEL = 'Unknown';
 
 // The ISO table's non-ISO answers are full sentences ("None (WECC: no ISO;
 // CAISO WEIM participation is not full ISO membership)") — true, and far too
@@ -70,6 +81,14 @@ const ISO_SHORT = {
 export function divisionLabel(raw) {
   const d = String(raw || '').trim();
   return d || NO_DIVISION_LABEL;
+}
+
+// The state / province / country a site's consumption files under — the
+// same 'ST / Prov / Country' spelling the Indicative Savings tabs bucket by,
+// which already falls back to the country name outside the US and Canada.
+export function stateLabel(raw) {
+  const s = String(raw || '').trim();
+  return s || UNKNOWN_STATE_LABEL;
 }
 
 export function isoLabel(iso) {
@@ -99,6 +118,10 @@ function emptyDivision(name) {
     therms: 0, thermsModelled: 0, thermsSites: 0,
     // Sites by market.
     iso: {},
+    // The same consumption again, split by state: label -> { sites, kwh,
+    // therms }. Held in the page's native units like the totals above it and
+    // converted where it is written, so the two can't round differently.
+    byState: {},
   };
 }
 
@@ -123,6 +146,8 @@ function emptyDivision(name) {
 //                 volume comes from two of its ninety sites has a total
 //                 that means something quite different from one whose
 //                 ninety all reported.
+//     state       'ST / Prov / Country' the site's consumption files under,
+//                 blank where neither a state nor a country resolved.
 //
 // `savingsByDivision` is keyed by the same divisionLabel(): the per-division
 // procurement rollup, computed on the page against its per-state
@@ -130,6 +155,7 @@ function emptyDivision(name) {
 export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
   const byName = new Map();
   const isoTotals = new Map();
+  const stateTotals = new Map();
   const ensure = (name) => {
     if (!byName.has(name)) byName.set(name, emptyDivision(name));
     return byName.get(name);
@@ -161,6 +187,19 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
         if (e.thermsModelled) d.thermsModelled += e.therms;
       }
     }
+
+    // The same consumption again, filed by state. Every site opens a bucket,
+    // including one carrying no consumption at all — a state the division
+    // has sites in but no figures for is a gap worth seeing, not a row to
+    // drop.
+    const st = stateLabel(f?.state);
+    const kwh = num(e?.kwh);
+    const therms = num(e?.therms);
+    const bucket = d.byState[st] || (d.byState[st] = { sites: 0, kwh: 0, therms: 0 });
+    bucket.sites += 1; bucket.kwh += kwh; bucket.therms += therms;
+    const stTotal = stateTotals.get(st) || { sites: 0, kwh: 0, therms: 0 };
+    stTotal.sites += 1; stTotal.kwh += kwh; stTotal.therms += therms;
+    stateTotals.set(st, stTotal);
 
     const c = f?.compliance;
     if (c) {
@@ -215,7 +254,20 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
     })
     .map(([label]) => label);
 
-  const totals = emptyDivision('All divisions');
+  // States, heaviest electric load first — the question this section answers
+  // is where the load is, so the answer leads. Gas breaks a tie between two
+  // states with no electric figures at all; the unresolved bucket sorts last
+  // whatever it carries, for the same reason the unassigned division does.
+  const stateLabels = [...stateTotals.entries()]
+    .sort((a, b) => {
+      const aUnk = a[0] === UNKNOWN_STATE_LABEL, bUnk = b[0] === UNKNOWN_STATE_LABEL;
+      if (aUnk !== bUnk) return aUnk ? 1 : -1;
+      return b[1].kwh - a[1].kwh || b[1].therms - a[1].therms || b[1].sites - a[1].sites
+        || a[0].localeCompare(b[0]);
+    })
+    .map(([label]) => label);
+
+  const totals = emptyDivision(ALL_DIVISIONS_LABEL);
   for (const d of divisions) {
     for (const k of [
       'sites', 'mapped', 'intervalYes', 'intervalNo', 'intervalUnknown',
@@ -226,12 +278,16 @@ export function summarizeDivisions(siteFacts = [], savingsByDivision = {}) {
     ]) totals[k] += d[k];
     if (d.penaltyKnown) totals.penaltyKnown = true;
     for (const [m, n] of Object.entries(d.iso)) totals.iso[m] = (totals.iso[m] || 0) + n;
+    for (const [st, b] of Object.entries(d.byState)) {
+      const t = totals.byState[st] || (totals.byState[st] = { sites: 0, kwh: 0, therms: 0 });
+      t.sites += b.sites; t.kwh += b.kwh; t.therms += b.therms;
+    }
   }
   totals.deregSpend = totals.electricSpend + totals.gasSpend;
   totals.savingsLow = totals.electricLow + totals.gasLow;
   totals.savingsHigh = totals.electricHigh + totals.gasHigh;
 
-  return { divisions, isoLabels, totals };
+  return { divisions, isoLabels, stateLabels, totals };
 }
 
 function num(v) {
@@ -258,13 +314,18 @@ const colLetter = (n) => { let s = ''; let i = n; while (i > 0) { const m = (i -
 // for a site list with no Division column mapped — the Master Analysis keeps
 // a fixed tab set, and a sheet that says why it's empty beats a missing one.
 export function buildDivisionsSheet(wb, summary, meta = {}) {
-  const { divisions = [], isoLabels = [], totals = emptyDivision('All divisions') } = summary || {};
+  const {
+    divisions = [], isoLabels = [], stateLabels = [],
+    totals = emptyDivision(ALL_DIVISIONS_LABEL),
+  } = summary || {};
   // Ten figures per table plus the bar column that charts one of them.
   const NC = 11;
-  // The market matrix runs wider than the tables above it when a portfolio
-  // spans a lot of ISOs, so the sheet is as wide as the widest thing on it.
-  const matrixCols = 2 + isoLabels.length; // Division + one per market + total
-  const width = Math.max(NC, matrixCols);
+  // The two matrices run wider than the tables above them when a portfolio
+  // spans a lot of ISOs — or is split into a lot of divisions — so the sheet
+  // is as wide as the widest thing on it.
+  const matrixCols = 2 + isoLabels.length;      // Division + one per market + total
+  const stateMatrixCols = 2 + divisions.length; // State + one per division + total
+  const width = Math.max(NC, matrixCols, stateMatrixCols);
 
   const ws = wb.addWorksheet(meta.sheetName || 'Divisions', {
     properties: { tabColor: { argb: SE_DARK } },
@@ -423,7 +484,10 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
   });
 
   // ---- 5. Sites by ISO / RTO --------------------------------------------
-  isoSection(ws, r, NC, divisions, isoLabels, totals);
+  r = isoSection(ws, r, NC, divisions, isoLabels, totals);
+
+  // ---- 6. Consumption by state -------------------------------------------
+  consumptionByStateSection(ws, r, NC, divisions, stateLabels, totals);
 
   return ws;
 }
@@ -591,6 +655,214 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
   }
 
   return after;
+}
+
+// A division picker over the two state × division consumption matrices.
+//
+// Section 2 asks how big each division is; this asks where that division's
+// load actually sits. Same shape as the market picker above, turned the
+// other way round: there the dropdown named a column of one matrix, here it
+// names a column of both, and the rows are states, so the answer reads
+// straight down. Formulas rather than a re-export, with cached results
+// written alongside so the table reads right in a viewer that doesn't
+// recalculate on open.
+function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, totals) {
+  let r = section(ws, startRow, NC, 'Consumption by State, by Division',
+    'Pick a division from the dropdown: the table under it reports that division\'s annual electric and gas volume in every state the portfolio touches. Same figures as the Energy Consumption section above, split by state instead of totalled — every site, regulated and deregulated alike, so these will read higher than the deregulated spend the savings run on. The two matrices below are what the table reads. Electric is kWh/yr and gas is Dth/yr, as on the Site Detail tab.');
+
+  if (!divisions.length || !stateLabels.length) {
+    ws.mergeCells(r, 1, r, NC);
+    const c = ws.getCell(r, 1);
+    c.value = 'No sites in scope.';
+    c.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
+    c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    return r + 2;
+  }
+
+  // One column per division plus the roll-up, and the source each reads.
+  const headers = [...divisions.map(d => d.name), ALL_DIVISIONS_LABEL];
+  const sources = [...divisions, totals];
+  // Rounded once, here, and reused by every matrix cell and every cached
+  // formula result — a formula whose cache disagreed with the cell it reads
+  // would show one number before a recalculation and another after. Gas
+  // converts to Dth at this one point, like every other gas figure on the
+  // sheet, so nothing is rounded twice.
+  const cellValue = (src, state, key) => {
+    const b = src?.byState?.[state];
+    return Math.round(key === 'therms' ? toDth(b?.therms) : num(b?.kwh));
+  };
+  const columnTotal = (src, key) => Math.round(stateLabels.reduce(
+    (sum, st) => sum + (key === 'therms' ? toDth(src?.byState?.[st]?.therms) : num(src?.byState?.[st]?.kwh)), 0));
+  // Opens on the largest named division so the picker is visibly doing
+  // something; a portfolio with nothing but unassigned sites opens on the
+  // roll-up, which is the only reading that means anything there.
+  const named = divisions.find(d => d.name !== NO_DIVISION_LABEL);
+  const defaultDivision = named ? named.name : ALL_DIVISIONS_LABEL;
+  const defaultSource = named || totals;
+
+  // Both matrices are written below the picker and the table that reads
+  // them, so their rows are worked out here and filled in after.
+  const pickerRow = r;
+  const selectedHeaderRow = r + 2;
+  const selectedFirstRow = selectedHeaderRow + 1;
+  const selectedTotalRow = selectedFirstRow + stateLabels.length;
+  const elecTitleRow = selectedTotalRow + 2;
+  const elecHeaderRow = elecTitleRow + 1;
+  const elecFirstRow = elecHeaderRow + 1;
+  const elecTotalRow = elecFirstRow + stateLabels.length;
+  const gasTitleRow = elecTotalRow + 2;
+  const gasHeaderRow = gasTitleRow + 1;
+  const gasFirstRow = gasHeaderRow + 1;
+  const gasTotalRow = gasFirstRow + stateLabels.length;
+  const lastCol = 1 + headers.length;
+  const L = colLetter(lastCol);
+  const elecRange = `$${colLetter(2)}$${elecHeaderRow}:$${L}$${elecTotalRow}`;
+  const gasRange = `$${colLetter(2)}$${gasHeaderRow}:$${L}$${gasTotalRow}`;
+  // The two matrices carry identical headers, so one of them is the whole
+  // dropdown. Validated against the range rather than an inline list for the
+  // same two reasons as the market picker: Excel caps an inline list at 255
+  // characters, which division names blow past on a sizeable portfolio, and
+  // a range can't fall out of step with the columns it picks from.
+  const headerRange = `$${colLetter(2)}$${elecHeaderRow}:$${L}$${elecHeaderRow}`;
+
+  // ---- the picker ----
+  const label = ws.getCell(pickerRow, 1);
+  label.value = 'Division';
+  label.font = { name: FONT, bold: true, size: 11, color: { argb: INK } };
+  label.alignment = { vertical: 'middle', horizontal: 'right' };
+  const pick = ws.getCell(pickerRow, 2);
+  pick.value = defaultDivision;
+  pick.font = { name: FONT, bold: true, size: 11, color: { argb: SE_DARK } };
+  pick.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_LIGHT } };
+  pick.alignment = { vertical: 'middle', horizontal: 'center' };
+  pick.border = {
+    top: { style: 'thin', color: { argb: SE_DARK } }, bottom: { style: 'thin', color: { argb: SE_DARK } },
+    left: { style: 'thin', color: { argb: SE_DARK } }, right: { style: 'thin', color: { argb: SE_DARK } },
+  };
+  pick.dataValidation = {
+    type: 'list',
+    allowBlank: false,
+    formulae: [headerRange],
+    showErrorMessage: true,
+    errorTitle: 'Pick a division',
+    error: `Choose one of the divisions listed in the matrices below, or "${ALL_DIVISIONS_LABEL}".`,
+  };
+  const hint = ws.getCell(pickerRow, 3);
+  hint.value = `← dropdown  ·  ${divisions.length} division${divisions.length === 1 ? '' : 's'}  ·  ${stateLabels.length} state${stateLabels.length === 1 ? '' : 's'} in this portfolio`;
+  hint.font = { name: FONT, italic: true, size: 9, color: { argb: SLATE } };
+  hint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(pickerRow).height = 22;
+
+  // ---- the selected-division table ----
+  // Same shape as the tables above: the figure is read, the bar beside it is
+  // looked at, and neither is drawn on top of the other.
+  headerRow(ws, selectedHeaderRow, [
+    { label: 'ST / Prov / Country', align: 'left' },
+    { label: 'Electric kWh/yr', align: 'center' },
+    { label: 'kWh Scale', align: 'center' },
+    { label: '% of Division kWh', align: 'center' },
+    { label: 'Gas Dth/yr', align: 'center' },
+    { label: '% of Division Dth', align: 'center' },
+  ]);
+
+  const elecTotalCached = columnTotal(defaultSource, 'kwh');
+  const gasTotalCached = columnTotal(defaultSource, 'therms');
+  stateLabels.forEach((st, i) => {
+    const rowNo = selectedFirstRow + i;
+    // Row 1 of each range is the header, so this state's row inside it is
+    // its matrix row minus the header row, plus one. The two matrices are
+    // laid out in step, so one index serves both.
+    const idx = i + 2;
+    const kwh = cellValue(defaultSource, st, 'kwh');
+    const dth = cellValue(defaultSource, st, 'therms');
+    writeRow(ws, rowNo, i, [
+      { v: st, align: 'left', bold: true, color: INK },
+      {
+        v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${elecRange},${idx},FALSE),0)`, result: kwh },
+        numFmt: '#,##0', bold: true, color: SE_DARK,
+      },
+      // The bar's own cell mirrors the figure so it moves with the picker,
+      // and hides the repeat behind the bar.
+      {
+        v: { formula: `${colLetter(2)}${rowNo}`, result: kwh },
+        numFmt: HIDDEN_NUM,
+      },
+      {
+        v: { formula: `IFERROR(${colLetter(2)}${rowNo}/$${colLetter(2)}$${selectedTotalRow},0)`, result: elecTotalCached ? kwh / elecTotalCached : 0 },
+        numFmt: '0%',
+      },
+      {
+        v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${gasRange},${idx},FALSE),0)`, result: dth },
+        numFmt: '#,##0', bold: true, color: SE_DARK,
+      },
+      {
+        v: { formula: `IFERROR(${colLetter(5)}${rowNo}/$${colLetter(5)}$${selectedTotalRow},0)`, result: gasTotalCached ? dth / gasTotalCached : 0 },
+        numFmt: '0%',
+      },
+    ]);
+  });
+  const totalIdx = stateLabels.length + 2;
+  totalsRow(ws, selectedTotalRow, [
+    { v: 'All states', align: 'left' },
+    {
+      v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${elecRange},${totalIdx},FALSE),0)`, result: elecTotalCached },
+      numFmt: '#,##0',
+    },
+    // Outside the bar's range, like every other totals row on the sheet.
+    { v: null, numFmt: HIDDEN_NUM },
+    { v: elecTotalCached ? 1 : 0, numFmt: '0%' },
+    {
+      v: { formula: `IFERROR(HLOOKUP($B$${pickerRow},${gasRange},${totalIdx},FALSE),0)`, result: gasTotalCached },
+      numFmt: '#,##0',
+    },
+    { v: gasTotalCached ? 1 : 0, numFmt: '0%' },
+  ]);
+  // A live bar beside the electric column, scaled to the heaviest state
+  // rather than to itself, so the shape of the load reads at a glance and
+  // stays right when the picker moves.
+  ws.addConditionalFormatting({
+    ref: `${colLetter(3)}${selectedFirstRow}:${colLetter(3)}${selectedTotalRow - 1}`,
+    rules: [{ type: 'dataBar', gradient: false, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: SE_DARK } }],
+  });
+
+  // ---- the matrices ----
+  const writeMatrix = (titleRow, hdrRow, firstRow, totalRow, key, title) => {
+    const t = ws.getCell(titleRow, 1);
+    t.value = title;
+    t.font = { name: FONT, bold: true, size: 10, color: { argb: SLATE } };
+    t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+    headerRow(ws, hdrRow, [
+      { label: 'ST / Prov / Country', align: 'left' },
+      ...headers.map(h => ({ label: h, align: 'center' })),
+    ]);
+    stateLabels.forEach((st, i) => {
+      writeRow(ws, firstRow + i, i, [
+        { v: st, align: 'left', bold: true, color: INK },
+        ...sources.map((src, ci) => ({
+          v: cellValue(src, st, key), numFmt: '#,##0', bold: ci === sources.length - 1,
+        })),
+      ]);
+    });
+    totalsRow(ws, totalRow, [
+      { v: 'All states', align: 'left' },
+      ...sources.map(src => ({ v: columnTotal(src, key), numFmt: '#,##0' })),
+    ]);
+  };
+  writeMatrix(elecTitleRow, elecHeaderRow, elecFirstRow, elecTotalRow, 'kwh',
+    'State × division matrix — electric consumption (kWh/yr)');
+  writeMatrix(gasTitleRow, gasHeaderRow, gasFirstRow, gasTotalRow, 'therms',
+    'State × division matrix — gas consumption (Dth/yr)');
+
+  const after = gasTotalRow + 2;
+  ws.mergeCells(after, 1, after, NC);
+  const note = ws.getCell(after, 1);
+  note.value = `A state a division has sites in but no consumption figures for reads as a zero rather than dropping out — the "Sites with data" columns in the Energy Consumption section say how much of each total is measured at all. A site whose State / Province and Country both came through blank files under "${UNKNOWN_STATE_LABEL}".`;
+  note.font = { name: FONT, italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+  note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+  ws.getRow(after).height = 26;
+
+  return after + 2;
 }
 
 // --- small shared writers ------------------------------------------------

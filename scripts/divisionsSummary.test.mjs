@@ -11,8 +11,9 @@
 // disagrees with the matrix under it) only show up in the file.
 import ExcelJS from 'exceljs';
 import {
-  summarizeDivisions, buildDivisionsSheet, divisionLabel, isoLabel, toDth,
+  summarizeDivisions, buildDivisionsSheet, divisionLabel, isoLabel, stateLabel, toDth,
   NO_DIVISION_LABEL, ALL_ISO_LABEL, UNKNOWN_ISO_LABEL,
+  ALL_DIVISIONS_LABEL, UNKNOWN_STATE_LABEL,
 } from '../src/utils/divisionsSummary.js';
 import { NONE_WECC } from '../src/utils/isoLookup.js';
 
@@ -28,7 +29,12 @@ const site = (division, iso, over = {}) => ({
   division, iso,
   mapped: false, interval: null,
   compliance: null,
+  state: '',
   ...over,
+});
+// A site's consumption, in the units the page holds it in.
+const energy = (kwh, therms, over = {}) => ({
+  kwh, therms, kwhModelled: false, thermsModelled: false, ...over,
 });
 const screened = (over = {}) => ({
   matched: true,
@@ -83,6 +89,50 @@ const screened = (over = {}) => ({
   eq(s.totals.iso, { PJM: 2, ERCOT: 2, [UNKNOWN_ISO_LABEL]: 1 }, 'market totals sum across divisions');
 }
 
+// ---- consumption by state -----------------------------------------------
+
+{
+  const facts = [
+    site('Retail', 'PJM', { state: 'TX', energy: energy(1_000_000, 4_000) }),
+    site('Retail', 'PJM', { state: 'TX', energy: energy(500_000, 1_000) }),
+    site('Retail', 'ERCOT', { state: 'OH', energy: energy(200_000, 9_000) }),
+    site('Industrial', 'ERCOT', { state: 'TX', energy: energy(3_000_000, null) }),
+    site('Industrial', 'ERCOT', { state: '', energy: energy(10, null) }),
+    // In a state, with no consumption figures at all: a gap worth seeing.
+    site('Industrial', 'PJM', { state: 'OH', energy: energy(null, null) }),
+  ];
+  const s = summarizeDivisions(facts, {});
+
+  eq(s.stateLabels, ['TX', 'OH', UNKNOWN_STATE_LABEL],
+    'states run heaviest electric load first with the unresolved bucket last');
+
+  const retail = s.divisions.find(d => d.name === 'Retail');
+  eq(retail.byState.TX, { sites: 2, kwh: 1_500_000, therms: 5_000 },
+    'a state bucket sums every site in it, deregulated or not');
+  eq(retail.byState.OH, { sites: 1, kwh: 200_000, therms: 9_000 }, 'each state keeps its own bucket');
+  eq(retail.byState[UNKNOWN_STATE_LABEL], undefined,
+    'a division with no unresolved site carries no unresolved bucket');
+
+  const industrial = s.divisions.find(d => d.name === 'Industrial');
+  eq(industrial.byState.OH, { sites: 1, kwh: 0, therms: 0 },
+    'a site with no consumption figures still opens its state bucket');
+  eq(industrial.byState.TX, { sites: 1, kwh: 3_000_000, therms: 0 },
+    'a null on one commodity contributes nothing rather than breaking the sum');
+
+  eq(s.totals.byState.TX, { sites: 3, kwh: 4_500_000, therms: 5_000 },
+    'the totals row sums each state across divisions');
+  eq(s.totals.byState[UNKNOWN_STATE_LABEL], { sites: 1, kwh: 10, therms: 0 },
+    'a site with neither a state nor a country still lands somewhere');
+
+  // The by-state split and the by-division totals are the same figures read
+  // two ways, so they have to add up to each other.
+  const acrossStates = Object.values(retail.byState).reduce((n, b) => n + b.kwh, 0);
+  eq(acrossStates, retail.kwh, "a division's states sum to the division total in section 2");
+}
+
+eq(stateLabel('  '), UNKNOWN_STATE_LABEL, 'a blank state gets the one shared label');
+eq(stateLabel(' TX '), 'TX', 'a state label is trimmed, not otherwise rewritten');
+
 eq(divisionLabel('  '), NO_DIVISION_LABEL, 'a blank division gets the one shared label');
 eq(divisionLabel(' Retail '), 'Retail', 'a division name is trimmed, not otherwise rewritten');
 eq(isoLabel(NONE_WECC), 'Non-ISO (WECC)', 'a sentence-length non-ISO answer is shortened for the matrix header');
@@ -122,7 +172,8 @@ function build(facts, savings) {
     'Building Compliance by Division',
     'Interval Data by Division',
     'Sites by ISO / RTO Market, by Division',
-  ], 'the five sections are written in order');
+    'Consumption by State, by Division',
+  ], 'the six sections are written in order');
 
   // Find the market matrix by its caption — the picker cell above it also
   // holds a market name, so matching on the market alone finds the wrong row.
@@ -181,6 +232,80 @@ function build(facts, savings) {
     if (typeof v === 'string' && v.startsWith('Shortened market names:')) footnote = v;
   });
   ok(footnote.includes(NONE_WECC), 'a shortened market name is spelled out in a footnote');
+}
+
+{
+  // The consumption-by-state picker: a dropdown over both matrices' shared
+  // header, and a table of formulas under it. The ways this breaks silently
+  // are the ones the market picker can break in — a validation pointing at
+  // the wrong range, an HLOOKUP row index off by one, a cached result that
+  // disagrees with the matrix under it — so it is read back out of a real
+  // worksheet.
+  const facts = [
+    site('Retail', 'PJM', { state: 'TX', energy: energy(1_000_000, 4_000) }),
+    site('Retail', 'PJM', { state: 'OH', energy: energy(200_000, 9_000) }),
+    site('Industrial', 'ERCOT', { state: 'TX', energy: energy(3_000_000, 500) }),
+  ];
+  const { ws } = build(facts, {});
+
+  const rowOf = (predicate) => {
+    let found = 0;
+    ws.eachRow({ includeEmpty: false }, (row, n) => { if (!found && predicate(row, n)) found = n; });
+    return found;
+  };
+  // 'Division' is also the first column header of the tables above, so the
+  // picker is the row that carries a dropdown next to that label.
+  const pickerRow = rowOf(row => row.getCell(1).value === 'Division'
+    && row.getCell(2).dataValidation?.type === 'list');
+  ok(pickerRow > 0, 'the division picker has a labelled row');
+  eq(ws.getCell(pickerRow, 2).value, 'Retail',
+    'the picker opens on the largest named division rather than on a blank cell');
+
+  const elecHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix — electric consumption (kWh/yr)') + 1;
+  const gasHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix — gas consumption (Dth/yr)') + 1;
+  ok(elecHeaderRow > pickerRow && gasHeaderRow > elecHeaderRow, 'both matrices are written below the picker');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecHeaderRow, c).value),
+    ['ST / Prov / Country', 'Retail', 'Industrial', ALL_DIVISIONS_LABEL],
+    'the matrix carries one column per division plus the roll-up');
+  eq([1, 2, 3, 4].map(c => ws.getCell(gasHeaderRow, c).value),
+    ['ST / Prov / Country', 'Retail', 'Industrial', ALL_DIVISIONS_LABEL],
+    'both matrices share the header the dropdown reads');
+
+  const dv = ws.getCell(pickerRow, 2).dataValidation;
+  eq(dv?.formulae, [`$B$${elecHeaderRow}:$D$${elecHeaderRow}`],
+    'the dropdown reads the matrix header row rather than an inline list');
+
+  // The matrices themselves: TX leads on load, and the roll-up column adds up.
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecHeaderRow + 1, c).value), ['TX', 1_000_000, 3_000_000, 4_000_000],
+    'the heaviest-load state leads, with each division in its own column');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecHeaderRow + 2, c).value), ['OH', 200_000, 0, 200_000],
+    'a state one division has no sites in reads as a real zero, not a blank');
+  eq([1, 2, 3, 4].map(c => ws.getCell(elecHeaderRow + 3, c).value), ['All states', 1_200_000, 3_000_000, 4_200_000],
+    'the matrix totals row sums every state');
+  // Gas is written in Dth, like every other gas figure in the workbook.
+  eq([1, 2, 3, 4].map(c => ws.getCell(gasHeaderRow + 1, c).value), ['TX', toDth(4_000), toDth(500), toDth(4_500)],
+    'the gas matrix carries the same states, converted to Dth');
+
+  // The selected-division table reads both matrices by formula, and its
+  // cached results agree with them for the division the picker opens on.
+  const selFirstRow = pickerRow + 3;
+  eq(ws.getCell(selFirstRow, 1).value, 'TX', 'the selected table lists states in the same order');
+  const txElec = ws.getCell(selFirstRow, 2);
+  eq(txElec.value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${elecHeaderRow}:$D$${elecHeaderRow + 3},2,FALSE),0)`,
+    "electric is an HLOOKUP into this state's row of the electric matrix");
+  eq(txElec.value.result, 1_000_000, "the cached figure matches the matrix for the picker's division");
+  eq(ws.getCell(selFirstRow, 5).value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${gasHeaderRow}:$D$${gasHeaderRow + 3},2,FALSE),0)`,
+    'gas reads the gas matrix at the same row index');
+  eq(ws.getCell(selFirstRow, 5).value.result, toDth(4_000), 'the cached gas figure matches the gas matrix');
+  eq(ws.getCell(selFirstRow, 4).value.result, 1_000_000 / 1_200_000,
+    "the share is the state over the division's own total, not the portfolio's");
+  eq(ws.getCell(selFirstRow + 1, 2).value.result, 200_000, 'the second state reads its own matrix row');
+
+  const selTotalRow = selFirstRow + 2;
+  eq(ws.getCell(selTotalRow, 1).value, 'All states', 'the selected table closes on a totals row');
+  eq(ws.getCell(selTotalRow, 2).value.formula, `IFERROR(HLOOKUP($B$${pickerRow},$B$${elecHeaderRow}:$D$${elecHeaderRow + 3},4,FALSE),0)`,
+    'the totals row reads the matrix totals row');
+  eq(ws.getCell(selTotalRow, 2).value.result, 1_200_000, "the cached total is the picked division's, not the portfolio's");
 }
 
 {
@@ -327,7 +452,7 @@ function build(facts, savings) {
   });
 
   const bars = ws.conditionalFormattings.filter(cf => cf.rules.some(r => r.type === 'dataBar'));
-  eq(bars.length, 5, 'every table on the tab charts one figure');
+  eq(bars.length, 6, 'every table on the tab charts one figure');
 
   const colOf = (ref) => ref.match(/^([A-Z]+)/)[1];
   const rowsOf = (ref) => ref.match(/(\d+):[A-Z]+(\d+)/).slice(1).map(Number);
