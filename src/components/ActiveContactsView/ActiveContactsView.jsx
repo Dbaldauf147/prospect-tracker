@@ -39,7 +39,7 @@ function companiesMatch(a, b) {
   return strip(na) === strip(nb);
 }
 
-export function ActiveContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName }) {
+export function ActiveContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName }) {
   const [windowDays, setWindowDays] = useState(() => {
     try {
       const saved = Number(localStorage.getItem('active-contacts:window-days'));
@@ -411,6 +411,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      updateSettingsPath={updateSettingsPath}
       cdmName={cdmName}
       storagePrefix="active-contacts"
       pageTitle="Active Contacts"

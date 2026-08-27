@@ -10,10 +10,27 @@ import { dbGet, dbGetAll, dbPut, dbDelete } from './db';
 const STORE = 'settings-backups';
 const MAX_BACKUPS = 30;
 
-export async function pushBackup(settings, reason = '') {
+// One backup per burst of saves.
+//
+// A backup is a deep clone of the whole settings document written to
+// IndexedDB, and the store keeps only the latest MAX_BACKUPS. The contact
+// popup's tag table saves on every click, so backing up each save did two
+// unhelpful things at once: it cloned the entire document on the main thread
+// per click — a big part of why a run down that table felt slow — and it
+// pushed the genuinely useful older snapshots out of the store within a
+// minute. Recovery wants the state before a burst of edits, which the first
+// save of the burst already captured; pass { force: true } for a backup that
+// must be taken regardless.
+export const BACKUP_MIN_INTERVAL_MS = 30000;
+let lastPushAt = 0;
+
+export async function pushBackup(settings, reason = '', { force = false } = {}) {
   if (!settings || typeof settings !== 'object') return;
+  const now = Date.now();
+  if (!force && lastPushAt && now - lastPushAt < BACKUP_MIN_INTERVAL_MS) return;
+  lastPushAt = now;
   try {
-    const timestamp = Date.now();
+    const timestamp = now;
     const entry = {
       timestamp,
       reason,
@@ -58,5 +75,11 @@ export async function deleteBackup(timestamp) {
 
 // Console escape hatch for emergency restore.
 if (typeof window !== 'undefined') {
-  window.__settingsBackups = { listBackups, getBackup, pushBackup };
+  // Forced: a backup asked for by hand is always wanted, whatever the
+  // throttle above would have said.
+  window.__settingsBackups = {
+    listBackups,
+    getBackup,
+    pushBackup: (settings, reason = 'manual') => pushBackup(settings, reason, { force: true }),
+  };
 }

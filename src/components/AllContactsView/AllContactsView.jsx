@@ -63,7 +63,7 @@ function contactTagStatus(c, tag, reviewMap) {
   return tagAnswerFrom(tagged, isLocalTagVerdict(stored) ? stored : '');
 }
 
-export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
+export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
 
@@ -540,6 +540,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      updateSettingsPath={updateSettingsPath}
       cdmName={cdmName}
       storagePrefix="all-contacts"
       pageTitle="All Contacts"

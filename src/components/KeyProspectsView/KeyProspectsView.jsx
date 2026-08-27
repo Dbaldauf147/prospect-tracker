@@ -46,7 +46,7 @@ function companiesMatch(a, b) {
   return false;
 }
 
-export function KeyProspectsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
+export function KeyProspectsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
 
@@ -299,6 +299,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      updateSettingsPath={updateSettingsPath}
       cdmName={cdmName}
       storagePrefix="key-prospects"
       pageTitle="Key Prospects"

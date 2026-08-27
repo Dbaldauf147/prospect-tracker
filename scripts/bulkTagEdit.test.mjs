@@ -21,7 +21,8 @@
 // The server has always treated them as one tag (api/hubspot.js dansTagKey),
 // and so has the bulk picker — these tests hold the writer to the same rule.
 import { tagKey, dedupeTags, planTagEdit, groupTagWrites, recordForVerdict, recordKeepsTag,
-  findTagRecord, tagRecordKeyFor, tagReviewScore, tagStateFrom } from '../src/utils/contactTagReview.js';
+  findTagRecord, tagRecordKeyFor, tagReviewScore, tagStateFrom, tagVocabulary,
+  saveTagReview, TAG_OPTIONS } from '../src/utils/contactTagReview.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -253,6 +254,57 @@ function eq(actual, expected, name) {
     'a contact tagged in HubSpot\'s spelling counts against the vocabulary\'s');
   eq(tagReviewScore({ dans_tags: '' }, { 'Efficiency/Renewables': { answer: 'no', status: '' } }, scoredOnly).answered, 1,
     'and so does an answer saved under the other spelling');
+}
+
+// ── The picker offers one row per tag, not one per spelling ─────────────
+// The bug this was reported as: the contact popup's tag table showed "NAM
+// only" AND "NAM Only" as separate rows, so the tag could be answered twice
+// and the Tagged % was out of a total that counted it twice.
+{
+  const fromContacts = ['NAM only', 'Efficiency/Renewables', 'ESG', 'Climate Risk', ''];
+  const vocab = tagVocabulary(fromContacts);
+  eq(vocab.filter(t => tagKey(t) === tagKey('NAM Only')).length, 1,
+    'the two spellings of NAM Only are one option');
+  eq(vocab.includes('NAM Only'), true,
+    'and it is the vocabulary\'s spelling that is offered');
+  eq(vocab.filter(t => tagKey(t) === tagKey('Efficiency / Renewables')).length, 1,
+    'same for the spaced and unspaced Efficiency / Renewables');
+  eq(vocab.includes('Climate Risk'), true,
+    'a tag only the contacts know about is still offered');
+  eq(vocab.length, TAG_OPTIONS.length + 1,
+    'nothing else is added: the vocabulary plus the one unknown tag');
+  eq(tagVocabulary([]).length, TAG_OPTIONS.length,
+    'with no contacts, the vocabulary is the whole list');
+}
+
+// ── Saving one contact's records touches one contact's records ──────────
+{
+  const settings = { contactTagReview: { 111: { ESG: { answer: 'yes', status: '' } } } };
+  const paths = [];
+  const wholes = [];
+  const map = { EU: { answer: 'no', status: '' } };
+  saveTagReview({
+    cid: 222, map, settings,
+    updateSettings: u => wholes.push(u),
+    updateSettingsPath: u => paths.push(u),
+  });
+  eq(paths, [{ 'contactTagReview.222': map }], 'a path write carries just this contact');
+  eq(wholes.length, 0, 'and does not rewrite the whole map');
+
+  // Clearing the last answer removes the entry rather than storing {}.
+  paths.length = 0;
+  saveTagReview({ cid: 222, map: {}, settings, updateSettingsPath: u => paths.push(u) });
+  eq(paths, [{ 'contactTagReview.222': null }], 'an emptied record deletes the path');
+
+  // Callers without the path API still work, and keep the other contacts.
+  wholes.length = 0;
+  saveTagReview({ cid: 222, map, settings, updateSettings: u => wholes.push(u) });
+  eq(wholes, [{ contactTagReview: { 111: { ESG: { answer: 'yes', status: '' } }, 222: map } }],
+    'the fallback writes the whole map with the other contacts intact');
+
+  wholes.length = 0;
+  saveTagReview({ cid: null, map, settings, updateSettings: u => wholes.push(u) });
+  eq(wholes.length, 0, 'no contact id, no write');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
