@@ -20,6 +20,7 @@ import MASTER_ORDINANCES from '../data/masterOrdinances.js';
 import CITY_LOOKUP from '../data/complianceCityLookup.js';
 import { normalizeState } from './utilityRates.js';
 import { normalizeProvince } from '../data/naMarkets.js';
+import { countryRates, normalizeCountryRateName } from '../data/countryRates.js';
 
 export const CATEGORIES = ['bbs', 'audits', 'bps'];
 export const CATEGORY_LABEL = { bbs: 'BBS', audits: 'Energy Audits', bps: 'BPS' };
@@ -95,6 +96,35 @@ function regionsConflict(site, candidate) {
   return !!(site.state && candidate.state && site.state !== candidate.state);
 }
 
+// The reference is a US and Canadian one, so a site outside North America has
+// nothing in it to match. A bare city name is exactly where that went wrong:
+// there is a Brisbane in Queensland as well as the one in California, and a
+// London in Ontario as well as one in England. Neither an Australian state nor
+// an English county contradicts a US jurisdiction the way another US state
+// does, so the veto below never fired and an overseas site was screened
+// against a Californian benchmarking deadline.
+//
+// Country is the signal to read: the site list already resolves it (mapped
+// column, else derived from the zip / utility), where a State column reading
+// "Queensland" resolves to nothing at all.
+//
+// Only a country the reference table can place counts, the same way only a
+// positively disagreeing state vetoes a match. A blank Country — the common
+// case for a US portfolio whose upload has no such column — and a spelling the
+// table can't resolve both leave the match alone.
+// The reference table's own region name for the continent — the same value
+// siteRegion.js buckets its North America column on. Spelled here rather than
+// imported from there because this module is loaded by the Node test scripts,
+// and siteRegion's imports are extensionless (Vite-only).
+const NORTH_AMERICA_REGION = 'North America';
+
+export function countryOutsideNorthAmerica(country) {
+  const canonical = normalizeCountryRateName(String(country == null ? '' : country).trim());
+  if (!canonical) return false;
+  const region = countryRates(canonical)?.region;
+  return !!region && region !== NORTH_AMERICA_REGION;
+}
+
 // Resolve a city + state to a Government ID. Tries city+state (state may be an
 // abbreviation or full name — the lookup carries both), then city-only.
 //
@@ -108,10 +138,14 @@ function regionsConflict(site, candidate) {
 // candidate jurisdiction's positively disagree — a different country, or a
 // different state within the same one. A city+state hit is an explicit curated
 // mapping and is always trusted.
-export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = MASTER_ORDINANCES) {
+//
+// `country` outranks both steps: a site the country places outside North
+// America matches nothing, the curated city+state key included.
+export function lookupGovId(city, state, cityLookup = CITY_LOOKUP, ordinances = MASTER_ORDINANCES, country = '') {
   const c = String(city || '').trim();
   const s = String(state || '').trim();
   if (!c) return null;
+  if (countryOutsideNorthAmerica(country)) return null;
   const withState = cityLookup[normKey(c + s)];
   if (withState != null) return withState;
   const cityOnly = cityLookup[normKey(c)];
@@ -423,7 +457,7 @@ function evalCategory(category, mandate, site) {
 // Screen one site end-to-end. `site`: { id, siteName, city, state, sqft,
 // propertyType, electricUtility, gasUtility }. Never throws.
 export function screenSite(site, { ordinances = MASTER_ORDINANCES, cityLookup = CITY_LOOKUP } = {}) {
-  const govId = lookupGovId(site.city, site.state, cityLookup, ordinances);
+  const govId = lookupGovId(site.city, site.state, cityLookup, ordinances, site.country);
   const mandate = getMandates(govId, ordinances);
   if (!mandate) {
     return { ...site, matched: false, govId: govId || null, government: null };

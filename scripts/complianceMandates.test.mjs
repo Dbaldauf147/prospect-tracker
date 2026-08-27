@@ -1,7 +1,7 @@
 // Assertion tests for the Building Compliance Screening lookup. Plain Node.
 // Run:  node scripts/complianceMandates.test.mjs
 import {
-  lookupGovId, getMandates, screenSite, screenSites,
+  lookupGovId, getMandates, screenSite, screenSites, countryOutsideNorthAmerica,
   classifyPropertyType, eligibilityByOrdinance, totalEligible,
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
   buildComplianceRoadmap, auditRequirements, auditRequirementsLabel, categoryColumns,
@@ -67,6 +67,45 @@ eq(lookupGovId('Columbus', ''), 'US-OH-Columb-01', 'Columbus with no state uncha
 eq(lookupGovId('Columbus', 'Multiple'), 'US-OH-Columb-01', 'unresolvable state does not veto');
 // Washington DC is not Washington state.
 eq(lookupGovId('Seattle', 'DC'), null, 'Seattle,DC -> not Seattle WA');
+
+// --- the reference is North American ---------------------------------------
+// A site the Country column places outside North America matches nothing: the
+// reference carries US and Canadian jurisdictions only, and a foreign state
+// ("Queensland") never contradicted a US one the way another US state does.
+eq(lookupGovId('Brisbane', 'Queensland', undefined, undefined, 'Australia'), null,
+  'Brisbane,Queensland,Australia -> not Brisbane CA');
+eq(lookupGovId('London', '', undefined, undefined, 'United Kingdom'), null,
+  'London,UK -> not London ON');
+eq(lookupGovId('Cambridge', '', undefined, undefined, 'England'), null,
+  'Cambridge,England -> not Cambridge MA');
+// The veto outranks a curated city+state key too — a state that happens to
+// match cannot put a foreign site back on a US ordinance.
+eq(lookupGovId('Seattle', 'WA', undefined, undefined, 'Germany'), null,
+  'a foreign country vetoes even a city+state hit');
+// North American sites are untouched, Mexico and Greenland included.
+eq(lookupGovId('Brisbane', 'CA', undefined, undefined, 'United States'), 'US-CA-Brisba-01',
+  'Brisbane,CA,US still resolves');
+eq(lookupGovId('Toronto', 'ON', undefined, undefined, 'Canada'), 'CAN-ON-Toront-01',
+  'Toronto,ON,Canada still resolves');
+eq(lookupGovId('Seattle', 'WA', undefined, undefined, 'Mexico'), 'US-WA-Seattl-01',
+  'a North American country does not veto');
+// Same positive-disagreement rule as the state guard: a blank Country (the
+// common case for a US upload with no such column) and a spelling the country
+// table can't place both leave the match alone.
+eq(lookupGovId('Brisbane', 'CA', undefined, undefined, ''), 'US-CA-Brisba-01',
+  'blank country does not veto');
+eq(lookupGovId('Brisbane', 'CA', undefined, undefined, 'Freedonia'), 'US-CA-Brisba-01',
+  'unplaceable country does not veto');
+ok(countryOutsideNorthAmerica('Australia') === true, 'countryOutsideNorthAmerica(Australia)');
+ok(countryOutsideNorthAmerica('USA') === false, 'countryOutsideNorthAmerica(USA)');
+ok(countryOutsideNorthAmerica('') === false, 'countryOutsideNorthAmerica(blank)');
+// screenSite reads the site's own country, so the whole screening drops it.
+ok(screenSite({ id: 1, city: 'Brisbane', state: 'Queensland', country: 'Australia', sqft: 250000, propertyType: 'Office' }).matched === false,
+  'screenSite: an Australian Brisbane matches nothing');
+ok(screenSite({ id: 2, city: 'Brisbane', state: 'CA', country: 'United States', sqft: 250000, propertyType: 'Office' }).matched === true,
+  'screenSite: the Californian Brisbane still screens');
+ok(screenSite({ id: 3, city: 'Brisbane', state: 'CA', sqft: 250000, propertyType: 'Office' }).matched === true,
+  'screenSite: no Country column still screens');
 
 // --- benchmarking counts only mandatory programmes -------------------------
 // "Active/ Voluntary" benchmarking obliges nobody, so it must not screen as a
