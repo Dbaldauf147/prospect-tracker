@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { toISODate, formatDateDisplay } from '../../utils/isoDate';
+import { toISODate, formatDateDisplay, parseTypedDate } from '../../utils/isoDate';
 
 // Shared click-to-pick date cell. Renders the value as M/D/YYYY and opens a
 // calendar popup on click, storing the chosen day as ISO (YYYY-MM-DD) so it
@@ -14,7 +14,14 @@ import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 // its value changes, so paging to another month could land the cell on a date
 // the user never picked — they'd have to reopen the popup and try again. Here
 // month/year navigation is pure browsing: nothing is written until a day is
-// clicked, and Esc or a click outside leaves the stored value untouched.
+// clicked or a typed date is entered, and Esc or a click outside leaves the
+// stored value untouched.
+//
+// The popup also takes a typed date, because clicking back through the arrows
+// is the wrong tool for a date years away — and because most of these values
+// arrive by being read off a contract, where typing what it says beats
+// hunting for the day. The box is the focused control when the popup opens,
+// so a keyboard user never has to reach for the grid at all.
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const MONTHS = [
@@ -23,7 +30,11 @@ const MONTHS = [
 ];
 
 const POPUP_WIDTH = 250;
-const POPUP_HEIGHT = 292;
+// Header row + typed box + grid + footer, measured on the tallest case: a
+// month whose days span six rows. Only used to decide whether the popup fits
+// below the cell or has to flip above it, so it tracks the real panel height
+// — a figure left behind when the panel grows puts it half off-screen.
+const POPUP_HEIGHT = 326;
 
 // ISO (YYYY-MM-DD) → {y, m, d} in local time. Parsing the parts by hand
 // avoids Date.parse reading a bare ISO date as UTC and shifting the day.
@@ -60,15 +71,32 @@ function navStyle() {
 
 function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
   const ref = useRef(null);
-  const selected = isoParts(selectedIso);
+  const inputRef = useRef(null);
   const today = todayParts();
-  // The month the grid is showing. Seeded from the stored value (or today
-  // when the cell is blank) and then driven purely by the arrows — changing
-  // it never touches the cell.
-  const [view, setView] = useState(() => ({
+  // What's in the typed box. Seeded from the stored value in the same
+  // M/D/YYYY shape the cell shows, so the common edit — change the year,
+  // press Enter — is two keystrokes.
+  const [draft, setDraft] = useState(() => (selectedIso ? formatDateDisplay(selectedIso) : ''));
+  // '' means the box is empty (Enter would clear the cell), null means what's
+  // in it isn't a date yet. Only an ISO string is something to commit.
+  const typed = parseTypedDate(draft);
+  const typedIso = typed || '';
+  const typedInvalid = typed === null;
+
+  // The grid highlights the typed date the moment it parses, so a typed value
+  // is checked against a calendar before it is committed — 3/5 vs 5/3 is the
+  // mistake this catches.
+  const selected = isoParts(typedIso) || isoParts(selectedIso);
+  // The month the grid shows follows the typed box until the arrows are used,
+  // and follows them from there — typing again snaps it back, because the
+  // onChange below drops the browsed month. Derived rather than synced, so
+  // there is one answer to "which month is this" instead of two that can
+  // disagree. Either way, changing it never touches the cell.
+  const [browsed, setBrowsed] = useState(null);
+  const view = browsed || {
     y: selected ? selected.y : today.y,
     m: selected ? selected.m : today.m,
-  }));
+  };
 
   // Keep the popup on screen: flip above the cell when there isn't room
   // below, and pull it left when it would run off the right edge. Derived
@@ -89,9 +117,11 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
   }, [anchorRect]);
 
   useEffect(() => {
-    // Focus the panel so Esc reaches it and the keyboard isn't left on the
-    // cell behind the popup.
-    ref.current?.focus();
+    // Focus the typed box: it is the control most edits start in, and it
+    // keeps the keyboard off the cell behind the popup. Esc is handled on the
+    // document below, so it still reaches the popup from inside the input.
+    (inputRef.current || ref.current)?.focus();
+    inputRef.current?.select();
     function onDocMouseDown(e) {
       if (!ref.current?.contains(e.target)) onClose();
     }
@@ -112,10 +142,10 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
     };
   }, [onClose]);
 
-  const shiftMonth = (delta) => setView((v) => {
-    const next = new Date(v.y, v.m + delta, 1);
-    return { y: next.getFullYear(), m: next.getMonth() };
-  });
+  const shiftMonth = (delta) => {
+    const next = new Date(view.y, view.m + delta, 1);
+    setBrowsed({ y: next.getFullYear(), m: next.getMonth() });
+  };
 
   const leading = new Date(view.y, view.m, 1).getDay();
   const total = daysInMonth(view.y, view.m);
@@ -152,6 +182,43 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
         <button type="button" style={navStyle()} title="Next month" aria-label="Next month" onClick={() => shiftMonth(1)}>›</button>
         <button type="button" style={navStyle()} title="Next year" aria-label="Next year" onClick={() => shiftMonth(12)}>»</button>
       </div>
+
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        autoComplete="off"
+        placeholder="M/D/YYYY — or pick below"
+        aria-label="Type a date"
+        aria-invalid={typedInvalid || undefined}
+        title="Type a date and press Enter. A two-digit year and a missing year both fill in; Esc closes without changing the cell."
+        onChange={(e) => {
+          setDraft(e.target.value);
+          // Typing takes the grid back to the typed date, wherever the
+          // arrows had wandered off to.
+          setBrowsed(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          // Enter is the commit. An empty box clears the cell, the way the
+          // Clear button does; text that isn't a date does nothing at all,
+          // leaving the box red rather than writing a guess.
+          if (typedInvalid) return;
+          if (typedIso) onPick(typedIso); else onClear();
+        }}
+        style={{
+          width: '100%', boxSizing: 'border-box', marginBottom: 6,
+          padding: '3px 6px', borderRadius: 4,
+          border: `1px solid ${typedInvalid ? 'var(--color-danger, #DC2626)' : 'var(--color-border)'}`,
+          background: 'var(--color-surface)', color: 'var(--color-text)',
+          font: 'inherit', fontSize: '0.78rem', outline: 'none',
+          // The panel sets user-select: none so dragging across the day grid
+          // doesn't paint it blue; the box has to opt back in or its text
+          // can't be selected to be replaced.
+          userSelect: 'text',
+        }}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {WEEKDAYS.map(w => (
