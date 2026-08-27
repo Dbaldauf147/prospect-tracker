@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { toggleContactInEvents } from '../../utils/eventsStore';
+import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
 import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, NOTE_LINEBREAK } from '../../utils/nextSteps';
 import { loadCallRecord } from '../../utils/callRecordingsStore';
@@ -12341,10 +12342,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={saveContactInvitedToLouisville}
           contactTagReview={settings?.contactTagReview || {}}
-          onSaveTagReview={(cid, map) => {
-            if (cid == null) return;
-            updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
-          }}
+          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
           events={settings?.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
           companyContacts={(hubspotContacts || []).filter(c => {

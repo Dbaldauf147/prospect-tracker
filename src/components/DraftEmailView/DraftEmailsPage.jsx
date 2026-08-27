@@ -17,7 +17,7 @@ import { MarketUpdatesView } from './MarketUpdatesView';
 
 const TABS = ['drafts', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sitelists'];
 
-export function DraftEmailsPage({ prospects, settings, updateSettings, initialTab = 'drafts' }) {
+export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
   // Subject of a campaign the tracking tab asked to open. Cleared as soon as
   // the campaign view picks it up, so clicking the same campaign twice works.
@@ -58,7 +58,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, initialTa
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
-        <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+        <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />
       )}
       {tab === 'dansdrafts' && (
         <DansDraftsView settings={settings} updateSettings={updateSettings} />

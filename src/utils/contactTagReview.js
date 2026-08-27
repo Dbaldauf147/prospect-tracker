@@ -98,6 +98,34 @@ export function dedupeTags(list) {
   return out;
 }
 
+// The tag list a picker offers: the vocabulary, plus whatever spellings the
+// contacts themselves carry, with one tag showing once.
+//
+// The tags in this dataset are spelled several ways — "NAM only" beside
+// "NAM Only", "Efficiency/Renewables" beside "Efficiency / Renewables" — so a
+// list built by dropping raw values into a Set showed each spelling as its
+// own entry. In the contact popup's tag table that meant two rows for the one
+// tag: answering either left the other sitting blank, and both counted
+// against the Tagged % — the same tag asked twice.
+//
+// Collapsed on tagKey, with the vocabulary's spelling winning, so the row is
+// labelled (and written back to HubSpot) the way TAG_OPTIONS spells it while
+// still offering tags only the contacts know about.
+export function tagVocabulary(extra = [], tagOptions = TAG_OPTIONS) {
+  const seen = new Map();
+  for (const t of tagOptions) {
+    const name = String(t || '').trim();
+    if (name) seen.set(tagKey(name), name);
+  }
+  for (const raw of extra) {
+    const t = String(raw || '').trim();
+    if (!t) continue;
+    const k = tagKey(t);
+    if (!seen.has(k)) seen.set(k, t);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
 // What one contact's dans_tags string becomes under a bulk tag edit.
 //
 // `current` is the tag string HubSpot holds for that contact right now, or
@@ -275,6 +303,32 @@ export function withTagStatus(stored, status) {
 export function recordForVerdict(stored, verdict) {
   if (TAG_SALE_STATUSES.includes(verdict)) return withTagStatus(stored, verdict);
   return withTagAnswer(stored, verdict);
+}
+
+// Where one contact's tag records get saved.
+//
+// Path-based when the caller has updateSettingsPath. contactTagReview holds
+// a record for every contact anyone has ever answered a tag for, and the
+// popup saves on every single click — rewriting the whole map each time sent
+// all of it to Firestore per click, which is what made a run down the tag
+// table crawl and left later clicks queued behind earlier ones. A path write
+// sends just this contact's records, and can't stomp another contact's
+// records written on another device in the meantime.
+//
+// The whole-map write stays as the fallback for callers that don't have the
+// path API threaded down to them. An empty map removes the contact's entry
+// rather than storing `{}`.
+export function saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath }) {
+  if (cid == null) return;
+  const empty = !map || Object.keys(map).length === 0;
+  if (updateSettingsPath) {
+    updateSettingsPath({ [`contactTagReview.${cid}`]: empty ? null : map });
+    return;
+  }
+  if (!updateSettings) return;
+  const next = { ...(settings?.contactTagReview || {}) };
+  if (empty) delete next[cid]; else next[cid] = map;
+  updateSettings({ contactTagReview: next });
 }
 
 export function contactTagList(contact) {

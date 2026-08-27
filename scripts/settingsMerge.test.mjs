@@ -1,7 +1,7 @@
 // Assertion tests for the cross-device settings merge. Plain Node — no
 // test framework (the project has none). Run:
 //   node scripts/settingsMerge.test.mjs
-import { autoMergeValue, mergeTablePrefs, mergeSettingsKey } from '../src/utils/settingsMerge.js';
+import { autoMergeValue, mergeTablePrefs, mergeSettingsKey, foldWriteResult } from '../src/utils/settingsMerge.js';
 
 let passed = 0, failed = 0;
 // Key order is an artifact of which side seeded the spread, not part of
@@ -94,6 +94,37 @@ eq(
   { check: { days: [1] } },
   'mergeSettingsKey passes the key through for snapshot arrays',
 );
+
+// --- A click made while a save was in flight is not undone by it -------
+// The regression this was added for: the contact popup's tag table saves on
+// every click, each save takes a round trip, and the completed save used to
+// rebuild local state from the snapshot it had STARTED with — so a tag
+// answered while the previous save was in the air quietly un-answered itself
+// a second later.
+{
+  const beforeSave = { contactTagReview: { 1: { ESG: 'yes' } }, theme: 'dark' };
+  // The write goes out, then the user answers another tag.
+  const nowHolding = { contactTagReview: { 1: { ESG: 'yes' }, 2: { EU: 'no' } }, theme: 'dark' };
+  const folded = foldWriteResult(beforeSave, beforeSave, nowHolding);
+  eq(folded.contactTagReview, nowHolding.contactTagReview,
+    'the answer clicked mid-save survives the save settling');
+  eq(folded.theme, 'dark', 'untouched keys are left alone');
+}
+{
+  // A key the write itself carried, plus a remote change to another key:
+  // both land, and neither wipes the other.
+  const snapshot = { a: 1, b: 1 };
+  const current = { a: 1, b: 1 };
+  const base = { a: 2, b: 1, c: 'from-other-device' };
+  eq(foldWriteResult(base, snapshot, current), { a: 2, b: 1, c: 'from-other-device' },
+    'with nothing changed mid-write, the write result stands');
+}
+{
+  // _lastWriteAt is the caller's to stamp — never carried over from the
+  // in-flight local state, which holds the PREVIOUS write's timestamp.
+  const folded = foldWriteResult({ x: 1, _lastWriteAt: 20 }, { _lastWriteAt: 5 }, { x: 1, _lastWriteAt: 10 });
+  eq(folded._lastWriteAt, 20, 'the write\'s own timestamp survives the fold');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

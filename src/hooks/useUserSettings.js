@@ -1,11 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
-import { autoMergeValue, mergeSettingsKey } from '../utils/settingsMerge';
+import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
 // plain nested object, creating intermediate objects as needed.
+// A copy of `obj` with one dotted path set, sharing every subtree the path
+// doesn't touch.
+//
+// The optimistic state a path save shows used to be a structuredClone of the
+// whole settings document — a deep copy of everything the user has, on the
+// main thread, for a one-key change. That is per save, and the contact
+// popup's tag table saves on every click.
+function withDottedPath(obj, path, value) {
+  const parts = path.split('.');
+  const root = { ...(obj && typeof obj === 'object' ? obj : {}) };
+  let cur = root;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    const child = cur[part];
+    cur[part] = (child && typeof child === 'object' && !Array.isArray(child)) ? { ...child } : {};
+    cur = cur[part];
+  }
+  const last = parts[parts.length - 1];
+  if (value == null) delete cur[last]; else cur[last] = value;
+  return root;
+}
+
 function setDottedPath(obj, path, value) {
   const parts = path.split('.');
   let cur = obj;
@@ -125,12 +147,22 @@ export function useUserSettings(user) {
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
         written = mergedUpdates;
         writtenAt = forced.writtenAt;
-        const merged = { ...remote, ...mergedUpdates, _lastWriteAt: forced.writtenAt };
+        const merged = foldWriteResult(
+          { ...remote, ...mergedUpdates },
+          optimistic,
+          settingsRef.current,
+        );
+        merged._lastWriteAt = forced.writtenAt;
         settingsRef.current = merged;
         setSettings(merged);
       } else {
         writtenAt = result.writtenAt;
-        const next = { ...optimistic, _lastWriteAt: result.writtenAt };
+        // Folded into whatever is current rather than replayed from
+        // `optimistic`: edits made while this write was in the air are newer
+        // than anything it can say, and rebuilding from the pre-write
+        // snapshot silently undid them on screen.
+        const next = foldWriteResult(optimistic, optimistic, settingsRef.current);
+        next._lastWriteAt = result.writtenAt;
         settingsRef.current = next;
         setSettings(next);
         console.log('Settings saved to Firestore:', Object.keys(updates));
@@ -146,7 +178,7 @@ export function useUserSettings(user) {
         // A remote snapshot landed mid-write. Take it as the new base
         // (the other device's changes) and overlay the keys we just
         // wrote, so neither side's change is dropped.
-        const next = { ...pending, ...written };
+        const next = foldWriteResult({ ...pending, ...written }, optimistic, settingsRef.current);
         const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
         if (at) next._lastWriteAt = at;
         settingsRef.current = next;
@@ -171,9 +203,9 @@ export function useUserSettings(user) {
     const expectedAt = prev._lastWriteAt || null;
 
     // Build optimistic local state by walking each path.
-    const optimistic = structuredClone(prev);
+    let optimistic = prev;
     for (const [path, value] of Object.entries(pathUpdates)) {
-      setDottedPath(optimistic, path, value);
+      optimistic = withDottedPath(optimistic, path, value);
     }
     if (refuseIfOverBudget(optimistic)) return;
     settingsRef.current = optimistic;
@@ -221,16 +253,20 @@ export function useUserSettings(user) {
         writtenAt = forced.writtenAt;
         // Rebuild local state: take the freshest remote, then apply
         // our merged path writes on top.
-        const next = structuredClone(remote);
+        const rebuilt = structuredClone(remote);
         for (const [path, value] of Object.entries(mergedPathUpdates)) {
-          setDottedPath(next, path, value);
+          setDottedPath(rebuilt, path, value);
         }
+        const next = foldWriteResult(rebuilt, optimistic, settingsRef.current);
         next._lastWriteAt = forced.writtenAt;
         settingsRef.current = next;
         setSettings(next);
       } else {
         writtenAt = result.writtenAt;
-        const next = { ...optimistic, _lastWriteAt: result.writtenAt };
+        // Same as updateSettings: a path written while this one was in
+        // flight is newer than this write's snapshot of the document.
+        const next = foldWriteResult(optimistic, optimistic, settingsRef.current);
+        next._lastWriteAt = result.writtenAt;
         settingsRef.current = next;
         setSettings(next);
       }
@@ -245,10 +281,11 @@ export function useUserSettings(user) {
         // A remote snapshot landed mid-write. Take it as the new base
         // (the other device's changes) and overlay the paths we just
         // wrote, so neither side's change is dropped.
-        const next = structuredClone(pending);
+        const rebuilt = structuredClone(pending);
         for (const [path, value] of Object.entries(written)) {
-          setDottedPath(next, path, value);
+          setDottedPath(rebuilt, path, value);
         }
+        const next = foldWriteResult(rebuilt, optimistic, settingsRef.current);
         const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
         if (at) next._lastWriteAt = at;
         settingsRef.current = next;

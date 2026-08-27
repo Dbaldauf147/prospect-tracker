@@ -9,6 +9,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { saveTagReview } from '../../utils/contactTagReview';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
@@ -997,7 +998,7 @@ const SELF_RECIPIENT = Object.freeze({
   company: '',
 });
 
-export function DraftEmailView({ prospects, settings, updateSettings }) {
+export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath }) {
   const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
@@ -2754,10 +2755,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
           }}
           contactTagReview={settings?.contactTagReview || {}}
-          onSaveTagReview={(cid, map) => {
-            if (cid == null) return;
-            updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
-          }}
+          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
           companyContacts={editCompanyContacts}
           emailDomains={editEmailDomains}
           companyNames={editCompanyNames}

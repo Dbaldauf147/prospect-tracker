@@ -102,3 +102,29 @@ export function mergeTablePrefs(ours, remote) {
 export function mergeSettingsKey(key, ours, remote) {
   return key === 'tablePrefs' ? mergeTablePrefs(ours, remote) : autoMergeValue(ours, remote, key);
 }
+
+// Fold a finished write's result into the state the app holds NOW.
+//
+// A save takes a Firestore round trip and the user keeps working during it.
+// Rebuilding local state from the snapshot taken BEFORE that round trip threw
+// away everything they did while it was in flight — which is how an answer
+// clicked on the contact popup's tag table while the previous click was still
+// saving un-clicked itself a second later.
+//
+//   base      what this write says the document now holds
+//   snapshot  the state this write started from
+//   current   what the app is holding at the moment the write settles
+//
+// A key whose current value has moved on from the snapshot was changed after
+// this write began, so the newer value wins: its own save is already on its
+// way, and this one has nothing newer to say about it. Everything else comes
+// from `base`, so a remote change folded in by the caller still lands.
+export function foldWriteResult(base, snapshot, current) {
+  const next = { ...base };
+  const was = snapshot || {};
+  for (const [k, v] of Object.entries(current || {})) {
+    if (k === '_lastWriteAt') continue;
+    if (v !== was[k]) next[k] = v;
+  }
+  return next;
+}

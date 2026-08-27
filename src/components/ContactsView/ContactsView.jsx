@@ -50,6 +50,7 @@ export function ContactsView({
   cdmName,
   settings,
   updateSettings,
+  updateSettingsPath,
   targetAccountsData,
   onNavigate,
 }) {
@@ -166,6 +167,7 @@ export function ContactsView({
             prospects={prospects}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             onAddProspect={onAddProspect}
             onSelectProspect={onSelectProspect}
             targetAccountsData={targetAccountsData}
@@ -178,6 +180,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}
@@ -187,6 +190,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}
@@ -196,6 +200,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}
@@ -205,6 +210,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}
@@ -214,6 +220,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}
@@ -223,6 +230,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             cdmName={cdmName}
           />
         )}

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview } from '../../utils/contactTagReview';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -768,16 +768,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     partner: savedFamily.partner || '',
     kids: savedFamily.kids || '',
   });
-  // Checked state for the 5 known tags
-  const [checkedTags, setCheckedTags] = useState(() =>
-    new Set(parsedTags.filter(t => knownTagKeys.has(tagKey(t))).map(t => {
-      // Normalise to the option's own spelling, so saving converges the
-      // duplicates rather than preserving both — the same rewrite the API
-      // performs when HubSpot refuses a spelling it already holds under
-      // another (see reconcileDansTags).
-      return visibleTagOptions.find(o => tagKey(o) === tagKey(t)) || t;
-    }))
-  );
+  // The checked set a dans_tags string implies. Every tag is normalised to
+  // the option's own spelling, so saving converges the duplicates rather
+  // than preserving both — the same rewrite the API performs when HubSpot
+  // refuses a spelling it already holds under another (see
+  // reconcileDansTags). Shared by the seed below, the re-seed effect and the
+  // rollback, so all three read a tag string the same way.
+  function checkedTagsFrom(str) {
+    return new Set(
+      String(str || '').split(';').map(t => t.trim()).filter(Boolean)
+        .map(t => visibleTagOptions.find(o => tagKey(o) === tagKey(t)))
+        .filter(Boolean),
+    );
+  }
+  // Checked state for the known tags
+  const [checkedTags, setCheckedTags] = useState(() => checkedTagsFrom(rawTags));
   // "Met In Person" is its own checkbox, stored locally (never in HubSpot).
   // Prefer the saved local value; for contacts that haven't been touched
   // yet, fall back to the legacy HubSpot tag so anyone already tagged shows
@@ -818,17 +823,20 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // "Efficiency / Renewables" — has to resolve to the option it IS, or this
   // drops it: the row reads as untagged however plainly HubSpot has it, and
   // the next save from this popup writes the tag list without it.
+  //
+  // The in-flight guard is what keeps a fast run down the table honest.
+  // Every click saves the WHOLE tag list, and each save hands the new list
+  // back through the contact prop as it lands — so a click made while the
+  // previous save was still in the air used to be wiped off screen the
+  // moment that older list arrived, and only came back when its own save
+  // landed a second later. That flicker is the "it unrecorded what I just
+  // clicked": while this popup has writes outstanding, its own state is the
+  // newer one.
   useEffect(() => {
-    const canonical = new Map(
-      tagOptions
-        .filter(t => t.toLowerCase() !== MET_IN_PERSON_TAG.toLowerCase())
-        .map(t => [tagKey(t), t]),
-    );
-    setCheckedTags(new Set(
-      rawTags.split(';').map(t => t.trim()).filter(Boolean)
-        .map(t => canonical.get(tagKey(t)))
-        .filter(Boolean),
-    ));
+    if (tagWritesPendingRef.current > 0) return;
+    savedTagsRef.current = rawTags;
+    setCheckedTags(checkedTagsFrom(rawTags));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawTags, tagOptions]);
   const savedTagReview = metCid != null ? contactTagReview[metCid] : undefined;
   useEffect(() => {
@@ -1067,6 +1075,37 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return [...set, ...extraTags].join(';');
   }
 
+  // Tag writes, one at a time and only the latest.
+  //
+  // dans_tags is a single string, so every click sends the WHOLE list. Fired
+  // in parallel, four quick clicks were four overlapping whole-list writes
+  // whose order HubSpot decides — and whichever landed last won, which is
+  // how an answer clicked third could end up not recorded at all. They now
+  // queue behind each other, and a write that a later click has already
+  // superseded is dropped rather than sent: clicking five tags in a row
+  // costs one or two round trips instead of five.
+  //
+  // The queue is refs rather than state on purpose — a click has to see what
+  // the click before it did without waiting for a render.
+  const tagWriteChainRef = useRef(Promise.resolve());
+  const tagWritesPendingRef = useRef(0);
+  const latestTagsRef = useRef(null);
+  // The last tag string HubSpot accepted, so a refused write can put the
+  // table back to what is actually saved rather than to a guess.
+  const savedTagsRef = useRef(rawTags);
+  function queueDansTags(tagsStr) {
+    latestTagsRef.current = tagsStr;
+    tagWritesPendingRef.current += 1;
+    const run = tagWriteChainRef.current
+      .catch(() => {})
+      // Superseded by a later click while we waited our turn: that click's
+      // write carries this one's tags too, so sending this is pure latency.
+      .then(() => (latestTagsRef.current === tagsStr ? persistDansTags(tagsStr) : true));
+    tagWriteChainRef.current = run.catch(() => {});
+    const settle = (ok) => { tagWritesPendingRef.current -= 1; return ok; };
+    return run.then(settle, () => settle(false));
+  }
+
   // Returns true when HubSpot took the tags, false when it refused them —
   // the caller uses that to undo the checkbox it flipped optimistically.
   async function persistDansTags(tagsStr) {
@@ -1088,6 +1127,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
         });
       } catch {}
+      savedTagsRef.current = tagsStr;
       onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
@@ -1110,6 +1150,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return findTagRecord(tagVerdicts, tag);
   }
 
+  // Mirrors of the two tag states, refreshed every render, so a click can
+  // read what the click before it wrote instead of the value React has yet
+  // to re-render with. Write through applyCheckedTags / applyTagVerdicts so
+  // the ref and the state can't disagree.
+  const checkedTagsRef = useRef(checkedTags);
+  checkedTagsRef.current = checkedTags;
+  const tagVerdictsRef = useRef(tagVerdicts);
+  tagVerdictsRef.current = tagVerdicts;
+  function applyCheckedTags(set) {
+    checkedTagsRef.current = set;
+    setCheckedTags(set);
+  }
+  function applyTagVerdicts(map) {
+    tagVerdictsRef.current = map;
+    setTagVerdicts(map);
+  }
+
   // Set one half of a tag's record — the answer (Yes / No / Not sure) or the
   // sale status (Sold / Not sold). The two are independent, so setting one
   // leaves the other alone: a contact can be Yes and Not sold at once, which
@@ -1121,43 +1178,47 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // their account buys. Everything else is local, because an absent tag
   // means "doesn't apply", "haven't looked", "don't know" and "holding off"
   // all at once. Clicking the current choice again clears that half.
+  //
+  // Both halves of the state are read off refs rather than off this render's
+  // values: clicking two tags in the same beat used to have the second click
+  // build its tag list from the state the first had not yet rendered, so the
+  // first tag was dropped from the list the second click saved.
   function updateTagRecord(tag, apply) {
     // Built from the resolved state rather than the raw record, so a value
     // the tag has since contradicted can't leak back in through an edit.
-    const current = tagStateFrom(checkedTags.has(tag), verdictFor(tag));
+    const tagsNow = checkedTagsRef.current;
+    const current = tagStateFrom(tagsNow.has(tag), findTagRecord(tagVerdictsRef.current, tag));
     const next = apply(current);
     const shouldBeTagged = recordKeepsTag(next);
-    if (shouldBeTagged !== checkedTags.has(tag)) {
-      const set = new Set(checkedTags);
+    if (shouldBeTagged !== tagsNow.has(tag)) {
+      const set = new Set(tagsNow);
       if (shouldBeTagged) set.add(tag); else set.delete(tag);
-      setCheckedTags(set);
+      applyCheckedTags(set);
       // The tag is shown on (or off) before HubSpot has agreed, so the row
       // answers instantly. If HubSpot refuses the write, put it back: a tag
       // this popup believes in but the saved record doesn't have is exactly
       // how the header's Tagged % ends up ahead of the table's, which reads
       // the saved record. The failure is already on screen next to the Tags
       // label; this stops the count claiming the write landed.
-      persistDansTags(buildTagsStringFrom(set)).then(ok => {
+      //
+      // Rolled back to the last list HubSpot accepted rather than by undoing
+      // this one tag: writes are coalesced, so a refused one may have been
+      // carrying several clicks' worth of tags.
+      queueDansTags(buildTagsStringFrom(set)).then(ok => {
         if (ok) return;
-        setCheckedTags(prev => {
-          const back = new Set(prev);
-          if (shouldBeTagged) back.delete(tag); else back.add(tag);
-          return back;
-        });
+        applyCheckedTags(checkedTagsFrom(savedTagsRef.current));
       });
     }
-    setTagVerdicts(prev => {
-      const map = { ...prev };
-      // Drop any record saved under another spelling of this tag, so an edit
-      // replaces it rather than leaving two records for the one tag.
-      const k = tagKey(tag);
-      for (const key of Object.keys(map)) if (key !== tag && tagKey(key) === k) delete map[key];
-      if (next.answer || next.status) map[tag] = { answer: next.answer, status: next.status };
-      else delete map[tag];
-      const cid = contact.id || contact.vid;
-      if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
-      return map;
-    });
+    const map = { ...tagVerdictsRef.current };
+    // Drop any record saved under another spelling of this tag, so an edit
+    // replaces it rather than leaving two records for the one tag.
+    const k = tagKey(tag);
+    for (const key of Object.keys(map)) if (key !== tag && tagKey(key) === k) delete map[key];
+    if (next.answer || next.status) map[tag] = { answer: next.answer, status: next.status };
+    else delete map[tag];
+    applyTagVerdicts(map);
+    const cid = contact.id || contact.vid;
+    if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
   }
 
   function setTagAnswer(tag, answer) {
@@ -4138,21 +4199,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return targetAccountTierMap.get(targetAccount.toLowerCase()) || '';
   }, [targetAccountTierMap]);
 
-  // Collect all unique tags across all HubSpot contacts for the dropdown
+  // Collect all unique tags across all HubSpot contacts for the dropdown.
+  //
+  // tagVocabulary collapses the spellings: this dataset carries "NAM only"
+  // beside "NAM Only" and "Efficiency/Renewables" beside its spaced twin, and
+  // the plain Set this used to be offered each of them separately — which the
+  // popup's tag table then drew as two rows for the one tag.
   const allTagOptions = useMemo(() => {
-    const tagSet = new Set();
+    const fromContacts = [];
     for (const c of hubspotContacts) {
       const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-      raw.split(';').map(t => t.trim()).filter(Boolean).forEach(t => {
-        // Canonicalize on the spaced version "Efficiency / Renewables";
-        // drop the no-space variant so we don't show both in the picker.
-        if (t.toLowerCase().replace(/\s+/g, '') === 'efficiency/renewables') return;
-        tagSet.add(t);
-      });
+      for (const t of raw.split(';')) fromContacts.push(t);
     }
-    // Always include the canonical bucket tags
-    TAG_OPTIONS.forEach(t => tagSet.add(t));
-    return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return tagVocabulary(fromContacts);
   }, [hubspotContacts]);
 
   // CDM options for the searchable dropdown, driven by the "CDM"
@@ -10103,8 +10162,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           const tagsList = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
           function setTagsList(arr) { setBulkValue(arr.join(';')); }
           function toggleTag(t) {
-            const lower = t.toLowerCase();
-            if (tagsList.some(x => x.toLowerCase() === lower)) setTagsList(tagsList.filter(x => x.toLowerCase() !== lower));
+            // Matched on tagKey, so clicking a chip clears the tag whichever
+            // spelling the typed list holds it under.
+            const k = tagKey(t);
+            if (tagsList.some(x => tagKey(x) === k)) setTagsList(tagsList.filter(x => tagKey(x) !== k));
             else setTagsList([...tagsList, t]);
           }
           return (
@@ -10161,8 +10222,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                       <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>Tags</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                        {[...new Set([...TAG_OPTIONS, ...BUCKETS.map(b => b.label), ...tagsList])].map(t => {
-                          const active = tagsList.some(x => x.toLowerCase() === t.toLowerCase());
+                        {tagVocabulary([...BUCKETS.map(b => b.label), ...tagsList]).map(t => {
+                          const active = tagsList.some(x => tagKey(x) === tagKey(t));
                           return (
                             <button
                               key={t}
@@ -10267,10 +10328,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
           contactTagReview={settings.contactTagReview || {}}
-          onSaveTagReview={(cid, map) => {
-            if (cid == null) return;
-            updateSettings({ contactTagReview: { ...(settings.contactTagReview || {}), [cid]: map } });
-          }}
+          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
           companyContacts={companyContacts}

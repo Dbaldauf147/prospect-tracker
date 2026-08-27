@@ -51,7 +51,7 @@ function companiesMatch(a, b) {
   return false;
 }
 
-export function ClientContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
+export function ClientContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   // Only the logged-in user's clients. Mirrors how ClientsView scopes
   // its list — `matchesCdm` handles "Dan Baldauf" / "Baldauf, Dan" /
   // "D. Baldauf" / "Dan B" variants. Without a configured cdmName we
@@ -219,6 +219,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      updateSettingsPath={updateSettingsPath}
       cdmName={cdmName}
       storagePrefix="client-contacts"
       pageTitle="Client Contacts"

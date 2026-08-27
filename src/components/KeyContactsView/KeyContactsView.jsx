@@ -8,7 +8,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
-import { tagReviewScore, TAG_OPTIONS, recordForVerdict, sameTagRecord, recordKeepsTag, tagKey, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
+import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
@@ -510,6 +510,7 @@ function KeyContactsViewInner({
   cdmName = '',
   settings = {},
   updateSettings = () => {},
+  updateSettingsPath = null,
   storagePrefix = 'key-contacts',
   pageTitle = 'Key Contacts',
   pageSubtitle = (
@@ -1863,20 +1864,17 @@ function KeyContactsViewInner({
   // a tag already in HubSpot keeps the spelling HubSpot has and only a
   // genuinely new tag shows the app's.
   const dansTagOptions = useMemo(() => {
-    const seen = new Map(); // collapsed key → spelling to show
-    const add = (raw) => {
-      const t = String(raw || '').trim();
-      if (!t) return;
-      const k = tagKey(t);
-      if (!seen.has(k)) seen.set(k, t);
-    };
+    // Collapsed by tagVocabulary, so one tag is one option however the
+    // contacts spell it — and the vocabulary's spelling is the one shown, so
+    // a tag applied from here lands in HubSpot spelled the way the contact
+    // popup spells it rather than adding a second variant to the pile.
+    const fromContacts = [];
     for (const c of (hubspotCache?.contacts || [])) {
       const v = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
       if (!v) continue;
-      for (const part of String(v).split(';')) add(part);
+      for (const part of String(v).split(';')) fromContacts.push(part);
     }
-    for (const t of TAG_OPTIONS) add(t);
-    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+    return tagVocabulary(fromContacts);
   }, [hubspotCache]);
 
   // Activity cache (emails / calls / meetings) populated by the
@@ -4736,10 +4734,7 @@ function KeyContactsViewInner({
               updateSettings({ contactInvitedToLouisville: { ...current, [contactId]: !!invited } });
             }}
             contactTagReview={settings?.contactTagReview || {}}
-            onSaveTagReview={(cid, map) => {
-              if (cid == null) return;
-              updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
-            }}
+            onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}

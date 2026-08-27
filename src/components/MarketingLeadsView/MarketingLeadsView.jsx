@@ -12,6 +12,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 import { addQueuedLeads } from '../../utils/draftLeadsQueue';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { saveTagReview } from '../../utils/contactTagReview';
 import {
   LEAD_PASTE_TARGETS as PASTE_TARGETS,
   autoDetectLeadMapping as autoDetectMapping,
@@ -409,7 +410,7 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
   );
 });
 
-export function MarketingLeadsView({ prospects = [], settings, updateSettings, onAddProspect, onSelectProspect, targetAccountsData, onNavigate }) {
+export function MarketingLeadsView({ prospects = [], settings, updateSettings, updateSettingsPath, onAddProspect, onSelectProspect, targetAccountsData, onNavigate }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     return arr.map(r => {
@@ -2730,10 +2731,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, o
             updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
           }}
           contactTagReview={settings?.contactTagReview || {}}
-          onSaveTagReview={(cid, map) => {
-            if (cid == null) return;
-            updateSettings({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
-          }}
+          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
           companyContacts={editCompanyContacts}
           emailDomains={editEmailDomains}
           companyNames={editCompanyNames}
