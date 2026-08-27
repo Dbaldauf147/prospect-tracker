@@ -5,8 +5,8 @@ import { withCompanyOverride } from '../utils/contactCompanyOverride';
 //
 // The popup edits two kinds of field. The HubSpot ones it pushes itself; the
 // rest — notes, nickname, team name, old emails, reports-to, cc/to-also, the
-// family fields, met-in-person, invited-to-Louisville, and the per-tag review
-// verdicts — HubSpot has nowhere to put, so they live in the user's settings
+// family fields, met-in-person, invited-to-Louisville, champion/detractor,
+// and the per-tag review verdicts — HubSpot has nowhere to put, so they live in the user's settings
 // under one map apiece, and every page that opens the popup has to hand it
 // both the map and the writer for it.
 //
@@ -86,6 +86,10 @@ export function useContactEditSettings({ settings, updateSettings }) {
         if (cid == null) return;
         updateSettings?.({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
       },
+      // Champion / detractor. Neutral is the empty value, and saveMap's
+      // "blank means remove the key" is exactly that.
+      contactSentiment: settings?.contactSentiment || {},
+      onSaveSentiment: (cid, v) => saveMap('contactSentiment', cid, v),
       contactTagReview: settings?.contactTagReview || {},
       onSaveTagReview: (cid, map) => {
         if (cid == null) return;

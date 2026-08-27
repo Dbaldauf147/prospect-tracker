@@ -2753,6 +2753,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             if (cid == null) return;
             updateSettings({ contactInvitedToLouisville: { ...(settings?.contactInvitedToLouisville || {}), [cid]: !!invited } });
           }}
+          contactSentiment={settings?.contactSentiment || {}}
+          onSaveSentiment={(cid, v) => {
+            if (cid == null) return;
+            const next = { ...(settings?.contactSentiment || {}) };
+            if (v) next[cid] = v; else delete next[cid];
+            updateSettings({ contactSentiment: next });
+          }}
           contactTagReview={settings?.contactTagReview || {}}
           onSaveTagReview={(cid, map) => {
             if (cid == null) return;
