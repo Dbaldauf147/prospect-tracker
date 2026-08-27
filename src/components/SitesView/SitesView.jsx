@@ -12892,6 +12892,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           kwhModelled: kwh != null && !!r.__kwhFromEstimate__,
           thermsModelled: therms != null && !!r.__thermsFromEstimate__,
         },
+        // Where that consumption sits, in the same 'ST / Prov / Country'
+        // spelling the Site Detail sheet uses: the 2-letter code in the US
+        // and Canada, the country name everywhere else.
+        state: r.__stateProvinceDisplay__ || r.__state__ || '',
       };
     });
   }
