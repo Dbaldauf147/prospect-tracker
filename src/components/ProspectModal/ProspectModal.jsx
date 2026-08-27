@@ -8000,7 +8000,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       {hiddenCount} hidden service{hiddenCount !== 1 ? 's' : ''}
                     </div>
                   )}
-                  <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
+                  {/* Fewer, wider boxes per row.
+                      Each service row spends a fixed ~150px on its pencil,
+                      SME chip and status control, so at the 200px columns
+                      this used to lay out in the name was left about 80px —
+                      not enough to tell "Invoice recalculation - light" from
+                      "Invoice recalculation", and 57 of the 143 names came
+                      out ellipsized. A 320px minimum leaves the name ~170px,
+                      and since the columns stretch past the minimum it
+                      measures wider than that in practice: none of the 143
+                      is clipped at either a 1280px or an 1830px window.
+                      The trade is height, so the panel grows on a tall
+                      screen rather than scrolling twice as far in 500px. */}
+                  <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.4rem', maxHeight: 'max(500px, 60vh)', overflowY: 'auto', padding: '0.15rem' }}>
                   {/* Names already assigned as an SME on this card, offered
                       as suggestions on every SME box below. */}
                   <datalist id="service-sme-names">
@@ -8137,7 +8149,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   </span>
                                   {/* SME — the Schneider contact who owns this
                                       service. The service boxes sit in a
-                                      multi-column grid (~235px a row), so this
+                                      multi-column grid (~320px a row), so this
                                       is a compact chip rather than a text box;
                                       a full input here squeezed the service
                                       name down to ~45px. Click to edit below. */}
