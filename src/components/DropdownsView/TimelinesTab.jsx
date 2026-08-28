@@ -32,7 +32,7 @@ import {
 import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import {
-  stageTableColumns, resolveStageTableColumns,
+  stageTableColumnsForMode, resolveStageTableColumns,
   loadStageTableLayout, saveStageTableLayout,
   STAGE_TABLE_LAYOUT_EVENT, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH,
 } from '../../utils/stageTableColumns';
@@ -258,16 +258,17 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
             </select>
           </td>
   );
+  // Only rendered when the chart is positioned by dates —
+  // stageTableColumnsForMode drops this column under month numbers rather than
+  // leaving two dead date pickers greyed out in every row.
   cells.range = (
-          <td key="range" className={`${styles.stageDatesCell} ${byDates ? '' : styles.inactiveCell}`}>
+          <td key="range" className={styles.stageDatesCell}>
             <input
               type="date"
               className={styles.dateInput}
               value={range?.start || ''}
               onChange={(e) => onChange({ ...stage, start: e.target.value })}
-              title={byDates
-                ? 'Start date: drives where this step sits on the chart'
-                : 'Start date (the chart is positioned by month numbers)'}
+              title="Start date: drives where this step sits on the chart"
             />
             <span className={styles.dateSep}>→</span>
             <input
@@ -275,9 +276,7 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
               className={styles.dateInput}
               value={range?.end || ''}
               onChange={(e) => onChange({ ...stage, end: e.target.value })}
-              title={byDates
-                ? 'End date: drives how wide the bar is'
-                : 'End date (the chart is positioned by month numbers)'}
+              title="End date: drives how wide the bar is"
             />
             {auto && (
               <span className={styles.autoTag} title="Read from the Timing column. Pick a date to override; clear it to go back to automatic.">auto</span>
@@ -486,9 +485,9 @@ function StageHeadCell({ column, label, title, className, onResize, onResizeEnd 
 
 // "Columns" menu: a checkbox per hideable column. Closes on Escape or a click
 // outside, like the other popovers on this page.
-function ColumnPicker({ format, layout, onChange }) {
+function ColumnPicker({ format, mode, layout, onChange }) {
   const [open, setOpen] = useState(false);
-  const all = stageTableColumns(format);
+  const all = stageTableColumnsForMode(format, mode);
   const hideable = all.filter(c => !c.fixed);
   const hiddenCount = hideable.filter(c => layout.hidden[c.key]).length;
 
@@ -792,10 +791,10 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
   // table tracks the pointer without a storage write per frame.
   const [dragWidth, setDragWidth] = useState(null);
   const columns = useMemo(() => {
-    const resolved = resolveStageTableColumns(format, layout);
+    const resolved = resolveStageTableColumns(format, layout, mode);
     if (!dragWidth) return resolved;
     return resolved.map(c => (c.key === dragWidth.key ? { ...c, width: dragWidth.width } : c));
-  }, [format, layout, dragWidth]);
+  }, [format, layout, mode, dragWidth]);
   const totalColumnWidth = columns.reduce((sum, c) => sum + c.width, 0);
 
   const resizeColumn = (key, width) => setDragWidth({ key, width });
@@ -1050,7 +1049,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
       )}
 
       <div className={styles.stageTableTools}>
-        <ColumnPicker format={format} layout={layout} onChange={setLayout} />
+        <ColumnPicker format={format} mode={mode} layout={layout} onChange={setLayout} />
       </div>
 
       <div className={styles.timelineTableWrap}>
