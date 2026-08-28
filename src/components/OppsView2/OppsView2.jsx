@@ -43,6 +43,7 @@ import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
+import { NotSoldAnalysis } from './NotSoldAnalysis';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -11599,12 +11600,6 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       render: (row) => <TopReasonCell reasons={row.soldReasons} />,
     },
     {
-      key: 'topReasonNotSold',
-      label: 'Top Reason Not Sold',
-      defaultWidth: 200,
-      render: (row) => <TopReasonCell reasons={row.notSoldReasons} />,
-    },
-    {
       key: 'percent',
       label: '% of Total',
       defaultWidth: 220,
@@ -12318,6 +12313,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onClick={() => setActiveTab('bySource')}
         >By Source</button>
         <button
+          className={activeTab === 'notSold' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('notSold')}
+        >Not Sold Analysis</button>
+        <button
           className={activeTab === 'stageDays' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageDays')}
         >Days in Stage</button>
@@ -12687,6 +12686,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             updateSettings={updateSettings}
           />
         </>
+      )}
+
+      {activeTab === 'notSold' && (
+        <NotSoldAnalysis
+          records={records}
+          settings={settings}
+          updateSettings={updateSettings}
+          onOpenOpp={setInfoOppId}
+        />
       )}
 
       {activeTab === 'stageDays' && (
