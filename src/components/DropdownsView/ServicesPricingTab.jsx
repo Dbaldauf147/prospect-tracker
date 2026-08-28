@@ -1,5 +1,9 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
+import { useAuth } from '../../contexts/AuthContext';
+import { loadOpps2Newest } from '../../utils/opps2Store';
+import { oppScenario } from '../../utils/oppPricingImport';
+import { OppImportModal } from './OppImportModal';
 import {
   PRICING_BASES,
   PRICING_UNITS,
@@ -12,6 +16,9 @@ import {
   setPricingField,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
+
+// Every unit label, for naming the ones an import couldn't fill.
+const UNIT_LABEL = Object.fromEntries(PRICING_UNITS.map(u => [u.unit, u.label]));
 
 // Where this table's column widths, order and visibility are remembered,
 // alongside every other table's under settings.tablePrefs.
@@ -215,8 +222,21 @@ function CountInput({ label, value, onCommit, placeholder, wide }) {
 // parent rather than here so switching subtabs and coming back doesn't lose
 // a half-built estimate. It's a scratch calculation, so it isn't saved — the
 // rate card is the part worth keeping, and that's in settings.
-export function ServicesPricingTab({ settings, updateSettings, serviceRows = [], scenario, setScenario }) {
+export function ServicesPricingTab({ settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [] }) {
   const [search, setSearch] = useState('');
+  // `|| {}` so the tab still renders outside the AuthProvider (tests,
+  // harnesses): with no user it reads the local opps cache and skips the
+  // Firestore pull, which is exactly the right behaviour there.
+  const { user } = useAuth() || {};
+
+  // The Opps 2 dataset, pulled only when the picker is first opened. It's
+  // the whole opp store — thousands of rows — and most visits to this tab
+  // are to edit a rate, not to import a deal, so loading it on mount would
+  // charge every visit for something few of them use.
+  const [oppPicker, setOppPicker] = useState(false);
+  const [oppRecords, setOppRecords] = useState(null);
+  const [oppError, setOppError] = useState('');
+  const [oppLoading, setOppLoading] = useState(false);
 
   const pricing = useMemo(() => getServicePricing(settings), [settings?.servicePricing]);
 
@@ -231,6 +251,74 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
 
   function savePricingField(name, field, value) {
     updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value) });
+  }
+
+  // What the last import filled in, so the bar can say where its numbers
+  // came from and what it couldn't answer. Cleared when the scope is.
+  const [oppImport, setOppImport] = useState(null);
+
+  async function openOppPicker() {
+    setOppPicker(true);
+    if (oppRecords || oppLoading) return;
+    setOppLoading(true);
+    setOppError('');
+    try {
+      const data = await loadOpps2Newest(user?.uid);
+      setOppRecords(Array.isArray(data?.records) ? data.records : []);
+    } catch (err) {
+      console.error('Services Pricing: could not load opps', err);
+      setOppError('Could not load the opportunities. Open the Opps 2 tab to sync them, then try again.');
+      setOppRecords([]);
+    } finally {
+      setOppLoading(false);
+    }
+  }
+
+  // Apply an opp to the estimator. The scenario is replaced rather than
+  // merged: leaving a previous deal's site count behind would quietly
+  // inflate this one, and a number nobody typed for this account is worse
+  // than a blank the summary asks them to fill.
+  function applyOpp(opp) {
+    const scen = oppScenario({
+      opp,
+      prospects,
+      siteLists: settings?.companySiteLists,
+      serviceNames: serviceRows.map(r => r.name),
+    });
+
+    // Which units this scope actually needs, so the summary can name the
+    // ones nothing on file could answer.
+    const needed = new Set();
+    const noPrice = [];
+    for (const name of scen.services) {
+      const basis = basisFor(pricingFor(pricing, name).basis);
+      if (!basis) { noPrice.push(name); continue; }
+      if (basis.unit) needed.add(basis.unit);
+    }
+
+    setScenario({ services: scen.services, counts: scen.counts, dealSize: scen.dealSize });
+    setOppImport({
+      account: scen.account,
+      stage: scen.stage,
+      company: scen.matchedProspect ? scen.company : '',
+      services: scen.services.length,
+      unmatchedTokens: scen.unmatchedTokens,
+      filled: Object.keys(scen.counts).map(unit => ({
+        unit,
+        label: UNIT_LABEL[unit] || unit,
+        value: scen.counts[unit],
+        source: scen.countSources[unit],
+      })),
+      dealSizeSource: scen.dealSizeSource,
+      missing: [...needed].filter(u => scen.counts[u] === undefined).map(u => UNIT_LABEL[u] || u),
+      noPrice,
+    });
+    setOppPicker(false);
+  }
+
+  function clearScope() {
+    setScenario(s => ({ ...s, services: [] }));
+    setOppImport(null);
   }
 
   function toggleScope(name) {
@@ -393,6 +481,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <button
+          type="button"
+          className={styles.importOppBtn}
+          onClick={openOppPicker}
+          title="Pull an opportunity's scope and its account's site / accounts figures into the estimator"
+        >Import opp</button>
         <span className={styles.resultCount}>
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
           {` · ${pricedCount} priced`}
@@ -405,6 +499,17 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       <div className={styles.pricingBar}>
         <div className={styles.pricingInputs}>
           <span className={styles.pricingBarTitle}>Deal estimate</span>
+          {oppImport && (
+            <span
+              className={styles.oppChip}
+              title={oppImport.company && oppImport.company !== oppImport.account
+                ? `Imported from the ${oppImport.account} opp, matched to ${oppImport.company}`
+                : `Imported from the ${oppImport.account} opp`}
+            >
+              {oppImport.account}
+              {oppImport.stage && <span className={styles.oppChipStage}>{oppImport.stage}</span>}
+            </span>
+          )}
           {visibleUnits.map(u => (
             <CountInput
               key={u.unit}
@@ -427,8 +532,8 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <button
               type="button"
               className={styles.showHiddenBtn}
-              onClick={() => setScenario(s => ({ ...s, services: [] }))}
-              title="Untick every service"
+              onClick={clearScope}
+              title="Untick every service and forget the imported opp"
             >Clear scope</button>
           )}
         </div>
@@ -452,6 +557,31 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           </div>
         </div>
       </div>
+
+      {/* What the import did and didn't manage. Where each number came from
+          matters as much as the number: an estimate built on a site count
+          nobody checked is one you'd want to know was taken off a company
+          record rather than typed for this deal. */}
+      {oppImport && (
+        <div className={styles.oppImportNote}>
+          <strong>{oppImport.account}</strong>
+          {' — ticked '}{oppImport.services}{' service'}{oppImport.services === 1 ? '' : 's'}
+          {oppImport.filled.length > 0 && (
+            <>{'; filled '}{oppImport.filled.map(f => `${f.label} ${f.value.toLocaleString('en-US')} from ${f.source}`).join(', ')}</>
+          )}
+          {oppImport.dealSizeSource && <>{'; deal size from '}{oppImport.dealSizeSource}</>}.
+          {oppImport.missing.length > 0 && (
+            <span className={styles.oppImportGap}>
+              {' Nothing on file for '}{oppImport.missing.join(', ')} — the services priced on {oppImport.missing.length === 1 ? 'it' : 'those'} count as $0 until you enter {oppImport.missing.length === 1 ? 'it' : 'them'} above.
+            </span>
+          )}
+          {oppImport.unmatchedTokens.length > 0 && (
+            <span className={styles.oppImportGap}>
+              {' Nothing in the Scope matched: '}{oppImport.unmatchedTokens.join(', ')}.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Said once, under the numbers, rather than as a footnote on every
           row: a service nobody has priced contributes nothing, so the total
@@ -477,6 +607,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             : `No services match "${search}".`}
         />
       </div>
+
+      {oppPicker && (
+        <OppImportModal
+          records={oppRecords}
+          loading={oppLoading}
+          error={oppError}
+          onPick={applyOpp}
+          onClose={() => setOppPicker(false)}
+        />
+      )}
     </>
   );
 }
