@@ -4,12 +4,18 @@
 // uploads their tracker workbook.
 
 import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
 
 const KEY = 'deals-list-override';
 // Fired whenever the deals roster is saved or cleared, so same-window
 // listeners (e.g. the Issues badge) refresh — the native 'storage' event
 // only fires in OTHER tabs, never the one that made the change.
 export const DEALS_LIST_EVENT = 'deals-list-changed';
+
+// Mirrored to Firestore so the roster survives a cleared browser or a move
+// to another machine — losing it used to leave every active client without
+// a contract End Date, which the Issues tab reports as "No expiration date".
+registerMirroredKey(KEY, DEALS_LIST_EVENT);
 
 export function loadDealsList() {
   try {
@@ -27,11 +33,16 @@ export function loadDealsList() {
 export function saveDealsOverride(arr) {
   if (!Array.isArray(arr)) throw new Error('Deals override must be an array');
   userLsSet(KEY, JSON.stringify(arr));
+  queueMirrorPush(KEY);
   try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
 }
 
 export function clearDealsOverride() {
   userLsRemove(KEY);
+  // allowEmpty: this is the user clearing the roster on purpose, so the
+  // emptiness is the thing to sync. A browser that merely LOST its copy
+  // never reaches here, and so can't wipe the cloud one.
+  queueMirrorPush(KEY, { allowEmpty: true });
   try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
 }
 
