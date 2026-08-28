@@ -573,7 +573,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // applyRunUpShift. That plan has already placed every step where it means
   // them, so shifting would invent a gap rather than make room for one.
   const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
-  const { preSpan, placed } = applyRunUpShift(raw, statedSignature);
+  const { preSpan, placed } = applyRunUpShift(raw, statedSignature, mode);
   const needed = Math.max(...placed.map(p => p.month + p.span - 1), 1);
   // The column the contract is signed at the head of. Null when nothing
   // happens before it, which is every timeline that hasn't been given a

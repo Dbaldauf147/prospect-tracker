@@ -31,7 +31,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { BUILTIN_TIMELINE_TEMPLATES } from '../data/timelineTemplates.js';
-import { STEP_DURATION_UNITS, DEFAULT_DURATION_UNIT, parseDependsOn } from './timelineDates.js';
+import { STEP_DURATION_UNITS, DEFAULT_DURATION_UNIT, parseDependsOn, getStageRange } from './timelineDates.js';
 
 // The owners a stage can be assigned to. "Both" covers the joint working
 // sessions that neither side runs alone.
@@ -212,6 +212,138 @@ export function makeTimelineStage(overrides = {}) {
   };
 }
 
+// --- The contract legal review run-up ------------------------------------
+//
+// The months a deal spends in legal before anyone signs. Optional, because
+// plenty of timelines start at signature and have nothing to say about what
+// came before, and adjustable, because two months is a convention rather
+// than a rule.
+//
+// It's a STEP, not a setting on the timeline: the implementation chart draws
+// steps, the Excel sheet lists them, and the run-up wants to read like the
+// rest of the plan — a named bar in the months before the signature rule,
+// renameable and describable like anything else. The control on the
+// Timelines tab is a shortcut for authoring that one step, and reads its
+// value back off it, so there's one source of truth and the Duration cell
+// and the control can't disagree.
+export const LEGAL_REVIEW_NAME = 'Contract legal review';
+export const LEGAL_REVIEW_DEFAULT_MONTHS = 2;
+
+// The legal review step on a timeline, or null.
+export function legalReviewStage(template) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  return stages.find(st => st?.legalReview === true) || null;
+}
+
+// How many months of legal review the timeline carries — 0 when it has none.
+export function legalReviewMonths(template) {
+  const stage = legalReviewStage(template);
+  if (!stage) return 0;
+  const n = Math.floor(Number(stage.duration) || 0);
+  return n > 0 ? n : LEGAL_REVIEW_DEFAULT_MONTHS;
+}
+
+// First day of the month `delta` months from the one this ISO date is in,
+// and the last day of the month before it. Whole months, so the run-up
+// occupies exactly the columns it's given rather than straddling a boundary
+// because the engagement happens to start on the 31st.
+function monthStartISO(iso, delta = 0) {
+  const [y, m] = String(iso).split('-').map(Number);
+  const d = new Date(Date.UTC(y, (m - 1) + delta, 1));
+  return d.toISOString().slice(0, 10);
+}
+function priorMonthEndISO(iso) {
+  const [y, m] = String(iso).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1, 0));
+  return d.toISOString().slice(0, 10);
+}
+
+// The same date `delta` months away, keeping the day of the month so a range
+// the user typed comes back exactly as they typed it when the run-up that
+// moved it is shortened again. Clamped for the short months: 31 August back
+// six months is 28 February, not 3 March.
+function shiftMonthsISO(iso, delta) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const target = new Date(Date.UTC(y, (m - 1) + delta, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d || 1, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
+// The date the engagement starts: the earliest start among the steps that
+// happen after signature. '' when none of them is dated.
+function engagementStartISO(template) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  const starts = stages
+    .filter(st => !st?.preKickoff)
+    .map(st => getStageRange(st)?.start)
+    .filter(Boolean)
+    .sort();
+  return starts[0] || '';
+}
+
+/**
+ * Set (or clear) the timeline's legal review run-up, in months.
+ *
+ * 0 removes it. Anything else writes a single pre-signature step at the head
+ * of the plan — the run-up precedes the engagement, and the stages array IS
+ * the plan order — keeping whatever name and description the user has given
+ * it.
+ *
+ * On a timeline placed by DATES the step is dated too, in whole months
+ * ending the month before the engagement starts, because a step with no
+ * dates on that chart falls back to the first column and would draw on top
+ * of the work it's supposed to precede. A declared timeline range moves back
+ * with it by the same number of months, so the months just added are inside
+ * the window rather than warned about as falling outside it — and forward
+ * again when the run-up is shortened or removed.
+ */
+export function setLegalReviewMonths(template, months) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  const next = Math.max(0, Math.floor(Number(months) || 0));
+  const current = legalReviewMonths(template);
+  if (next === current) return template;
+  const delta = next - current;
+
+  // A declared range is the window everything is drawn against, so it has to
+  // cover the months the run-up just claimed (or give them back).
+  const rangeStart = template?.rangeStart
+    ? shiftMonthsISO(template.rangeStart, -delta)
+    : template?.rangeStart;
+
+  if (next === 0) {
+    return { ...template, rangeStart, stages: stages.filter(st => st?.legalReview !== true) };
+  }
+
+  const existing = legalReviewStage(template);
+  const dated = template?.positionMode !== 'months';
+  const engagement = dated ? engagementStartISO(template) : '';
+  const range = engagement
+    ? { start: monthStartISO(engagement, -next), end: priorMonthEndISO(engagement) }
+    : { start: '', end: '' };
+
+  const stage = makeTimelineStage({
+    ...(existing || {}),
+    id: existing?.id || makeTimelineId('st'),
+    name: existing?.name?.trim() ? existing.name : LEGAL_REVIEW_NAME,
+    owner: existing?.owner || 'Both',
+    kind: 'timeline',
+    preKickoff: true,
+    legalReview: true,
+    duration: next,
+    durationUnit: 'months',
+    start: range.start,
+    end: range.end,
+    // Month × Span is the other way of placing a step, and a stale value
+    // there would outrank both the duration and the dates.
+    startMonth: '',
+    months: '',
+  });
+
+  const rest = stages.filter(st => st?.legalReview !== true);
+  return { ...template, rangeStart, stages: [stage, ...rest] };
+}
+
 // A new timeline for one service, attached to it. The Services popup creates
 // this the first time somebody adds a step to a service that has no timeline
 // yet; from then on it's an ordinary template, editable on the Timelines tab
@@ -269,6 +401,11 @@ function normalizeStage(stage) {
     // it to a month would flip it whenever a duration pushed the step across
     // the boundary.
     preKickoff: stage?.preKickoff === true,
+    // The contract legal review, if this is it: the optional run-up the
+    // Timelines tab offers as a months control rather than as a step to
+    // write out. Flagged rather than matched by name so renaming it — "Legal
+    // & procurement review", "MSA negotiation" — doesn't lose the control.
+    legalReview: stage?.legalReview === true,
     // Implementation format: the phase band this step sits in, and its
     // position in months from kickoff. Blank month/span fall back to the
     // stage's calendar position.

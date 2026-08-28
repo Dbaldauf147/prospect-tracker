@@ -726,6 +726,24 @@
   color: var(--color-text);
 }
 
+/* Small numeric setting — the legal-review month count. Narrow enough to
+   read as "a number of months" rather than another text field. */
+.settingNumber {
+  width: 56px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text);
+}
+
+.settingNumber:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 .settingInputWide {
   flex: 1;
   min-width: 220px;
