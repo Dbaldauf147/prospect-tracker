@@ -13,19 +13,19 @@ import {
   parseMoney, parseYear, parseDateYear, isQuotedPlus, yearElapsedFraction,
 } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { loadCommissions } from '../../utils/commissionsStore';
+import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { asNumber, dealYear } from '../../utils/dealsFormat';
 import {
   loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
-  juneRebuildDone, markJuneRebuildDone,
+  juneRebuildDone, markJuneRebuildDone, QUOTED_PROJECTIONS_EVENT,
 } from '../../utils/quotedProjectionsStore';
 import {
   saveQuotedMonthRows, loadQuotedMonthRows, loadAllQuotedMonthRows,
   capturedValuesMatch, QUOTED_ROW_FIELDS,
 } from '../../utils/quotedMonthRows';
-import { loadYoyOverrides, saveYoyOverrides } from '../../utils/yoyOverridesStore';
+import { loadYoyOverrides, saveYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
 
@@ -420,16 +420,19 @@ export function YOYView() {
     saveHiddenCharts([]);
   }, []);
   // Persist a chart's override table; an empty table clears it entirely.
+  // The save is deliberately OUTSIDE the state updater: saveYoyOverrides now
+  // dispatches a change event, and React may run an updater during render
+  // (twice under StrictMode), which would setState mid-render. Reading
+  // `overrides` directly is safe here — the editor is modal, so there is no
+  // second write racing this one.
   const saveChartOverrides = useCallback((chartId, table) => {
-    setOverrides((prev) => {
-      const next = { ...prev };
-      if (table && Object.keys(table).length) next[chartId] = table;
-      else delete next[chartId];
-      saveYoyOverrides(next);
-      return next;
-    });
+    const next = { ...overrides };
+    if (table && Object.keys(table).length) next[chartId] = table;
+    else delete next[chartId];
+    setOverrides(next);
+    saveYoyOverrides(next);
     setEditingChart(null);
-  }, []);
+  }, [overrides]);
   // Fiscal target that the Annual Sales % Quota override recompute needs.
   const editCtx = useMemo(
     () => ({ annualTarget: target > 0 ? target : DEFAULT_ANNUAL_TARGET }),
@@ -448,11 +451,23 @@ export function YOYView() {
       setCommissions(loadCommissions().data);
       setDeals(loadDealsList().data);
     }
+    // Same-window change events. These also fire when the Firestore mirror
+    // hydrates a newer copy at signin, which is what makes a restored
+    // browser show its projections without a reload.
+    const onCommissions = () => setCommissions(loadCommissions().data);
+    const onQuoted = () => setQuotedTable(loadQuotedProjections());
+    const onOverrides = () => setOverrides(loadYoyOverrides());
     window.addEventListener('storage', onStorage);
     window.addEventListener('focus', onFocus);
+    window.addEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
+    window.addEventListener(QUOTED_PROJECTIONS_EVENT, onQuoted);
+    window.addEventListener(YOY_OVERRIDES_EVENT, onOverrides);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
+      window.removeEventListener(QUOTED_PROJECTIONS_EVENT, onQuoted);
+      window.removeEventListener(YOY_OVERRIDES_EVENT, onOverrides);
     };
   }, []);
 

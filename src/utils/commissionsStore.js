@@ -5,8 +5,19 @@
 // prompt.
 
 import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
 
 const KEY = 'commissions-list-override';
+
+// Fired whenever the roster is saved or cleared, so same-window listeners
+// (the Commissions subtab, the Deals table, the YOY page) refresh — the
+// native 'storage' event only fires in OTHER tabs, never the one that
+// made the change.
+export const COMMISSIONS_LIST_EVENT = 'commissions-list-changed';
+
+// Mirrored to Firestore so the pasted roster survives a cleared browser or
+// a move to another machine.
+registerMirroredKey(KEY, COMMISSIONS_LIST_EVENT);
 
 export const COMMISSION_MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -88,10 +99,17 @@ export function loadCommissions() {
 export function saveCommissionsOverride(arr) {
   if (!Array.isArray(arr)) throw new Error('Commissions override must be an array');
   userLsSet(KEY, JSON.stringify(arr));
+  queueMirrorPush(KEY);
+  dispatchStoreEvent(COMMISSIONS_LIST_EVENT);
 }
 
 export function clearCommissionsOverride() {
   userLsRemove(KEY);
+  // allowEmpty: this is the user clearing the roster on purpose, so the
+  // emptiness is the thing to sync. A browser that merely LOST its copy
+  // never reaches here, and so can't wipe the cloud one.
+  queueMirrorPush(KEY, { allowEmpty: true });
+  dispatchStoreEvent(COMMISSIONS_LIST_EVENT);
 }
 
 // Commission rows link to a client through their "Account Name" lookup

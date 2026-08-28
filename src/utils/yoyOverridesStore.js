@@ -13,8 +13,17 @@
 //   field    — the plotted dataKey being overridden (e.g. 'count', 'sold')
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
 
 const KEY = 'yoy-chart-overrides';
+
+// Fired whenever an override is saved, so same-window listeners (the YOY
+// page) refresh — the native 'storage' event only fires in OTHER tabs.
+export const YOY_OVERRIDES_EVENT = 'yoy-chart-overrides-changed';
+
+// Mirrored to Firestore: the computed numbers behind these charts survive a
+// cleared browser, but the hand-typed corrections pinned onto them did not.
+registerMirroredKey(KEY, YOY_OVERRIDES_EVENT);
 
 export function loadYoyOverrides() {
   try {
@@ -29,4 +38,6 @@ export function loadYoyOverrides() {
 
 export function saveYoyOverrides(map) {
   try { userLsSet(KEY, JSON.stringify(map || {})); } catch { /* ignore quota */ }
+  queueMirrorPush(KEY);
+  dispatchStoreEvent(YOY_OVERRIDES_EVENT);
 }

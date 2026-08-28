@@ -12,7 +12,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
-import { loadCommissions } from '../../utils/commissionsStore';
+import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
 import { DEAL_IGNORED_KEY } from '../../utils/postSaleFollowUp';
 import { HANDOFF_FIELDS, isFilled, isHandoffFieldDone } from '../../utils/dealHandoff';
 import { loadOpps2Newest } from '../../utils/opps2Store';
@@ -1134,13 +1134,18 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     function onSoldIgnore() {
       setSoldIgnore(loadSoldWarningIgnore());
     }
+    // This page only READS commissions, so reacting to the change event
+    // can't feed back into its own writes.
+    const onCommissions = () => setCommissionsData(loadCommissions().data || []);
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
+    window.addEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
+      window.removeEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
     };
   }, []);
 
