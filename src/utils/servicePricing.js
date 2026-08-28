@@ -6,11 +6,20 @@
 // a service with no entry is simply unpriced, and the estimator says so rather
 // than guessing a number for it.
 //
-// An entry is { basis, rate, minFee, notes }:
+// An entry is { basis, rate, minFee, avgFee, notes }:
 //   basis  — which PRICING_BASES key the fee is worked out from
 //   rate   — dollars per unit, a flat dollar figure, or a percentage,
 //            depending on the basis
 //   minFee — dollar floor applied to unit- and percentage-based fees
+//   avgFee — a fee typed straight into the Est. Fee column: what this
+//            service usually sells for. It OVERRIDES whatever the basis
+//            and rate would work out to, because it is the more direct
+//            statement — someone who types "$40,000" into the fee column
+//            is answering the question the rate card exists to answer, and
+//            a model that quietly outvoted them would be useless. Clearing
+//            it hands the row back to the basis. A service can carry only
+//            an avgFee and no basis at all, which is the quick way to
+//            price one: a number, no model behind it.
 //   notes  — free text, for the assumptions a number can't carry
 //
 // Stored under settings.servicePricing so it syncs across devices with the
@@ -89,6 +98,7 @@ export function pricingFor(pricing, name) {
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     minFee: parseMoney(row?.minFee),
+    avgFee: parseMoney(row?.avgFee),
     notes: String(row?.notes || ''),
   };
 }
@@ -102,9 +112,11 @@ export function setPricingField(pricing, name, field, value) {
   const blank = value == null || value === '';
   if (blank) delete row[field];
   else row[field] = (field === 'basis' || field === 'notes') ? value : parseMoney(value);
-  // A rate is meaningless without a basis to read it against, and clearing
-  // the basis is how a user un-prices a service — so it takes the numbers
-  // with it rather than leaving a stranded "$450 per nothing".
+  // A rate is meaningless without a basis to read it against, so clearing
+  // the basis takes the numbers that belonged to it rather than leaving a
+  // stranded "$450 per nothing". A typed Est. Fee is not one of them — it
+  // stands on its own, and a service priced only that way would otherwise
+  // lose its price the moment someone cleared a basis it never had.
   if (field === 'basis' && blank) { delete row.rate; delete row.minFee; }
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
@@ -150,9 +162,21 @@ export function estimateService({ entry, meta, counts, dealSize }) {
   const basis = basisFor(entry?.basis);
   const rate = parseMoney(entry?.rate);
   const minFee = parseMoney(entry?.minFee);
+  const avgFee = parseMoney(entry?.avgFee);
   const recurring = isRecurring(meta);
   const years = recurring ? contractYears(meta) : 1;
-  const base = { priced: false, fee: null, value: null, recurring, years, unit: basis?.unit || null, units: null, note: '' };
+  const base = {
+    priced: false, fee: null, value: null, recurring, years,
+    unit: basis?.unit || null, units: null, note: '', typed: false,
+  };
+
+  // A fee typed into the Est. Fee column is the answer, whatever the basis
+  // would have made of the counts. It still runs across the term, so a
+  // recurring service priced at an average year is still worth that year
+  // times its years.
+  if (avgFee !== null) {
+    return { ...base, priced: true, typed: true, fee: avgFee, value: avgFee * years };
+  }
 
   if (!basis) return { ...base, note: 'No pricing basis set' };
   if (rate === null) return { ...base, note: 'No rate set' };
