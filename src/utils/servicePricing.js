@@ -11,8 +11,8 @@
 //   rate   — dollars per unit, a flat dollar figure, or a percentage,
 //            depending on the basis
 //   minFee — dollar floor applied to unit- and percentage-based fees
-//   avgFee — a fee typed straight into the Est. Fee column: what this
-//            service usually sells for. It OVERRIDES whatever the basis
+//   avgFee — a fee typed straight into the Estimated Year 1 Fee column:
+//            what this service usually sells for. It OVERRIDES the basis
 //            and rate would work out to, because it is the more direct
 //            statement — someone who types "$40,000" into the fee column
 //            is answering the question the rate card exists to answer, and
@@ -114,7 +114,7 @@ export function setPricingField(pricing, name, field, value) {
   else row[field] = (field === 'basis' || field === 'notes') ? value : parseMoney(value);
   // A rate is meaningless without a basis to read it against, so clearing
   // the basis takes the numbers that belonged to it rather than leaving a
-  // stranded "$450 per nothing". A typed Est. Fee is not one of them — it
+  // stranded "$450 per nothing". A typed fee is not one of them — it
   // stands on its own, and a service priced only that way would otherwise
   // lose its price the moment someone cleared a basis it never had.
   if (field === 'basis' && blank) { delete row.rate; delete row.minFee; }
@@ -170,7 +170,7 @@ export function estimateService({ entry, meta, counts, dealSize }) {
     unit: basis?.unit || null, units: null, note: '', typed: false,
   };
 
-  // A fee typed into the Est. Fee column is the answer, whatever the basis
+  // A fee typed into the Year 1 Fee column is the answer, whatever the basis
   // would have made of the counts. It still runs across the term, so a
   // recurring service priced at an average year is still worth that year
   // times its years.
@@ -211,7 +211,8 @@ export function estimateService({ entry, meta, counts, dealSize }) {
 // `rows` are { name, meta } — the same shape the Services subtab builds — and
 // `services` is the subset in scope. Recurring and one-off money are kept
 // apart on the way through: a $60k/yr service over three years and a $180k
-// project are the same contract value but not the same deal.
+// project are the same contract value but not the same deal — and they are
+// very different first years, which is why both totals come back.
 export function estimateScope({ rows, services, pricing, counts, dealSize }) {
   const inScope = new Set(services || []);
   const lines = [];
@@ -232,5 +233,18 @@ export function estimateScope({ rows, services, pricing, counts, dealSize }) {
     lines.push({ name: row.name, entry, ...est });
   }
 
-  return { lines, recurringAnnual, oneTime, contractValue, unpriced, unitsUsed };
+  // Year one is what the client actually signs up to spend in the first
+  // twelve months: every recurring service's annual fee plus every one-off
+  // project in full. It is the sum of the Estimated Year 1 Fee column, which
+  // is why that column and the headline figure always tie out — contractValue
+  // runs the recurring lines across their whole term and does not.
+  return {
+    lines,
+    recurringAnnual,
+    oneTime,
+    yearOne: recurringAnnual + oneTime,
+    contractValue,
+    unpriced,
+    unitsUsed,
+  };
 }

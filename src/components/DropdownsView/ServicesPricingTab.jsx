@@ -37,9 +37,12 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'minFee',       label: 'Min Fee ($)',        width: 110 },
   { key: 'units',        label: 'Units',              width: 80 },
   // The two estimate columns are the scenario in the bar above applied to
-  // this one row: the fee it earns, and what that comes to over the term.
-  { key: 'fee',          label: 'Est. Fee',           width: 120 },
-  { key: 'value',        label: 'Est. Deal Value',    width: 140 },
+  // this one row: the fee it earns in the first year, and what that comes to
+  // over the term. The fee is annual for a recurring service and the whole
+  // job for a project, so year one is what it states either way — the title
+  // says so rather than leaving "Est. Fee" to be read as the term.
+  { key: 'fee',          label: 'Estimated Year 1 Fee', width: 200 },
+  { key: 'value',        label: 'Est. Deal Value',      width: 140 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
 ];
 
@@ -361,7 +364,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   ), [totals.unitsUsed, counts]);
 
   // Priced = there's a figure behind it, however it got there: a basis to
-  // work one out, or a fee typed straight into the Est. Fee column.
+  // work one out, or a fee typed straight into the Year 1 Fee column.
   const pricedCount = useMemo(
     () => serviceRows.filter(r => {
       const entry = pricingFor(pricing, r.name);
@@ -431,7 +434,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
               title={row._typed && row.basis
-                ? 'Not in use: the Est. Fee column has a fee typed into it, which wins. Clear that cell to price off this rate again.'
+                ? 'Not in use: the Estimated Year 1 Fee column has a fee typed into it, which wins. Clear that cell to price off this rate again.'
                 : row.basis
                   ? (row._kind === 'percent' ? 'Percentage of the deal size' : `Dollars — ${row.basisLabel.toLowerCase()}`)
                   : 'Pick a pricing basis first'}
@@ -464,7 +467,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             ? <span className={styles.serviceMutedCell}>-</span>
             : row.units.toLocaleString('en-US')),
         };
-      // Est. Fee is the one estimate cell you can write into: typing a
+      // The fee is the one estimate cell you can write into: typing a
       // figure sets it as this service's fee outright, for when the answer
       // is "it goes for about forty grand" rather than a rate times a
       // count. It opens prefilled with whatever the basis worked out, so
@@ -604,9 +607,26 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.pricingTotalLabel}>One-off projects</span>
             <span className={styles.pricingTotalValue}>{formatMoney(totals.oneTime) || '$0'}</span>
           </div>
+          {/* The term total still has to be somewhere — it's the number a
+              multi-year deal is signed at — but it's no longer the headline,
+              so it sits with the other supporting figures. */}
+          <div className={styles.pricingTotal}>
+            <span className={styles.pricingTotalLabel}>Contract value</span>
+            <span
+              className={styles.pricingTotalValue}
+              title="Every service across its full term: a recurring fee times its years, plus the one-off projects."
+            >{formatMoney(totals.contractValue) || '$0'}</span>
+          </div>
+          {/* Year one, not the term: the recurring services at one year each
+              plus the projects in full. Ties out to the Estimated Year 1 Fee
+              column, which is the point — the headline is the sum of what
+              each row says. */}
           <div className={styles.pricingTotalMain}>
-            <span className={styles.pricingTotalLabel}>Estimated deal size</span>
-            <span className={styles.pricingTotalValueMain}>{formatMoney(totals.contractValue) || '$0'}</span>
+            <span className={styles.pricingTotalLabel}>Estimated Year 1 deal size</span>
+            <span
+              className={styles.pricingTotalValueMain}
+              title="The first twelve months: each recurring service's annual fee plus every one-off project in full. The sum of the Estimated Year 1 Fee column."
+            >{formatMoney(totals.yearOne) || '$0'}</span>
           </div>
         </div>
       </div>
