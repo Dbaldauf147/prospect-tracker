@@ -25,6 +25,21 @@ import { dbGet, dbPut, dbDelete, getDbUserId } from './db';
 const STORE = 'rfp-templates';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+// The standard template — the one RFP workbook that loads on every opp,
+// as opposed to a file attached to a single deal. It's stored through the
+// same path under a reserved key; opp ids are numbers, so nothing can
+// collide with it.
+export const STANDARD_RFP_KEY = '__standard__';
+
+// Where the standard's summary line lives: the parent document of the
+// items collection, which otherwise holds nothing. Reading it is what
+// tells a second device that the standard has been replaced without
+// downloading the workbook to find out — the bytes are only fetched when
+// this says the local copy is behind.
+function standardPointerDoc(userId) {
+  return doc(db, 'oppRfpTemplates', String(userId));
+}
+
 // Chunk size in base64 characters. 600 KB per field leaves plenty of
 // head-room under the 1 MB document cap once the other fields are counted.
 const CHUNK_CHARS = 600_000;
@@ -123,11 +138,16 @@ export async function saveOppRfpTemplate(oppId, blob, fileName) {
 
 // The record for this opp, or null. IDB first; Firestore on a miss, with
 // the restored blob written back locally.
-export async function loadOppRfpTemplate(oppId) {
+//
+// `expectedSavedAt` is the stamp the caller believes is current — the one
+// on the opp record, written wherever the file was last attached. A local
+// copy that doesn't match it is a revision behind (attached on another
+// machine since this one cached it), so it's re-fetched rather than served.
+export async function loadOppRfpTemplate(oppId, expectedSavedAt) {
   if (oppId == null) return null;
   try {
     const rec = await dbGet(STORE, String(oppId));
-    if (rec?.blob) return rec;
+    if (rec?.blob && (!expectedSavedAt || rec.savedAt === expectedSavedAt)) return rec;
   } catch { /* fall through to the backup */ }
 
   const userId = getDbUserId();
@@ -158,4 +178,64 @@ export async function deleteOppRfpTemplate(oppId) {
   const userId = getDbUserId();
   if (!userId) return;
   try { await deleteDoc(itemDoc(userId, oppId)); } catch { /* best-effort */ }
+}
+
+// ---- The standard template -------------------------------------------
+//
+// One workbook for the whole pipeline: the RFP question sheet you send
+// every client, offered for download on every opp. A deal that answers a
+// client's own RFP still attaches that one to itself; the standard is what
+// every other deal opens with.
+
+// The summary line for the standard, or null. Cheap — it reads the pointer
+// document, not the workbook.
+export async function loadStandardRfpMeta() {
+  const userId = getDbUserId();
+  if (!userId) return null;
+  try {
+    const snap = await getDoc(standardPointerDoc(userId));
+    const std = snap.exists() ? snap.data()?.standard : null;
+    return std?.fileName ? std : null;
+  } catch (err) {
+    console.warn('Standard RFP template pointer read failed', err);
+    return null;
+  }
+}
+
+// The standard workbook, or null. The pointer read above decides whether
+// the local copy is still current; when Firestore can't be reached at all,
+// whatever IDB holds is better than nothing.
+export async function loadStandardRfpTemplate() {
+  const meta = await loadStandardRfpMeta();
+  let local = null;
+  try { local = await dbGet(STORE, STANDARD_RFP_KEY); } catch { /* no local copy */ }
+  if (!meta) return local?.blob ? local : null;
+  if (local?.blob && local.savedAt === meta.savedAt) return local;
+  const fetched = await loadOppRfpTemplate(STANDARD_RFP_KEY, meta.savedAt);
+  return fetched || (local?.blob ? local : null);
+}
+
+// Make this workbook the standard. Returns its record.
+export async function saveStandardRfpTemplate(blob, fileName) {
+  const rec = await saveOppRfpTemplate(STANDARD_RFP_KEY, blob, fileName);
+  const userId = getDbUserId();
+  if (userId && rec) {
+    try {
+      await setDoc(standardPointerDoc(userId), { standard: rfpTemplateMeta(rec) }, { merge: true });
+    } catch (err) {
+      console.warn('Standard RFP template pointer write failed', err);
+    }
+  }
+  return rec;
+}
+
+export async function deleteStandardRfpTemplate() {
+  await deleteOppRfpTemplate(STANDARD_RFP_KEY);
+  const userId = getDbUserId();
+  if (!userId) return;
+  try {
+    await setDoc(standardPointerDoc(userId), { standard: null }, { merge: true });
+  } catch (err) {
+    console.warn('Standard RFP template pointer clear failed', err);
+  }
 }
