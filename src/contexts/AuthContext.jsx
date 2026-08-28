@@ -74,6 +74,23 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Failed to set localStorage user scope', err);
       }
+      // The deals roster and the Clients-tab typed fields are localStorage
+      // stores with a Firestore mirror. Pull anything the cloud holds that
+      // this browser doesn't (a cleared browser, a new machine) now that the
+      // localStorage scope above is set — the keys are per-user prefixed, so
+      // hydrating any earlier would read the wrong slot. Not awaited: each
+      // store fires its own change event when a value lands, which is how
+      // the views already refresh, so this must not hold up sign-in.
+      try {
+        const { hydrateLocalMirrors, setMirrorUserId } = await import('../utils/localMirrorSync');
+        setMirrorUserId(firebaseUser?.uid || null);
+        if (firebaseUser?.uid) {
+          hydrateLocalMirrors(firebaseUser.uid)
+            .catch(err => console.warn('Failed to hydrate local mirrors', err));
+        }
+      } catch (err) {
+        console.warn('Failed to start local mirror sync', err);
+      }
       // Partition encrypted token storage (Outlook OAuth tokens, etc.).
       try {
         const { setSecureUserId } = await import('../utils/secureStorage');

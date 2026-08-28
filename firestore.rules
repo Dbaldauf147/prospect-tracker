@@ -119,6 +119,21 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Firestore mirror of the localStorage-backed stores — the uploaded
+    // deals roster, the deal→client mappings, and the typed Clients-tab
+    // fields. These lived in one browser and nowhere else, so clearing site
+    // data lost them (and left the Issues tab reporting every client as
+    // missing a contract End Date). One document per localStorage key.
+    match /userSettings/{userId}/localMirrors/{mirrorKey} {
+      allow read, write: if owns(userId);
+    }
+
+    // Payload chunks for a mirrored key too large for one document, split
+    // the same way opps2Data/chunks is.
+    match /userSettings/{userId}/localMirrors/{mirrorKey}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
     // Google Sheets auto-sync clock: when the additive import last ran for
     // this account. Its own document rather than a field on the settings
     // document because it is rewritten on every completed pass, and a

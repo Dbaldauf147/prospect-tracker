@@ -12,9 +12,15 @@
 // snoozed before comes back on its own.
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
 
 const SNOOZED_KEY = 'issues-snoozed-map';
 export const ISSUE_SNOOZED_EVENT = 'issue-snoozed-changed';
+
+// Mirrored to Firestore: a snooze is a decision the user made about an
+// issue ("not this quarter"), and losing the map puts every snoozed row
+// back on the tab and back in the sidebar count.
+registerMirroredKey(SNOOZED_KEY, ISSUE_SNOOZED_EVENT);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -53,6 +59,7 @@ export function loadIssueSnoozedMap() {
 function persist(map) {
   try {
     userLsSet(SNOOZED_KEY, JSON.stringify(map || {}));
+    queueMirrorPush(SNOOZED_KEY);
     window.dispatchEvent(new Event(ISSUE_SNOOZED_EVENT));
   } catch (err) {
     console.warn('Failed to persist issue snooze map', err);

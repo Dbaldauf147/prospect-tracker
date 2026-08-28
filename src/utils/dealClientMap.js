@@ -5,10 +5,17 @@
 // per user so accounts sharing a browser don't share mapping state.
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
 
 const KEY = 'deals-client-map';
 const IGNORE_KEY = 'deals-client-ignore';
 export const DEALS_CLIENT_MAP_EVENT = 'deals-client-map-changed';
+
+// Mirrored to Firestore alongside the roster: without these mappings the
+// deals can't be grouped onto their clients, so losing them has the same
+// effect on the Clients and Issues tabs as losing the roster itself.
+registerMirroredKey(KEY, DEALS_CLIENT_MAP_EVENT);
+registerMirroredKey(IGNORE_KEY, DEALS_CLIENT_MAP_EVENT);
 
 export function loadDealClientMap() {
   try {
@@ -32,6 +39,7 @@ export function loadDealClientIgnore() {
 function persistMap(map) {
   try {
     userLsSet(KEY, JSON.stringify(map || {}));
+    queueMirrorPush(KEY);
     window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
   } catch (err) {
     console.warn('Failed to persist deal client map', err);
@@ -41,6 +49,7 @@ function persistMap(map) {
 function persistIgnore(set) {
   try {
     userLsSet(IGNORE_KEY, JSON.stringify([...set]));
+    queueMirrorPush(IGNORE_KEY);
     window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
   } catch (err) {
     console.warn('Failed to persist deal client ignore set', err);
