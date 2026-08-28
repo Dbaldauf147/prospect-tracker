@@ -107,6 +107,10 @@ import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
+// Aliased: this module already has a parseMoney of its own (oppsMetrics),
+// and the rate card's numbers have to be read the way the Services Pricing
+// tab reads them.
+import { getServicePricing, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -1784,7 +1788,10 @@ function PricingOptionSnapshotView({ snapshot }) {
 // renders as a link to it, and a Pricing-Option snapshot still falls
 // back to the existing "open the Opp details popup" affordance when
 // no manual URL is set. All edits happen inside the popup.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress }) {
+function QuotedAmountCell({
+  value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress,
+  scopeNames = [], pricing = null, serviceOverrides = null, sites = '',
+}) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
   const [draftUrl, setDraftUrl] = useState(url ?? '');
@@ -1814,6 +1821,38 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
   // fee × unit count). Recomputed from the frozen snapshot rows so it
   // stays correct even after the Pricing tab is cleared.
   const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
+
+  // What the services in this deal's Scope are worth in their first year,
+  // read off the rate card on Dropdowns › Services Pricing.
+  //
+  // The same estimator the Services Pricing tab runs, so a fee here is the
+  // fee it shows: a typed Est. Fee wins outright, otherwise the basis and
+  // rate are worked against the counts. The only count an opp carries is its
+  // Sites, so a service priced per meter or per invoice comes back priced
+  // but at nothing, and says which count it was missing rather than showing
+  // a confident $0. A percentage-of-deal service reads the amount being
+  // typed in the box above, which is what it's a percentage of.
+  //
+  // Only while the popup is open: this runs per rendered row otherwise, and
+  // the answer is only ever looked at here.
+  const scopeEstimate = useMemo(() => {
+    if (!open || !scopeNames.length) return null;
+    const rows = scopeNames.map(name => ({
+      name,
+      meta: getEffectiveServiceMetadata(name, serviceOverrides),
+    }));
+    const est = estimateScope({
+      rows,
+      services: scopeNames,
+      pricing: pricing || {},
+      counts: { sites: parsePricingMoney(sites) ?? 0 },
+      dealSize: parsePricingMoney(draftAmount),
+    });
+    // Each line says where its fee came from, so a number that moves has a
+    // reason on the row — the percentage ones move with the amount being
+    // typed in the box above, which is the deal size they're a cut of.
+    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line) })) };
+  }, [open, scopeNames, pricing, serviceOverrides, sites, draftAmount]);
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
@@ -1965,6 +2004,84 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span>Final Margin <span style={{ color: '#94A3B8' }}>(over the term)</span></span>
                     <strong style={{ color: '#1E293B' }}>{fmtMarginPct(snapStats.finalMargin)}</strong>
+                  </div>
+                )}
+              </div>
+            )}
+            {scopeEstimate && scopeEstimate.lines.length > 0 && (
+              <div style={{
+                padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                border: '1px solid var(--color-border-light)', borderRadius: 4,
+                fontSize: '0.78rem', color: '#475569',
+              }}>
+                <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
+                  Scope services{' '}
+                  <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+                    ({scopeEstimate.lines.length}) &middot; est. Year 1 fee
+                  </span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {scopeEstimate.lines.map((line) => (
+                      <tr key={line.name}>
+                        <td style={{ padding: '2px 0', verticalAlign: 'top' }}>
+                          {line.name}
+                          {/* Where the fee came from, and — when a priced
+                              service still came out at nothing — the count
+                              it needed that the opp doesn't carry. */}
+                          {(line.note || line.how) ? (
+                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
+                              {line.note || line.how}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: '2px 0', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                          {line.priced ? (
+                            <strong
+                              style={{ color: '#1E293B' }}
+                              title={line.typed
+                                ? 'Est. Fee typed on the Services Pricing tab'
+                                : 'Worked out from this service\u2019s basis and rate'}
+                            >{formatMoney(line.fee) || '$0'}</strong>
+                          ) : (
+                            <span style={{ color: '#94A3B8' }} title="No price on the Services Pricing tab yet">&mdash;</span>
+                          )}
+                          {line.recurring ? (
+                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                  borderTop: '1px solid var(--color-border-light)', paddingTop: 4, marginTop: 4,
+                }}>
+                  <span>
+                    Year 1 total
+                    {scopeEstimate.unpriced.length ? (
+                      <span style={{ color: '#94A3B8' }}>
+                        {' '}({scopeEstimate.unpriced.length} unpriced)
+                      </span>
+                    ) : null}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <strong style={{ color: '#1E293B' }}>{formatMoney(scopeEstimate.year1Total) || '$0'}</strong>
+                    {/* Fills the box above rather than saving: the total is an
+                        estimate, and whether it IS the deal size is the
+                        user's call to make and then Save. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
+                      title="Put this total in the Amount box above"
+                      style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                    >Use</button>
+                  </span>
+                </div>
+                {scopeEstimate.unpriced.length > 0 && (
+                  <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+                    No price yet: {scopeEstimate.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
                   </div>
                 )}
               </div>
@@ -10612,6 +10729,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
+  // The Solutions list and the rate card behind Dropdowns › Services Pricing.
+  // Both are read per row while the table renders — a Scope value is resolved
+  // to the service it names, and that service is priced — so they're taken
+  // once here rather than rebuilt inside the cell.
+  const solutionOptions = useMemo(
+    () => listRegistry.get('solutions')?.options || [],
+    [listRegistry],
+  );
+  const servicePricing = useMemo(() => getServicePricing(settings), [settings]);
   const records = useMemo(() => data?.records || [], [data]);
 
   // Drop any selection ids that no longer match a live record (e.g.
@@ -10852,6 +10978,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 services={cellServices}
                 bfoName={row['BFO Link']}
                 bfoAddress={row['BFO Address']}
+                // What's in the deal, and what the rate card says each of
+                // those services is worth in year 1. Names are resolved
+                // through the Solutions list so a shorthand Scope value
+                // prices under the service it means.
+                scopeNames={scopeServices(row, solutionOptions)}
+                pricing={servicePricing}
+                serviceOverrides={settings?.serviceOverrides}
+                sites={row['Sites']}
               />
             );
           }
