@@ -80,6 +80,31 @@ export function stageTableColumns(format) {
   return COLUMNS[format] || COLUMNS.gantt;
 }
 
+// Columns that only apply under one placement mode, keyed to the mode that
+// keeps them. The implementation format is positioned either by real dates or
+// by typed month numbers, and the cells for the mode that isn't running are
+// dead: two date pickers per row that change nothing. Dropping the column
+// beats grey-ing it, so a row shows only what's actually in play.
+//
+// Note that dates still act as a FALLBACK in months mode — getStageMonths
+// reads them where Month and Span are both blank — so hiding the column does
+// not make them stop counting. What keeps that honest is the Month × Span
+// cell, whose placeholders show the resolved position whatever it came from:
+// the derived value stays on screen even when the dates behind it don't.
+const MODE_ONLY_COLUMNS = {
+  range: 'dates',
+};
+
+// The columns a format shows under a placement mode. Applied when columns are
+// resolved for rendering and when the Columns menu is built — never to the
+// stored layout, so a column the user hid by hand in one mode is still hidden
+// when they switch back rather than being forgotten while it was out of view.
+export function stageTableColumnsForMode(format, mode) {
+  const only = mode === 'months' ? 'months' : 'dates';
+  return stageTableColumns(format)
+    .filter(c => !MODE_ONLY_COLUMNS[c.key] || MODE_ONLY_COLUMNS[c.key] === only);
+}
+
 function readAll() {
   try {
     const raw = userLsGet(STORAGE_KEY);
@@ -120,10 +145,11 @@ export function loadStageTableLayout(format) {
 }
 
 // The columns actually rendered: defaults with any dragged width applied, in
-// display order, minus the hidden ones.
-export function resolveStageTableColumns(format, layout) {
+// display order, minus the hidden ones and the ones the placement mode makes
+// dead.
+export function resolveStageTableColumns(format, layout, mode) {
   const { hidden = {}, widths = {} } = layout || {};
-  return stageTableColumns(format)
+  return stageTableColumnsForMode(format, mode)
     .filter(c => !hidden[c.key])
     .map(c => ({ ...c, width: widths[c.key] ?? c.width }));
 }
