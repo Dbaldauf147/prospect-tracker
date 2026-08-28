@@ -541,3 +541,15 @@
   color: var(--color-text);
   border-color: var(--color-accent);
 }
+
+/* Section heading over each table on the Not Sold Analysis tab. The two
+   tables are the same losses filed two ways, so each needs saying which
+   way — but quietly, since the table headers do the real labelling. */
+.notSoldSectionTitle {
+  margin: 0.35rem 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
