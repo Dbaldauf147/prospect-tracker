@@ -42,6 +42,7 @@ import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
+import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -452,6 +453,67 @@ function findChanceColumn(headers, row) {
 // Closed (won/lost) stages — an opp in one of these is no longer active.
 // Mirrors the in-component CLOSED_STAGES used by the activity filter.
 const CLOSED_STAGES_SET = new Set(['Sold', 'Not Sold']);
+
+// One By Source cell showing the most-cited close reason for a win/loss
+// bucket. Ties are already broken alphabetically upstream, so the first
+// entry is the one to show; the rest ride along in the tooltip and are
+// laid out in full in the source's drilldown popup.
+function TopReasonCell({ reasons }) {
+  if (!reasons || reasons.length === 0) {
+    return <span style={{ color: 'var(--color-text-muted, #64748B)' }}>-</span>;
+  }
+  const [top, ...rest] = reasons;
+  const total = reasons.reduce((n, r) => n + r.count, 0);
+  const title = reasons.map(r => `${r.reason}: ${r.count}`).join('\n');
+  return (
+    <div title={title} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      {top.reason}
+      <span style={{ color: 'var(--color-text-muted, #64748B)' }}>
+        {' '}({top.count}/{total}{rest.length ? `, +${rest.length} more` : ''})
+      </span>
+    </div>
+  );
+}
+
+// Full reason tally for one side of the win/loss split, shown in the
+// Source drilldown popup where there's room for every value rather than
+// just the leader.
+function ReasonBreakdown({ label, reasons }) {
+  return (
+    <div style={{ minWidth: 180 }}>
+      <div style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-muted, #64748B)', marginBottom: 2 }}>
+        {label}
+      </div>
+      {(!reasons || reasons.length === 0) ? (
+        <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #64748B)' }}>No reason recorded</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: '1rem', fontSize: '0.8rem' }}>
+          {reasons.map(r => (
+            <li key={r.reason}>
+              {r.reason}
+              <span style={{ color: 'var(--color-text-muted, #64748B)' }}> &times;{r.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// One headline number in the Source drilldown's summary strip.
+function DrillStat({ label, value, hint }) {
+  return (
+    <div style={{ minWidth: 120 }}>
+      <div style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-muted, #64748B)' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '1rem', fontWeight: 700 }}>{value}</div>
+      {hint && (
+        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted, #64748B)' }}>{hint}</div>
+      )}
+    </div>
+  );
+}
 
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
@@ -11420,8 +11482,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (!sourceRowMatches(r)) continue;
       const stage = (r['Stage'] || '').trim();
       const source = sourceKeyOf(r);
-      if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0 };
+      if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0, opps: [] };
       stats[source].total += 1;
+      stats[source].opps.push(r);
       if (stage === 'Sold') stats[source].wins += 1;
       else if (stage === 'Not Sold') stats[source].losses += 1;
       total += 1;
@@ -11435,6 +11498,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           wins: s.wins,
           winRate: decided > 0 ? (s.wins / decided) * 100 : null,
           percent: total > 0 ? (s.total / total) * 100 : 0,
+          ...summarizeOppsMoneyAndReasons(s.opps),
         };
       })
       .sort((a, b) => b.count - a.count);
@@ -11456,6 +11520,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return tb - ta;
       });
   }, [sourceDrillDown, records, sourceRowMatches, sourceKeyOf]);
+
+  // Money + reason stats for the opps behind the open drilldown. Runs the
+  // same roll-up the summary row uses, so the popup's headline numbers
+  // always match the row that opened it.
+  const sourceDrillStats = useMemo(
+    () => summarizeOppsMoneyAndReasons(sourceDrillRows),
+    [sourceDrillRows],
+  );
 
   const sourceColumns = useMemo(() => [
     {
@@ -11489,6 +11561,48 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           {row.winRate == null ? '-' : `${row.winRate.toFixed(1)}%`}
         </div>
       ),
+    },
+    {
+      key: 'avgDeal',
+      label: 'Avg Deal $',
+      defaultWidth: 120,
+      render: (row) => (
+        <div
+          style={{ textAlign: 'right' }}
+          title={row.avgDeal == null
+            ? 'No opp in this source has a Quoted Amount yet.'
+            : `Average Quoted Amount across the ${row.quotedCount} of ${row.count} opps that carry one.`}
+        >
+          {row.avgDeal == null ? '-' : fmtMoneyWhole(Math.round(row.avgDeal))}
+        </div>
+      ),
+    },
+    {
+      key: 'avgWon',
+      label: 'Avg Won $',
+      defaultWidth: 120,
+      render: (row) => (
+        <div
+          style={{ textAlign: 'right' }}
+          title={row.avgWon == null
+            ? 'No Sold opp with a Quoted Amount in this range — widen the Show filter to include closed opps.'
+            : `Average Quoted Amount across ${row.wonCount} Sold opp${row.wonCount === 1 ? '' : 's'}.`}
+        >
+          {row.avgWon == null ? '-' : fmtMoneyWhole(Math.round(row.avgWon))}
+        </div>
+      ),
+    },
+    {
+      key: 'topReasonSold',
+      label: 'Top Reason Sold',
+      defaultWidth: 200,
+      render: (row) => <TopReasonCell reasons={row.soldReasons} />,
+    },
+    {
+      key: 'topReasonNotSold',
+      label: 'Top Reason Not Sold',
+      defaultWidth: 200,
+      render: (row) => <TopReasonCell reasons={row.notSoldReasons} />,
     },
     {
       key: 'percent',
@@ -12025,7 +12139,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(820px, 94vw)', maxHeight: '82vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
+            style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(1040px, 94vw)', maxHeight: '82vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
               <h3 style={{ margin: 0, fontSize: '1.05rem' }}>
@@ -12039,6 +12153,24 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             <p style={{ marginTop: 0, fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
               Opps in this source, matching the current date range and Show filter. Click a row to open its details.
             </p>
+            {sourceDrillRows.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'flex-start', padding: '0.6rem 0.75rem', marginBottom: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface-alt, #F8FAFC)' }}>
+                <DrillStat
+                  label="Avg Deal $"
+                  value={sourceDrillStats.avgDeal == null ? '-' : fmtMoneyWhole(Math.round(sourceDrillStats.avgDeal))}
+                  hint={`${sourceDrillStats.quotedCount} of ${sourceDrillRows.length} quoted`}
+                />
+                <DrillStat
+                  label="Avg Won $"
+                  value={sourceDrillStats.avgWon == null ? '-' : fmtMoneyWhole(Math.round(sourceDrillStats.avgWon))}
+                  hint={sourceDrillStats.wonCount === 0
+                    ? 'no Sold opps in range'
+                    : `${sourceDrillStats.wonCount} Sold opp${sourceDrillStats.wonCount === 1 ? '' : 's'}`}
+                />
+                <ReasonBreakdown label="Reason Sold" reasons={sourceDrillStats.soldReasons} />
+                <ReasonBreakdown label="Reason Not Sold" reasons={sourceDrillStats.notSoldReasons} />
+              </div>
+            )}
             {sourceDrillRows.length === 0 ? (
               <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No opps to display.</div>
             ) : (
@@ -12049,6 +12181,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     <th style={{ padding: '0.4rem 0.5rem' }}>Contact</th>
                     <th style={{ padding: '0.4rem 0.5rem' }}>Stage</th>
                     <th style={{ padding: '0.4rem 0.5rem' }}>Scope</th>
+                    <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Quoted $</th>
+                    <th style={{ padding: '0.4rem 0.5rem' }}>Reason</th>
                     <th style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>Start Date</th>
                   </tr>
                 </thead>
@@ -12063,6 +12197,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                       <td style={{ padding: '0.4rem 0.5rem' }}>{r['Contact'] || '-'}</td>
                       <td style={{ padding: '0.4rem 0.5rem' }}>{r['Stage'] || '-'}</td>
                       <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '-'}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const amt = parseMoney(r['Quoted Amount']);
+                          return amt == null ? '-' : fmtMoneyWhole(Math.round(amt));
+                        })()}
+                      </td>
+                      <td style={{ padding: '0.4rem 0.5rem' }}>{closeReasonOf(r) || '-'}</td>
                       <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Start Date'] || '-'}</td>
                     </tr>
                   ))}
@@ -12529,8 +12670,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               {(sourceFrom || sourceTo) ? ' in range' : ''} · click a source to see its opps
             </span>
           </div>
+          {/* tableId bumped from "opps2-source" when Avg Deal $ / Avg Won $
+              and the two reason columns were added: DataTable treats a saved
+              visible-column set as authoritative, so anyone who had already
+              used this tab would have kept the old five-column layout and
+              never seen the new metrics. A fresh id starts everyone back at
+              "all columns shown". */}
           <DataTable
-            tableId="opps2-source"
+            tableId="opps2-source-v2"
             columns={sourceColumns}
             rows={sourceBreakdown.rows.map(r => ({ ...r, id: r.source }))}
             alwaysVisible={['source']}

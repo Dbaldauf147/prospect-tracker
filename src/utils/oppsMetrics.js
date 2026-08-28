@@ -220,3 +220,56 @@ export function yoyReviewMetrics(records, { target = 0, nowMs = Date.now() } = {
     },
   };
 }
+
+// The close-out reason a record carries. Opps 2 writes both the Sold and
+// the Not Sold follow-up prompts into the single "Reason Not Sold" column,
+// so which side of the win/loss split a reason belongs to comes from the
+// Stage, not from a second field. Import placeholders ("-", "#N/A") read
+// as no reason at all.
+export function closeReasonOf(r) {
+  const raw = String(r?.['Reason Not Sold'] ?? '').trim();
+  return raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+}
+
+// Roll a list of opps up into the money + close-reason stats the By Source
+// tab and its drilldown popup both show. Pure, so the summary row and the
+// popup it opens can never quote different numbers for the same source.
+//
+//   avgDeal — mean Quoted Amount across every opp passed in that carries a
+//             dollar figure. This is the pipeline-sizing number, so it
+//             stays meaningful under the By Source tab's default "Active
+//             only" filter, where nothing has closed yet.
+//   avgWon  — mean Quoted Amount of the Sold opps only, matching the
+//             "Deal Size" line on the YOY charts.
+//   soldReasons / notSoldReasons — close reasons ranked by frequency,
+//             ties broken alphabetically so the order is stable.
+export function summarizeOppsMoneyAndReasons(rows) {
+  let quotedSum = 0, quotedCount = 0, wonSum = 0, wonCount = 0;
+  const soldTally = new Map();
+  const notSoldTally = new Map();
+  for (const r of rows || []) {
+    const stage = String(r?.['Stage'] ?? '').trim();
+    const amt = parseMoney(r?.['Quoted Amount']);
+    // A blank or zero amount means "not quoted yet" rather than a $0 deal,
+    // so it stays out of the average instead of dragging it down.
+    if (amt != null && amt > 0) {
+      quotedSum += amt; quotedCount += 1;
+      if (stage === 'Sold') { wonSum += amt; wonCount += 1; }
+    }
+    const reason = closeReasonOf(r);
+    if (!reason) continue;
+    const tally = stage === 'Sold' ? soldTally : stage === 'Not Sold' ? notSoldTally : null;
+    if (tally) tally.set(reason, (tally.get(reason) || 0) + 1);
+  }
+  const rank = (tally) => [...tally.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  return {
+    avgDeal: quotedCount > 0 ? quotedSum / quotedCount : null,
+    quotedCount,
+    avgWon: wonCount > 0 ? wonSum / wonCount : null,
+    wonCount,
+    soldReasons: rank(soldTally),
+    notSoldReasons: rank(notSoldTally),
+  };
+}
