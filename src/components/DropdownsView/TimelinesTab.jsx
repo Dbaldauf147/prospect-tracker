@@ -12,7 +12,11 @@ import {
   canSwapStages,
   summarizeStageOwners,
   shortOwnerLabel,
-  libraryTimelines,
+  libraryEntries,
+  saveToLibrary,
+  removeFromLibrary,
+  instantiateTimeline,
+  LIBRARY_ID_PREFIX,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { PriorStepsPicker } from './PriorStepsPicker';
@@ -713,7 +717,7 @@ function TimelineVisual({ template, onChangeFormat }) {
 // One timeline: an editable name, the services it's attached to, and its
 // ordered stages. The parent owns the array and hands down a single
 // onChange so every edit lands as one settings write.
-function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) {
+function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, onSaveToLibrary, savedInLibrary }) {
   const { stages } = template;
   const counts = summarizeStageOwners(stages);
   const format = template.format || 'gantt';
@@ -818,6 +822,39 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
             {counts[o]} {shortOwnerLabel(o)}
           </span>
         ))}
+        {/* Put this timeline on the library shelf, so the next engagement
+            can start from it. A snapshot: what's on the shelf stops here, and
+            carrying on editing below doesn't rewrite it.
+            
+            Once this timeline HAS an entry — it was taken off the shelf, or
+            put there earlier — the two things you might mean are different
+            enough to be separate buttons. Tailoring a standard plan to one
+            client and saving it should not quietly replace the standard, so
+            "Save as new" is there rather than inferred from whether the name
+            changed. */}
+        {savedInLibrary ? (
+          <>
+            <button
+              type="button"
+              className={styles.librarySaveBtn}
+              onClick={() => onSaveToLibrary?.(template, { asNew: false })}
+              title="Replace this timeline&rsquo;s library copy with how it reads now"
+            >Update in library</button>
+            <button
+              type="button"
+              className={styles.librarySaveBtn}
+              onClick={() => onSaveToLibrary?.(template, { asNew: true })}
+              title="Put this on the library shelf as its own entry, leaving the one it came from alone"
+            >Save as new</button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className={styles.librarySaveBtn}
+            onClick={() => onSaveToLibrary?.(template, { asNew: false })}
+            title="Save this timeline to the library, to start future ones from"
+          >Save to library</button>
+        )}
         <button
           type="button"
           className={styles.timelineDeleteBtn}
@@ -1059,17 +1096,21 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   );
 }
 
-// The standard timelines the user doesn't currently have, offered next to
-// "+ New timeline".
+// The library shelf, offered next to "+ New timeline": the timelines that
+// ship with the app, and the ones the user has saved from their own list.
 //
-// A timeline that ships with the app only shows up on its own until somebody
-// saves their own set — from then on the saved list is the whole truth. So
-// the ones added since are offered here instead of appearing in the list
-// unasked: clicking one adds it, and a timeline that isn't wanted is simply
-// never clicked (or deleted again, and it comes back to this menu).
-function LibraryPicker({ templates, onAdd }) {
+// Clicking one adds a COPY — new ids throughout — so the same standard plan
+// can be pulled off the shelf once per engagement without the two copies
+// being edited and deleted as one. Which is why entries stay listed after
+// they've been used; a row whose name is already in the list says so rather
+// than disappearing.
+function LibraryPicker({ entries, templates, onAdd, onRemove }) {
   const [open, setOpen] = useState(false);
-  const available = useMemo(() => libraryTimelines(templates), [templates]);
+  // Names already in the list, so a row can warn before it's added twice.
+  const present = useMemo(
+    () => new Set(templates.map(t => t.name.trim().toLowerCase()).filter(Boolean)),
+    [templates],
+  );
 
   useEffect(() => {
     if (!open) return undefined;
@@ -1087,7 +1128,13 @@ function LibraryPicker({ templates, onAdd }) {
     };
   }, [open]);
 
-  if (!available.length) return null;
+  if (!entries.length) return null;
+
+  function remove(entry) {
+    const label = entry.name.trim() || 'this timeline';
+    if (!window.confirm(`Take "${label}" off the library shelf? The copies already in your list are untouched.`)) return;
+    onRemove(entry);
+  }
 
   return (
     <div className={styles.libraryPicker}>
@@ -1095,24 +1142,40 @@ function LibraryPicker({ templates, onAdd }) {
         type="button"
         className={styles.libraryPickerBtn}
         onClick={() => setOpen(v => !v)}
-        title="Add one of the timelines that ship with the app"
-      >+ From library · {available.length}</button>
+        title="Start a timeline from one on the library shelf"
+      >+ From library · {entries.length}</button>
       {open && (
         <div className={styles.libraryPickerMenu}>
-          {available.map(tpl => (
-            <button
-              key={tpl.id}
-              type="button"
-              className={styles.libraryPickerRow}
-              onClick={() => { setOpen(false); onAdd(tpl); }}
-              title={tpl.subtitle || `Add the ${tpl.name} timeline`}
-            >
-              <span className={styles.libraryPickerName}>{tpl.name || 'Untitled timeline'}</span>
-              <span className={styles.libraryPickerMeta}>
-                {tpl.stages.length} stage{tpl.stages.length === 1 ? '' : 's'}
-              </span>
-            </button>
-          ))}
+          {entries.map(entry => {
+            const already = present.has(entry.name.trim().toLowerCase());
+            return (
+              <div key={entry.libraryId} className={styles.libraryPickerItem}>
+                <button
+                  type="button"
+                  className={styles.libraryPickerRow}
+                  onClick={() => { setOpen(false); onAdd(entry); }}
+                  title={entry.subtitle || `Add a copy of ${entry.name}`}
+                >
+                  <span className={styles.libraryPickerName}>
+                    {entry.name || 'Untitled timeline'}
+                    {already && <span className={styles.libraryPickerNote}>already in your list</span>}
+                  </span>
+                  <span className={styles.libraryPickerMeta}>
+                    {entry.stages.length} stage{entry.stages.length === 1 ? '' : 's'}
+                  </span>
+                </button>
+                {entry.builtIn ? null : (
+                  <button
+                    type="button"
+                    className={styles.libraryPickerRemove}
+                    onClick={() => remove(entry)}
+                    title="Take this off the library shelf"
+                    aria-label={`Remove ${entry.name || 'timeline'} from the library`}
+                  >×</button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1129,9 +1192,28 @@ export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) 
   // timelines themselves change, not on every unrelated settings write.
   const saved = settings?.timelineTemplates;
   const templates = useMemo(() => getTimelineTemplates({ timelineTemplates: saved }), [saved]);
+  const savedLibrary = settings?.timelineLibrary;
+  const entries = useMemo(() => libraryEntries({ timelineLibrary: savedLibrary }), [savedLibrary]);
+  const savedIds = useMemo(
+    () => new Set(entries.map(e => e.libraryId).filter(Boolean)),
+    [entries],
+  );
 
   function saveTemplates(next) {
     updateSettings?.({ timelineTemplates: next });
+  }
+  // Saving to the library writes both halves at once: the shelf gains (or
+  // refreshes) its entry, and the timeline in the list records which entry
+  // it is, so the next save updates that one rather than shelving a second
+  // near-copy beside it.
+  function saveTemplateToLibrary(tpl, { asNew = false } = {}) {
+    const withId = tpl.libraryId && !asNew
+      ? tpl
+      : { ...tpl, libraryId: makeTimelineId(LIBRARY_ID_PREFIX) };
+    updateSettings?.({
+      timelineLibrary: saveToLibrary({ timelineLibrary: savedLibrary }, withId),
+      timelineTemplates: templates.map(t => (t.id === withId.id ? withId : t)),
+    });
   }
   function updateTemplate(id, next) {
     saveTemplates(templates.map(t => (t.id === id ? next : t)));
@@ -1189,8 +1271,12 @@ export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) 
           }}
         >+ New timeline</button>
         <LibraryPicker
+          entries={entries}
           templates={templates}
-          onAdd={(tpl) => saveTemplates([...templates, tpl])}
+          onAdd={(entry) => saveTemplates([...templates, instantiateTimeline(entry)])}
+          onRemove={(entry) => updateSettings?.({
+            timelineLibrary: removeFromLibrary({ timelineLibrary: savedLibrary }, entry.libraryId),
+          })}
         />
         <span className={styles.resultCount}>
           {term
@@ -1223,6 +1309,8 @@ export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) 
                 filter={search}
                 onChange={(next) => updateTemplate(tpl.id, next)}
                 onRemove={() => removeTemplate(tpl.id)}
+                onSaveToLibrary={saveTemplateToLibrary}
+                savedInLibrary={!!tpl.libraryId && savedIds.has(tpl.libraryId)}
               />
             </div>
           ))

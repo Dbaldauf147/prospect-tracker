@@ -2307,7 +2307,7 @@
   top: calc(100% + 4px);
   left: 0;
   z-index: 20;
-  min-width: 260px;
+  min-width: 320px;
   padding: 0.35rem;
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -2315,12 +2315,22 @@
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
 }
 
+/* One shelf row: the timeline itself, plus the remove control for the ones
+   the user put there. The row is the button; the × sits beside it so a
+   click on either can't be mistaken for the other. */
+.libraryPickerItem {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
 .libraryPickerRow {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.6rem;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 0.3rem 0.35rem;
   border: none;
   border-radius: 4px;
@@ -2332,6 +2342,51 @@
 
 .libraryPickerRow:hover {
   background: var(--color-bg-hover, rgba(148, 163, 184, 0.12));
+}
+
+/* "already in your list" — its own line under the name, so a long name and
+   the note don't wrap into each other. */
+.libraryPickerNote {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.libraryPickerRemove {
+  padding: 0 0.3rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.libraryPickerRemove:hover {
+  background: var(--color-bg-hover, rgba(148, 163, 184, 0.12));
+  color: #B91C1C;
+}
+
+/* "Save to library" on a timeline card's header, beside the delete bin. */
+.librarySaveBtn {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.librarySaveBtn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .libraryPickerName {

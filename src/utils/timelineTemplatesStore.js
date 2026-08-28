@@ -13,6 +13,7 @@
 //   [{
 //     id:       'tl-<base36>',
 //     name:     'Budget timeline',
+//     libraryId: 'lib-<base36>',           // set once it's been on the library shelf
 //     subtitle: 'What the timeline is for',  // optional, drawn under the title
 //     services: ['Budgets'],               // Solutions-catalog names, optional
 //     stages: [{
@@ -302,6 +303,9 @@ function normalizeTemplate(tpl) {
   return {
     positionMode: inferPositionMode(tpl),
     id: tpl?.id || makeTimelineId('tl'),
+    // The library entry this timeline was added from (or last saved to), or
+    // '' for one that has never been on the shelf. See libraryEntries.
+    libraryId: String(tpl?.libraryId ?? ''),
     name: String(tpl?.name ?? ''),
     // The line under the title — what the timeline is FOR, in the words it's
     // presented in ("Building the procurement foundation to move quickly when
@@ -354,24 +358,98 @@ export function getTimelineTemplates(settings) {
   return source.map(normalizeTemplate);
 }
 
-// The built-in timelines the user doesn't currently have, ready to be added
-// back — the "library" the Timelines tab offers alongside "+ New timeline".
+// --- The library ---------------------------------------------------------
 //
-// The seeds only show while nobody has saved a set of their own; the moment
-// anything on the page is edited, the saved array is the whole truth and a
-// timeline shipped later would never reach the people already using the tab.
-// This is how it reaches them: as something they add when they want it,
-// rather than something that reappears in their list on its own.
+// A shelf of timelines to start from, offered behind "+ From library" on the
+// Timelines tab. Two things sit on it: the timelines that ship with the app,
+// and the ones the user puts there themselves.
 //
-// Matched on id, so a library timeline that's already there isn't offered
-// twice, and one the user deleted stays deleted until they ask for it back.
-export function libraryTimelines(current) {
-  const have = new Set(
-    (Array.isArray(current) ? current : []).map(t => String(t?.id ?? '')).filter(Boolean),
-  );
-  return BUILTIN_TIMELINE_TEMPLATES
-    .filter(tpl => !have.has(String(tpl?.id ?? '')))
-    .map(normalizeTemplate);
+// Why the shelf exists at all: the seeds only show while nobody has saved a
+// set of their own, and from the first edit on the page the saved array is
+// the whole truth — so a timeline shipped later would never reach anyone
+// already using the tab. The library is how it reaches them, as something
+// they add when they want it rather than something that appears in their
+// list on its own.
+//
+// And why the user can save to it: a timeline worked out once — the stages,
+// the owners, the wording that goes in front of a client — is the thing you
+// want to start the NEXT engagement from. Saving puts a copy on the shelf;
+// what's on the shelf is a snapshot, so carrying on editing the timeline in
+// the list doesn't quietly rewrite the copy.
+//
+// Saved entries live under settings.timelineLibrary and sync with the other
+// dropdown settings. Each carries a `libraryId`, its identity on the shelf:
+// a timeline saved a second time updates its own entry rather than growing
+// a second one, and an entry added to the list remembers where it came from
+// so the same is true of the copy.
+export const LIBRARY_ID_PREFIX = 'lib';
+
+// Every entry on the shelf: the built-ins first, then whatever the user has
+// saved, each stamped with the `libraryId` that identifies it and whether
+// it's one of ours (which can't be removed — it ships with the app).
+export function libraryEntries(settings) {
+  const saved = Array.isArray(settings?.timelineLibrary) ? settings.timelineLibrary : [];
+  return [
+    ...BUILTIN_TIMELINE_TEMPLATES.map(tpl => ({
+      ...normalizeTemplate(tpl),
+      libraryId: String(tpl?.id ?? ''),
+      builtIn: true,
+    })),
+    ...saved.map(tpl => ({
+      ...normalizeTemplate(tpl),
+      libraryId: String(tpl?.libraryId || tpl?.id || makeTimelineId(LIBRARY_ID_PREFIX)),
+      builtIn: false,
+    })),
+  ];
+}
+
+// Put a timeline on the shelf, or update the entry it already came from.
+// Returns the next saved-library array, ready to write back to settings.
+//
+// A snapshot, deliberately: the entry holds the timeline as it is at the
+// moment it's saved, so the copy in the working list stays editable without
+// the shelf following along behind it.
+export function saveToLibrary(settings, template) {
+  const saved = Array.isArray(settings?.timelineLibrary) ? settings.timelineLibrary : [];
+  const libraryId = String(template?.libraryId || '').trim() || makeTimelineId(LIBRARY_ID_PREFIX);
+  const entry = { ...normalizeTemplate(template), libraryId };
+  const at = saved.findIndex(t => String(t?.libraryId ?? '') === libraryId);
+  if (at === -1) return [...saved, entry];
+  return saved.map((t, i) => (i === at ? entry : t));
+}
+
+// Take a timeline off the shelf. Built-ins aren't in the saved array to
+// begin with, so asking to remove one is a no-op rather than an error.
+export function removeFromLibrary(settings, libraryId) {
+  const saved = Array.isArray(settings?.timelineLibrary) ? settings.timelineLibrary : [];
+  const key = String(libraryId ?? '');
+  return saved.filter(t => String(t?.libraryId ?? '') !== key);
+}
+
+// A fresh timeline built from a library entry, ready to append to the list.
+//
+// Every id is regenerated — the timeline's and each stage's — because the
+// same entry can be added more than once: one standard plan, instantiated
+// per engagement. Two timelines sharing an id would be edited and deleted as
+// one. `dependsOn` is a list of stage ids, so it's remapped through the same
+// table rather than left pointing at the stages of whichever copy was added
+// first.
+export function instantiateTimeline(entry) {
+  const tpl = normalizeTemplate(entry);
+  const idMap = new Map();
+  for (const stage of tpl.stages) idMap.set(stage.id, makeTimelineId('st'));
+  return {
+    ...tpl,
+    id: makeTimelineId('tl'),
+    // Where this copy came from, so editing it and saving updates that entry
+    // instead of leaving a near-duplicate beside it on the shelf.
+    libraryId: String(entry?.libraryId || entry?.id || ''),
+    stages: tpl.stages.map(stage => ({
+      ...stage,
+      id: idMap.get(stage.id),
+      dependsOn: formatDependsOn(parseDependsOn(stage.dependsOn).map(id => idMap.get(id) || id)),
+    })),
+  };
 }
 
 // Templates attached to a given service name, compared case-insensitively so
