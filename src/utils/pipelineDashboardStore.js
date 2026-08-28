@@ -5,10 +5,16 @@
 // PipelineView announces every save with PIPELINE_DASHBOARD_EVENT so those
 // readers refresh as soon as the user adds or removes a service.
 import { dbGet } from './db';
+import { registerMirroredDbKey } from './localMirrorSync';
 
 export const PIPELINE_STORE = 'pipeline-dashboard';
 export const PIPELINE_KEY = 'current';
 export const PIPELINE_DASHBOARD_EVENT = 'pipeline-dashboard-changed';
+
+// Mirrored to Firestore. The dashboard is typed state, not derived data —
+// nothing rebuilds it — so a cleared browser used to lose it outright, and
+// with it the tracked coverage services the Issues tab reads.
+registerMirroredDbKey(PIPELINE_STORE, PIPELINE_KEY, PIPELINE_DASHBOARD_EVENT);
 
 export async function loadPipelineDashboard() {
   try {

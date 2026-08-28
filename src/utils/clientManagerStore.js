@@ -7,6 +7,7 @@
 // share client-tab notes / statuses.
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
 
 const MANAGER_KEY = 'clients-manager-map';
 const IN_PERSON_KEY = 'clients-inperson-map';
@@ -42,6 +43,7 @@ function loadMap(key) {
 function persistMap(key, map, eventName) {
   try {
     userLsSet(key, JSON.stringify(map || {}));
+    queueMirrorPush(key);
     window.dispatchEvent(new Event(eventName));
   } catch (err) {
     console.warn(`Failed to persist ${key}`, err);
@@ -148,6 +150,15 @@ const ALL_CLIENT_MAPS = [
   [UNTRACKED_KEY, CLIENT_UNTRACKED_EVENT],
   [LOUISVILLE_KEY, CLIENT_LOUISVILLE_EVENT],
 ];
+
+// Every one of those is mirrored to Firestore. They are the fields typed
+// straight onto the Clients tab — "Don't Track" among them, which decides
+// whether a client is chased on the Issues tab — and until now they existed
+// in one browser and nowhere else. Registered off ALL_CLIENT_MAPS so a
+// field added there is mirrored without a second edit here.
+for (const [mirroredKey, mirroredEvent] of ALL_CLIENT_MAPS) {
+  registerMirroredKey(mirroredKey, mirroredEvent);
+}
 
 // How many per-client field values would move if `oldName` were renamed to
 // `newName` — for the rename-confirmation summary. A field only moves when

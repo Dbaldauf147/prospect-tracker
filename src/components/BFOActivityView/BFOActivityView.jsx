@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { saveBfoActivity } from '../../utils/bfoActivityStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { setOppBfoLink } from '../../utils/opps2Store';
 import { normalizeCompany } from '../../utils/companyNorm';
@@ -163,7 +164,10 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, { headers: data.headers, rows: data.rows }, KEY).catch(err => console.warn('BFO data save failed', err));
+    // Mirrored to Firestore (see utils/bfoActivityStore) so the pasted rows
+    // survive a cleared browser.
+    saveBfoActivity({ headers: data.headers, rows: data.rows })
+      .catch(err => console.warn('BFO data save failed', err));
   }, [data]);
 
   useEffect(() => {

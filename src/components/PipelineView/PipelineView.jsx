@@ -7,7 +7,7 @@ import { Component, createContext, Fragment, useContext, useEffect, useMemo, use
 import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { PipelineFunnel } from './PipelineFunnel';
-import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { dbGet, dbDelete } from '../../utils/db';
 import { bfoStageMetrics, matchStage } from '../../utils/bfoStageMetrics';
 import { parseMoney } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -28,6 +28,7 @@ import {
   serviceLabelMap,
 } from '../../utils/serviceCoverage';
 import { notifyPipelineDashboardChanged } from '../../utils/pipelineDashboardStore';
+import { mirrorDbPut } from '../../utils/localMirrorSync';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
@@ -1630,7 +1631,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
   useEffect(() => {
     if (!hydrated) return;
-    dbPut(STORE, state, KEY)
+    // mirrorDbPut is dbPut plus the Firestore mirror, so the dashboard
+    // survives a cleared browser.
+    mirrorDbPut(STORE, KEY, state)
       // Tell the Issues tab (and the sidebar badge) the dashboard moved —
       // it reads coverageServices from this record.
       .then(notifyPipelineDashboardChanged)
