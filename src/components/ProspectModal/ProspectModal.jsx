@@ -28,6 +28,7 @@ import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
+import { nameFromEmail } from '../../utils/nameFromEmail';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners } from '../../utils/peOwners';
@@ -1273,6 +1274,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const stateRef = useRef(null);
   stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, sentiment };
 
+  // Re-render trigger for the moment a new contact gains a HubSpot id (see
+  // handleSave). The id itself is pinned on the contact prop, which React
+  // doesn't watch, so the header, the footer and the Events panel need a
+  // nudge to stop treating the form as a "new contact" one.
+  const [, setCreatedTick] = useState(0);
+
   // `auto` marks a background (debounced) save: the modal stays open and any
   // status is reported inline rather than by handing control back to the
   // caller, which closes the popup on a non-silent onSave.
@@ -1341,6 +1348,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       // contact's id (which a later delete-by-id would then wipe alongside it).
       const alreadyExisted = isNew && json?.alreadyExisted === true && !!newId;
       const savedContact = isNew ? { id: newId, ...allProps } : { ...contact, ...allProps };
+      // Autosave keeps running after this, so the form has to stop being a
+      // "new contact" one the instant HubSpot hands back an id — otherwise the
+      // next debounce would post a second create and mint a duplicate. A
+      // silent onSave leaves the caller holding this exact contact object, so
+      // pin the id on it the way the duplicate-recovery branch above does.
+      if (isNew && newId && String(contact.id || contact.vid || '') !== String(newId)) {
+        contact.id = newId;
+        setCreatedTick(n => n + 1);
+      }
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         await updateHubspotCache(draft => {
@@ -1494,7 +1510,20 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
   const existingHsId = contact.id || contact.vid;
-  const autosaveEnabled = !!existingHsId && !(typeof existingHsId === 'string' && existingHsId.startsWith('local-'));
+  // Saving a half-typed address would push "dan@" to HubSpot (and key the
+  // CC / To Also maps off it) before the next keystroke fixes it, so hold the
+  // autosave until the address is at least shaped like one. The explicit
+  // button is unaffected — it only needs a non-empty value, as before.
+  const emailLooksComplete = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((f.email || '').trim());
+  // A brand-new contact autosaves too, from the moment its address is
+  // complete: the email is what makes the record findable at all, so once
+  // it's there the first debounce creates the HubSpot contact and every edit
+  // after that updates it, exactly as for a contact that already existed.
+  // Until then there's nothing to key a record on, so an untouched form stays
+  // on the explicit "Create in HubSpot" click and can be closed without
+  // minting anything.
+  const isLocalOnlyId = typeof existingHsId === 'string' && existingHsId.startsWith('local-');
+  const autosaveEnabled = (!!existingHsId && !isLocalOnlyId) || emailLooksComplete;
   const currentSig = signatureOf(stateRef.current);
   const [savedSig, setSavedSig] = useState(currentSig);
   const savedSigRef = useRef(currentSig);
@@ -1503,11 +1532,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const failedSigRef = useRef(null);
   const inFlightRef = useRef(null);
   const dirty = currentSig !== savedSig;
-  // Saving a half-typed address would push "dan@" to HubSpot (and key the
-  // CC / To Also maps off it) before the next keystroke fixes it, so hold the
-  // autosave until the address is at least shaped like one. The explicit
-  // button is unaffected — it only needs a non-empty value, as before.
-  const emailLooksComplete = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((f.email || '').trim());
+  // A contact with no HubSpot record yet always has something to push, even
+  // when nothing has been typed since the form opened — a new-contact form
+  // opened with fields already filled in starts out "clean" but still doesn't
+  // exist anywhere. Autosave deliberately keeps using `dirty`, so merely
+  // opening such a form never mints a record; the button and the status
+  // readout use `needsSave`, so the user can always create it by hand.
+  const notInHubspot = !existingHsId || isLocalOnlyId;
+  const needsSave = dirty || notInHubspot;
   const canAutosave = autosaveEnabled && dirty && emailLooksComplete && failedSigRef.current !== currentSig;
 
   function runSave(opts) {
@@ -1533,7 +1565,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     const flush = () => {
       const sig = signatureOf(stateRef.current);
       if (sig === savedSigRef.current) return;
-      if (!stateRef.current.f.email.trim()) return;
+      // Same bar as the debounce: a flush must not be the thing that pushes a
+      // half-typed address, and for a contact that doesn't exist yet it would
+      // also be the thing that creates the record under it.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stateRef.current.f.email.trim())) return;
       if (failedSigRef.current === sig) return;
       void handleSave({ auto: true });
     };
@@ -1668,6 +1703,37 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                   {unique.map(s => (
                     <button key={s} type="button" onClick={() => set('email', s)} style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BFDBFE', borderRadius: '999px', background: '#EFF6FF', color: '#1E40AF', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
                   ))}
+                </div>
+              );
+            })()}
+            {/* The reverse trip: a contact who arrives as a forwarded address
+                gets their email typed first, so read a name back out of it and
+                offer whichever half the form is still missing. Only ever fills
+                a blank field — a name already typed wins over the guess. */}
+            {(() => {
+              const guess = nameFromEmail(f.email);
+              if (!guess) return null;
+              const wantFirst = !!guess.firstname && !f.firstname.trim();
+              const wantLast = !!guess.lastname && !f.lastname.trim();
+              if (!wantFirst && !wantLast) return null;
+              // An address like jnewman@ only evidences the surname — say which
+              // field the chip fills so a half-guess doesn't read as a whole one.
+              const what = wantFirst && wantLast ? 'name' : wantFirst ? 'first name' : 'last name';
+              const label = [wantFirst && guess.firstname, wantLast && guess.lastname].filter(Boolean).join(' ');
+              const apply = () => setF(prev => ({
+                ...prev,
+                firstname: wantFirst ? guess.firstname : prev.firstname,
+                lastname: wantLast ? guess.lastname : prev.lastname,
+              }));
+              return (
+                <div style={{ marginTop: '0.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#64748B' }}>{`Use this ${what}?`}</span>
+                  <button
+                    type="button"
+                    onClick={apply}
+                    title={`Fill the ${what} from ${f.email.trim()}`}
+                    style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BBF7D0', borderRadius: '999px', background: '#F0FDF4', color: '#166534', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                  >{label}</button>
                 </div>
               );
             })()}
@@ -2372,19 +2438,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             {autosaveEnabled && (
               <span
                 title="Edits save to HubSpot automatically a moment after you stop typing."
-                style={{ fontSize: '0.7rem', color: saving ? '#0369A1' : !dirty ? '#059669' : '#B45309', fontWeight: 600, whiteSpace: 'nowrap' }}
+                style={{ fontSize: '0.7rem', color: saving ? '#0369A1' : !needsSave ? '#059669' : '#B45309', fontWeight: 600, whiteSpace: 'nowrap' }}
               >
-                {saving ? 'Saving…' : !dirty ? 'All changes saved' : !emailLooksComplete ? 'Enter a valid email to save' : 'Saving shortly…'}
+                {saving ? 'Saving…'
+                  : !needsSave ? 'All changes saved'
+                  : !emailLooksComplete ? 'Enter a valid email to save'
+                  : dirty ? (notInHubspot ? 'Creating shortly…' : 'Saving shortly…')
+                  : 'Not in HubSpot yet'}
               </span>
             )}
-            <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>{autosaveEnabled ? 'Close' : 'Cancel'}</button>
+            <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>{autosaveEnabled && !notInHubspot ? 'Close' : 'Cancel'}</button>
             <button
               onClick={() => runSave({ auto: autosaveEnabled })}
-              disabled={saving || (autosaveEnabled ? !dirty : saved) || !f.email.trim()}
+              disabled={saving || (autosaveEnabled ? !needsSave : saved) || !f.email.trim()}
               title={!f.email.trim() ? 'Email is required' : autosaveEnabled ? 'Edits save automatically: click to push them now' : ''}
-              style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: (saved || (autosaveEnabled && !dirty)) ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving || (autosaveEnabled && !dirty)) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
+              style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: (saved || (autosaveEnabled && !needsSave)) ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving || (autosaveEnabled && !needsSave)) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
             >
-              {saving ? 'Saving…' : !f.email.trim() ? 'Email required' : autosaveEnabled ? (dirty ? 'Save now' : '✓ Saved') : saved ? '✓ Saved!' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
+              {saving ? 'Saving…' : !f.email.trim() ? 'Email required' : notInHubspot ? 'Create in HubSpot' : autosaveEnabled ? (dirty ? 'Save now' : '✓ Saved') : saved ? '✓ Saved!' : 'Save to HubSpot'}
             </button>
           </div>
         </div>
