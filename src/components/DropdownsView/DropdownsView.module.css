@@ -2278,3 +2278,70 @@
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
 }
+
+/* "+ From library": the timelines that ship with the app and aren't in the
+   user's set yet. Same menu shape as the column picker, anchored under a
+   button that sits beside "+ New timeline". */
+.libraryPicker {
+  position: relative;
+}
+
+.libraryPickerBtn {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-accent);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.libraryPickerBtn:hover {
+  background: var(--color-accent-light, rgba(59, 125, 221, 0.1));
+}
+
+.libraryPickerMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 260px;
+  padding: 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface, var(--color-bg));
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+}
+
+.libraryPickerRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.3rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.libraryPickerRow:hover {
+  background: var(--color-bg-hover, rgba(148, 163, 184, 0.12));
+}
+
+.libraryPickerName {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.libraryPickerMeta {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}

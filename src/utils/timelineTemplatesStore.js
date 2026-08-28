@@ -13,6 +13,7 @@
 //   [{
 //     id:       'tl-<base36>',
 //     name:     'Budget timeline',
+//     subtitle: 'What the timeline is for',  // optional, drawn under the title
 //     services: ['Budgets'],               // Solutions-catalog names, optional
 //     stages: [{
 //       id:          'st-<base36>',
@@ -302,6 +303,11 @@ function normalizeTemplate(tpl) {
     positionMode: inferPositionMode(tpl),
     id: tpl?.id || makeTimelineId('tl'),
     name: String(tpl?.name ?? ''),
+    // The line under the title — what the timeline is FOR, in the words it's
+    // presented in ("Building the procurement foundation to move quickly when
+    // market opportunities arise"). Optional: a timeline without one draws
+    // its header exactly as it always did.
+    subtitle: String(tpl?.subtitle ?? ''),
     // Which layout the visual and exports render. Timelines saved before the
     // Gantt existed have no format and pick up the default.
     format: ['milestone', 'phased', 'gantt'].includes(tpl?.format) ? tpl.format : 'gantt',
@@ -346,6 +352,26 @@ export function getTimelineTemplates(settings) {
   const raw = settings?.timelineTemplates;
   const source = Array.isArray(raw) ? raw : BUILTIN_TIMELINE_TEMPLATES;
   return source.map(normalizeTemplate);
+}
+
+// The built-in timelines the user doesn't currently have, ready to be added
+// back — the "library" the Timelines tab offers alongside "+ New timeline".
+//
+// The seeds only show while nobody has saved a set of their own; the moment
+// anything on the page is edited, the saved array is the whole truth and a
+// timeline shipped later would never reach the people already using the tab.
+// This is how it reaches them: as something they add when they want it,
+// rather than something that reappears in their list on its own.
+//
+// Matched on id, so a library timeline that's already there isn't offered
+// twice, and one the user deleted stays deleted until they ask for it back.
+export function libraryTimelines(current) {
+  const have = new Set(
+    (Array.isArray(current) ? current : []).map(t => String(t?.id ?? '')).filter(Boolean),
+  );
+  return BUILTIN_TIMELINE_TEMPLATES
+    .filter(tpl => !have.has(String(tpl?.id ?? '')))
+    .map(normalizeTemplate);
 }
 
 // Templates attached to a given service name, compared case-insensitively so
