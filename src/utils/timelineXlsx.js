@@ -12,7 +12,7 @@
 // compliance export already uses.
 
 import { schneiderLogoPngDataUrl, SE_GREEN_DARK, SE_GREEN } from './schneiderLogo.js';
-import { ownerColor, WORKSTREAM_COLOR, tint } from './timelineGraphic.js';
+import { ownerColor, WORKSTREAM_COLOR, workstreamLegendEntries, tint } from './timelineGraphic.js';
 import { groupStagesByPhase, subRuns } from './timelineTemplatesStore.js';
 import {
   getStageRange, isoToMs, daysInMonth, monthLabel,
@@ -93,8 +93,8 @@ const MONTH_COL_CHARS = 10;
 const rowHeightPx = (points) => Math.round((points * 4) / 3);
 
 // The diamond itself, rasterized on a canvas — ExcelJS only takes raster
-// formats. Matches the chart's marker: workstream colour, white step number,
-// and a "Both" diamond split down the middle. Browser-only, like the logo.
+// formats. Matches the chart's marker: workstream colour and a white step
+// number, "Both" included. Browser-only, like the logo.
 function milestoneDiamondPng({ size, owner, label, scale = 4 }) {
   const canvas = document.createElement('canvas');
   canvas.width = size * scale;
@@ -110,20 +110,9 @@ function milestoneDiamondPng({ size, owner, label, scale = 4 }) {
     ctx.lineTo(0.5, mid);
     ctx.closePath();
   };
-  if (owner === 'Both') {
-    ctx.save();
-    outline();
-    ctx.clip();
-    ctx.fillStyle = WORKSTREAM_COLOR['Client'];
-    ctx.fillRect(0, 0, mid, size);
-    ctx.fillStyle = WORKSTREAM_COLOR['Schneider Electric'];
-    ctx.fillRect(mid, 0, mid, size);
-    ctx.restore();
-  } else {
-    ctx.fillStyle = WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR['Schneider Electric'];
-    outline();
-    ctx.fill();
-  }
+  ctx.fillStyle = WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR['Schneider Electric'];
+  outline();
+  ctx.fill();
   if (label != null && label !== '') {
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `800 ${Math.round(size * 0.44)}px "Nunito Sans", "Segoe UI", Arial, sans-serif`;
@@ -710,24 +699,25 @@ function writePhasedSheet(wb, ws, template) {
 
   ws.views = [{ state: 'frozen', xSplit: LEAD, ySplit: weekRow, showGridLines: false }];
 
-  // Legend, naming the client workstream the way the graphic does. The two
-  // swatches stack down column A — one per row, the width of the Stages
-  // column — rather than running across the sheet, so the key stays under
-  // the labels it explains instead of drifting over the month grid.
+  // Legend, naming the client workstream the way the graphic does — same
+  // entries, same order, so "Both" appears here exactly when it appears
+  // there. The swatches stack down column A — one per row, the width of the
+  // Stages column — rather than running across the sheet, so the key stays
+  // under the labels it explains instead of drifting over the month grid.
   r += 1;
-  const clientName = String(template?.clientName || '').trim() || 'Client';
+  const legendEntries = workstreamLegendEntries(template);
   ws.getCell(r, 1).value = 'Legend';
   ws.getCell(r, 1).font = { name: FONT, bold: true, size: 9, color: { argb: SLATE } };
   r += 1;
-  [[`${clientName.toUpperCase()} WORKSTREAM`, 'Client'], ['SE WORKSTREAM', 'Schneider Electric']].forEach(([label, owner], i) => {
+  legendEntries.forEach(({ label, owner }, i) => {
     const cell = ws.getCell(r + i, 1);
-    cell.value = label;
+    cell.value = `${String(label).toUpperCase()} WORKSTREAM`;
     cell.font = { name: FONT, bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
     cell.fill = fill(argb(WORKSTREAM_COLOR[owner]));
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(r + i).height = 16;
   });
-  r += 1;
+  r += legendEntries.length - 1;
   const lastFramedRow = r;
 
   frameBlock(ws, 1, 1, lastFramedRow, NCOLS);

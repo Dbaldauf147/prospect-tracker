@@ -486,8 +486,9 @@ export function buildGanttSvg(template, { branded = true } = {}) {
 // following slide.
 //
 // This format uses a workstream palette rather than the ring colours of the
-// other two — blue for the client, green for Schneider Electric — because
-// that's the convention these decks are read in. The legend names both.
+// other two — blue for the client, green for Schneider Electric, teal for a
+// stage both own — because that's the convention these decks are read in.
+// Every colour on the grid is named in the legend.
 
 export const WORKSTREAM_COLOR = {
   'Client': '#29ABE2',
@@ -497,6 +498,28 @@ export const WORKSTREAM_COLOR = {
 
 function workstreamColor(owner) {
   return WORKSTREAM_COLOR[owner] || WORKSTREAM_COLOR[DEFAULT_STAGE_OWNER];
+}
+
+// The workstreams the legend names, in the order they're drawn. Client and SE
+// are always listed — they're the two sides of every one of these decks, and a
+// deck that happens to have no client-owned step still reads against the same
+// key as the rest of the pack. "Both" is listed only when a stage actually
+// uses it, so a timeline with no jointly-owned work doesn't carry a swatch for
+// a colour that never appears in its grid.
+//
+// Shared with the Excel export so the sheet and the graphic key the same
+// colours in the same order.
+export function workstreamLegendEntries(template) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  const clientName = String(template?.clientName || '').trim() || 'Client';
+  const entries = [
+    { label: clientName, owner: 'Client' },
+    { label: 'SE', owner: 'Schneider Electric' },
+  ];
+  if (stages.some(st => st?.owner === 'Both')) {
+    entries.push({ label: 'Both', owner: 'Both' });
+  }
+  return entries;
 }
 
 // Lighten a hex toward white. Used for the fill of a step that belongs to a
@@ -627,7 +650,6 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const gridH = bandH.reduce((a, b) => a + b, 0);
   const height = gridTop + gridH + PHASED.footH + 8;
 
-  const clientName = String(template?.clientName || '').trim() || 'Client';
   const x0 = PHASED.labelW;
   const colX = (m) => x0 + (m - 1) * colW;
 
@@ -659,18 +681,24 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     });
   }
 
-  // Legend, top-right: one dot per workstream plus the numbering note.
+  // Legend, top-right: one dot per workstream plus the numbering note. The
+  // box grows with the entries rather than being a fixed 126 tall, so the
+  // third swatch on a timeline with jointly-owned work doesn't land on top of
+  // the numbering note beneath it.
   const legendW = 236, legendX = width - legendW - 8;
-  s += `<rect x="${legendX}" y="8" width="${legendW}" height="126" fill="#FFFFFF"/>`;
-  [[clientName, 'Client'], ['SE', 'Schneider Electric']].forEach(([label, owner], i) => {
+  const legendEntries = workstreamLegendEntries(template);
+  const legendNote = wrapText('*Numbering on the timeline corresponds to a step in the process on the next slide', legendW - 28, 11, 4);
+  const noteTop = 32 + legendEntries.length * 28;
+  const legendH = noteTop + legendNote.length * 13 + 4;
+  s += `<rect x="${legendX}" y="8" width="${legendW}" height="${legendH}" fill="#FFFFFF"/>`;
+  legendEntries.forEach(({ label, owner }, i) => {
     const cy = 32 + i * 28;
     s += `<circle cx="${legendX + 22}" cy="${cy}" r="9" fill="${workstreamColor(owner)}"/>`;
     s += `<text x="${legendX + 40}" y="${cy + 5}" font-size="12.5" font-weight="700" fill="${SE_INK}">${esc(String(label).toUpperCase())} WORKSTREAM</text>`;
   });
-  wrapText('*Numbering on the timeline corresponds to a step in the process on the next slide', legendW - 28, 11, 4)
-    .forEach((ln, i) => {
-      s += `<text x="${legendX + 14}" y="${84 + i * 13}" font-size="11" font-weight="700" fill="${SE_SLATE}">${esc(ln)}</text>`;
-    });
+  legendNote.forEach((ln, i) => {
+    s += `<text x="${legendX + 14}" y="${noteTop + i * 13}" font-size="11" font-weight="700" fill="${SE_SLATE}">${esc(ln)}</text>`;
+  });
 
   const title = template?.name?.trim() || 'Implementation Timeline';
   s += `<text x="40" y="${PHASED.headH - 26}" font-size="27" fill="#FFFFFF">${esc(title)}</text>`;
@@ -832,27 +860,9 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
         const cx = frac == null
           ? chipX + chipW / 2
           : chipX + Math.min(Math.max(frac * chipW, rx), chipW - rx);
-        const diamond = (fillColor, clipHalf) => {
-          const pts = `${cx},${cy - 13} ${cx + rx},${cy} ${cx},${cy + 13} ${cx - rx},${cy}`;
-          if (!clipHalf) return `<polygon points="${pts}" fill="${fillColor}"/>`;
-          // 'Both' splits the diamond down the middle, matching the bar.
-          const x = clipHalf === 'left' ? cx - rx : cx;
-          return `<g><clipPath id="mcl${step.index}${clipHalf}">`
-            + `<rect x="${x}" y="${cy - 14}" width="${rx}" height="28"/></clipPath>`
-            + `<polygon points="${pts}" fill="${fillColor}" clip-path="url(#mcl${step.index}${clipHalf})"/></g>`;
-        };
-        if (step.stage.owner === 'Both') {
-          s += diamond(workstreamColor('Client'), 'left');
-          s += diamond(workstreamColor('Schneider Electric'), 'right');
-        } else {
-          s += diamond(color);
-        }
+        const pts = `${cx},${cy - 13} ${cx + rx},${cy} ${cx},${cy + 13} ${cx - rx},${cy}`;
+        s += `<polygon points="${pts}" fill="${color}"/>`;
         s += `<text x="${cx}" y="${cy + 4.5}" text-anchor="middle" font-size="12" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
-      } else if (!group.color && step.stage.owner === 'Both') {
-        // Split chip: both workstreams own the step.
-        s += `<rect x="${chipX}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Client')}"/>`;
-        s += `<rect x="${chipX + chipW / 2}" y="${rowY}" width="${chipW / 2}" height="24" fill="${workstreamColor('Schneider Electric')}"/>`;
-        s += `<text x="${chipX + (chipW > 60 ? 10 : chipW / 2)}" y="${rowY + 17}" text-anchor="${chipW > 60 ? 'start' : 'middle'}" font-size="13.5" font-weight="800" fill="#FFFFFF">${step.index + 1}</text>`;
       } else {
         s += `<rect x="${chipX}" y="${rowY}" width="${chipW}" height="24" fill="${color}"/>`;
         // Who owns the step, kept on a group-coloured bar as a cap at its
