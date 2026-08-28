@@ -125,16 +125,20 @@ function wrapText(text, maxWidth, fontSize, maxLines) {
 const MAX_TITLE_LINES = 3;
 const MAX_DESC_LINES = 8;
 
+// The milestone canvas, in the same slide the other two formats are drawn
+// on: the green band takes the top, so the first row of callouts starts
+// below it rather than under a white header. Every floor here moved down by
+// the difference when the band arrived — a timeline whose callouts fit these
+// numbers is drawn on exactly the same geometry it was, only lower.
 const LAYOUT = {
   padX: 44,
   slot: 292,
-  height: 646,
-  axisY: 322,
+  height: 722,
+  axisY: 398,
   radius: 36,
-  topDotY: 98,
-  botDotY: 554,
-  legendY: 606,
-  headerY: 42,
+  topDotY: 174,
+  botDotY: 630,
+  legendY: 682,
 };
 
 function markerRing(cx, cy, r, owner) {
@@ -220,7 +224,7 @@ function stageCallout(stage, index, cx, above, geom) {
 // directions: the row above the line is pinned to its dots and grows down
 // toward the axis, the row below hangs off the axis and grows toward the
 // legend.
-function milestoneGeometry(stages) {
+function milestoneGeometry(stages, branded = true) {
   const { padX, slot, radius, topDotY, legendY, height, axisY } = LAYOUT;
   const textWidth = slot - 46;
   // Every callout writes its text to the RIGHT of its marker, so the last
@@ -248,12 +252,16 @@ function milestoneGeometry(stages) {
   const belowEnd = axis + radius + 34 + below;
   const botDot = Math.max(LAYOUT.botDotY + (axis - axisY), belowEnd + 18);
   const legend = Math.max(legendY + (axis - axisY), botDot + 24);
+  const canvas = Math.max(height + (axis - axisY), legend + 40);
   return {
     padX, slot, radius, topDotY, textWidth, width,
     axisY: axis,
     botDotY: botDot,
     legendY: legend,
-    height: Math.max(height + (axis - axisY), legend + 40),
+    // The footer sits under everything the callouts drew; unbranded there is
+    // no footer and the old owner legend keeps the space it always had.
+    footY: branded ? legend - 14 : canvas,
+    height: branded ? legend - 14 + SLIDE.footH + 8 : canvas,
   };
 }
 
@@ -269,21 +277,104 @@ function legend(width, legendY = LAYOUT.legendY) {
   return out;
 }
 
-// Header band shared by both formats: title, attached services, lockup, rule.
-function brandedHeader(template, width) {
+// --- Slide chrome -------------------------------------------------------
+//
+// The Schneider deck furniture every timeline is drawn inside, whichever
+// layout it uses: the green band across the top carrying the title, the
+// caveat box, the white legend card, and the green footer strip.
+//
+// It lived inside the implementation chart, which is why that format looked
+// like a slide and the other two looked like diagrams of one. The formats
+// differ in how they PLACE work — dated bars, months from kickoff, evenly
+// spaced markers — and that's the whole of what should differ; a Gantt handed
+// to a client is the same deck page as an implementation chart.
+//
+// `branded: false` skips the band and the footer entirely. The Word report
+// draws its own green band around the graphic, so a second one inside it
+// would be a band inside a band.
+const SLIDE = {
+  bandH: 152,     // green header band: caveat, title, legend card
+  footH: 26,      // green footer strip
+  titleY: 126,    // title baseline inside the band
+  legendW: 236,
+  legendNote: '*Numbering on the timeline corresponds to a step in the process on the next slide',
+};
+
+// The white legend card, top-right of the band: one dot per entry, then the
+// note under them. Sized to what it holds — two workstreams and a four-line
+// note on the implementation chart, three owners and a shorter note on the
+// other two — rather than to a fixed height a longer card would spill out
+// of at the bottom.
+function slideLegend({ x, y, entries, note }) {
+  const w = SLIDE.legendW;
+  const lines = wrapText(note ?? SLIDE.legendNote, w - 28, 11, 4);
+  const noteTop = y + 49 + Math.max(0, entries.length - 1) * 28;
+  const h = noteTop + (lines.length - 1) * 13 + 8 - y;
+  let s = `<rect x="${x}" y="${y}" width="${w}" height="${h.toFixed(0)}" fill="#FFFFFF"/>`;
+  entries.forEach((entry, i) => {
+    const cy = y + 24 + i * 28;
+    s += `<circle cx="${x + 22}" cy="${cy}" r="9" fill="${entry.color}"/>`;
+    s += `<text x="${x + 40}" y="${cy + 5}" font-size="12.5" font-weight="700" fill="${SE_INK}">${esc(String(entry.label).toUpperCase())}</text>`;
+  });
+  lines.forEach((ln, i) => {
+    s += `<text x="${x + 14}" y="${noteTop + i * 13}" font-size="11" font-weight="700" fill="${SE_SLATE}">${esc(ln)}</text>`;
+  });
+  return s;
+}
+
+// The whole top band: green ground, the caveat box the timeline carries, the
+// legend card, and the title with its subtitle under it.
+//
+// `bandH` is the band's own height rather than SLIDE.bandH, because the
+// implementation chart continues it down over its month and week rows — the
+// axis headings are part of the same green field there.
+function slideHead({ template, width, bandH = SLIDE.bandH, entries, note, subWidth = 520 }) {
+  let s = `<rect x="0" y="0" width="${width}" height="${bandH}" fill="${SE_GREEN}"/>`;
+
+  // Optional caveat box, top-left, in a deeper green so it reads as an aside.
+  const caveat = String(template?.note || '').trim();
+  if (caveat) {
+    const lines = wrapText(caveat, 268, 11.5, 3);
+    const boxH = 14 + lines.length * 15;
+    s += `<rect x="8" y="8" width="292" height="${boxH}" fill="#2FB350"/>`;
+    lines.forEach((ln, i) => {
+      s += `<text x="18" y="${26 + i * 15}" font-size="11.5" font-weight="700" fill="#FFFFFF">${esc(ln)}</text>`;
+    });
+  }
+
+  s += slideLegend({ x: width - SLIDE.legendW - 8, y: 8, entries, note });
+
   const title = template?.name?.trim() || 'Timeline';
-  let out = `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY}" font-size="24" font-weight="800" fill="${SE_INK}">${esc(title)}</text>`;
-  // The subtitle and the attached services share the line under the title:
-  // the header band's height is fixed and the milestone callouts start just
-  // below it, so a second line would land on top of the first one's dots.
+  s += `<text x="40" y="${SLIDE.titleY}" font-size="27" fill="#FFFFFF">${esc(title)}</text>`;
+  // The subtitle and the services the timeline is attached to share the line
+  // under the title, the way they shared it on the old white header.
   const sub = [String(template?.subtitle ?? '').trim(), (template?.services || []).join(' · ')]
     .filter(Boolean).join(' · ');
-  if (sub) {
-    out += `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY + 21}" font-size="12.5" font-weight="600" fill="${SE_MUTE}">${esc(sub)}</text>`;
+  // One line, clipped to the room before the axis caption starts: the band is
+  // a fixed height and a second line would land on the month headings.
+  const subLine = sub ? wrapText(sub, subWidth, 12.5, 1)[0] : '';
+  if (subLine) {
+    s += `<text x="40" y="${SLIDE.titleY + 19}" font-size="12.5" font-weight="600" fill="#DFF5E4">${esc(subLine)}</text>`;
   }
-  out += `<g transform="translate(${width - LAYOUT.padX - 172} 14)">${schneiderLogoSvg({ width: 172 })}</g>`;
-  out += `<line x1="${LAYOUT.padX}" y1="${LAYOUT.headerY + 34}" x2="${width - LAYOUT.padX}" y2="${LAYOUT.headerY + 34}" stroke="${SE_LINE}" stroke-width="1"/>`;
-  return out;
+  return s;
+}
+
+// The green footer strip: the confidentiality line, and the lockup in white.
+function slideFoot({ width, y, branded = true }) {
+  let s = `<rect x="0" y="${y}" width="${width}" height="${SLIDE.footH}" fill="${SE_GREEN}"/>`;
+  s += `<text x="20" y="${y + 17}" font-size="10.5" font-weight="700" fill="#FFFFFF">Confidential Property of Schneider Electric</text>`;
+  if (branded) {
+    // White lockup, sized to sit inside the 26px band rather than overflow it.
+    s += `<g transform="translate(${width - 132} ${y + 1})">${schneiderLogoSvg({ onDark: true, width: 108 })}</g>`;
+  }
+  return s;
+}
+
+// The legend rows for a format that colours its work by OWNER — the Gantt's
+// bars and the milestone chart's rings. The implementation chart names
+// workstreams instead, and passes its own.
+function ownerLegendEntries() {
+  return TIMELINE_STAGE_OWNERS.map(owner => ({ label: owner, color: ownerColor(owner) }));
 }
 
 // --- Gantt --------------------------------------------------------------
@@ -292,7 +383,11 @@ const GANTT = {
   padX: 44,
   labelW: 268,   // stage name + owner column
   rowH: 56,
-  topY: 150,     // first row baseline area starts here
+  // First row starts here: clear of the green band, which runs down past the
+  // title to carry the month headings the way the implementation chart's
+  // does (SLIDE.bandH + headRowH), with a little air under it.
+  topY: 210,
+  headRowH: 34,   // the month-headings row, still inside the band
   minTickW: 96,
   chartW: 1100,  // the plot width the ticks are always fitted to
 };
@@ -418,23 +513,38 @@ export function buildGanttSvg(template, { branded = true } = {}) {
   // header to clear, so the rows start near the top instead of leaving a gap.
   const rowsTop = branded ? GANTT.topY : 76;
   const gridBottom = rowsTop + dated.length * GANTT.rowH - 12;
-  const noteY = gridBottom + 40;
-  // Room for the "not shown" / "outside the range" notes under the legend.
-  const noteLines = (undated.length ? 1 : 0) + 1;
-  const height = noteY + 16 + noteLines * 16;
+  const noteY = gridBottom + (branded ? 26 : 40);
+  // Room for the "not shown" notes under the chart — and, unbranded, for the
+  // owner legend and the reading note that the slide keeps in its card.
+  const noteLines = (undated.length ? 1 : 0) + (branded ? 0 : 1);
+  const bodyBottom = noteY + 16 + noteLines * 16;
+  const footY = bodyBottom + 4;
+  const height = branded ? footY + SLIDE.footH + 8 : bodyBottom;
 
   let body = '';
+  // The month headings sit on the green band, in white, with the same
+  // "Stages" / "Timeline" captions the implementation chart uses — the two
+  // formats are the same slide, and only the plot inside it differs. Under
+  // an unbranded render there's no band to write on, so they stay grey.
+  const bandBottom = branded ? SLIDE.bandH + GANTT.headRowH : rowsTop - 34;
+  if (branded) {
+    body += `<text x="${GANTT.padX}" y="${bandBottom - 11}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
+    body += `<text x="${X0 + 8}" y="${SLIDE.bandH - 4}" font-size="15" font-weight="700" fill="#FFFFFF">Timeline</text>`;
+    body += `<line x1="${X0}" y1="${SLIDE.bandH}" x2="${chartRight}" y2="${SLIDE.bandH}" stroke="#FFFFFF" stroke-width="1" opacity="0.55"/>`;
+  }
   // Axis ticks first, so the bars sit on top of the gridlines.
   ticks.forEach((t, i) => {
     const x = px(Date.UTC(t.y, t.m - 1, 1));
-    body += `<line x1="${x.toFixed(1)}" y1="${rowsTop - 34}" x2="${x.toFixed(1)}" y2="${gridBottom}" stroke="${SE_LINE}" stroke-width="1" stroke-dasharray="3 4"/>`;
+    body += `<line x1="${x.toFixed(1)}" y1="${bandBottom}" x2="${x.toFixed(1)}" y2="${gridBottom}" stroke="${SE_LINE}" stroke-width="1" stroke-dasharray="3 4"/>`;
     const showYear = i === 0 || t.m === 1 || byQuarter;
     const text = byQuarter
       ? `Q${Math.floor((t.m - 1) / 3) + 1} ${t.y}`
       : monthLabel(t.y, t.m, showYear);
-    body += `<text x="${(x + 8).toFixed(1)}" y="${rowsTop - 40}" font-size="11.5" font-weight="800" fill="${SE_MUTE}">${esc(text)}</text>`;
+    body += `<text x="${(x + 8).toFixed(1)}" y="${bandBottom - 11}" font-size="11.5" font-weight="800" fill="${branded ? '#FFFFFF' : SE_MUTE}">${esc(text)}</text>`;
   });
-  body += `<line x1="${GANTT.padX}" y1="${rowsTop - 30}" x2="${chartRight}" y2="${rowsTop - 30}" stroke="${SE_LINE}" stroke-width="1"/>`;
+  if (!branded) {
+    body += `<line x1="${GANTT.padX}" y1="${rowsTop - 30}" x2="${chartRight}" y2="${rowsTop - 30}" stroke="${SE_LINE}" stroke-width="1"/>`;
+  }
 
   dated.forEach(({ stage, range }, i) => {
     body += ganttRow(stage, range, i, rowsTop + i * GANTT.rowH, px, chartRight, X0);
@@ -449,16 +559,19 @@ export function buildGanttSvg(template, { branded = true } = {}) {
     body += `<text x="${(x + 6).toFixed(1)}" y="${gridBottom + 14}" font-size="10.5" font-weight="800" fill="${SE_GREEN}">TODAY</text>`;
   }
 
-  // Legend
-  let lx = GANTT.padX;
-  let legendSvg = '';
-  for (const owner of TIMELINE_STAGE_OWNERS) {
-    legendSvg += `<rect x="${lx}" y="${noteY - 9}" width="16" height="11" rx="3" fill="${ownerColor(owner)}"/>`;
-    legendSvg += `<text x="${lx + 22}" y="${noteY}" font-size="12" font-weight="700" fill="${SE_SLATE}">${esc(owner)}</text>`;
-    lx += 34 + owner.length * 7.2;
+  // Who owns what is in the legend card on the band now, so the strip under
+  // the chart carries only how to read the marks.
+  if (!branded) {
+    let lx = GANTT.padX;
+    for (const owner of TIMELINE_STAGE_OWNERS) {
+      body += `<rect x="${lx}" y="${noteY - 9}" width="16" height="11" rx="3" fill="${ownerColor(owner)}"/>`;
+      body += `<text x="${lx + 22}" y="${noteY}" font-size="12" font-weight="700" fill="${SE_SLATE}">${esc(owner)}</text>`;
+      lx += 34 + owner.length * 7.2;
+    }
   }
-  legendSvg += `<text x="${width - GANTT.padX}" y="${noteY}" text-anchor="end" font-size="11" fill="${SE_MUTE}">Bars show duration · diamonds are point-in-time milestones</text>`;
-  body += legendSvg;
+  if (!branded) {
+    body += `<text x="${width - GANTT.padX}" y="${noteY}" text-anchor="end" font-size="11" fill="${SE_MUTE}">Bars show duration · diamonds are point-in-time milestones</text>`;
+  }
 
   // A stage the parser couldn't place is still named here: it isn't the
   // window's doing, so the page's out-of-range warning wouldn't cover it.
@@ -472,8 +585,13 @@ export function buildGanttSvg(template, { branded = true } = {}) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
     + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
-    + (branded ? brandedHeader(template, width) : '')
+    + (branded ? slideHead({
+      template, width, bandH: SLIDE.bandH + GANTT.headRowH,
+      entries: ownerLegendEntries(), subWidth: GANTT.labelW,
+      note: 'Bars show the months each stage runs; diamonds are point-in-time milestones.',
+    }) : '')
     + body
+    + (branded ? slideFoot({ width, y: footY, branded }) : '')
     + `</svg>`;
 }
 
@@ -667,41 +785,22 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   const todayX = todayOffset == null ? null : x0 + todayOffset * colW;
 
   let s = `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`;
-  // Green header band, carrying the title and the month numbers.
-  s += `<rect x="0" y="0" width="${width}" height="${gridTop}" fill="${SE_GREEN}"/>`;
-
-  // Optional caveat box, top-left, in a deeper green so it reads as an aside.
-  const note = String(template?.note || '').trim();
-  if (note) {
-    const lines = wrapText(note, 268, 11.5, 3);
-    const boxH = 14 + lines.length * 15;
-    s += `<rect x="8" y="8" width="292" height="${boxH}" fill="#2FB350"/>`;
-    lines.forEach((ln, i) => {
-      s += `<text x="18" y="${26 + i * 15}" font-size="11.5" font-weight="700" fill="#FFFFFF">${esc(ln)}</text>`;
-    });
-  }
-
-  // Legend, top-right: one dot per workstream plus the numbering note. The
-  // box grows with the entries rather than being a fixed 126 tall, so the
-  // third swatch on a timeline with jointly-owned work doesn't land on top of
-  // the numbering note beneath it.
-  const legendW = 236, legendX = width - legendW - 8;
-  const legendEntries = workstreamLegendEntries(template);
-  const legendNote = wrapText('*Numbering on the timeline corresponds to a step in the process on the next slide', legendW - 28, 11, 4);
-  const noteTop = 32 + legendEntries.length * 28;
-  const legendH = noteTop + legendNote.length * 13 + 4;
-  s += `<rect x="${legendX}" y="8" width="${legendW}" height="${legendH}" fill="#FFFFFF"/>`;
-  legendEntries.forEach(({ label, owner }, i) => {
-    const cy = 32 + i * 28;
-    s += `<circle cx="${legendX + 22}" cy="${cy}" r="9" fill="${workstreamColor(owner)}"/>`;
-    s += `<text x="${legendX + 40}" y="${cy + 5}" font-size="12.5" font-weight="700" fill="${SE_INK}">${esc(String(label).toUpperCase())} WORKSTREAM</text>`;
-  });
-  legendNote.forEach((ln, i) => {
-    s += `<text x="${legendX + 14}" y="${noteTop + i * 13}" font-size="11" font-weight="700" fill="${SE_SLATE}">${esc(ln)}</text>`;
-  });
-
+  // The deck furniture, shared with the other two formats — here the band
+  // runs all the way down to the grid, because the month and week headings
+  // are drawn on the same green field.
   const title = template?.name?.trim() || 'Implementation Timeline';
-  s += `<text x="40" y="${PHASED.headH - 26}" font-size="27" fill="#FFFFFF">${esc(title)}</text>`;
+  s += slideHead({
+    template: { ...template, name: title },
+    width,
+    bandH: gridTop,
+    // The "Months" caption sits at the head of the grid on the same line, so
+    // the subtitle stops where the label column does.
+    subWidth: PHASED.labelW - 60,
+    // Client and SE always, plus Both when the plan has jointly-owned work —
+    // the card grows with them.
+    entries: workstreamLegendEntries(template)
+      .map(({ label, owner }) => ({ label: `${label} workstream`, color: workstreamColor(owner) })),
+  });
 
   // "Stages" / "Months" captions and the month numbers, all on the band.
   s += `<text x="40" y="${monthsBottom - 9}" font-size="17" font-weight="700" fill="#FFFFFF">Stages</text>`;
@@ -912,14 +1011,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
     s += `<circle cx="${todayX.toFixed(1)}" cy="${gridTop + gridH}" r="3.5" fill="${SE_RED}"/>`;
   }
 
-  // Footer band.
-  const footY = gridTop + gridH + 8;
-  s += `<rect x="0" y="${footY}" width="${width}" height="${PHASED.footH}" fill="${SE_GREEN}"/>`;
-  s += `<text x="20" y="${footY + 17}" font-size="10.5" font-weight="700" fill="#FFFFFF">Confidential Property of Schneider Electric</text>`;
-  if (branded) {
-    // White lockup, sized to sit inside the 26px band rather than overflow it.
-    s += `<g transform="translate(${width - 132} ${footY + 1})">${schneiderLogoSvg({ onDark: true, width: 108 })}</g>`;
-  }
+  s += slideFoot({ width, y: gridTop + gridH + 8, branded });
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(title)}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">${s}</svg>`;
 }
@@ -934,7 +1026,7 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
-  const geom = milestoneGeometry(stages);
+  const geom = milestoneGeometry(stages, branded);
   const { padX, slot, width, height, axisY, radius } = geom;
 
   let body = '';
@@ -956,8 +1048,15 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
     + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
-    + (branded ? brandedHeader(template, width) : '')
-    + body + legend(width, geom.legendY)
+    + (branded ? slideHead({
+      template, width, entries: ownerLegendEntries(),
+      // Nothing else is written on this band, so the subtitle has the room
+      // between the title and the legend card.
+      subWidth: width - SLIDE.legendW - 100,
+      note: 'Each milestone is marked in the colour of the side that owns it.',
+    }) : legend(width, geom.legendY))
+    + body
+    + (branded ? slideFoot({ width, y: geom.footY, branded }) : '')
     + `</svg>`;
 }
 
