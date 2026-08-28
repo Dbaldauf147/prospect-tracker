@@ -4,6 +4,11 @@
 // the contact modal auto-applies when the Left tag is added). Either
 // signal qualifies, so contacts that were marked Left manually before
 // the auto-flow existed still show up.
+//
+// Unlike the other contact rosters, this one doesn't drop Schneider
+// Electric coworkers wholesale — a coworker tagged Left has moved on and
+// is worth chasing at their new employer, so the Left tag overrides the
+// coworker exclusion here.
 
 import { useCallback } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
@@ -24,8 +29,14 @@ function isSchneiderContact(c) {
 function isChangedJobs(c) {
   const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
   if (tags.includes('hide')) return false;
-  if (isSchneiderContact(c)) return false;
+  // The Left tag comes before the coworker check, not after it: someone
+  // tagged Left has left wherever they were, Schneider Electric included,
+  // and a former coworker landing at a new employer is exactly the kind of
+  // person this page exists to chase. Everyone still at Schneider stays out
+  // — an @se.com address or a Schneider Company only means "coworker" while
+  // the contact hasn't been marked as having left.
   if (tags.includes('left')) return true;
+  if (isSchneiderContact(c)) return false;
   const company = String(c.company || '').trim().toLowerCase();
   if (company === 'changed jobs') return true;
   return false;
