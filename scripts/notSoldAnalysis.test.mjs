@@ -7,13 +7,20 @@
 // the per-source losses both add up to the same total, and both take their
 // percentages against it.
 //
+// A source's own reason rows carry two percentages and they are not
+// interchangeable: the share of that source's losses says what goes wrong
+// with the source, the share of every loss says how much of the business's
+// problem it is. A source can be 100% of its own losses and a rounding error
+// of the total.
+//
 // The other rules here are about what happens to a loss the report can't
 // place. A loss with no reason recorded is its own bucket rather than
 // missing from the table, and a loss with no Close Date is counted while the
-// report is unbounded but declared excluded once a date range is set — the
-// one case where dropping it is right, and the one case where saying so
-// matters.
-import { notSoldBreakdown, reasonOf, sourceOf, NO_REASON } from '../src/utils/notSoldAnalysis.js';
+// report is unbounded but declared excluded once a window is set — the one
+// case where dropping it is right, and the one case where saying so matters.
+import {
+  notSoldBreakdown, notSoldYears, sourceReasonRows, reasonOf, sourceOf, closeYearOf, NO_REASON,
+} from '../src/utils/notSoldAnalysis.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -46,13 +53,33 @@ const RECORDS = [
     [['Referral', 3], ['Cold Call', 1]]);
 }
 
-// --- what a loss was worth ------------------------------------------------
+// --- a source's reasons, and the two shares they carry --------------------
 {
   const d = notSoldBreakdown(RECORDS);
-  check('only quoted losses carry value', [d.lostValue, d.quotedLosses], [70000, 2]);
-  check('a reason with nothing quoted is $0, not missing',
-    d.reasons.find(r => r.reason === 'Timing').lost, 0);
+  const referral = d.sources.find(s => s.source === 'Referral');
+  check('a source lists every reason it lost on', referral.reasons.map(r => r.reason),
+    ['Price', NO_REASON]);
+  check('its reasons add up to its own losses',
+    referral.reasons.reduce((n, r) => n + r.count, 0), referral.losses);
+  check('% of the source is against that source',
+    referral.reasons.map(r => Math.round(r.percent)), [67, 33]);
+  check('% of all losses is against every loss',
+    referral.reasons.map(r => Math.round(r.percentAll)), [50, 25]);
+
+  const cold = d.sources.find(s => s.source === 'Cold Call');
+  check('a source can be all of its own losses and a quarter of the total',
+    [Math.round(cold.reasons[0].percent), Math.round(cold.reasons[0].percentAll)], [100, 25]);
   check('the won side of the window is counted too', d.winCount, 1);
+}
+
+// --- the flat pairs behind the Excel sheet --------------------------------
+{
+  const d = notSoldBreakdown(RECORDS);
+  const flat = sourceReasonRows(d.sources);
+  check('one row per source-and-reason pair', flat.length,
+    d.sources.reduce((n, s) => n + s.reasons.length, 0));
+  check('carrying both shares', flat[0],
+    { Source: 'Referral', 'Reason Not Sold': 'Price', Losses: 2, '% of Source Losses': 66.7, '% of All Losses': 50 });
 }
 
 // --- nothing recorded is still a loss -------------------------------------
@@ -69,6 +96,7 @@ const RECORDS = [
   const q1 = notSoldBreakdown(RECORDS, { from: '2026-03-01', to: '2026-03-31' });
   check('losses are those closed in the window', q1.rows.map(r => r._id), [2, 1]);
   check('a loss with no Close Date is excluded, and said so', [q1.lossCount, q1.undated], [2, 1]);
+  check('a set window is reported as one', q1.windowed, true);
   check('the wins in the window narrow with it', q1.winCount, 1);
   check('loss rate is losses over decided, in-window',
     q1.sources.map(s => [s.source, s.losses, s.wins, Math.round(s.lossRate)]),
@@ -77,6 +105,33 @@ const RECORDS = [
   const may = notSoldBreakdown(RECORDS, { from: '2026-05-01' });
   check('an open-ended range still bounds one side', may.rows.map(r => r._id), [3]);
   check('a source that lost nothing in range is not listed', may.sources.map(s => s.source), ['Cold Call']);
+}
+
+// --- the year filter ------------------------------------------------------
+{
+  check('the years on offer are the loss years, newest first',
+    notSoldYears(RECORDS), [2026]);
+  check('a year is read off the digits, not through a local-time Date',
+    [closeYearOf({ 'Close Date': '2026-01-01' }), closeYearOf({ 'Close Date': '1/1/2026' })],
+    [2026, 2026]);
+  check('no Close Date has no year', closeYearOf({ 'Close Date': '' }), null);
+
+  const withYears = [
+    ...RECORDS,
+    { _id: 7, Stage: 'Not Sold', Source: 'Cold Call', 'Reason Not Sold': 'Price', 'Close Date': '2025-07-02' },
+    { _id: 8, Stage: 'Sold', Source: 'Cold Call', 'Close Date': '2025-08-02' },
+  ];
+  check('both years are offered', notSoldYears(withYears), [2026, 2025]);
+  check('no years selected means every year', notSoldBreakdown(withYears, { years: [] }).lossCount, 5);
+  check('one year narrows to it', notSoldBreakdown(withYears, { years: [2025] }).rows.map(r => r._id), [7]);
+  check('and takes the wins with it', notSoldBreakdown(withYears, { years: [2025] }).winCount, 1);
+  check('several years add up', notSoldBreakdown(withYears, { years: [2025, 2026] }).lossCount, 4);
+  check('a year filter excludes the undated loss, and says so',
+    notSoldBreakdown(withYears, { years: [2026] }).undated, 1);
+
+  // The two filters narrow together rather than one overriding the other.
+  const both = notSoldBreakdown(withYears, { years: [2026], from: '2026-04-01' });
+  check('a year and a date range compose', both.rows.map(r => r._id), [3]);
 }
 
 // --- unbounded keeps the undated loss -------------------------------------
@@ -91,7 +146,9 @@ const RECORDS = [
 {
   const empty = notSoldBreakdown([]);
   check('an empty set reports zeroes, not NaN',
-    [empty.lossCount, empty.lostValue, empty.reasons.length, empty.sources.length], [0, 0, 0, 0]);
+    [empty.lossCount, empty.winCount, empty.reasons.length, empty.sources.length], [0, 0, 0, 0]);
+  check('and no window is no window', empty.windowed, false);
+  check('no records means no years to offer', notSoldYears([]), []);
 }
 
 console.log(failures ? `${failures} failed.` : 'All passed.');
