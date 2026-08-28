@@ -911,7 +911,11 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   );
 }
 
-export function DropdownsView({ settings, updateSettings }) {
+// `prospects` is read only by the Services Pricing subtab, to answer how many
+// sites and accounts an imported opp's company has. Optional: the tab falls
+// back to the opp's own columns and the company's saved site list, so the
+// page still works if it's ever rendered without them.
+export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
   // The Services Pricing subtab's working estimate: which services are
@@ -1702,6 +1706,7 @@ export function DropdownsView({ settings, updateSettings }) {
           serviceRows={pricingServiceRows}
           scenario={pricingScenario}
           setScenario={setPricingScenario}
+          prospects={prospects}
         />
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
