@@ -3,8 +3,17 @@
 // src/data/raClients.json.
 import defaultRaClients from '../data/raClients.json';
 import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
 
 const KEY = 'ra-clients-override';
+
+// Fired whenever the override is saved or cleared, so same-window listeners
+// refresh — the native 'storage' event only fires in OTHER tabs.
+export const RA_CLIENTS_EVENT = 'ra-clients-changed';
+
+// Mirrored to Firestore. Losing this one degrades to the bundled default
+// rather than to nothing, but the uploaded list is still the user's work.
+registerMirroredKey(KEY, RA_CLIENTS_EVENT);
 
 export function loadEffectiveRaClients() {
   try {
@@ -24,10 +33,17 @@ export function loadEffectiveRaClients() {
 export function saveRaClientsOverride(arr) {
   if (!Array.isArray(arr) || arr.length === 0) throw new Error('Override must be a non-empty array');
   userLsSet(KEY, JSON.stringify(arr));
+  queueMirrorPush(KEY);
+  dispatchStoreEvent(RA_CLIENTS_EVENT);
 }
 
 export function clearRaClientsOverride() {
   userLsRemove(KEY);
+  // allowEmpty: reverting to the bundled default on purpose, so the
+  // emptiness is the thing to sync. A browser that merely LOST its copy
+  // never reaches here, and so can't wipe the cloud one.
+  queueMirrorPush(KEY, { allowEmpty: true });
+  dispatchStoreEvent(RA_CLIENTS_EVENT);
 }
 
 export function hasRaClientsOverride() {

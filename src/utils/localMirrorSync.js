@@ -156,9 +156,24 @@ function mirrorDoc(userId, key) {
   return doc(db, COL, userId, SUB, key);
 }
 
-function fire(eventName) {
+// Announce a store's change to same-window listeners, one microtask later.
+//
+// Several stores persist from INSIDE a React state updater — see
+// CommissionsView.updateCell, which calls saveCommissionsOverride within
+// setStore(prev => …). A listener that reacts by calling setState would then
+// run while that updater is still executing, which React treats as an update
+// during render (and, under StrictMode, does twice). Hopping a microtask puts
+// every listener safely after the updater has returned; nothing here needs to
+// observe the change synchronously.
+export function dispatchStoreEvent(eventName) {
   if (!eventName) return;
-  try { window.dispatchEvent(new Event(eventName)); } catch { /* no window */ }
+  Promise.resolve().then(() => {
+    try { window.dispatchEvent(new Event(eventName)); } catch { /* no window */ }
+  });
+}
+
+function fire(eventName) {
+  dispatchStoreEvent(eventName);
 }
 
 // ---------------------------------------------------------------------
@@ -333,6 +348,10 @@ export async function hydrateLocalMirrors(userId) {
     import('./myAccountsFlagsStore'),
     import('./pipelineDashboardStore'),
     import('./bfoActivityStore'),
+    import('./quotedProjectionsStore'),
+    import('./commissionsStore'),
+    import('./yoyOverridesStore'),
+    import('./raClientsStore'),
   ]).catch(err => console.warn('localMirror: store registration import failed', err));
 
   const entries = [...registry.entries()];

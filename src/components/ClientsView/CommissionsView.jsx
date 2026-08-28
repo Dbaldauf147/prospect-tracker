@@ -3,7 +3,7 @@ import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
 import {
   loadCommissions, saveCommissionsOverride, clearCommissionsOverride,
-  COMMISSION_MONTH_NAMES,
+  COMMISSION_MONTH_NAMES, COMMISSIONS_LIST_EVENT,
 } from '../../utils/commissionsStore';
 import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL, normProjectName } from './CommissionsPasteImportModal';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
@@ -1078,8 +1078,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     function onStorage(e) {
       if (e.key === 'commissions-list-override') setStore(loadCommissions());
     }
+    // Same-window change event — also fires when the Firestore mirror
+    // hydrates a newer roster at signin.
+    const onChanged = () => setStore(loadCommissions());
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(COMMISSIONS_LIST_EVENT, onChanged);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(COMMISSIONS_LIST_EVENT, onChanged);
+    };
   }, []);
 
   // Page-level paste handler. When the user hits Ctrl/Cmd+V anywhere on

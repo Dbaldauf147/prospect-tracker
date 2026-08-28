@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
-import { loadEffectiveRaClients, saveRaClientsOverride, clearRaClientsOverride, raClientName } from '../../utils/raClientsStore';
+import { loadEffectiveRaClients, saveRaClientsOverride, clearRaClientsOverride, raClientName, RA_CLIENTS_EVENT } from '../../utils/raClientsStore';
 import styles from './RAClientsView.module.css';
 
 // Column definitions used only when the uploaded/bundled data already has these keys.
@@ -60,8 +60,15 @@ export function RAClientsView({ settings, updateSettings } = {}) {
     function onStorage(e) {
       if (e.key === 'ra-clients-override') setStore(loadEffectiveRaClients());
     }
+    // Same-window change event — also fires when the Firestore mirror
+    // hydrates a newer list at signin.
+    const onChanged = () => setStore(loadEffectiveRaClients());
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(RA_CLIENTS_EVENT, onChanged);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(RA_CLIENTS_EVENT, onChanged);
+    };
   }, []);
 
   const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);

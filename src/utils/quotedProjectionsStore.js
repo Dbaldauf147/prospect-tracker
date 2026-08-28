@@ -6,8 +6,18 @@
 // its own right-hand axis since it runs larger). Keyed by month "YYYY-MM".
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
 
 const KEY = 'yoy-quoted-projections';
+
+// Fired whenever the projections are saved, so same-window listeners (the
+// YOY page) refresh — the native 'storage' event only fires in OTHER tabs.
+export const QUOTED_PROJECTIONS_EVENT = 'yoy-quoted-projections-changed';
+
+// Mirrored to Firestore: these are month-end figures typed in by hand, one
+// month at a time, and nothing else in the app can recompute them. A cleared
+// browser used to lose the lot.
+registerMirroredKey(KEY, QUOTED_PROJECTIONS_EVENT);
 
 export const QUOTED_FIELDS = ['weak', 'ok', 'expected', 'agreements', 'bfoPipe'];
 
@@ -39,6 +49,8 @@ export function loadQuotedProjections() {
 
 export function saveQuotedProjections(map) {
   try { userLsSet(KEY, JSON.stringify(map || {})); } catch { /* ignore quota */ }
+  queueMirrorPush(KEY);
+  dispatchStoreEvent(QUOTED_PROJECTIONS_EVENT);
 }
 
 // June 2026 was filled once with the then-current live totals as a stand-in,
@@ -47,10 +59,16 @@ export function saveQuotedProjections(map) {
 // value exactly once per user, leaving any later hand correction alone.
 const JUNE_REBUILD_KEY = 'yoy-quoted-june-2026-rebuilt';
 
+// Mirrored alongside the values themselves. The flag is what makes the
+// rebuild one-shot, so a browser that restored the projections but not the
+// flag would run it a second time and overwrite a hand-corrected June.
+registerMirroredKey(JUNE_REBUILD_KEY, QUOTED_PROJECTIONS_EVENT);
+
 export function juneRebuildDone() {
   return userLsGet(JUNE_REBUILD_KEY) === '1';
 }
 
 export function markJuneRebuildDone() {
   try { userLsSet(JUNE_REBUILD_KEY, '1'); } catch { /* ignore quota */ }
+  queueMirrorPush(JUNE_REBUILD_KEY);
 }
