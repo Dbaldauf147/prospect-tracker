@@ -2,15 +2,21 @@ import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
+import { parseMoney } from '../../utils/oppsMetrics';
 import {
-  notSoldBreakdown, quotedOf, reasonOf, sourceOf,
+  notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
 } from '../../utils/notSoldAnalysis';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
 
-function money(n) {
-  return n > 0 ? fmtMoneyWhole(Math.round(n)) : '-';
+// One opp's own Quoted Amount, in the drilldown. The aggregate "$ lost"
+// columns are gone from the tables — a loss total built only from the opps
+// that happened to carry a figure reads as a number when it is a sample —
+// but what a single deal was quoted at is a fact about that deal.
+function money(v) {
+  const n = parseMoney(v);
+  return n != null && n > 0 ? fmtMoneyWhole(Math.round(n)) : '-';
 }
 
 // A share-of-losses cell: the number and a bar, so the long tail of
@@ -73,7 +79,7 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
                 <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '-'}</td>
                 <td style={{ padding: '0.4rem 0.5rem' }}>{r['Competition'] || '-'}</td>
                 <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {money(quotedOf(r) || 0)}
+                  {money(r['Quoted Amount'])}
                 </td>
                 <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Close Date'] || '-'}</td>
               </tr>
@@ -83,6 +89,70 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
       </div>
     </div>,
     document.body,
+  );
+}
+
+// The year filter. Only a handful of years ever have losses in them, so
+// they're chips rather than a dropdown: every option visible, one click to
+// include or drop one. Nothing selected means every year — so a year that
+// only shows up in next year's data needs no re-selecting to be counted.
+function YearChips({ years, selected, onToggle, onClear }) {
+  if (years.length === 0) return null;
+  const all = selected.length === 0;
+  return (
+    <span className={styles.notSoldYears}>
+      <span className={styles.filterLabel} style={{ marginRight: 2 }}>Years</span>
+      <button
+        type="button"
+        className={all ? styles.notSoldYearOn : styles.notSoldYear}
+        onClick={onClear}
+        title="Count losses from every year"
+      >All</button>
+      {years.map(y => (
+        <button
+          key={y}
+          type="button"
+          className={selected.includes(y) ? styles.notSoldYearOn : styles.notSoldYear}
+          onClick={() => onToggle(y)}
+          title={selected.includes(y) ? `Stop counting ${y}` : `Include ${y}`}
+        >{y}</button>
+      ))}
+    </span>
+  );
+}
+
+// One source's reasons, opened out under its row: what goes wrong with this
+// source, and how much of the whole picture each of those is. The two
+// percentages answer different questions — a source can lose most of its own
+// deals to one reason while barely moving the business total.
+function SourceReasons({ row }) {
+  return (
+    <table className={styles.notSoldReasonTable}>
+      <thead>
+        <tr>
+          <th>Reason Not Sold</th>
+          <th style={{ textAlign: 'right' }}>Losses</th>
+          <th style={{ textAlign: 'right' }}>% of {row.source}</th>
+          <th style={{ textAlign: 'right' }}>% of all losses</th>
+        </tr>
+      </thead>
+      <tbody>
+        {row.reasons.map(r => (
+          <tr key={r.reason}>
+            <td>{r.reason}</td>
+            <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.count}</td>
+            <td style={{ textAlign: 'right' }}>{r.percent.toFixed(1)}%</td>
+            <td style={{ textAlign: 'right', ...muted }}>{r.percentAll.toFixed(1)}%</td>
+          </tr>
+        ))}
+        <tr className={styles.notSoldReasonTotal}>
+          <td>Total</td>
+          <td style={{ textAlign: 'right' }}>{row.losses}</td>
+          <td style={{ textAlign: 'right' }}>100.0%</td>
+          <td style={{ textAlign: 'right', ...muted }}>{row.percent.toFixed(1)}%</td>
+        </tr>
+      </tbody>
+    </table>
   );
 }
 
@@ -102,10 +172,29 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
 export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // Close years to count. Empty means all of them.
+  const [years, setYears] = useState([]);
+  // Which source rows are opened out into their reason breakdown.
+  const [expanded, setExpanded] = useState(() => new Set());
   // What the open drilldown is showing: { title, subtitle, rows }.
   const [drill, setDrill] = useState(null);
 
-  const data = useMemo(() => notSoldBreakdown(records, { from, to }), [records, from, to]);
+  const yearOptions = useMemo(() => notSoldYears(records), [records]);
+  const data = useMemo(
+    () => notSoldBreakdown(records, { from, to, years }),
+    [records, from, to, years],
+  );
+
+  function toggleYear(y) {
+    setYears(prev => (prev.includes(y) ? prev.filter(v => v !== y) : [...prev, y]));
+  }
+  function toggleExpanded(source) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(source)) next.delete(source); else next.add(source);
+      return next;
+    });
+  }
 
   const reasonColumns = useMemo(() => [
     {
@@ -131,17 +220,6 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
       render: (row) => <ShareCell percent={row.percent} />,
     },
     {
-      key: 'lost',
-      label: 'Quoted $ Lost',
-      defaultWidth: 130,
-      render: (row) => (
-        <div
-          style={{ textAlign: 'right' }}
-          title={row.lost > 0 ? undefined : 'None of these losses carried a Quoted Amount.'}
-        >{money(row.lost)}</div>
-      ),
-    },
-    {
       key: 'sourceList',
       label: 'Sources',
       defaultWidth: 300,
@@ -157,6 +235,25 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   ], []);
 
   const sourceColumns = useMemo(() => [
+    {
+      // Its own control rather than the row click, which already opens the
+      // losses themselves. The click is stopped here so opening the
+      // breakdown doesn't also open the popup over the top of it.
+      key: 'expand',
+      label: '',
+      defaultWidth: 34,
+      render: (row) => (
+        <button
+          type="button"
+          className={styles.notSoldExpandBtn}
+          onClick={(e) => { e.stopPropagation(); toggleExpanded(row.source); }}
+          title={expanded.has(row.source)
+            ? `Hide ${row.source}'s reasons`
+            : `Show every reason ${row.source} lost on`}
+          aria-label={expanded.has(row.source) ? 'Collapse' : 'Expand'}
+        >{expanded.has(row.source) ? '\u25BE' : '\u25B8'}</button>
+      ),
+    },
     {
       key: 'source',
       label: 'Source',
@@ -191,12 +288,6 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
       render: (row) => <ShareCell percent={row.percent} />,
     },
     {
-      key: 'lost',
-      label: 'Quoted $ Lost',
-      defaultWidth: 130,
-      render: (row) => <div style={{ textAlign: 'right' }}>{money(row.lost)}</div>,
-    },
-    {
       key: 'topReason',
       label: 'Top Reason',
       defaultWidth: 240,
@@ -218,9 +309,9 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
         );
       },
     },
-  ], []);
+  ], [expanded]);
 
-  const ranged = !!(from || to);
+  const windowed = data.windowed;
 
   return (
     <>
@@ -245,21 +336,26 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             onChange={e => setTo(e.target.value)}
           />
         </label>
-        {ranged && (
+        <YearChips
+          years={yearOptions}
+          selected={years}
+          onToggle={toggleYear}
+          onClear={() => setYears([])}
+        />
+        {windowed && (
           <button
             className={styles.clearFiltersBtn}
-            onClick={() => { setFrom(''); setTo(''); }}
+            onClick={() => { setFrom(''); setTo(''); setYears([]); }}
           >Clear filters</button>
         )}
         <span className={styles.resultCount}>
           {data.lossCount} loss{data.lossCount === 1 ? '' : 'es'}
-          {ranged ? ' closed in range' : ''}
-          {data.lostValue > 0 && ` · ${money(data.lostValue)} quoted across ${data.quotedLosses}`}
+          {windowed ? ' closed in range' : ''}
           {` · ${data.winCount} won in the same window`}
           {' · click a row to see the opps'}
         </span>
-        {/* Said rather than silently done: with a range set there's no way to
-            place a loss that never got a Close Date, so it sits out. */}
+        {/* Said rather than silently done: with a window set there's no way
+            to place a loss that never got a Close Date, so it sits out. */}
         {data.undated > 0 && (
           <span className={styles.resultCount} style={{ color: '#92400E' }}>
             {data.undated} not counted — no Close Date
@@ -276,10 +372,10 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             rows={data.reasons.map(r => ({ ...r, id: r.reason }))}
             alwaysVisible={['reason']}
             exportFileName="Not Sold by reason"
-            emptyMessage={ranged ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
+            emptyMessage={windowed ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
             onRowClick={(row) => setDrill({
               title: `Reason: ${row.reason}`,
-              subtitle: `Every loss filed under this reason${ranged ? ', closed in the current range.' : '.'}`,
+              subtitle: `Every loss filed under this reason${windowed ? ', closed in the current range.' : '.'}`,
               rows: data.rows.filter(r => reasonOf(r) === row.reason),
             })}
             settings={settings}
@@ -293,12 +389,29 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             tableId="opps2-not-sold-sources"
             columns={sourceColumns}
             rows={data.sources.map(r => ({ ...r, id: r.source }))}
-            alwaysVisible={['source']}
+            alwaysVisible={['expand', 'source']}
+            expandedRowIds={expanded}
+            renderExpansion={(row) => <SourceReasons row={row} />}
+            toolbarActions={[{
+              key: 'expandAll',
+              label: expanded.size === data.sources.length && data.sources.length > 0
+                ? 'Collapse all'
+                : 'Expand all',
+              title: 'Open every source out into the reasons behind its losses',
+              onClick: () => setExpanded(prev => (
+                prev.size === data.sources.length ? new Set() : new Set(data.sources.map(r => r.source))
+              )),
+              disabled: data.sources.length === 0,
+            }]}
             exportFileName="Not Sold by source"
-            emptyMessage={ranged ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
+            // The reason breakdown is an on-screen expansion, so it would
+            // otherwise be the one part of this tab you couldn't take away
+            // with you.
+            exportExtraSheets={[{ name: 'Reasons by source', rows: sourceReasonRows(data.sources) }]}
+            emptyMessage={windowed ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
             onRowClick={(row) => setDrill({
               title: `Source: ${row.source}`,
-              subtitle: `Every loss from this source${ranged ? ', closed in the current range.' : '.'}`,
+              subtitle: `Every loss from this source${windowed ? ', closed in the current range.' : '.'}`,
               rows: data.rows.filter(r => sourceOf(r) === row.source),
             })}
             settings={settings}
