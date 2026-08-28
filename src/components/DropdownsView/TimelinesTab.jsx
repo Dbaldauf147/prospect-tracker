@@ -12,6 +12,7 @@ import {
   canSwapStages,
   summarizeStageOwners,
   shortOwnerLabel,
+  libraryTimelines,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { PriorStepsPicker } from './PriorStepsPicker';
@@ -833,6 +834,20 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
         onRemove={removeService}
       />
 
+      {/* The line under the title on every export — what this timeline is
+          for, in the words it gets presented in. Outside the per-format
+          settings because the header carries it whichever layout is drawn. */}
+      <div className={styles.phasedSettings}>
+        <span className={styles.timelineServicesLabel}>Subtitle</span>
+        <DraftInput
+          value={template.subtitle}
+          placeholder="What this timeline is for"
+          title="Drawn under the title on the visual and every export"
+          className={`${styles.settingInput} ${styles.settingInputWide}`}
+          onCommit={(next) => onChange({ ...template, subtitle: next })}
+        />
+      </div>
+
       {/* The window the whole timeline is drawn against. Set both ends and
           every surface — the grid on this page, the .xlsx, the .svg / .png —
           covers exactly those months, including empty ones, instead of
@@ -1044,6 +1059,66 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove }) 
   );
 }
 
+// The standard timelines the user doesn't currently have, offered next to
+// "+ New timeline".
+//
+// A timeline that ships with the app only shows up on its own until somebody
+// saves their own set — from then on the saved list is the whole truth. So
+// the ones added since are offered here instead of appearing in the list
+// unasked: clicking one adds it, and a timeline that isn't wanted is simply
+// never clicked (or deleted again, and it comes back to this menu).
+function LibraryPicker({ templates, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const available = useMemo(() => libraryTimelines(templates), [templates]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onClick = (e) => {
+      if (!e.target.closest?.(`.${styles.libraryPicker}`)) setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    // Deferred so the click that opened the menu doesn't immediately close it.
+    const id = setTimeout(() => window.addEventListener('click', onClick), 0);
+    return () => {
+      clearTimeout(id);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClick);
+    };
+  }, [open]);
+
+  if (!available.length) return null;
+
+  return (
+    <div className={styles.libraryPicker}>
+      <button
+        type="button"
+        className={styles.libraryPickerBtn}
+        onClick={() => setOpen(v => !v)}
+        title="Add one of the timelines that ship with the app"
+      >+ From library · {available.length}</button>
+      {open && (
+        <div className={styles.libraryPickerMenu}>
+          {available.map(tpl => (
+            <button
+              key={tpl.id}
+              type="button"
+              className={styles.libraryPickerRow}
+              onClick={() => { setOpen(false); onAdd(tpl); }}
+              title={tpl.subtitle || `Add the ${tpl.name} timeline`}
+            >
+              <span className={styles.libraryPickerName}>{tpl.name || 'Untitled timeline'}</span>
+              <span className={styles.libraryPickerMeta}>
+                {tpl.stages.length} stage{tpl.stages.length === 1 ? '' : 's'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Dropdowns → Timelines. Builds the reusable timeline templates — a named
 // sequence of stages, each owned by the client or Schneider Electric — that
 // get attached to services. Everything persists under
@@ -1113,6 +1188,10 @@ export function TimelinesTab({ settings, updateSettings, serviceOptions = [] }) 
             fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}
         >+ New timeline</button>
+        <LibraryPicker
+          templates={templates}
+          onAdd={(tpl) => saveTemplates([...templates, tpl])}
+        />
         <span className={styles.resultCount}>
           {term
             ? `${visible.length} of ${templates.length} timelines`

@@ -11,17 +11,17 @@
 // print: the marker ring color, the uppercase owner caption above each
 // title, and the legend. A "Both" stage rings half green / half grey.
 
-import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo';
+import { SE_GREEN, SE_GREEN_DARK, schneiderLogoSvg } from './schneiderLogo.js';
 import {
   TIMELINE_STAGE_OWNERS, DEFAULT_STAGE_OWNER, groupStagesByPhase, subRuns,
-} from './timelineTemplatesStore';
+} from './timelineTemplatesStore.js';
 import {
   getStageRange, formatRangeLabel, isoToMs, msToIso, daysInMonth, monthLabel,
   placeStages, anchorPlus, todayMonthIndex, todayMonthOffset,
   applyRunUpShift,
   stageMonthFraction, timelineWeekTicks, resolveMonthWindow, monthWindowBounds,
   stagesOutsideWindow, placementBaseMonth,
-} from './timelineDates';
+} from './timelineDates.js';
 
 const SE_INK = '#0F172A';
 const SE_SLATE = '#475569';
@@ -116,6 +116,15 @@ function wrapText(text, maxWidth, fontSize, maxLines) {
 
 // --- Layout -------------------------------------------------------------
 
+// How many lines a callout will draw of a step's name and of its description
+// before it gives up and ellipses. Generous because the canvas grows to fit
+// them (see milestoneGeometry) — the caps are only there so a paragraph
+// pasted into a step can't stretch the drawing to a page and a half. Two
+// lines of title used to cut names like "Establish portfolio baseline &
+// counterparty framework" mid-word.
+const MAX_TITLE_LINES = 3;
+const MAX_DESC_LINES = 8;
+
 const LAYOUT = {
   padX: 44,
   slot: 292,
@@ -153,24 +162,39 @@ function markerIcon(cx, cy, stage, index) {
   return `<g transform="translate(${(cx - offset).toFixed(2)} ${(cy - offset).toFixed(2)}) scale(${scale})" fill="none" stroke="${color}" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></g>`;
 }
 
+// How much room a callout's text needs, and the wrapped lines to draw in it.
+//
+// Measured before anything is drawn so the canvas can be sized to the text
+// rather than the text clipped to the canvas: these callouts carry the
+// paragraph a slide would print under each milestone, and a description cut
+// off at three lines with an ellipsis is a sentence the reader doesn't get.
+// The deep description is what grows — the rest of the block is fixed.
+function calloutText(stage, textWidth) {
+  const titleLines = wrapText(stage.name || 'Untitled stage', textWidth, 19, MAX_TITLE_LINES);
+  const descLines = wrapText(stage.description, textWidth, 14.5, MAX_DESC_LINES);
+  // From the owner caption's baseline down to the last thing drawn.
+  const height = 24 + titleLines.length * 24 + 6 + descLines.length * 20
+    + (descLines.length ? 6 : 0) + (stage.timing ? 18 : 0);
+  return { titleLines, descLines, height };
+}
+
 // One stage callout: the stem from the marker out to its end dot, plus the
-// owner caption / title / description / timing stacked beside it.
-function stageCallout(stage, index, cx, above) {
-  const { axisY, radius, topDotY, botDotY, slot } = LAYOUT;
+// owner caption / title / description / timing stacked beside it. `geom` is
+// the sized-to-the-text geometry from milestoneGeometry.
+function stageCallout(stage, index, cx, above, geom) {
+  const { axisY, radius, topDotY, botDotY, textWidth } = geom;
   const color = ownerColor(stage.owner);
   const textX = cx + 18;
-  const textWidth = slot - 46;
 
   const dotY = above ? topDotY : botDotY;
   const stemFrom = above ? axisY - radius : axisY + radius;
   let out = `<line x1="${cx}" y1="${stemFrom}" x2="${cx}" y2="${dotY}" stroke="${SE_LINE}" stroke-width="1.4"/>`;
   out += `<circle cx="${cx}" cy="${dotY}" r="5.5" fill="#FFFFFF" stroke="${color}" stroke-width="1.6"/>`;
 
+  const { titleLines, descLines } = calloutText(stage, textWidth);
   const ownerY = above ? topDotY + 28 : axisY + radius + 34;
-  const titleLines = wrapText(stage.name || 'Untitled stage', textWidth, 19, 2);
   const titleTop = ownerY + 24;
   const descTop = titleTop + titleLines.length * 24 + 6;
-  const descLines = wrapText(stage.description, textWidth, 14.5, 3);
   const timingY = descTop + descLines.length * 20 + (descLines.length ? 6 : 0);
 
   out += `<text x="${textX}" y="${ownerY}" font-size="10.5" font-weight="800" letter-spacing="0.9" fill="${color}">${esc(String(stage.owner || '').toUpperCase())}</text>`;
@@ -186,8 +210,54 @@ function stageCallout(stage, index, cx, above) {
   return out;
 }
 
-function legend(width) {
-  const { legendY } = LAYOUT;
+// The canvas this set of stages needs: where the axis sits, where the two
+// rows of callout dots sit, and how tall the drawing ends up.
+//
+// The stored LAYOUT numbers are the FLOOR, not the answer — a timeline whose
+// callouts fit inside them is drawn exactly as it always was, and only one
+// carrying more text than that pushes the axis down and the canvas taller.
+// The two rows are measured separately because they grow in opposite
+// directions: the row above the line is pinned to its dots and grows down
+// toward the axis, the row below hangs off the axis and grows toward the
+// legend.
+function milestoneGeometry(stages) {
+  const { padX, slot, radius, topDotY, legendY, height, axisY } = LAYOUT;
+  const textWidth = slot - 46;
+  // Every callout writes its text to the RIGHT of its marker, so the last
+  // one needs a column of its own past the end of the axis — a slot's width
+  // of markers is not the width of the drawing. Without this the final step's
+  // description and its month window ran off the edge of the canvas, which on
+  // a five-step timeline is the step that says what the client has to have
+  // ready.
+  const width = Math.max(
+    padX * 2 + slot * stages.length,
+    padX + slot * (stages.length - 0.5) + 18 + textWidth + padX,
+  );
+  let above = 0;
+  let below = 0;
+  stages.forEach((stage, i) => {
+    const need = calloutText(stage, textWidth).height;
+    if (i % 2 === 0) above = Math.max(above, need);
+    else below = Math.max(below, need);
+  });
+  // Above: dot, 28px to the owner caption, the block, then clear air before
+  // the marker ring.
+  const axis = Math.max(axisY, topDotY + 28 + above + 18 + radius);
+  // Below: the marker ring, 34px to the owner caption, the block, then the
+  // stem's end dot and the legend under it.
+  const belowEnd = axis + radius + 34 + below;
+  const botDot = Math.max(LAYOUT.botDotY + (axis - axisY), belowEnd + 18);
+  const legend = Math.max(legendY + (axis - axisY), botDot + 24);
+  return {
+    padX, slot, radius, topDotY, textWidth, width,
+    axisY: axis,
+    botDotY: botDot,
+    legendY: legend,
+    height: Math.max(height + (axis - axisY), legend + 40),
+  };
+}
+
+function legend(width, legendY = LAYOUT.legendY) {
   let x = LAYOUT.padX;
   let out = '';
   for (const owner of TIMELINE_STAGE_OWNERS) {
@@ -203,9 +273,13 @@ function legend(width) {
 function brandedHeader(template, width) {
   const title = template?.name?.trim() || 'Timeline';
   let out = `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY}" font-size="24" font-weight="800" fill="${SE_INK}">${esc(title)}</text>`;
-  const services = (template?.services || []).join(' · ');
-  if (services) {
-    out += `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY + 21}" font-size="12.5" font-weight="600" fill="${SE_MUTE}">${esc(services)}</text>`;
+  // The subtitle and the attached services share the line under the title:
+  // the header band's height is fixed and the milestone callouts start just
+  // below it, so a second line would land on top of the first one's dots.
+  const sub = [String(template?.subtitle ?? '').trim(), (template?.services || []).join(' · ')]
+    .filter(Boolean).join(' · ');
+  if (sub) {
+    out += `<text x="${LAYOUT.padX}" y="${LAYOUT.headerY + 21}" font-size="12.5" font-weight="600" fill="${SE_MUTE}">${esc(sub)}</text>`;
   }
   out += `<g transform="translate(${width - LAYOUT.padX - 172} 14)">${schneiderLogoSvg({ width: 172 })}</g>`;
   out += `<line x1="${LAYOUT.padX}" y1="${LAYOUT.headerY + 34}" x2="${width - LAYOUT.padX}" y2="${LAYOUT.headerY + 34}" stroke="${SE_LINE}" stroke-width="1"/>`;
@@ -850,8 +924,8 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
-  const { padX, slot, height, axisY } = LAYOUT;
-  const width = padX * 2 + slot * stages.length;
+  const geom = milestoneGeometry(stages);
+  const { padX, slot, width, height, axisY, radius } = geom;
 
   let body = '';
   // Axis first so the white-filled markers mask it where they sit.
@@ -861,19 +935,19 @@ export function buildMilestoneSvg(template, { branded = true } = {}) {
 
   stages.forEach((stage, i) => {
     const cx = padX + slot * (i + 0.5);
-    body += stageCallout(stage, i, cx, i % 2 === 0);
+    body += stageCallout(stage, i, cx, i % 2 === 0, geom);
   });
   stages.forEach((stage, i) => {
     const cx = padX + slot * (i + 0.5);
-    body += `<circle cx="${cx}" cy="${axisY}" r="${LAYOUT.radius}" fill="#FFFFFF"/>`;
-    body += markerRing(cx, axisY, LAYOUT.radius, stage.owner);
+    body += `<circle cx="${cx}" cy="${axisY}" r="${radius}" fill="#FFFFFF"/>`;
+    body += markerRing(cx, axisY, radius, stage.owner);
     body += markerIcon(cx, axisY, stage, i);
   });
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(template?.name || 'Timeline')}" font-family="'Nunito Sans','Segoe UI',Arial,Helvetica,sans-serif">`
     + `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>`
     + (branded ? brandedHeader(template, width) : '')
-    + body + legend(width)
+    + body + legend(width, geom.legendY)
     + `</svg>`;
 }
 
