@@ -2345,3 +2345,13 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+/* A fee typed straight into the Est. Fee column, rather than worked out
+   from a basis and a rate. Marked so a figure that overrides the model
+   can't be mistaken for one the model produced. */
+.pricingEstTyped {
+  font-weight: 700;
+  color: #7C3AED;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed #C4B5FD;
+}
