@@ -291,7 +291,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const needed = new Set();
     const noPrice = [];
     for (const name of scen.services) {
-      const basis = basisFor(pricingFor(pricing, name).basis);
+      const entry = pricingFor(pricing, name);
+      // A typed fee already answers the question, so it needs no count and
+      // isn't missing a price.
+      if (entry.avgFee !== null) continue;
+      const basis = basisFor(entry.basis);
       if (!basis) { noPrice.push(name); continue; }
       if (basis.unit) needed.add(basis.unit);
     }
@@ -356,8 +360,13 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     totals.unitsUsed.has(u.unit) || (counts?.[u.unit] !== '' && counts?.[u.unit] != null)
   ), [totals.unitsUsed, counts]);
 
+  // Priced = there's a figure behind it, however it got there: a basis to
+  // work one out, or a fee typed straight into the Est. Fee column.
   const pricedCount = useMemo(
-    () => serviceRows.filter(r => pricingFor(pricing, r.name).basis).length,
+    () => serviceRows.filter(r => {
+      const entry = pricingFor(pricing, r.name);
+      return !!entry.basis || entry.avgFee !== null;
+    }).length,
     [serviceRows, pricing],
   );
 
@@ -383,6 +392,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         value: est?.priced ? est.value : null,
         _kind: basis?.kind || '',
         _note: est?.note || '',
+        _typed: !!est?.typed,
         _scoped: inScope.has(name),
       };
     })
@@ -420,9 +430,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               display={row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={row.basis
-                ? (row._kind === 'percent' ? 'Percentage of the deal size' : `Dollars — ${row.basisLabel.toLowerCase()}`)
-                : 'Pick a pricing basis first'}
+              title={row._typed && row.basis
+                ? 'Not in use: the Est. Fee column has a fee typed into it, which wins. Clear that cell to price off this rate again.'
+                : row.basis
+                  ? (row._kind === 'percent' ? 'Percentage of the deal size' : `Dollars — ${row.basisLabel.toLowerCase()}`)
+                  : 'Pick a pricing basis first'}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
             />
           ),
@@ -452,18 +464,59 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             ? <span className={styles.serviceMutedCell}>-</span>
             : row.units.toLocaleString('en-US')),
         };
+      // Est. Fee is the one estimate cell you can write into: typing a
+      // figure sets it as this service's fee outright, for when the answer
+      // is "it goes for about forty grand" rather than a rate times a
+      // count. It opens prefilled with whatever the basis worked out, so
+      // adjusting a modelled number is a click and a retype, and clearing
+      // it hands the row back to the model.
       case 'fee':
+        return {
+          ...base,
+          getSortValue: (row) => row.fee,
+          render: (row) => (
+            <NumberCell
+              // The editor opens on whatever is showing — the typed figure,
+              // or the one the basis worked out — so adjusting a modelled
+              // number is a retype rather than a re-derivation. Committing
+              // an unchanged value writes nothing (see NumberCell), so
+              // opening a computed cell and clicking away can't turn it
+              // into an override.
+              value={row.fee}
+              display={row.fee === null
+                ? ''
+                : (
+                  <span className={row._typed
+                    ? styles.pricingEstTyped
+                    : (row._scoped ? styles.pricingEstScoped : undefined)}
+                  >{formatMoney(row.fee)}</span>
+                )}
+              placeholder="$"
+              step="100"
+              title={row._typed
+                ? 'Typed in: this is the fee, whatever the basis works out to. Clear the cell to go back to the basis.'
+                : row.fee === null
+                  ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type an average fee here, or set a basis and rate.`
+                  : `Worked out from the basis${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type a figure to use that instead.`}
+              onCommit={(v) => savePricingField(row.name, 'avgFee', v)}
+            />
+          ),
+        };
       case 'value':
         return {
           ...base,
-          getSortValue: (row) => row[col.key],
-          render: (row) => (row[col.key] === null
+          getSortValue: (row) => row.value,
+          render: (row) => (row.value === null
             ? <span className={styles.serviceMutedCell} title={row._note || 'Not priced yet'}>-</span>
             : (
               <span
-                className={row._scoped ? styles.pricingEstScoped : undefined}
-                title={row._note || undefined}
-              >{formatMoney(row[col.key])}</span>
+                className={row._typed
+                  ? styles.pricingEstTyped
+                  : (row._scoped ? styles.pricingEstScoped : undefined)}
+                title={row._typed
+                  ? 'The typed fee, across the service’s term'
+                  : (row._note || undefined)}
+              >{formatMoney(row.value)}</span>
             )),
         };
       default:
