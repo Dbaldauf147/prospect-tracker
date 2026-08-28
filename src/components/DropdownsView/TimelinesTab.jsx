@@ -961,10 +961,10 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
             })}
             title={hasRange
               ? `The timeline range sets this: ${rangeSummary}. Clear the range to pick a month count instead.`
-              : 'How many month columns to show: applies to the visual and every export'}
+              : 'How many month columns to show: applies to the visual and every export. Auto ends the chart one month after the last step, and grows as steps are added.'}
             className={styles.settingSelect}
           >
-            <option value="">Auto (fit the steps)</option>
+            <option value="">Auto (steps + 1 month)</option>
             {MONTH_COUNT_OPTIONS.map(n => <option key={n} value={n}>{n} months</option>)}
             {/* A value typed before this became a picker still shows. */}
             {template.monthCount !== '' && template.monthCount != null

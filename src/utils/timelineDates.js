@@ -552,13 +552,42 @@ export function getTimelineRange(template) {
 // A declared range wins and always reads as calendar months — that's what
 // picking dates asks for. Without one this falls back to the anchor-month and
 // month-count settings, so a timeline that never sets a range behaves exactly
-// as it did before. `needed` is how many months the stages themselves occupy,
-// used only by the "Auto (fit the steps)" fallback.
+// as it did before. `needed` is how many months the stages themselves occupy;
+// it feeds the "Auto" fallback, and a caller with no placement of its own can
+// pass null and have it derived from the template (timelineMonthsNeeded).
 //
 // The range snaps out to whole months at both ends. Part-months would leave
 // the Gantt's first tick hanging off the left of its own chart, and the
 // implementation grid can't draw half a column at all — snapping is what lets
 // all three surfaces agree on one set of columns.
+/**
+ * How many month columns this timeline's own steps occupy — the month the
+ * last of them ends in.
+ *
+ * Worked out from the template rather than taken from the caller, because
+ * the callers don't agree: the chart and the Excel export knew their step
+ * placement and passed it, while the Timelines page and the "steps left out"
+ * warning had nothing to pass and fell back to a flat twelve. A plan running
+ * eighteen months therefore drew eighteen columns and was warned that its
+ * last six months of work was outside the window. One answer, derived in one
+ * place, so they can't disagree.
+ *
+ * Mirrors the phased chart's own placement: steps positioned, dependencies
+ * resolved, then any pre-signature run-up shifted out of the way.
+ * `timelineBaseMonth` is inlined rather than reached through
+ * placementBaseMonth, which asks resolveMonthWindow, which asks this.
+ */
+export function timelineMonthsNeeded(template) {
+  const stages = Array.isArray(template?.stages) ? template.stages : [];
+  if (!stages.length) return 0;
+  const mode = template?.positionMode === 'months' ? 'months' : 'dates';
+  const baseMonth = timelineBaseMonth(stages);
+  const raw = placeStages(stages, baseMonth, mode).map((pos, i) => ({ stage: stages[i], ...pos }));
+  const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
+  const { placed } = applyRunUpShift(raw, statedSignature);
+  return Math.max(0, ...placed.map(p => p.month + p.span - 1));
+}
+
 export function resolveMonthWindow(template, needed) {
   const range = getTimelineRange(template);
   if (range) {
@@ -575,13 +604,25 @@ export function resolveMonthWindow(template, needed) {
       fromRange: true,
     };
   }
+  // "Auto" is the plan's own extent plus one month of tail — enough that the
+  // last bar isn't flush against the right edge, and no more. It used to be
+  // a flat twelve-month floor, which drew most of a year of empty columns
+  // beside an eight-week rollout and squeezed the real work into the first
+  // sliver of the chart. A template that names its own month count still
+  // wins: that's what the Months picker is for.
+  //
+  // An extent of zero means there are no steps to fit yet, so a blank
+  // template keeps the twelve columns it has always opened with rather than
+  // collapsing to a single one.
+  const extent = Number(needed) > 0 ? Math.floor(Number(needed)) : timelineMonthsNeeded(template);
+  const auto = extent > 0 ? extent + 1 : 12;
   return {
     anchor: String(template?.anchorMonth || '').trim(),
     monthCount: Math.max(
       1,
       Math.min(36, Number(template?.monthCount) > 0
         ? Math.floor(template.monthCount)
-        : Math.max(12, Number(needed) > 0 ? Number(needed) : 12)),
+        : auto),
     ),
     calendar: template?.monthMode === 'calendar',
     fromRange: false,
