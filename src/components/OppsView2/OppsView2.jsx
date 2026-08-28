@@ -311,7 +311,7 @@ const DEFAULT_HEADERS = [
   'Credit approval',
   // The date the agreement is expected to be signed. Set on the rollout
   // timeline, where it is month 1 of the whole delivery plan, and shown on
-  // the Notes and Update Status popups because it's a date being negotiated
+  // the Follow Up Notes popup because it's a date being negotiated
   // rather than a drawing preference.
   'Target Signature Date',
 ];
@@ -688,7 +688,7 @@ function resolveScopeToSolution(token, options) {
 
 // Canonical Solutions names in the opp's Scope flagged "Timeline Driven
 // = Yes" in Dropdowns › Services (seed catalog + settings.serviceOverrides).
-// These drive an auto-inserted timeline row in the Update Status / Notes
+// These drive an auto-inserted timeline row in the Follow Up Notes
 // editors so every timeline-driven service always shows a table to fill
 // in. `solutionOptions` is the live Solutions list so shorthand Scope
 // values resolve to the real service name. Order follows Scope; dupes
@@ -2076,7 +2076,7 @@ function NextStepsCell({ value, onOpen }) {
       <span
         ref={ref}
         onClick={(e) => { e.stopPropagation(); onOpen(); }}
-        title="Click to edit in Notes"
+        title="Click to edit in Follow Up Notes"
         style={{
           display: 'block', cursor: 'pointer', minHeight: '1em',
           padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
@@ -4048,8 +4048,8 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
   // run-on Scope string.
   const servicesLost = useMemo(() => scopeServices(opp, solutionOptions), [opp, solutionOptions]);
 
-  // Seed the Next Steps rows from the same source the standalone
-  // NextStepsEditor and the Update Status popup use, so closing an opp out
+  // Seed the Next Steps rows from the same source the Follow Up Notes
+  // popup uses, so closing an opp out
   // edits the notes in the identical Next Step / Waiting On format. Kept as
   // local state and flattened back on Save.
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
@@ -4085,7 +4085,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
   }
 
   function handleSave() {
-    // Same flattening the Update Status popup does: drop wholly-empty rows,
+    // Same flattening the Follow Up Notes popup does: drop wholly-empty rows,
     // join the notes with newlines and keep the parallel Waiting On array
     // index-aligned with them.
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
@@ -4131,7 +4131,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
           // Wider than the narrow four-field original: the Next Step /
           // Waiting On rows editor below needs the width, and a long note
           // list needs the body to scroll instead of pushing the Save button
-          // off-screen. (The Update Status popup, which this used to match,
+          // off-screen. (The Follow Up Notes popup, which this used to match,
           // has since been widened again to fit its two tables — this one
           // carries neither, so it stays here.)
           width: 'min(820px, 94vw)', maxHeight: '88vh',
@@ -4174,7 +4174,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
             </div>
           ) : null}
           {/* The four close-out fields sit on one wrapping row, the way the
-              Update Status popup lays its short fields out, so they don't
+              Follow Up Notes popup lays its short fields out, so they don't
               stretch across the width the notes table below needs. */}
           <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
@@ -5134,7 +5134,7 @@ function ticketHref(raw) {
 }
 
 // Two link fields — Contract Service Desk ticket + COA Approval ticket —
-// shared by the Follow-Up status popup and the Notes editor so both render
+// shared by the Follow Up Notes popup and the close-out screen so both render
 // identically. `onChange*` updates the live value; `onCommit*` fires on blur
 // for editors (like Notes) that persist immediately.
 function TicketLinksFields({ labelStyle, inputStyle, contractUrl, coaUrl, onChangeContract, onChangeCoa, onCommitContract, onCommitCoa }) {
@@ -5216,7 +5216,7 @@ function OppTicketLinksSection({ opp, onFieldChange }) {
 }
 
 // "today" / "tomorrow" / "in 8 days" / "6 days ago" for the Follow Up date
-// shown in the status popup, so the picked day reads as a distance as well
+// shown in the Follow Up Notes popup, so the picked day reads as a distance as well
 // as a date. Past dates are spelled out rather than folded into "today" —
 // a follow-up that's already overdue should say so.
 function followUpWhenLabel(days) {
@@ -5227,32 +5227,47 @@ function followUpWhenLabel(days) {
   return days > 0 ? `in ${days} days` : `${-days} days ago`;
 }
 
-// Prompt shown whenever an opp's Follow Up date changes, asking the user
-// to pick the new Status (Who is waiting) for that opp so it stays
-// current with each follow-up. Cleared on Save or Skip.
+// The Follow Up Notes popup: one screen for everything you say about a deal
+// when you next pick it up — the Follow Up date, who's waiting (Status), the
+// Sales Partner, the deal's timelines, and the running notes.
 //
-// The new Follow Up date leads the popup, editable in place: the edit that
-// opened this modal is already applied to the opp, so the user sees what
-// they just picked and can correct it here instead of closing the popup and
-// re-dating the cell. `prevFollowUp` is the pre-edit date, surfaced in the
-// hint so it's clear what the date moved from.
-// `updateOppField` is for the one control here that isn't part of the form:
-// the Target Signature Date in the header, which saves as it's picked like
-// the same field does on the Notes popup and on the rollout chart this
-// header opens. Everything else still lands through onSave.
-function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onSave, onClose, onCancel, updateOppField }) {
-  const curStatus = opp?.['Status'] ?? '';
-  const [status, setStatus] = useState(String(curStatus ?? ''));
-  const curFollowUp = toISODate(opp?.['Follow Up']);
-  const [followUp, setFollowUp] = useState(curFollowUp);
-  const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
+// It replaces what used to be two popups over the same record — "Update
+// Status" (opened by changing a Follow Up date) and "Notes" (opened from the
+// Notes / Waiting On cells) — which had grown to hold nearly the same fields
+// and forced the user to close one to reach the other. Both entry points now
+// open this, and the only difference between them is the Cancel button:
+// arriving from a date change, `onCancel` puts that date back; opened from a
+// cell there is nothing to put back, so it isn't rendered. `prevFollowUp` is
+// the pre-edit date, surfaced in the hint so it's clear what the date moved
+// from.
+//
+// Everything saves as it's edited, the way the Notes popup always did, rather
+// than on a Save button: the popup is a place you take notes in, and typed
+// notes that vanish because the window was dismissed the wrong way are worse
+// than a status written a moment earlier than it used to be. So the fields
+// here read straight off the record and write straight back through
+// `updateOppField` — the Notes rows and Timelines keep local state only
+// because they're edited as tables and flattened on commit.
+function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onClose, onCancel, updateOppField }) {
+  // Only the date-change route has a previous date to restore, and only it
+  // opens without the user having asked for this screen — so that's the route
+  // that gets the Cancel button and the focused Status picker.
+  const fromFollowUpChange = !!onCancel;
+
+  const followUp = toISODate(opp?.['Follow Up']);
+  const status = String(opp?.['Status'] ?? '');
+  // The Status as it stood when the popup opened, so the field can say what
+  // it moved from — the same "was …" the Follow Up hint gives. Seeded once
+  // and never set again: it's a snapshot of the record at open, not a value
+  // that should follow the field the user is editing.
+  const [openStatus] = useState(status);
+
   // Structured timelines: a list of { type, value, kickoff, leadTime } rows, each
   // with its own Kickoff Deadline and delivery lead time, seeded from the opp
   // (falling back to the legacy free-text Timeline? column). Any service in the
   // opp's Scope flagged "Timeline Driven = Yes" also gets an auto row so its
   // table always appears, and every row named after a service starts with that
   // service's Rollout Time as its lead time.
-  // Flattened back to a readable summary on Save.
   const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
   const seededTimelines = useMemo(
     () => withServiceRolloutTimes(
@@ -5263,39 +5278,61 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
 
-  // Seed the Next Steps rows from the same source the standalone
-  // NextStepsEditor uses so this popup edits them in the identical
-  // Next Step / Waiting On format. Kept as local state and flattened
-  // back on Save.
+  // The "Timeline?" column is user-added, so its stored key can carry odd
+  // casing / zero-width drift (hence the tolerant read). Write back to
+  // whatever key already exists on the record, falling back to the
+  // canonical "Timeline?" when the opp doesn't have one yet.
+  const timelineKey = useMemo(() => {
+    for (const k in (opp || {})) {
+      if (normCell(k) === 'timeline?') return k;
+    }
+    return 'Timeline?';
+  }, [opp]);
+
+  function changeTimelineList(nextList) {
+    setTimelineList(nextList);
+    updateOppField(opp._id, '_timelines', nextList);
+    // Mirror the soonest per-row kickoff to the opp-level field the Flags
+    // column reads, so the most urgent kickoff still drives the warning, and
+    // a readable summary back into Timeline? so table cells keep working.
+    updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(nextList));
+    updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
+  }
+
+  // Notes rows: one { note, waitingOn } per line, flattened back to the
+  // 'Next Steps' text and its parallel _nextStepsWaiting array on commit.
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const [rows, setRows] = useState(() => {
     const seed = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
     return seed.length > 0 ? seed : [{ note: '', waitingOn: '' }];
   });
+
+  function commit(nextRows) {
+    const kept = nextRows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
+    updateOppField(opp._id, 'Next Steps', kept.map(r => encodeNoteLine(r.note)).join('\n'));
+    updateOppField(opp._id, '_nextStepsWaiting', kept.map(r => (r.waitingOn || '').trim()));
+  }
   const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
-  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '' }]);
+  const addRow = () => setRows(prev => {
+    const next = [...prev, { note: '', waitingOn: '' }];
+    commit(next);
+    return next;
+  });
   const deleteRow = (idx) => setRows(prev => {
     const next = prev.filter((_, i) => i !== idx);
-    return next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+    const safe = next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+    commit(safe);
+    return safe;
   });
 
-  function handleSave() {
-    const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
-    const nextSteps = kept.map(r => encodeNoteLine(r.note)).join('\n');
-    const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ followUp, status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim(), timelines: timelineList });
-  }
+  const account = String(opp?.['Account'] || '').trim() || '(no account)';
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
-  const textHint = (raw) => {
-    const v = (raw ?? '').toString().trim();
-    return v ? <div style={hintStyle}>Currently: {v}</div> : null;
-  };
 
   // "6/20/2026 · in 8 days · was 6/12/2026" under the Follow Up picker. The
   // "was" half only appears when the date actually moved, so a popup reached
-  // some other way doesn't claim a change that didn't happen.
+  // from a Notes cell doesn't claim a change that didn't happen.
   const prevFollowUpISO = toISODate(prevFollowUp);
   const followUpParts = [];
   if (followUp) {
@@ -5303,7 +5340,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     const when = followUpWhenLabel(daysFromToday(followUp));
     if (when) followUpParts.push(when);
   }
-  if (prevFollowUpISO && prevFollowUpISO !== curFollowUp) {
+  if (prevFollowUpISO && prevFollowUpISO !== followUp) {
     followUpParts.push(`was ${formatDateDisplay(prevFollowUpISO)}`);
   }
 
@@ -5314,6 +5351,36 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
     border: '1px solid var(--color-border)', borderRadius: 4,
     fontSize: '0.85rem', fontFamily: 'inherit',
     background: '#fff', color: 'var(--color-text)',
+  };
+
+  // One-click activity marks. Stamps today's date on `_calledOn` /
+  // `_metOn` (clicking again the same day clears it). The Agents page
+  // reads these stamps so a marked call or meeting shows up in its
+  // Activity table and the BFO Activity AI prompt without needing a
+  // phone-touch phrase in the notes text.
+  const markBtn = (field, icon, label) => {
+    const today = todayISO();
+    const stamped = toISODate(opp?.[field]);
+    const isToday = stamped === today;
+    return (
+      <button
+        type="button"
+        onClick={() => updateOppField(opp._id, field, isToday ? '' : today)}
+        title={isToday
+          ? `Marked "${label}" today: click to unmark`
+          : stamped
+            ? `Last marked "${label}" on ${stamped}: click to mark again for today (shows on the Agents page's BFO Activity list)`
+            : `Mark "${label}" today: shows on the Agents page's BFO Activity list`}
+        style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+          fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
+          cursor: 'pointer', fontFamily: 'inherit',
+          background: isToday ? '#DCFCE7' : '#fff',
+          color: isToday ? '#166534' : '#64748B',
+          border: isToday ? '1px solid #86EFAC' : '1px dashed #CBD5E1',
+        }}
+      >{icon} {label}{isToday ? ' ✓' : ''}</button>
+    );
   };
 
   // Only dismiss when the press *started* on the backdrop. Drag-selecting text
@@ -5327,7 +5394,7 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
       onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
-        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
       <div
@@ -5352,13 +5419,11 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem',
         }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Update Status{opp?.['Account'] ? <>: {opp['Account']}</> : null}
+            Follow Up Notes: {account}
           </div>
-          {/* Same control row the Notes popup header carries, in the same
-              order, so the two popups don't drift apart. Its own flex box
-              rather than direct children of the header: DealTimelineButton
-              renders a label and a button as siblings, and the header's
-              1rem gap would space them like separate controls. */}
+          {/* Its own flex box rather than direct children of the header:
+              DealTimelineButton renders a label and a button as siblings, and
+              the header's 1rem gap would space them like separate controls. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <DealTimelineButton
               opp={opp}
@@ -5372,6 +5437,17 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
               solutionOptions={solutionOptions}
               serviceOverrides={serviceOverrides}
             />
+            {markBtn('_calledOn', '📞', 'Called')}
+            {markBtn('_metOn', '🤝', 'Meeting')}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+              }}
+            >×</button>
           </div>
         </div>
 
@@ -5382,8 +5458,11 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
               <input
                 type="date"
                 value={followUp}
-                onChange={(e) => setFollowUp(e.target.value)}
-                title="The new Follow Up date. Change it here and it saves with the rest of the popup."
+                // skipFollowUpPrompt: this popup is the follow-up prompt, and
+                // it's already open on this opp — re-opening it for the date
+                // it just set would only re-seed the fields under the user.
+                onChange={(e) => updateOppField(opp._id, 'Follow Up', e.target.value, { skipFollowUpPrompt: true })}
+                title="The Follow Up date. Changing it here saves straight away."
                 style={inputStyle}
               />
               {followUpParts.length > 0 ? (
@@ -5393,9 +5472,10 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
             <div style={{ flex: '1 1 200px', minWidth: 0 }}>
               <label style={labelStyle}>Status</label>
               <select
-                autoFocus
+                autoFocus={fromFollowUpChange}
                 value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                onChange={(e) => updateOppField(opp._id, 'Status', e.target.value)}
+                title="Who the deal is waiting on."
                 style={inputStyle}
               >
                 <option value="">(Select)</option>
@@ -5403,7 +5483,9 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
                   <option key={o} value={o}>{o}</option>
                 ))}
               </select>
-              {textHint(curStatus)}
+              {openStatus && openStatus !== status
+                ? <div style={hintStyle}>was {openStatus}</div>
+                : null}
             </div>
             {clientManager ? (
               <div style={{ flex: '1 1 200px', minWidth: 0 }}>
@@ -5418,22 +5500,32 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
             <div style={{ flex: '1 1 200px', minWidth: 0 }}>
               <label style={labelStyle}>Sales Partner</label>
               <input
+                key={String(opp?.['Sales Partner'] ?? '')}
                 type="text"
-                value={salesPartner}
-                onChange={(e) => setSalesPartner(e.target.value)}
+                defaultValue={String(opp?.['Sales Partner'] ?? '')}
                 placeholder="-"
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
+                }}
                 style={inputStyle}
               />
             </div>
           </div>
+
           <div>
             <label style={labelStyle}>Timelines</label>
             <TimelinesEditor
               list={timelineList}
-              onChangeList={setTimelineList}
+              onChangeList={changeTimelineList}
               serviceOverrides={serviceOverrides}
             />
           </div>
+
           <div>
             <label style={labelStyle}>Notes</label>
             <LastCallLine opp={opp} />
@@ -5442,49 +5534,44 @@ function FollowUpStatusModal({ opp, statusOptions, clientManager, solutionOption
               onUpdateRow={updateRow}
               onAddRow={addRow}
               onDeleteRow={deleteRow}
-              onCommit={() => {}}
+              onCommit={() => commit(rows)}
             />
           </div>
         </div>
 
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '0.6rem 1rem',
+          padding: '0.6rem 1rem', gap: '1rem',
           borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
         }}>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              type="button"
-              onClick={onCancel}
-              title="Put the Follow Up date back to what it was before this edit."
-              style={{
-                padding: '0.35rem 0.7rem', background: 'transparent',
-                border: '1px solid var(--color-border)', borderRadius: 4,
-                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-                color: 'var(--color-text-muted)', cursor: 'pointer',
-              }}
-            >Cancel</button>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+            Everything here saves as you edit it.
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+            {fromFollowUpChange ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                title="Put the Follow Up date back to what it was before this edit. Anything else you changed here is already saved."
+                style={{
+                  padding: '0.35rem 0.7rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text-muted)', cursor: 'pointer',
+                }}
+              >Undo date change</button>
+            ) : null}
             <button
               type="button"
               onClick={onClose}
               style={{
-                padding: '0.35rem 0.7rem', background: 'transparent',
-                border: '1px solid var(--color-border)', borderRadius: 4,
+                padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+                border: '1px solid var(--color-accent)', borderRadius: 4,
                 fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-                color: 'var(--color-text-muted)', cursor: 'pointer',
+                color: '#fff', cursor: 'pointer',
               }}
-            >Skip for now</button>
+            >Done</button>
           </div>
-          <button
-            type="button"
-            onClick={handleSave}
-            style={{
-              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
-              border: '1px solid var(--color-accent)', borderRadius: 4,
-              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: 'pointer',
-            }}
-          >Save</button>
         </div>
       </div>
     </div>,
@@ -7079,8 +7166,8 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
   );
 }
 
-// The Next Step / Waiting On rows table shared by the standalone
-// NextStepsEditor modal and the Follow Up status popup, so both edit
+// The Next Step / Waiting On rows table shared by the Follow Up Notes
+// popup and the close-out screen, so both edit
 // Next Steps in the exact same format. Presentational only — the
 // parent owns the `rows` state and the add / delete / commit handlers.
 // The last call mapped to this opp, above the notes it explains.
@@ -7260,14 +7347,13 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
   );
 }
 
-// The "Timelines" button both the Notes and Update Status popups carry, and
+// The "Timelines" button the Follow Up Notes popup carries, and
 // the rollout plan it opens.
 //
 // The Timelines table below it logs the dates THIS deal has agreed. This
 // button answers the other question — what delivering the deal actually
 // looks like if it kicked off today — by composing the timelines attached to
-// its services with the services those depend on. Shared between the two
-// popups so the entry points can't drift apart.
+// its services with the services those depend on.
 //
 // Portalled to the body rather than nested: the popups it opens from close
 // on Escape and on a backdrop click, and a nested modal's own Escape would
@@ -7343,8 +7429,8 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings, 
   );
 }
 
-// The "KTM Mapping" button both the Notes and Update Status popup headers
-// carry, and the table it opens: the services this deal is scoped to,
+// The "KTM Mapping" button the Follow Up Notes popup header
+// carries, and the table it opens: the services this deal is scoped to,
 // each alongside the KTM recorded against it in the KTM column of
 // Dropdowns › Services.
 //
@@ -7854,247 +7940,6 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
   );
 }
 
-function NextStepsEditor({ opp, clientManager, solutionOptions, serviceOverrides, settings, onClose, updateOppField }) {
-  const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
-  const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
-  const initialRows = useMemo(() => {
-    const rows = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
-    return rows.length > 0 ? rows : [{ note: '', waitingOn: '' }];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opp]);
-  const [rows, setRows] = useState(initialRows);
-
-  function commit(nextRows) {
-    const kept = nextRows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
-    const notesText = kept.map(r => encodeNoteLine(r.note)).join('\n');
-    const waiting = kept.map(r => (r.waitingOn || '').trim());
-    updateOppField(opp._id, 'Next Steps', notesText);
-    updateOppField(opp._id, '_nextStepsWaiting', waiting);
-  }
-
-  function updateRow(idx, key, value) {
-    setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
-  }
-
-  function addRow() {
-    setRows(prev => {
-      const next = [...prev, { note: '', waitingOn: '' }];
-      commit(next);
-      return next;
-    });
-  }
-
-  function deleteRow(idx) {
-    setRows(prev => {
-      const next = prev.filter((_, i) => i !== idx);
-      const safe = next.length > 0 ? next : [{ note: '', waitingOn: '' }];
-      commit(safe);
-      return safe;
-    });
-  }
-
-  const account = String(opp?.['Account'] || '').trim() || '(no account)';
-
-  // The "Timeline?" column is user-added, so its stored key can carry odd
-  // casing / zero-width drift (hence the tolerant read). Write back to
-  // whatever key already exists on the record, falling back to the
-  // canonical "Timeline?" when the opp doesn't have one yet.
-  const timelineKey = useMemo(() => {
-    for (const k in (opp || {})) {
-      if (normCell(k) === 'timeline?') return k;
-    }
-    return 'Timeline?';
-  }, [opp]);
-
-  // Structured timelines: a list of { type, value, kickoff, leadTime } rows,
-  // each with its own Kickoff Deadline. Seeded from the opp (falling back to
-  // the legacy free-text Timeline? column) and persisted on every change — the
-  // list also writes a readable summary back into Timeline? so table cells /
-  // flags keep working.
-  // Any service in the opp's Scope flagged "Timeline Driven = Yes" also gets
-  // an auto row so its table always appears (empty auto rows aren't persisted
-  // until the user logs a date), and a row named after a service starts with
-  // that service's Rollout Time as its lead time.
-  const initialTimelines = useMemo(() => readTimelines(opp), [opp]);
-  const seededTimelines = useMemo(
-    () => withServiceRolloutTimes(
-      withServiceTimelines(initialTimelines.list, timelineDrivenServices(opp, solutionOptions, serviceOverrides)),
-      serviceOverrides,
-    ),
-    [initialTimelines, opp, solutionOptions, serviceOverrides]
-  );
-  const [timelineList, setTimelineList] = useState(seededTimelines);
-
-  // Shared with FollowUpStatusModal so the Notes editor renders its fields
-  // with the same label / input chrome as the Update Status popup.
-  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
-  const inputStyle = {
-    width: '100%', boxSizing: 'border-box',
-    padding: '0.45rem 0.55rem',
-    border: '1px solid var(--color-border)', borderRadius: 4,
-    fontSize: '0.85rem', fontFamily: 'inherit',
-    background: '#fff', color: 'var(--color-text)',
-  };
-
-  function persistTimelines(nextList) {
-    updateOppField(opp._id, '_timelines', nextList);
-    // Mirror the soonest per-row kickoff to the opp-level field the Flags
-    // column reads, so the most urgent kickoff still drives the warning.
-    updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(nextList));
-    updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
-  }
-  function changeTimelineList(nextList) {
-    setTimelineList(nextList);
-    persistTimelines(nextList);
-  }
-
-  // One-click activity marks. Stamps today's date on `_calledOn` /
-  // `_metOn` (clicking again the same day clears it). The Agents page
-  // reads these stamps so a marked call or meeting shows up in its
-  // Activity table and the BFO Activity AI prompt without needing a
-  // phone-touch phrase in the notes text.
-  const markBtn = (field, icon, label) => {
-    const today = todayISO();
-    const stamped = toISODate(opp?.[field]);
-    const isToday = stamped === today;
-    return (
-      <button
-        type="button"
-        onClick={() => updateOppField(opp._id, field, isToday ? '' : today)}
-        title={isToday
-          ? `Marked "${label}" today: click to unmark`
-          : stamped
-            ? `Last marked "${label}" on ${stamped}: click to mark again for today (shows on the Agents page's BFO Activity list)`
-            : `Mark "${label}" today: shows on the Agents page's BFO Activity list`}
-        style={{
-          display: 'inline-block', padding: '3px 10px', borderRadius: 999,
-          fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
-          cursor: 'pointer', fontFamily: 'inherit',
-          background: isToday ? '#DCFCE7' : '#fff',
-          color: isToday ? '#166534' : '#64748B',
-          border: isToday ? '1px solid #86EFAC' : '1px dashed #CBD5E1',
-        }}
-      >{icon} {label}{isToday ? ' ✓' : ''}</button>
-    );
-  };
-
-  // Only treat a backdrop click as "close" when the press *started* on the
-  // backdrop. Without this, drag-selecting text in a field and releasing the
-  // mouse over the dimmed backdrop fires a click whose target is the overlay,
-  // which would close the popup mid-selection.
-  const backdropMouseDown = useRef(false);
-
-  return (
-    <div
-      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
-      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
-        // Sized like the Update Status popup, which holds the same two
-        // tables: at 820px the Timelines columns and the Note / Waiting On
-        // pair were narrow enough to wrap their own text, spending height
-        // on a screen with spare width either side.
-        style={{
-          width: 'min(1200px, 96vw)', maxHeight: '94vh',
-          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
-          display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        }}
-      >
-        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Notes: {account}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <DealTimelineButton
-              opp={opp}
-              solutionOptions={solutionOptions}
-              serviceOverrides={serviceOverrides}
-              settings={settings}
-              updateOppField={updateOppField}
-            />
-            <KtmMappingButton
-              opp={opp}
-              solutionOptions={solutionOptions}
-              serviceOverrides={serviceOverrides}
-            />
-            {markBtn('_calledOn', '📞', 'Called')}
-            {markBtn('_metOn', '🤝', 'Meeting')}
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
-              }}
-            >×</button>
-          </div>
-        </div>
-
-        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
-          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            {clientManager ? (
-              <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                <label style={labelStyle}>Client Manager</label>
-                <div style={{
-                  padding: '0.45rem 0.55rem',
-                  border: '1px solid var(--color-border)', borderRadius: 4,
-                  fontSize: '0.85rem', background: 'var(--color-bg)', color: 'var(--color-text)',
-                }}>{clientManager}</div>
-              </div>
-            ) : null}
-            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-              <label style={labelStyle}>Sales Partner</label>
-              <input
-                key={String(opp?.['Sales Partner'] ?? '')}
-                type="text"
-                defaultValue={String(opp?.['Sales Partner'] ?? '')}
-                placeholder="-"
-                onBlur={(e) => {
-                  const v = e.currentTarget.value.trim();
-                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
-                }}
-                style={inputStyle}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label style={labelStyle}>Timelines</label>
-            <TimelinesEditor
-              list={timelineList}
-              onChangeList={changeTimelineList}
-              serviceOverrides={serviceOverrides}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Notes</label>
-            <LastCallLine opp={opp} />
-            <NextStepsRowsEditor
-              rows={rows}
-              onUpdateRow={updateRow}
-              onAddRow={addRow}
-              onDeleteRow={deleteRow}
-              onCommit={() => commit(rows)}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // Modal for configuring the "No Further Action Today" clear schedules.
 // Each mark type (✓ checks, ✗ X marks, any value) gets an independent
 // schedule: an on/off toggle, the Eastern weekdays it runs on, and a
@@ -8597,14 +8442,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // stage's own prompt (Deal Size, Quoted details, …) so it opens after this
   // one closes rather than stacking two modals on top of each other.
   const [scopePrompt, setScopePrompt] = useState(null);
-  // _id of the opp that just had its Follow Up date changed. When set,
-  // the FollowUpStatusModal asks the user to pick the new Status
-  // (Who is waiting) for that opp. Cleared on Save or Skip.
-  const [followUpStatusPromptId, setFollowUpStatusPromptId] = useState(null);
-  // Snapshot of the Follow Up (and its sibling Call In) value from before
-  // the edit that opened the FollowUpStatusModal. Lets the modal's Cancel
-  // button put the Follow Up date back to what it was originally.
-  const [followUpStatusPrev, setFollowUpStatusPrev] = useState(null);
+  // The opp whose Follow Up Notes popup is open, as
+  // `{ id, prev }` — or null when none is. Both ways into that popup set
+  // this: clicking a Notes / Waiting On cell, and changing a Follow Up date,
+  // which opens it to ask for the new Status (who is waiting) to go with the
+  // new date.
+  //
+  // `prev` is the Follow Up (and its sibling Call In) as they stood before
+  // the edit that opened it, which is what the popup's "Undo date change"
+  // button puts back. Null for the cell route: nothing was changed to get
+  // there, so there's nothing to undo.
+  const [followUpNotes, setFollowUpNotes] = useState(null);
   // Imperative sort trigger handed to the DataTable. Bumping it re-ranks
   // the table by Call In ascending — fired once the Follow Up status
   // popup is dismissed so the re-scheduled opp lands in its new
@@ -8617,12 +8465,6 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
-  // Double-clicking the Next Steps cell opens a read-only popup showing
-  // the full value (useful when the column is narrow and the entry
-  // spans multiple Alt+Enter lines). Closing is via the modal's own
-  // Close / × buttons — Esc is intentionally not wired so accidental
-  // presses don't blow away an in-flight edit.
-  const [nextStepsPopupId, setNextStepsPopupId] = useState(null);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -9717,7 +9559,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   }, []);
 
   // `opts.skipFollowUpPrompt` writes a Follow Up date without opening the
-  // status popup that a changed Follow Up normally triggers. Used by the
+  // Follow Up Notes popup that a changed Follow Up normally triggers. Used by the
   // popup's own Follow Up picker, which would otherwise re-open itself the
   // moment it saved a corrected date.
   const updateOppField = useCallback((id, field, rawValue, opts) => {
@@ -9963,21 +9805,23 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // Whenever the Follow Up date changes, prompt for the new Status so
     // the "Who is waiting" value stays current with each follow-up.
     if (followUpChanged && !opts?.skipFollowUpPrompt) {
-      setFollowUpStatusPromptId(id);
-      // Remember the pre-edit Follow Up (and the sibling Call In that
-      // gets dropped as a side effect) so the modal's Cancel button can
-      // restore the original date.
-      setFollowUpStatusPrev({
-        hadFollowUp: 'Follow Up' in row,
-        followUp: row['Follow Up'],
-        hadCallIn: 'Call In' in row,
-        callIn: row['Call In'],
+      // Remember the pre-edit Follow Up (and the sibling Call In that gets
+      // dropped as a side effect) so the popup's "Undo date change" button
+      // can restore the original date.
+      setFollowUpNotes({
+        id,
+        prev: {
+          hadFollowUp: 'Follow Up' in row,
+          followUp: row['Follow Up'],
+          hadCallIn: 'Call In' in row,
+          callIn: row['Call In'],
+        },
       });
     }
   }, [pushUndoEntry, openStagePrompt]);
 
   // Restore the Follow Up date (and its sibling Call In) to the snapshot
-  // taken before the edit that opened the FollowUpStatusModal. Writes the
+  // taken before the edit that opened the Follow Up Notes popup. Writes the
   // values back directly via setData rather than updateOppField so the
   // restore doesn't itself count as a change and re-open the prompt.
   const revertFollowUpDate = useCallback((id, prev) => {
@@ -10568,7 +10412,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           }
           if (h === 'Waiting On') {
             // Mirror the popup's per-step Waiting On values into the
-            // table column. The Next Steps editor stores a parallel
+            // table column. The Follow Up Notes popup stores a parallel
             // array (_nextStepsWaiting) aligned with each note line, so
             // joining the non-empty entries with newlines stacks them
             // visually in the cell (white-space: pre keeps each on its
@@ -10583,8 +10427,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             if (stacked) {
               return (
                 <span
-                  onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); setNextStepsPopupId(row._id); }}
-                  title="Double-click to edit in Notes"
+                  onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); setFollowUpNotes({ id: row._id, prev: null }); }}
+                  title="Double-click to edit in Follow Up Notes"
                   style={{
                     display: 'block', cursor: 'pointer', minHeight: '1em',
                     padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
@@ -10597,7 +10441,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             return (
               <NextStepsCell
                 value={row[h]}
-                onOpen={() => setNextStepsPopupId(row._id)}
+                onOpen={() => setFollowUpNotes({ id: row._id, prev: null })}
               />
             );
           }
@@ -11941,7 +11785,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               if (competition !== String(opp['Competition'] ?? '').trim()) {
                 updateOppField(opp._id, 'Competition', competition);
               }
-              // Notes travel as the same pair the Update Status popup writes:
+              // Notes travel as the same pair the Follow Up Notes popup writes:
               // the newline-joined 'Next Steps' text plus the index-aligned
               // Waiting On array beside it.
               if (nextSteps !== String(opp['Next Steps'] ?? '')) {
@@ -12143,13 +11987,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         );
       })()}
 
-      {followUpStatusPromptId != null && (() => {
-        const opp = records.find(r => r._id === followUpStatusPromptId);
+      {followUpNotes?.id != null && (() => {
+        const opp = records.find(r => r._id === followUpNotes.id);
         if (!opp) return null;
         const link = resolveColumnLink('Status', columnLinks);
         const statusOpts = (link && listRegistry.get(link.listKey)?.options) || [];
+        // Re-sorting on close puts an opp that was just re-dated back in its
+        // soonest-first place. Harmless on the Notes route, where the date
+        // usually hasn't moved.
+        const close = () => { setFollowUpNotes(null); requestCallInSort(); };
         return (
-          <FollowUpStatusModal
+          <FollowUpNotesModal
+            key={opp._id}
             opp={opp}
             statusOptions={statusOpts}
             clientManager={clientManagerForAccount(opp?.['Account'])}
@@ -12157,50 +12006,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             serviceOverrides={settings?.serviceOverrides}
             settings={settings}
             updateOppField={updateOppField}
-            prevFollowUp={followUpStatusPrev?.hadFollowUp ? followUpStatusPrev.followUp : ''}
-            onSave={({ followUp, status, nextSteps, nextStepsWaiting, salesPartner, timelines }) => {
-              // A Follow Up date corrected inside the popup. Written with
-              // skipFollowUpPrompt so saving the new date doesn't immediately
-              // re-open this same popup for the date it just set.
-              if ((followUp || '') !== (toISODate(opp['Follow Up']) || '')) {
-                updateOppField(opp._id, 'Follow Up', followUp, { skipFollowUpPrompt: true });
-              }
-              if (status !== String(opp['Status'] ?? '')) {
-                updateOppField(opp._id, 'Status', status);
-              }
-              if (nextSteps !== String(opp['Next Steps'] ?? '')) {
-                updateOppField(opp._id, 'Next Steps', nextSteps);
-              }
-              if (salesPartner !== String(opp['Sales Partner'] ?? '').trim()) {
-                updateOppField(opp._id, 'Sales Partner', salesPartner);
-              }
-              // Persist the structured timelines, and mirror a readable summary
-              // back into the existing Timeline? column (whatever its casing) so
-              // table cells and the budget-timeline flag keep working.
-              const prevTimelines = readTimelines(opp);
-              if (JSON.stringify(timelines) !== JSON.stringify(prevTimelines.list)) {
-                updateOppField(opp._id, '_timelines', timelines);
-                const timelineKey = Object.keys(opp).find(k => normCell(k) === 'timeline?') || 'Timeline?';
-                updateOppField(opp._id, timelineKey, summarizeTimelines(timelines));
-                // Mirror the soonest per-row kickoff to the opp-level field the
-                // Flags column reads, so the most urgent kickoff still warns.
-                updateOppField(opp._id, '_kickoffDeadline', earliestKickoff(timelines));
-              }
-              const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
-              if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
-                updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
-              }
-              setFollowUpStatusPromptId(null);
-              setFollowUpStatusPrev(null);
-              requestCallInSort();
-            }}
-            onClose={() => { setFollowUpStatusPromptId(null); setFollowUpStatusPrev(null); requestCallInSort(); }}
-            onCancel={() => {
-              revertFollowUpDate(opp._id, followUpStatusPrev);
-              setFollowUpStatusPromptId(null);
-              setFollowUpStatusPrev(null);
-              requestCallInSort();
-            }}
+            prevFollowUp={followUpNotes.prev?.hadFollowUp ? followUpNotes.prev.followUp : ''}
+            onClose={close}
+            // Only the Follow Up route has a date to put back, and passing
+            // onCancel is what tells the popup to offer the button at all.
+            onCancel={followUpNotes.prev ? () => {
+              revertFollowUpDate(opp._id, followUpNotes.prev);
+              close();
+            } : null}
           />
         );
       })()}
@@ -12292,23 +12105,6 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onOpenCompany={openCompanyDetails}
             settings={settings}
             oppRows={records}
-          />
-        );
-      })()}
-
-      {nextStepsPopupId != null && (() => {
-        const opp = records.find(r => r._id === nextStepsPopupId);
-        if (!opp) return null;
-        return (
-          <NextStepsEditor
-            key={opp._id}
-            opp={opp}
-            clientManager={clientManagerForAccount(opp?.['Account'])}
-            solutionOptions={listRegistry.get('solutions')?.options || []}
-            serviceOverrides={settings?.serviceOverrides}
-            settings={settings}
-            onClose={() => setNextStepsPopupId(null)}
-            updateOppField={updateOppField}
           />
         );
       })()}
