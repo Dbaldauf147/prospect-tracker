@@ -18,6 +18,7 @@ import {
   loadClientUntrackedMap, setClientUntracked, CLIENT_UNTRACKED_EVENT,
   loadClientLouisvilleMap, setClientLouisville, CLIENT_LOUISVILLE_EVENT,
 } from '../../utils/clientManagerStore';
+import { ClientFieldsPasteModal } from './ClientFieldsPasteModal';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -838,6 +839,10 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  // Result banner for the last import, so a bulk write says what it did
+  // rather than just repainting the table.
+  const [importNote, setImportNote] = useState('');
 
   // Group deals by client. A row's raw Client Name is preferred, but
   // when the user has explicitly mapped that source name to a different
@@ -1395,10 +1400,23 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           title="Bind the Status column to a Dropdowns-tab list so the cell picks from a fixed option list."
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #E2E8F0', background: 'white', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
         >Link columns</button>
+        <button
+          type="button"
+          onClick={() => { setImportNote(''); setImportOpen(true); }}
+          title="Paste Company / Client Manager / Renewal Status / Don't Track rows from a spreadsheet to fill these columns in bulk."
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #E2E8F0', background: 'white', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
+        >Import fields</button>
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {activeCount}{showOld ? ` ${statusLabel.toLowerCase()} · ${oldCount} ${otherLabel.toLowerCase()}` : ''}
         </span>
       </div>
+
+      {importNote && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.4rem 0.7rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, fontSize: '0.74rem', color: '#166534', display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexShrink: 0 }}>
+          <span>{importNote}</span>
+          <button type="button" onClick={() => setImportNote('')} style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.74rem' }}>Dismiss</button>
+        </div>
+      )}
 
       {/* Always-visible diagnostic strip so 'blank page' is never actually blank. */}
       <div style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>
@@ -1486,6 +1504,40 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           />
         )}
       </div>
+      {importOpen && (
+        <ClientFieldsPasteModal
+          // Match against every client this CDM has, old ones included, so a
+          // pasted row still lands when the "Include Old Clients" toggle is
+          // off — the toggle is a view filter, not a statement about which
+          // clients exist.
+          companies={myProspects
+            .filter(p => primaryMatch(p) || secondaryMatch(p))
+            .map(p => p.company)
+            .filter(Boolean)}
+          current={{
+            manager: managerMap, status: statusMap, notes: notesMap,
+            inPerson: inPersonMap, louisville: louisvilleMap, untracked: untrackedMap,
+          }}
+          onApply={(writes) => {
+            // Each write goes through the same setter a typed edit uses, so
+            // the change events fire and the Firestore mirror picks it up.
+            const setters = {
+              manager: setClientManager, status: setClientStatus, notes: setClientNotes,
+              inPerson: setClientInPerson, louisville: setClientLouisville, untracked: setClientUntracked,
+            };
+            const touched = new Set();
+            for (const w of writes) {
+              const fn = setters[w.key];
+              if (!fn) continue;
+              fn(w.company, w.value);
+              touched.add(w.company);
+            }
+            setImportOpen(false);
+            setImportNote(`Imported ${writes.length} value${writes.length === 1 ? '' : 's'} across ${touched.size} client${touched.size === 1 ? '' : 's'}.`);
+          }}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
       {linkModalOpen && (
         <LinkColumnsModal
           headers={['Status']}
