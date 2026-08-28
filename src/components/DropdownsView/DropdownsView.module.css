@@ -1989,3 +1989,136 @@
   color: var(--color-text-muted);
   line-height: 1.4;
 }
+
+/* ── Services Pricing subtab ───────────────────────────────────────────
+   The estimator bar above the rate card: the scenario inputs on the left,
+   what they add up to on the right. Wraps rather than scrolls, since a
+   deal with several unit types would otherwise push its own total off the
+   side of the screen. */
+.pricingBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  margin: 0 1.25rem 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.pricingInputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+
+.pricingBarTitle {
+  align-self: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.pricingField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pricingFieldLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.pricingInput,
+.pricingInputWide {
+  width: 84px;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.pricingInputWide {
+  width: 130px;
+}
+
+.pricingInput:focus,
+.pricingInputWide:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.pricingTotals {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.1rem;
+}
+
+.pricingTotal,
+.pricingTotalMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+
+.pricingTotalMain {
+  padding-left: 1.1rem;
+  border-left: 1px solid var(--color-border-light);
+}
+
+.pricingTotalLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.pricingTotalValue {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pricingTotalValueMain {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Which ticked services the total is missing, said once under the bar. */
+.pricingWarn {
+  margin: 0 1.25rem 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-md);
+  background: #FEF3C7;
+  color: #92400E;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+/* A row that's in scope: tinted so the deal reads off the table at a
+   glance, and its two estimate figures carry the accent to match. */
+.pricingRowScoped td {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.pricingEstScoped {
+  font-weight: 700;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}

@@ -16,8 +16,10 @@ import {
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
 import { QuestionsTab } from './QuestionsTab';
+import { ServicesPricingTab } from './ServicesPricingTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
+import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
 import { ServiceDetailModal } from './ServiceDetailModal';
@@ -912,6 +914,13 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
 export function DropdownsView({ settings, updateSettings }) {
   const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
+  // The Services Pricing subtab's working estimate: which services are
+  // ticked, how many sites / accounts / meters the account has, and the deal
+  // size percentage-based fees take their cut of. Held here rather than in
+  // the subtab so stepping over to Services to fix a rate and coming back
+  // doesn't throw a half-built estimate away. Deliberately not saved — it's
+  // a scratch calculation; the rate card it reads is what's in settings.
+  const [pricingScenario, setPricingScenario] = useState({ services: [], counts: {}, dealSize: '' });
   const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
     settings?.dropdownLists,
@@ -1026,6 +1035,14 @@ export function DropdownsView({ settings, updateSettings }) {
     [settings?.hiddenServices],
   );
   const hiddenCount = hiddenServices.size;
+  // What the Services Pricing subtab lists. Same rows as the Services table
+  // — so a service added, renamed or re-filed there is priced under its new
+  // identity without a second edit — minus the hidden ones: a service that's
+  // out of the Opps Scope picker can't be in a deal, so pricing it is moot.
+  const pricingServiceRows = useMemo(
+    () => serviceRows.filter(r => !hiddenServices.has(r.name)),
+    [serviceRows, hiddenServices],
+  );
   const [showHiddenServices, setShowHiddenServices] = useState(false);
   // Rows that reached this table through the services board rather than the
   // Solutions list — the note under the search row explains them, since a
@@ -1343,6 +1360,12 @@ export function DropdownsView({ settings, updateSettings }) {
       const pruned = pruneServicesFromCategories(categories, options);
       if (pruned) { categories = pruned; moved = true; }
       if (moved) updates.customServiceCategories = categories;
+      // The rate card is keyed by service name, so a rename has to take the
+      // price with it — otherwise renaming a service silently un-prices it.
+      if (edit?.renamedFrom && edit?.renamedTo) {
+        const repriced = renameServicePricing(getServicePricing(settings), edit.renamedFrom, edit.renamedTo);
+        if (repriced) updates.servicePricing = repriced;
+      }
     }
     updateSettings?.(updates);
   }
@@ -1446,6 +1469,11 @@ export function DropdownsView({ settings, updateSettings }) {
           className={activeTab === 'services' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('services')}
         >Services <span className={styles.subtabCount}>{serviceRows.length}</span></button>
+        <button
+          type="button"
+          className={activeTab === 'pricing' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('pricing')}
+        >Services Pricing <span className={styles.subtabCount}>{pricingServiceRows.length}</span></button>
         <button
           type="button"
           className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
@@ -1667,6 +1695,14 @@ export function DropdownsView({ settings, updateSettings }) {
             />
           )}
         </>
+      ) : activeTab === 'pricing' ? (
+        <ServicesPricingTab
+          settings={settings}
+          updateSettings={updateSettings}
+          serviceRows={pricingServiceRows}
+          scenario={pricingScenario}
+          setScenario={setPricingScenario}
+        />
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       ) : (
