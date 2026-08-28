@@ -2419,7 +2419,7 @@
   white-space: nowrap;
 }
 
-/* A fee typed straight into the Est. Fee column, rather than worked out
+/* A fee typed straight into the Year 1 Fee column, rather than worked out
    from a basis and a rate. Marked so a figure that overrides the model
    can't be mistaken for one the model produced. */
 .pricingEstTyped {

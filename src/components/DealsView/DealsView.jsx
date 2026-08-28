@@ -19,6 +19,8 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import {
   loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
   SOLD_WARNING_IGNORE_EVENT,
+  loadSoldWarningCollapsed,
+  setSoldWarningCollapsed,
 } from '../../utils/soldWarningIgnore';
 import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo, dealTrackStatus, isDealTrackHealthy } from '../../utils/dealCommissions';
 import {
@@ -1067,6 +1069,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // Per-opp dismissals for the "Sold opp has no matching deal" banner, so
   // the user can silence a flagged opp they've decided not to track here.
   const [soldIgnore, setSoldIgnore] = useState(() => loadSoldWarningIgnore());
+  // Whether the Sold-opp banner is folded up. Remembered per user, so a page
+  // that's been read stays out of the way across reloads — the heading and
+  // its count stay either way, so nothing goes quiet.
+  const [soldCollapsed, setSoldCollapsed] = useState(() => loadSoldWarningCollapsed());
   // Commissions roster feeds the Revenue Recorded / Paid to Date auto-
   // population. Re-hydrated on the storage event so a paste on the
   // Commissions tab in another window flows through here without a
@@ -1967,6 +1973,17 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         </div>
       </div>
 
+      {/* The page's notices — an upload error, the Year 1 import offer, the
+          Sold opps with no deal — in one bounded, scrollable strip.
+          
+          Each of these sits in a fixed-height flex column and refuses to
+          shrink, and the Sold-opp warning lists every opp it found. Twenty
+          of them made a banner taller than the window, and because the page
+          itself doesn't scroll (the table below owns the only scrollbar)
+          there was no way to reach the table at all. They keep every row and
+          every button; the strip stops at a third of the window and scrolls
+          its own contents. */}
+      <div style={{ flexShrink: 0, maxHeight: '34vh', overflowY: 'auto' }}>
       {uploadError && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
           {uploadError}
@@ -2025,13 +2042,37 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
 
       {visibleSoldMissing.length > 0 && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, color: '#92400E', fontSize: '0.8rem', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <div style={{ fontWeight: 700 }}>
-              ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
-            </div>
-            {/* The same seeding as the per-row button, for the whole list.
-                Sits by the count so it reads as "…and here is what to do
-                about all of them". */}
+          {/* The heading folds the banner and carries the one action that
+              applies to every row in it. What the heading says never changes
+              with the fold — the count is the warning, and it keeps showing
+              whether or not the list under it is open, which is why Add all
+              stays reachable while folded too. The two are siblings rather
+              than nested: a button inside a button is neither valid nor
+              clickable. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: soldCollapsed ? 0 : 4 }}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !soldCollapsed;
+                setSoldCollapsed(next);
+                setSoldWarningCollapsed(next);
+              }}
+              aria-expanded={!soldCollapsed}
+              title={soldCollapsed
+                ? 'Show the flagged opps'
+                : 'Fold this away — the count stays, and the opps come back when you open it'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0,
+                padding: 0, background: 'none', border: 'none', textAlign: 'left',
+                font: 'inherit', fontWeight: 700, color: 'inherit', cursor: 'pointer',
+              }}
+            >
+              <span style={{ fontSize: '0.7rem' }}>{soldCollapsed ? '\u25B8' : '\u25BE'}</span>
+              <span>
+                ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+              </span>
+            </button>
+            {/* The same seeding as the per-row button, for the whole list. */}
             <button
               type="button"
               onClick={() => addAllDealsFromOpps(visibleSoldMissing)}
@@ -2043,10 +2084,20 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               }}
             >Add all deals suggested</button>
           </div>
+          {!soldCollapsed && (
           <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
             These opportunities are marked <strong>Sold</strong> in Opps but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
           </div>
-          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          )}
+          {!soldCollapsed && (<>
+          {/* The list scrolls inside the banner rather than growing it: every
+              flagged opp keeps its Add / Ignore buttons, while the heading
+              above stays put and the table below stays on screen. */}
+          <ul style={{
+            margin: 0, paddingLeft: '1.1rem', paddingRight: '0.25rem',
+            display: 'flex', flexDirection: 'column', gap: 3,
+            maxHeight: '24vh', overflowY: 'auto',
+          }}>
             {visibleSoldMissing.map((o) => (
               <li key={o.ignoreKey} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                 <span>
@@ -2089,6 +2140,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               >Reset</button>
             </div>
           )}
+          </>)}
         </div>
       )}
 
@@ -2102,6 +2154,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           >Reset</button>
         </div>
       )}
+      </div>
 
       <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
         <input
