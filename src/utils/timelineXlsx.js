@@ -354,7 +354,7 @@ function writePhasedSheet(wb, ws, template) {
   // applyRunUpShift. The sheet and the chart have to agree on this or the
   // Excel would carry a gap the screen doesn't.
   const statedSignature = Math.floor(Number(template?.signatureMonth) || 0);
-  const { preSpan, placed } = applyRunUpShift(raw, statedSignature);
+  const { preSpan, placed } = applyRunUpShift(raw, statedSignature, mode);
   // Where the contract is signed. A timeline with a run-up derives it — the
   // signature is wherever the pre-signature work ends — but a plan can also
   // state it outright, and the deal rollout does: every band on it is

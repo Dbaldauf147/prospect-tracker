@@ -17,6 +17,9 @@ import {
   removeFromLibrary,
   instantiateTimeline,
   LIBRARY_ID_PREFIX,
+  legalReviewMonths,
+  setLegalReviewMonths,
+  LEGAL_REVIEW_DEFAULT_MONTHS,
 } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, STAGE_ICONS, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { PriorStepsPicker } from './PriorStepsPicker';
@@ -722,6 +725,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
   const counts = summarizeStageOwners(stages);
   const format = template.format || 'gantt';
   const mode = template.positionMode === 'months' ? 'months' : 'dates';
+  const legalReview = legalReviewMonths(template);
   // Where each step lands on the chart, dependencies included — the Month
   // and Span cells show these as their placeholders, so the table says the
   // same thing the visual below it draws.
@@ -1013,6 +1017,27 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
               >This month</button>
             </>
           )}
+          {/* The months a deal spends in legal before anyone signs. Written
+              as a step (see setLegalReviewMonths) rather than held here, so
+              it draws, exports and reads like the rest of the plan — this is
+              the shortcut for authoring it, and it reads its value back off
+              that step. */}
+          <span className={styles.timelineServicesLabel}>Legal review</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={legalReview || ''}
+            placeholder="0"
+            title={`Months of contract legal review before signature. 0 (or empty) for none; ${LEGAL_REVIEW_DEFAULT_MONTHS} is the usual.`}
+            onChange={(e) => onChange(setLegalReviewMonths(template, e.target.value === '' ? 0 : Number(e.target.value)))}
+            className={styles.settingNumber}
+          />
+          <span className={styles.settingHint}>
+            {legalReview
+              ? `${legalReview} month${legalReview === 1 ? '' : 's'} before signature`
+              : 'months before signature (0 = none)'}
+          </span>
           <span className={styles.timelineServicesLabel}>Caveat</span>
           <DraftInput
             value={template.note}

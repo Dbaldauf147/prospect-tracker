@@ -357,16 +357,37 @@ export function getStageMonths(stage, baseMonth, mode = 'months') {
  * every step after the signature three months out — a phantom gap that grew
  * the earlier the window started.
  *
- * `raw` is [{ stage, month, span, ... }]; returns { preSpan, placed }.
+ * A plan placed by DATES says the same thing a different way, and gets the
+ * same answer: every step already sits on the month the calendar puts it in,
+ * so making room in front of it can only move it away from its own dates. Add
+ * two months of legal review to a timeline whose kickoff is dated 31 July and
+ * the shift walked kickoff into September while the axis still said July.
+ * Nothing moves here; the signature is simply where the engagement starts —
+ * the first month anything after the contract happens in.
+ *
+ * `raw` is [{ stage, month, span, ... }]; returns { preSpan, placed }, where
+ * preSpan is the number of columns standing before the signature either way.
  */
-export function applyRunUpShift(raw, statedSignature = 0) {
+export function applyRunUpShift(raw, statedSignature = 0, mode = 'months') {
   const list = Array.isArray(raw) ? raw : [];
   if (Math.floor(Number(statedSignature) || 0) > 0) return { preSpan: 0, placed: list };
-  const preSpan = list
+  const runUpEnd = list
     .filter(p => p.stage?.preKickoff)
     .reduce((a, p) => Math.max(a, p.month + p.span - 1), 0);
-  if (!preSpan) return { preSpan: 0, placed: list };
-  return { preSpan, placed: list.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + preSpan })) };
+  if (!runUpEnd) return { preSpan: 0, placed: list };
+  if (mode === 'dates') {
+    // Where the engagement begins, which is where the contract was signed.
+    // Falls back to the end of the run-up when there's nothing after it at
+    // all, so a plan that is only a run-up still draws its signature.
+    const firstPost = list
+      .filter(p => !p.stage?.preKickoff)
+      .reduce((a, p) => Math.min(a, p.month), Infinity);
+    return { preSpan: Number.isFinite(firstPost) ? Math.max(0, firstPost - 1) : runUpEnd, placed: list };
+  }
+  return {
+    preSpan: runUpEnd,
+    placed: list.map(p => (p.stage?.preKickoff ? p : { ...p, month: p.month + runUpEnd })),
+  };
 }
 
 export function placeStages(stages, baseMonth, mode = 'months') {
