@@ -1,6 +1,6 @@
 // "What does delivering this deal look like, starting today?"
 //
-// The Notes and Update Status popups already know the deal's Scope. The
+// The Follow Up Notes popup already knows the deal's Scope. The
 // Timelines page already knows each service's plan, and the Services page
 // already knows which services have to be rolled out before which. This
 // puts the three together on one chart: a band per service, sequenced by
@@ -39,7 +39,7 @@ export function DealTimelineModal({
   account = '', scopeServices = [], settings, serviceOverrides, planKey = '',
   // The deal's Target Signature Date and how to change it. The date belongs
   // to the opp, not to this popup: it's a date being negotiated, it has to
-  // survive the popup closing, and the Notes and Update Status screens show
+  // survive the popup closing, and the Follow Up Notes screen shows
   // it too. Blank means nobody has set one — the plan then reads as "if we
   // signed today" without writing that assumption down as a decision.
   signDate = '', onChangeSignDate,
@@ -243,7 +243,7 @@ export function DealTimelineModal({
             {/* First control in the row because it re-dates everything to its
                 right: the whole plan hangs off when the paperwork lands. */}
             <label
-              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it — and it's saved on the opp, so it's here next time and on the Notes and Update Status popups. Unset plans from today."
+              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it — and it's saved on the opp, so it's here next time and on the Follow Up Notes popup. Unset plans from today."
               style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}
             >
               Target signature
