@@ -1284,21 +1284,56 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     });
   }
 
-  // Add a new deal seeded from a flagged Sold opp. Carries over the BFO
-  // opp name (so the row immediately matches the opp and clears the
-  // warning) plus the Account → Client Name and the opp's GM. Mirrors
-  // addNewDeal's Due Date seed so Days/Paid on renders right away.
+  // A new deal seeded from a flagged Sold opp. Carries over the BFO opp
+  // name (so the row immediately matches the opp and clears the warning)
+  // plus the Account → Client Name and the opp's GM. Mirrors addNewDeal's
+  // Due Date seed so Days/Paid on renders right away.
+  //
+  // Shared by the per-opp button and the add-all one, so a deal seeded in
+  // a batch is identical to one seeded on its own.
+  function dealRowFromOpp(opp, dueDateStr) {
+    const row = { 'Due Date': dueDateStr };
+    if (opp.bfo) row[DEAL_BFO_KEY] = opp.bfo;
+    if (opp.account) row['Client Name'] = opp.account;
+    if (opp.gm) row['GM'] = opp.gm;
+    return row;
+  }
+
+  function seedDueDate() {
+    const due = new Date();
+    due.setDate(due.getDate() + 60);
+    return due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+  }
+
   function addDealFromOpp(opp) {
     setStore(prev => {
-      const due = new Date();
-      due.setDate(due.getDate() + 60);
-      const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-      const row = { 'Due Date': dueDateStr };
-      if (opp.bfo) row[DEAL_BFO_KEY] = opp.bfo;
-      if (opp.account) row['Client Name'] = opp.account;
-      if (opp.gm) row['GM'] = opp.gm;
-      const next = [row, ...prev.data];
+      const next = [dealRowFromOpp(opp, seedDueDate()), ...prev.data];
       try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
+  // Every flagged opp at once, in the order the banner lists them, in a
+  // single store pass — so the override file takes one write rather than
+  // one per deal, and the whole batch lands or none of it does.
+  //
+  // An opp with no BFO opp name still gets its deal, exactly as the
+  // per-opp button gives it one. It just can't stop warning, because the
+  // warning is "these two aren't linked" and only a BFO name links them —
+  // which is why the confirmation says so before the click rather than
+  // leaving a row of warnings looking like the button missed them.
+  function addAllDealsFromOpps(opps) {
+    if (!opps.length) return;
+    const noBfo = opps.filter(o => !o.bfo).length;
+    const ask = `Add ${opps.length} new deal${opps.length === 1 ? '' : 's'}, one for each suggested opp?`
+      + (noBfo > 0
+        ? `\n\n${noBfo} of them ${noBfo === 1 ? 'has' : 'have'} no BFO opp name, so ${noBfo === 1 ? 'that opp' : 'those opps'} will keep warning until you set one.`
+        : '');
+    if (!window.confirm(ask)) return;
+    setStore(prev => {
+      const dueDateStr = seedDueDate();
+      const next = [...opps.map(o => dealRowFromOpp(o, dueDateStr)), ...prev.data];
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deals failed', err); }
       return { data: next, source: 'override' };
     });
   }
@@ -1990,8 +2025,23 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
 
       {visibleSoldMissing.length > 0 && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, color: '#92400E', fontSize: '0.8rem', flexShrink: 0 }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div style={{ fontWeight: 700 }}>
+              ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+            </div>
+            {/* The same seeding as the per-row button, for the whole list.
+                Sits by the count so it reads as "…and here is what to do
+                about all of them". */}
+            <button
+              type="button"
+              onClick={() => addAllDealsFromOpps(visibleSoldMissing)}
+              title={`Create ${visibleSoldMissing.length} new deal${visibleSoldMissing.length === 1 ? '' : 's'}, each seeded with its opp's BFO opp name, Client Name, and GM`}
+              style={{
+                flex: '0 0 auto', padding: '0.15rem 0.6rem', background: '#92400E',
+                border: '1px solid #92400E', borderRadius: 4, color: '#fff',
+                fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >Add all deals suggested</button>
           </div>
           <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
             These opportunities are marked <strong>Sold</strong> in Opps but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
