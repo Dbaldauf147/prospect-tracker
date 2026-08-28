@@ -161,6 +161,18 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // RFP templates attached to an Opps 2 deal from the Follow Up Notes
+    // popup. One document per opp, holding the workbook as base64 split
+    // across chunk fields — a whole spreadsheet, so it can't share a
+    // document with the opps payload without threatening the 1 MB cap.
+    // Same per-user scoping as the opps data it hangs off.
+    match /oppRfpTemplates/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /oppRfpTemplates/{userId}/items/{oppId} {
+      allow read, write: if owns(userId);
+    }
+
     // Email campaigns: users can only read/write their own data
     match /emailCampaigns/{userId} {
       allow read, write: if owns(userId);

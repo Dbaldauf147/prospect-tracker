@@ -41,6 +41,13 @@ import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT }
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
+import {
+  loadOppRfpTemplate,
+  saveOppRfpTemplate,
+  deleteOppRfpTemplate,
+  rfpTemplateMeta,
+  RFP_MAX_SYNC_BYTES,
+} from '../../utils/oppRfpTemplate';
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
@@ -5499,6 +5506,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               solutionOptions={solutionOptions}
               serviceOverrides={serviceOverrides}
             />
+            <RfpTemplateButton opp={opp} updateOppField={updateOppField} />
             {markBtn('_calledOn', '📞', 'Called')}
             {markBtn('_metOn', '🤝', 'Meeting')}
             <button
@@ -7757,6 +7765,469 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
       </div>
     </div>
   );
+}
+
+// The "RFP" button the Follow Up Notes popup header carries, and the
+// screen it opens: the client's RFP template workbook, kept against this
+// deal.
+//
+// An RFP arrives as a spreadsheet to fill in and comes back revised more
+// than once, so the useful place for it is the deal — not a mail thread
+// somebody has to search. The bytes live in oppRfpTemplate.js (IndexedDB
+// locally, mirrored to Firestore so the file follows you to another
+// machine); what's kept on the opp itself is only the summary line, so the
+// pill can say "attached" without an async read on every render.
+//
+// Portalled to the body for the same reason Timelines and KTM Mapping are:
+// the modal closes on Escape and a backdrop click, and nesting it inside
+// the popup would let one Escape close both.
+function RfpTemplateButton({ opp, updateOppField }) {
+  const [open, setOpen] = useState(false);
+  const account = String(opp?.['Account'] ?? '').trim();
+  const meta = useMemo(() => parseRfpMeta(opp?.[RFP_TEMPLATE_FIELD]), [opp]);
+  const setMeta = (next) => {
+    if (opp?._id == null || !updateOppField) return;
+    updateOppField(opp._id, RFP_TEMPLATE_FIELD, next ? JSON.stringify(next) : '');
+  };
+  const attached = !!meta;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={attached
+          ? `RFP template: ${meta.fileName}${rfpSizeLabel(meta.sizeBytes) ? ` (${rfpSizeLabel(meta.sizeBytes)})` : ''}${meta.savedAt ? `, added ${formatDateDisplay(toISODate(meta.savedAt))}` : ''} — open to download, replace or remove it`
+          : 'Attach the client’s RFP template workbook to this deal'}
+        // Same pill as Timelines / KTM Mapping / Called / Meeting, and the
+        // same green "it's set" treatment the activity marks use, so an
+        // attached RFP reads at a glance from the header.
+        style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+          fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
+          cursor: 'pointer', fontFamily: 'inherit',
+          background: attached ? '#DCFCE7' : '#fff',
+          color: attached ? '#166534' : '#64748B',
+          border: attached ? '1px solid #86EFAC' : '1px dashed #CBD5E1',
+        }}
+      >📄 RFP{attached ? ' ✓' : ''}</button>
+      {open && createPortal(
+        <RfpTemplateModal
+          account={account}
+          oppId={opp?._id}
+          meta={meta}
+          canSave={!!updateOppField && opp?._id != null}
+          onChangeMeta={setMeta}
+          onClose={() => setOpen(false)}
+        />,
+        document.body,
+      )}
+    </>
+  );
+}
+
+// The column the RFP summary is kept under. Underscore-prefixed like
+// `_timelines` and `_calledOn`: app state that rides along on the opp
+// record rather than a column of the sheet.
+const RFP_TEMPLATE_FIELD = '_rfpTemplate';
+
+// The summary is stored as JSON text so it survives the same string-shaped
+// write path every other field uses. Anything unparseable reads as "nothing
+// attached" rather than throwing the popup.
+function parseRfpMeta(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw.fileName ? raw : null;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && parsed.fileName ? parsed : null;
+  } catch { return null; }
+}
+
+function rfpSizeLabel(sizeBytes) {
+  const n = Number(sizeBytes);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+const RFP_ACCEPT = '.xlsx,.xlsm,.xls,.csv';
+const RFP_EXT_RE = /\.(xlsx|xlsm|xls|csv)$/i;
+
+// The attachment screen. Handles the four things you do with an RFP:
+// attach one, look at what you attached, download it to fill in, and
+// replace it when the client sends the next revision.
+function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose }) {
+  const [rec, setRec] = useState(null);
+  const [loading, setLoading] = useState(!!meta);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  // { sheetNames, active, rows } for the attached workbook, or null while
+  // it hasn't been parsed. The preview is what tells the user the file that
+  // uploaded is the file they meant.
+  const [preview, setPreview] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef(null);
+  const backdropMouseDown = useRef(false);
+  // Escape is handled on the dialog, so it only fires once focus is inside
+  // it — take focus on open so the key works without a click first.
+  const dialogRef = useRef(null);
+  useEffect(() => { dialogRef.current?.focus(); }, []);
+  // Which attachment the bytes in `rec` belong to, so the reload below
+  // skips the file it just wrote. `meta` is rebuilt from the opp on every
+  // save, and without this the attach that produced it would immediately
+  // re-read what it had already put on screen.
+  const loadedKey = useRef('');
+  const metaKey = meta ? `${meta.fileName}|${meta.savedAt}` : '';
+
+  // Read the attached bytes on open. `meta` says something is attached; the
+  // bytes may still be missing here — an oversized workbook never made it to
+  // the Firestore mirror, so on a second machine there's a record and no file.
+  useEffect(() => {
+    let cancelled = false;
+    if (!metaKey || oppId == null) {
+      loadedKey.current = '';
+      setRec(null);
+      setPreview(null);
+      setLoading(false);
+      return undefined;
+    }
+    if (loadedKey.current === metaKey) return undefined;
+    setLoading(true);
+    loadOppRfpTemplate(oppId).then(found => {
+      if (cancelled) return;
+      loadedKey.current = metaKey;
+      setRec(found);
+      setLoading(false);
+      if (found?.blob) buildPreview(found.blob).then(p => { if (!cancelled) setPreview(p); });
+    });
+    return () => { cancelled = true; };
+  }, [metaKey, oppId]);
+
+  const attach = useCallback(async (file) => {
+    if (!file || busy) return;
+    if (!RFP_EXT_RE.test(file.name || '')) {
+      setError(`“${file.name}” isn’t a spreadsheet. Attach the RFP as .xlsx, .xlsm, .xls or .csv.`);
+      return;
+    }
+    if (!canSave) { setError('This row can’t take an attachment.'); return; }
+    setError('');
+    setBusy(true);
+    try {
+      const saved = await saveOppRfpTemplate(oppId, file, file.name);
+      const savedMeta = rfpTemplateMeta(saved);
+      loadedKey.current = `${savedMeta.fileName}|${savedMeta.savedAt}`;
+      setRec(saved);
+      onChangeMeta(savedMeta);
+      setPreview(await buildPreview(saved.blob));
+      if (file.size > RFP_MAX_SYNC_BYTES) {
+        setError(
+          `Saved on this device. At ${rfpSizeLabel(file.size)} it’s too big to back up, `
+          + 'so it won’t follow you to another browser.'
+        );
+      }
+    } catch (err) {
+      setError(`Couldn’t attach that file: ${err?.message || err}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, canSave, oppId, onChangeMeta]);
+
+  const download = useCallback(() => {
+    if (!rec?.blob) return;
+    const url = URL.createObjectURL(rec.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = rec.fileName || meta?.fileName || 'rfp.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [rec, meta]);
+
+  const remove = useCallback(async () => {
+    if (busy) return;
+    const name = rec?.fileName || meta?.fileName || 'this file';
+    if (!window.confirm(`Remove ${name} from this deal?`)) return;
+    setBusy(true);
+    try {
+      await deleteOppRfpTemplate(oppId);
+      loadedKey.current = '';
+      setRec(null);
+      setPreview(null);
+      setError('');
+      onChangeMeta(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, oppId, rec, meta, onChangeMeta]);
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) attach(file);
+  };
+
+  const shownName = rec?.fileName || meta?.fileName || '';
+  const shownSize = rfpSizeLabel(rec?.sizeBytes ?? meta?.sizeBytes);
+  const savedAtISO = toISODate(rec?.savedAt || meta?.savedAt);
+  // Attached according to the opp, but the bytes aren't on this device.
+  const missingBytes = !!meta && !loading && !rec;
+
+  return (
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10002,
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="RFP template"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
+        style={{
+          outline: 'none',
+          width: 'min(780px, 94vw)', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem',
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              RFP Template{account ? <>: {account}</> : null}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+              The RFP workbook this deal is answering. Attached to the opp, so it’s here next time —
+              and on your other machines.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1, flexShrink: 0,
+            }}
+          >×</button>
+        </div>
+
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          style={{ padding: '0.85rem 1rem', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={RFP_ACCEPT}
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Clear the input so re-picking the same file after a remove
+              // still fires a change event.
+              e.target.value = '';
+              if (file) attach(file);
+            }}
+          />
+
+          {loading ? (
+            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Loading the attached file…</div>
+          ) : meta ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap',
+              padding: '0.6rem 0.7rem', borderRadius: 6,
+              border: '1px solid var(--color-border)', background: 'var(--color-bg)',
+            }}>
+              <span style={{ fontSize: '1.1rem' }}>📄</span>
+              <div style={{ minWidth: 0, flex: '1 1 220px' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)', wordBreak: 'break-word' }}>
+                  {shownName}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                  {[shownSize, savedAtISO ? `added ${formatDateDisplay(savedAtISO)}` : ''].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={download}
+                  disabled={!rec?.blob || busy}
+                  title={rec?.blob ? `Download ${shownName}` : 'The file isn’t on this device'}
+                  style={rfpBtnStyle(!rec?.blob || busy)}
+                >⬇ Download</button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy || !canSave}
+                  title="Attach a newer revision in its place"
+                  style={rfpBtnStyle(busy || !canSave)}
+                >Replace</button>
+                <button
+                  type="button"
+                  onClick={remove}
+                  disabled={busy}
+                  title="Take the RFP off this deal"
+                  style={{ ...rfpBtnStyle(busy), color: '#B91C1C' }}
+                >Remove</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy || !canSave}
+              style={{
+                display: 'block', width: '100%', padding: '1.4rem 1rem',
+                border: `1px dashed ${dragging ? '#2563EB' : 'var(--color-border)'}`,
+                borderRadius: 8, background: dragging ? '#EFF6FF' : 'var(--color-bg)',
+                cursor: busy || !canSave ? 'default' : 'pointer',
+                fontFamily: 'inherit', color: 'var(--color-text)', textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                {busy ? 'Attaching…' : 'Upload the RFP template'}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                Drop the workbook here, or click to pick one — .xlsx, .xlsm, .xls or .csv
+              </div>
+            </button>
+          )}
+
+          {missingBytes && (
+            <div style={{
+              fontSize: '0.72rem', color: '#92400E', lineHeight: 1.45,
+              padding: '0.5rem 0.6rem', borderRadius: 4,
+              background: '#FEF3C7', border: '1px solid #FCD34D',
+            }}>
+              This deal has an RFP recorded, but its file isn’t on this device — a workbook too big to
+              back up stays on the machine it was attached from, and a backup that never went through
+              can’t come back. Use Replace to upload it again here.
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              fontSize: '0.72rem', color: '#92400E', lineHeight: 1.45,
+              padding: '0.5rem 0.6rem', borderRadius: 4,
+              background: '#FEF3C7', border: '1px solid #FCD34D',
+            }}>{error}</div>
+          )}
+
+          {preview && (
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+                marginBottom: 5,
+              }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)' }}>Preview</span>
+                {preview.sheetNames.length > 1 && (
+                  <select
+                    value={preview.active}
+                    onChange={async (e) => {
+                      const next = e.target.value;
+                      if (rec?.blob) setPreview(await buildPreview(rec.blob, next));
+                    }}
+                    title="Sheet to preview"
+                    style={{
+                      padding: '0.15rem 0.3rem', borderRadius: 4, fontFamily: 'inherit',
+                      fontSize: '0.72rem', border: '1px solid var(--color-border)',
+                      background: '#fff', color: 'var(--color-text)', maxWidth: 220,
+                    }}
+                  >
+                    {preview.sheetNames.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                )}
+                <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
+                  {preview.error
+                    ? preview.error
+                    : `first ${preview.rows.length} row${preview.rows.length === 1 ? '' : 's'}`
+                      + (preview.sheetNames.length > 1 ? ` of ${preview.sheetNames.length} sheets` : '')}
+                </span>
+              </div>
+              {preview.rows.length > 0 && (
+                <div style={{
+                  overflow: 'auto', maxHeight: 260,
+                  border: '1px solid var(--color-border-light)', borderRadius: 4,
+                }}>
+                  <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
+                    <tbody>
+                      {preview.rows.map((row, r) => (
+                        <tr key={r} style={{ background: r === 0 ? 'var(--color-bg)' : '#fff' }}>
+                          {row.map((cell, c) => (
+                            <td
+                              key={c}
+                              style={{
+                                border: '1px solid var(--color-border-light)',
+                                padding: '2px 6px', whiteSpace: 'nowrap',
+                                maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
+                                fontWeight: r === 0 ? 600 : 400,
+                                color: 'var(--color-text)',
+                              }}
+                              title={cell}
+                            >{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function rfpBtnStyle(disabled) {
+  return {
+    padding: '0.3rem 0.6rem', borderRadius: 4,
+    border: '1px solid var(--color-border)', background: '#fff',
+    fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+    color: 'var(--color-text)', whiteSpace: 'nowrap',
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+  };
+}
+
+// Top-left corner of a sheet, for the preview grid. xlsx is imported on
+// demand — it's a big dependency and nothing else on this screen needs it.
+const RFP_PREVIEW_ROWS = 18;
+const RFP_PREVIEW_COLS = 12;
+
+async function buildPreview(blob, sheetName) {
+  try {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array' });
+    const sheetNames = wb.SheetNames || [];
+    const active = sheetName && sheetNames.includes(sheetName) ? sheetName : sheetNames[0];
+    if (!active) return { sheetNames, active: '', rows: [], error: 'no sheets in this file' };
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[active], {
+      header: 1, defval: '', blankrows: false, raw: false,
+    });
+    const rows = raw.slice(0, RFP_PREVIEW_ROWS).map(r =>
+      (Array.isArray(r) ? r : []).slice(0, RFP_PREVIEW_COLS).map(c => String(c ?? '')));
+    return {
+      sheetNames,
+      active,
+      rows,
+      error: rows.length === 0 ? 'this sheet is empty' : '',
+    };
+  } catch (err) {
+    return { sheetNames: [], active: '', rows: [], error: `couldn’t read this file: ${err?.message || err}` };
+  }
 }
 
 // Shared "Timelines" editor used inside both the Notes and Follow Up popups.

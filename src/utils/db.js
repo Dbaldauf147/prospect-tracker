@@ -36,6 +36,10 @@ const STORES = [
   // Emails dropped onto the Draft Emails page's Market Updates tab, with
   // their attachments — see marketUpdatesStore.js for why these are local.
   { name: 'market-updates',      keyPath: null },
+  // RFP workbooks attached to an opp from the Follow Up Notes popup. The
+  // local half of oppRfpTemplate.js — the Firestore mirror there is what
+  // makes an attachment cross-device.
+  { name: 'rfp-templates',       keyPath: null },
 ];
 
 let dbPromise = null;
