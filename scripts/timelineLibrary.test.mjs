@@ -111,11 +111,13 @@ check('…and none of them points at the original',
 function svgFor(tpl) {
   const svg = buildTimelineSvg(tpl);
   const [, w, h] = svg.match(/viewBox="0 0 (\d+) (\d+)"/).map(Number);
-  // Where every left-aligned text run starts, so nothing can sit outside the
-  // drawing. The legend's closing note is anchored to the right edge and is
-  // measured from the other end, so it's left out.
+  // Where every left-aligned CALLOUT text run starts, so nothing can sit
+  // outside the drawing. Runs above y=152 are the slide band's — the title
+  // and the legend card, both bounded by the band rather than by a callout
+  // column — and the legend's closing note is anchored to the right edge and
+  // measured from the other end.
   const runs = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)"([^>]*)>/g)]
-    .filter(m => !m[3].includes('text-anchor="end"'));
+    .filter(m => !m[3].includes('text-anchor="end"') && Number(m[2]) > 152);
   return {
     svg, w, h,
     maxX: Math.max(...runs.map(m => Number(m[1]))),
@@ -135,12 +137,39 @@ for (const tpl of [sourcing, risk]) {
     tpl.stages.every(s => s.description.split(/\s+/).every(word => words.includes(word.replace(/&/g, '&amp;')))), true);
 }
 
-// A timeline whose callouts fit the original fixed layout is drawn on exactly
-// the canvas it always was — growing is for the ones that need it.
+// A timeline whose callouts fit the fixed layout is drawn on exactly that
+// canvas — growing is for the ones that need it. The floors sit where the
+// slide band left them: 152px of green above the first row of callouts.
 const legacy = buildTimelineSvg({ ...seeds[0], format: 'milestone' });
-check('a short milestone timeline keeps its axis at 322', /y1="322"/.test(legacy), true);
-check('…and its legend at 606', /y="606"/.test(legacy), true);
-check('…and its 646px canvas', /viewBox="0 0 \d+ 646"/.test(legacy), true);
+check('a short milestone timeline keeps its axis at 398', /y1="398"/.test(legacy), true);
+check('…and its 702px canvas', /viewBox="0 0 \d+ 702"/.test(legacy), true);
+
+// --- the slide chrome, on every format ------------------------------------
+// The formats differ in how they place work. The deck page they're drawn on
+// is the same one: green band, title, legend card, footer.
+for (const format of ['gantt', 'phased', 'milestone']) {
+  const tpl = { ...seeds[0], format, positionMode: 'dates' };
+  const svg = buildTimelineSvg(tpl);
+  check(`${format}: draws the green band`, svg.includes(`<rect x="0" y="0" width="`) && /fill="#3DCD58"/.test(svg), true);
+  check(`${format}: titles it in the band`, /y="126" font-size="27" fill="#FFFFFF">Budget timeline</.test(svg), true);
+  // The card itself, by its own white panel — the owner captions on the
+  // milestone callouts spell the same names, so matching on text would find
+  // a card that isn't there.
+  // Sized to its rows and note, so match the panel rather than a height.
+  const card = /width="236" height="\d+" fill="#FFFFFF"/;
+  check(`${format}: carries the legend card`, card.test(svg), true);
+  check(`${format}: and the confidentiality footer`, svg.includes('Confidential Property of Schneider Electric'), true);
+  // The report draws its own green page header around the graphic, so an
+  // unbranded render stays bare. (The implementation chart is the exception
+  // it always was: its band carries the month headings, so it draws even
+  // unbranded, and only the lockup is dropped.)
+  const plain = buildTimelineSvg(tpl, { branded: false });
+  if (format !== 'phased') {
+    check(`${format}: unbranded keeps none of it`, plain.includes('Confidential Property'), false);
+    check(`${format}: …and no legend card`, card.test(plain), false);
+  }
+  check(`${format}: unbranded drops the lockup`, plain.includes('Life Is On'), false);
+}
 
 console.log(failures === 0 ? '\nAll timeline library tests passed.' : `\n${failures} failure(s).`);
 process.exit(failures === 0 ? 0 : 1);
