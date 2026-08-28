@@ -206,6 +206,27 @@ export function estimateService({ entry, meta, counts, dealSize }) {
   return { ...base, priced: true, fee, value: fee * years, units };
 }
 
+// How a line's fee was arrived at, in a few words: the phrase that goes
+// under the service name wherever an estimate is shown, so a number that
+// moves has a reason on the row. A typed Est. Fee doesn't move; a per-unit
+// fee moves with the count it multiplies; a percentage moves with the deal
+// size it's a percentage of.
+//
+// Takes a line from estimateScope (or anything with `entry`, `typed` and
+// `units`). Returns '' for a service with nothing to say — an unpriced one,
+// whose own `note` says that instead.
+export function feeBasisLabel(line) {
+  if (line?.typed) return 'Est. Fee';
+  const basis = basisFor(line?.entry?.basis);
+  if (!basis) return '';
+  if (basis.kind === 'unit') {
+    const unit = basis.unitLabel.toLowerCase().replace(/s$/, '');
+    return `${formatRate(line.entry)} per ${unit}${line.units ? ` \u00d7 ${line.units}` : ''}`;
+  }
+  if (basis.kind === 'percent') return `${formatRate(line.entry)} of deal size`;
+  return basis.label;
+}
+
 // Roll a set of services up into a deal estimate.
 //
 // `rows` are { name, meta } — the same shape the Services subtab builds — and
@@ -233,18 +254,11 @@ export function estimateScope({ rows, services, pricing, counts, dealSize }) {
     lines.push({ name: row.name, entry, ...est });
   }
 
-  // Year one is what the client actually signs up to spend in the first
-  // twelve months: every recurring service's annual fee plus every one-off
-  // project in full. It is the sum of the Estimated Year 1 Fee column, which
-  // is why that column and the headline figure always tie out — contractValue
-  // runs the recurring lines across their whole term and does not.
-  return {
-    lines,
-    recurringAnnual,
-    oneTime,
-    yearOne: recurringAnnual + oneTime,
-    contractValue,
-    unpriced,
-    unitsUsed,
-  };
+  // What the scope costs in its FIRST year: a recurring service bills its
+  // annual fee, a project bills the job. Which is the two halves added — the
+  // same two the contract value keeps apart, because after year one they stop
+  // agreeing. It is also the sum of the Estimated Year 1 Fee column, which is
+  // why that column and the headline figure on the estimator always tie out.
+  const year1Total = recurringAnnual + oneTime;
+  return { lines, recurringAnnual, oneTime, year1Total, contractValue, unpriced, unitsUsed };
 }

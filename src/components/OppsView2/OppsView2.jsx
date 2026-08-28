@@ -45,6 +45,10 @@ import {
   loadOppRfpTemplate,
   saveOppRfpTemplate,
   deleteOppRfpTemplate,
+  loadStandardRfpMeta,
+  loadStandardRfpTemplate,
+  saveStandardRfpTemplate,
+  deleteStandardRfpTemplate,
   rfpTemplateMeta,
   RFP_MAX_SYNC_BYTES,
 } from '../../utils/oppRfpTemplate';
@@ -107,6 +111,10 @@ import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
+// Aliased: this module already has a parseMoney of its own (oppsMetrics),
+// and the rate card's numbers have to be read the way the Services Pricing
+// tab reads them.
+import { getServicePricing, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -1784,7 +1792,10 @@ function PricingOptionSnapshotView({ snapshot }) {
 // renders as a link to it, and a Pricing-Option snapshot still falls
 // back to the existing "open the Opp details popup" affordance when
 // no manual URL is set. All edits happen inside the popup.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress }) {
+function QuotedAmountCell({
+  value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress,
+  scopeNames = [], pricing = null, serviceOverrides = null, sites = '',
+}) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
   const [draftUrl, setDraftUrl] = useState(url ?? '');
@@ -1814,6 +1825,38 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
   // fee × unit count). Recomputed from the frozen snapshot rows so it
   // stays correct even after the Pricing tab is cleared.
   const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
+
+  // What the services in this deal's Scope are worth in their first year,
+  // read off the rate card on Dropdowns › Services Pricing.
+  //
+  // The same estimator the Services Pricing tab runs, so a fee here is the
+  // fee it shows: a typed Est. Fee wins outright, otherwise the basis and
+  // rate are worked against the counts. The only count an opp carries is its
+  // Sites, so a service priced per meter or per invoice comes back priced
+  // but at nothing, and says which count it was missing rather than showing
+  // a confident $0. A percentage-of-deal service reads the amount being
+  // typed in the box above, which is what it's a percentage of.
+  //
+  // Only while the popup is open: this runs per rendered row otherwise, and
+  // the answer is only ever looked at here.
+  const scopeEstimate = useMemo(() => {
+    if (!open || !scopeNames.length) return null;
+    const rows = scopeNames.map(name => ({
+      name,
+      meta: getEffectiveServiceMetadata(name, serviceOverrides),
+    }));
+    const est = estimateScope({
+      rows,
+      services: scopeNames,
+      pricing: pricing || {},
+      counts: { sites: parsePricingMoney(sites) ?? 0 },
+      dealSize: parsePricingMoney(draftAmount),
+    });
+    // Each line says where its fee came from, so a number that moves has a
+    // reason on the row — the percentage ones move with the amount being
+    // typed in the box above, which is the deal size they're a cut of.
+    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line) })) };
+  }, [open, scopeNames, pricing, serviceOverrides, sites, draftAmount]);
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
@@ -1965,6 +2008,84 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span>Final Margin <span style={{ color: '#94A3B8' }}>(over the term)</span></span>
                     <strong style={{ color: '#1E293B' }}>{fmtMarginPct(snapStats.finalMargin)}</strong>
+                  </div>
+                )}
+              </div>
+            )}
+            {scopeEstimate && scopeEstimate.lines.length > 0 && (
+              <div style={{
+                padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                border: '1px solid var(--color-border-light)', borderRadius: 4,
+                fontSize: '0.78rem', color: '#475569',
+              }}>
+                <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
+                  Scope services{' '}
+                  <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+                    ({scopeEstimate.lines.length}) &middot; est. Year 1 fee
+                  </span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {scopeEstimate.lines.map((line) => (
+                      <tr key={line.name}>
+                        <td style={{ padding: '2px 0', verticalAlign: 'top' }}>
+                          {line.name}
+                          {/* Where the fee came from, and — when a priced
+                              service still came out at nothing — the count
+                              it needed that the opp doesn't carry. */}
+                          {(line.note || line.how) ? (
+                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
+                              {line.note || line.how}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: '2px 0', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                          {line.priced ? (
+                            <strong
+                              style={{ color: '#1E293B' }}
+                              title={line.typed
+                                ? 'Est. Fee typed on the Services Pricing tab'
+                                : 'Worked out from this service\u2019s basis and rate'}
+                            >{formatMoney(line.fee) || '$0'}</strong>
+                          ) : (
+                            <span style={{ color: '#94A3B8' }} title="No price on the Services Pricing tab yet">&mdash;</span>
+                          )}
+                          {line.recurring ? (
+                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                  borderTop: '1px solid var(--color-border-light)', paddingTop: 4, marginTop: 4,
+                }}>
+                  <span>
+                    Year 1 total
+                    {scopeEstimate.unpriced.length ? (
+                      <span style={{ color: '#94A3B8' }}>
+                        {' '}({scopeEstimate.unpriced.length} unpriced)
+                      </span>
+                    ) : null}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <strong style={{ color: '#1E293B' }}>{formatMoney(scopeEstimate.year1Total) || '$0'}</strong>
+                    {/* Fills the box above rather than saving: the total is an
+                        estimate, and whether it IS the deal size is the
+                        user's call to make and then Save. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
+                      title="Put this total in the Amount box above"
+                      style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                    >Use</button>
+                  </span>
+                </div>
+                {scopeEstimate.unpriced.length > 0 && (
+                  <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+                    No price yet: {scopeEstimate.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
                   </div>
                 )}
               </div>
@@ -7797,11 +7918,12 @@ function RfpTemplateButton({ opp, updateOppField }) {
         type="button"
         onClick={() => setOpen(true)}
         title={attached
-          ? `RFP template: ${meta.fileName}${rfpSizeLabel(meta.sizeBytes) ? ` (${rfpSizeLabel(meta.sizeBytes)})` : ''}${meta.savedAt ? `, added ${formatDateDisplay(toISODate(meta.savedAt))}` : ''} — open to download, replace or remove it`
-          : 'Attach the client’s RFP template workbook to this deal'}
+          ? `RFP for this deal: ${meta.fileName}${rfpSizeLabel(meta.sizeBytes) ? ` (${rfpSizeLabel(meta.sizeBytes)})` : ''}${meta.savedAt ? `, added ${formatDateDisplay(toISODate(meta.savedAt))}` : ''} — open to download, replace or remove it`
+          : 'Download the standard RFP template, or attach one for this deal'}
         // Same pill as Timelines / KTM Mapping / Called / Meeting, and the
-        // same green "it's set" treatment the activity marks use, so an
-        // attached RFP reads at a glance from the header.
+        // same green "it's set" treatment the activity marks use. Green
+        // means this deal has its OWN file — the standard template is on
+        // every opp, so colouring for it would just light every pill up.
         style={{
           display: 'inline-block', padding: '3px 10px', borderRadius: 999,
           fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
@@ -7828,7 +7950,9 @@ function RfpTemplateButton({ opp, updateOppField }) {
 
 // The column the RFP summary is kept under. Underscore-prefixed like
 // `_timelines` and `_calledOn`: app state that rides along on the opp
-// record rather than a column of the sheet.
+// record rather than a column of the sheet. Only the deal's own file is
+// recorded here — the standard template is one workbook for the whole
+// pipeline and belongs to the account, not to any opp.
 const RFP_TEMPLATE_FIELD = '_rfpTemplate';
 
 // The summary is stored as JSON text so it survives the same string-shaped
@@ -7854,20 +7978,33 @@ function rfpSizeLabel(sizeBytes) {
 const RFP_ACCEPT = '.xlsx,.xlsm,.xls,.csv';
 const RFP_EXT_RE = /\.(xlsx|xlsm|xls|csv)$/i;
 
-// The attachment screen. Handles the four things you do with an RFP:
-// attach one, look at what you attached, download it to fill in, and
-// replace it when the client sends the next revision.
+// The attachment screen, in two slots.
+//
+// The top one is the standard template: the RFP question sheet that goes
+// to every client, set once and offered for download on every opp. That's
+// the usual reason to open this screen — take the standard, fill it in for
+// the account in front of you.
+//
+// The bottom one is this deal only, for a client that sends its own RFP
+// workbook. When a deal has one it's what the preview shows and what turns
+// the header pill green; the standard stays right above it, still a click
+// from being downloaded.
 function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose }) {
   const [rec, setRec] = useState(null);
   const [loading, setLoading] = useState(!!meta);
+  const [stdRec, setStdRec] = useState(null);
+  const [stdMeta, setStdMeta] = useState(null);
+  const [stdLoading, setStdLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // { sheetNames, active, rows } for the attached workbook, or null while
-  // it hasn't been parsed. The preview is what tells the user the file that
-  // uploaded is the file they meant.
+  // { sheetNames, active, rows } for whichever workbook the preview is
+  // showing, or null while it hasn't been parsed. The preview is what tells
+  // the user the file that uploaded is the file they meant.
   const [preview, setPreview] = useState(null);
-  const [dragging, setDragging] = useState(false);
+  const [dragTarget, setDragTarget] = useState('');
   const fileInputRef = useRef(null);
+  // Which slot the hidden file input is picking for — both slots share it.
+  const pickingFor = useRef('deal');
   const backdropMouseDown = useRef(false);
   // Escape is handled on the dialog, so it only fires once focus is inside
   // it — take focus on open so the key works without a click first.
@@ -7880,46 +8017,78 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
   const loadedKey = useRef('');
   const metaKey = meta ? `${meta.fileName}|${meta.savedAt}` : '';
 
-  // Read the attached bytes on open. `meta` says something is attached; the
-  // bytes may still be missing here — an oversized workbook never made it to
-  // the Firestore mirror, so on a second machine there's a record and no file.
+  // The standard, read once per open. Its pointer document says whether the
+  // local copy is current, so a template replaced on another machine shows
+  // up here rather than serving yesterday's cached copy.
+  useEffect(() => {
+    let cancelled = false;
+    setStdLoading(true);
+    Promise.all([loadStandardRfpMeta(), loadStandardRfpTemplate()]).then(([m, found]) => {
+      if (cancelled) return;
+      setStdMeta(m || (found ? rfpTemplateMeta(found) : null));
+      setStdRec(found);
+      setStdLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Read this deal's own bytes on open. `meta` says something is attached;
+  // the bytes may still be missing here — an oversized workbook never made
+  // it to the Firestore mirror, so on a second machine there's a record and
+  // no file.
   useEffect(() => {
     let cancelled = false;
     if (!metaKey || oppId == null) {
       loadedKey.current = '';
       setRec(null);
-      setPreview(null);
       setLoading(false);
       return undefined;
     }
     if (loadedKey.current === metaKey) return undefined;
     setLoading(true);
-    loadOppRfpTemplate(oppId).then(found => {
+    loadOppRfpTemplate(oppId, meta?.savedAt).then(found => {
       if (cancelled) return;
       loadedKey.current = metaKey;
       setRec(found);
       setLoading(false);
-      if (found?.blob) buildPreview(found.blob).then(p => { if (!cancelled) setPreview(p); });
     });
     return () => { cancelled = true; };
-  }, [metaKey, oppId]);
+  }, [metaKey, oppId, meta?.savedAt]);
 
-  const attach = useCallback(async (file) => {
+  // Preview whichever workbook this screen is really about: the deal's own
+  // when it has one, the standard otherwise.
+  const previewRec = rec || stdRec;
+  const previewBlob = previewRec?.blob || null;
+  const previewName = previewRec?.fileName || '';
+  useEffect(() => {
+    let cancelled = false;
+    if (!previewBlob) { setPreview(null); return undefined; }
+    buildPreview(previewBlob).then(p => { if (!cancelled) setPreview(p); });
+    return () => { cancelled = true; };
+  }, [previewBlob]);
+
+  // Take a picked or dropped file into one of the two slots.
+  const attach = useCallback(async (file, target) => {
     if (!file || busy) return;
     if (!RFP_EXT_RE.test(file.name || '')) {
       setError(`“${file.name}” isn’t a spreadsheet. Attach the RFP as .xlsx, .xlsm, .xls or .csv.`);
       return;
     }
-    if (!canSave) { setError('This row can’t take an attachment.'); return; }
+    if (target === 'deal' && !canSave) { setError('This row can’t take an attachment.'); return; }
     setError('');
     setBusy(true);
     try {
-      const saved = await saveOppRfpTemplate(oppId, file, file.name);
-      const savedMeta = rfpTemplateMeta(saved);
-      loadedKey.current = `${savedMeta.fileName}|${savedMeta.savedAt}`;
-      setRec(saved);
-      onChangeMeta(savedMeta);
-      setPreview(await buildPreview(saved.blob));
+      if (target === 'standard') {
+        const saved = await saveStandardRfpTemplate(file, file.name);
+        setStdRec(saved);
+        setStdMeta(rfpTemplateMeta(saved));
+      } else {
+        const saved = await saveOppRfpTemplate(oppId, file, file.name);
+        const savedMeta = rfpTemplateMeta(saved);
+        loadedKey.current = `${savedMeta.fileName}|${savedMeta.savedAt}`;
+        setRec(saved);
+        onChangeMeta(savedMeta);
+      }
       if (file.size > RFP_MAX_SYNC_BYTES) {
         setError(
           `Saved on this device. At ${rfpSizeLabel(file.size)} it’s too big to back up, `
@@ -7933,47 +8102,78 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
     }
   }, [busy, canSave, oppId, onChangeMeta]);
 
-  const download = useCallback(() => {
-    if (!rec?.blob) return;
-    const url = URL.createObjectURL(rec.blob);
+  const pick = (target) => { pickingFor.current = target; fileInputRef.current?.click(); };
+
+  const download = useCallback((which) => {
+    const from = which === 'standard' ? stdRec : rec;
+    if (!from?.blob) return;
+    const url = URL.createObjectURL(from.blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = rec.fileName || meta?.fileName || 'rfp.xlsx';
+    a.download = from.fileName || 'rfp.xlsx';
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [rec, meta]);
+  }, [rec, stdRec]);
 
-  const remove = useCallback(async () => {
+  const remove = useCallback(async (target) => {
     if (busy) return;
-    const name = rec?.fileName || meta?.fileName || 'this file';
-    if (!window.confirm(`Remove ${name} from this deal?`)) return;
+    const name = (target === 'standard' ? stdRec?.fileName || stdMeta?.fileName : rec?.fileName || meta?.fileName) || 'this file';
+    const where = target === 'standard' ? 'every opp' : 'this deal';
+    if (!window.confirm(`Remove ${name} from ${where}?`)) return;
     setBusy(true);
     try {
-      await deleteOppRfpTemplate(oppId);
-      loadedKey.current = '';
-      setRec(null);
-      setPreview(null);
+      if (target === 'standard') {
+        await deleteStandardRfpTemplate();
+        setStdRec(null);
+        setStdMeta(null);
+      } else {
+        await deleteOppRfpTemplate(oppId);
+        loadedKey.current = '';
+        setRec(null);
+        onChangeMeta(null);
+      }
       setError('');
-      onChangeMeta(null);
     } finally {
       setBusy(false);
     }
-  }, [busy, oppId, rec, meta, onChangeMeta]);
+  }, [busy, oppId, rec, meta, stdRec, stdMeta, onChangeMeta]);
 
-  const onDrop = (e) => {
+  // Promote the file attached to this deal to the standard, so every other
+  // opp opens with it. The deal keeps its copy — the two slots are separate
+  // records, and a deal that later gets its own revision shouldn't quietly
+  // rewrite the template the rest of the pipeline is using.
+  const makeStandard = useCallback(async () => {
+    if (busy || !rec?.blob) return;
+    setBusy(true);
+    setError('');
+    try {
+      const saved = await saveStandardRfpTemplate(rec.blob, rec.fileName);
+      setStdRec(saved);
+      setStdMeta(rfpTemplateMeta(saved));
+    } catch (err) {
+      setError(`Couldn’t make that the standard: ${err?.message || err}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, rec]);
+
+  const dropOn = (target) => (e) => {
     e.preventDefault();
-    setDragging(false);
+    setDragTarget('');
     const file = e.dataTransfer?.files?.[0];
-    if (file) attach(file);
+    if (file) attach(file, target);
   };
+  const dragProps = (target) => ({
+    onDragOver: (e) => { e.preventDefault(); setDragTarget(target); },
+    onDragLeave: () => setDragTarget(t => (t === target ? '' : t)),
+    onDrop: dropOn(target),
+  });
 
-  const shownName = rec?.fileName || meta?.fileName || '';
-  const shownSize = rfpSizeLabel(rec?.sizeBytes ?? meta?.sizeBytes);
-  const savedAtISO = toISODate(rec?.savedAt || meta?.savedAt);
   // Attached according to the opp, but the bytes aren't on this device.
-  const missingBytes = !!meta && !loading && !rec;
+  const missingDealBytes = !!meta && !loading && !rec;
+  const missingStdBytes = !!stdMeta && !stdLoading && !stdRec;
 
   return (
     <div
@@ -8008,8 +8208,8 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
               RFP Template{account ? <>: {account}</> : null}
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              The RFP workbook this deal is answering. Attached to the opp, so it’s here next time —
-              and on your other machines.
+              The standard template is on every opp — set it once, download it wherever you need it.
+              A client that sends its own RFP gets one attached to that deal instead.
             </div>
           </div>
           <button
@@ -8023,12 +8223,7 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
           >×</button>
         </div>
 
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          style={{ padding: '0.85rem 1rem', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}
-        >
+        <div style={{ padding: '0.85rem 1rem', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
           <input
             ref={fileInputRef}
             type="file"
@@ -8039,84 +8234,48 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
               // Clear the input so re-picking the same file after a remove
               // still fires a change event.
               e.target.value = '';
-              if (file) attach(file);
+              if (file) attach(file, pickingFor.current);
             }}
           />
 
-          {loading ? (
-            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Loading the attached file…</div>
-          ) : meta ? (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap',
-              padding: '0.6rem 0.7rem', borderRadius: 6,
-              border: '1px solid var(--color-border)', background: 'var(--color-bg)',
-            }}>
-              <span style={{ fontSize: '1.1rem' }}>📄</span>
-              <div style={{ minWidth: 0, flex: '1 1 220px' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)', wordBreak: 'break-word' }}>
-                  {shownName}
-                </div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-                  {[shownSize, savedAtISO ? `added ${formatDateDisplay(savedAtISO)}` : ''].filter(Boolean).join(' · ')}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
-                <button
-                  type="button"
-                  onClick={download}
-                  disabled={!rec?.blob || busy}
-                  title={rec?.blob ? `Download ${shownName}` : 'The file isn’t on this device'}
-                  style={rfpBtnStyle(!rec?.blob || busy)}
-                >⬇ Download</button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={busy || !canSave}
-                  title="Attach a newer revision in its place"
-                  style={rfpBtnStyle(busy || !canSave)}
-                >Replace</button>
-                <button
-                  type="button"
-                  onClick={remove}
-                  disabled={busy}
-                  title="Take the RFP off this deal"
-                  style={{ ...rfpBtnStyle(busy), color: '#B91C1C' }}
-                >Remove</button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={busy || !canSave}
-              style={{
-                display: 'block', width: '100%', padding: '1.4rem 1rem',
-                border: `1px dashed ${dragging ? '#2563EB' : 'var(--color-border)'}`,
-                borderRadius: 8, background: dragging ? '#EFF6FF' : 'var(--color-bg)',
-                cursor: busy || !canSave ? 'default' : 'pointer',
-                fontFamily: 'inherit', color: 'var(--color-text)', textAlign: 'center',
-              }}
-            >
-              <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                {busy ? 'Attaching…' : 'Upload the RFP template'}
-              </div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                Drop the workbook here, or click to pick one — .xlsx, .xlsm, .xls or .csv
-              </div>
-            </button>
-          )}
+          <RfpSlot
+            label="Standard template"
+            note="on every opp"
+            emptyTitle="Set the standard RFP template"
+            emptyHint="Drop the workbook here, or click to pick one — it loads on every opp"
+            loading={stdLoading}
+            fileMeta={stdMeta}
+            blobReady={!!stdRec?.blob}
+            missingBytes={missingStdBytes}
+            busy={busy}
+            canSave
+            dragging={dragTarget === 'standard'}
+            dragProps={dragProps('standard')}
+            onPick={() => pick('standard')}
+            onDownload={() => download('standard')}
+            onRemove={() => remove('standard')}
+          />
 
-          {missingBytes && (
-            <div style={{
-              fontSize: '0.72rem', color: '#92400E', lineHeight: 1.45,
-              padding: '0.5rem 0.6rem', borderRadius: 4,
-              background: '#FEF3C7', border: '1px solid #FCD34D',
-            }}>
-              This deal has an RFP recorded, but its file isn’t on this device — a workbook too big to
-              back up stays on the machine it was attached from, and a backup that never went through
-              can’t come back. Use Replace to upload it again here.
-            </div>
-          )}
+          <RfpSlot
+            label="This deal"
+            note={account ? `${account} only` : 'this opp only'}
+            emptyTitle="Attach the client’s own RFP"
+            emptyHint="Only if this client sent its own workbook — drop it here, or click to pick one"
+            loading={loading}
+            fileMeta={meta}
+            blobReady={!!rec?.blob}
+            missingBytes={missingDealBytes}
+            busy={busy}
+            canSave={canSave}
+            dragging={dragTarget === 'deal'}
+            dragProps={dragProps('deal')}
+            onPick={() => pick('deal')}
+            onDownload={() => download('deal')}
+            onRemove={() => remove('deal')}
+            extraAction={rec?.blob && (!stdMeta || stdMeta.savedAt !== meta?.savedAt || stdMeta.fileName !== meta?.fileName)
+              ? { label: 'Make standard', title: 'Use this workbook as the standard on every opp', onClick: makeStandard }
+              : null}
+          />
 
           {error && (
             <div style={{
@@ -8133,12 +8292,13 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
                 marginBottom: 5,
               }}>
                 <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)' }}>Preview</span>
+                <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>{previewName}</span>
                 {preview.sheetNames.length > 1 && (
                   <select
                     value={preview.active}
                     onChange={async (e) => {
                       const next = e.target.value;
-                      if (rec?.blob) setPreview(await buildPreview(rec.blob, next));
+                      if (previewBlob) setPreview(await buildPreview(previewBlob, next));
                     }}
                     title="Sheet to preview"
                     style={{
@@ -8189,6 +8349,108 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// One of the modal's two slots: a file card once something is in it, a drop
+// zone while it's empty. Both slots behave the same way, so they render the
+// same — what changes is the wording and where the bytes go.
+function RfpSlot({
+  label, note, emptyTitle, emptyHint,
+  loading, fileMeta, blobReady, missingBytes, busy, canSave,
+  dragging, dragProps, onPick, onDownload, onRemove, extraAction,
+}) {
+  return (
+    <div {...dragProps}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text)' }}>{label}</span>
+        <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>{note}</span>
+      </div>
+      {loading ? (
+        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', padding: '0.4rem 0' }}>Loading…</div>
+      ) : fileMeta ? (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap',
+            padding: '0.6rem 0.7rem', borderRadius: 6,
+            border: `1px solid ${dragging ? '#2563EB' : 'var(--color-border)'}`,
+            background: dragging ? '#EFF6FF' : 'var(--color-bg)',
+          }}>
+            <span style={{ fontSize: '1.1rem' }}>📄</span>
+            <div style={{ minWidth: 0, flex: '1 1 200px' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)', wordBreak: 'break-word' }}>
+                {fileMeta.fileName}
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                {[
+                  rfpSizeLabel(fileMeta.sizeBytes),
+                  toISODate(fileMeta.savedAt) ? `added ${formatDateDisplay(toISODate(fileMeta.savedAt))}` : '',
+                ].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={onDownload}
+                disabled={!blobReady || busy}
+                title={blobReady ? `Download ${fileMeta.fileName}` : 'The file isn’t on this device'}
+                style={rfpBtnStyle(!blobReady || busy)}
+              >⬇ Download</button>
+              {extraAction && (
+                <button
+                  type="button"
+                  onClick={extraAction.onClick}
+                  disabled={busy}
+                  title={extraAction.title}
+                  style={rfpBtnStyle(busy)}
+                >{extraAction.label}</button>
+              )}
+              <button
+                type="button"
+                onClick={onPick}
+                disabled={busy || !canSave}
+                title="Attach a newer revision in its place"
+                style={rfpBtnStyle(busy || !canSave)}
+              >Replace</button>
+              <button
+                type="button"
+                onClick={onRemove}
+                disabled={busy}
+                title="Take this file off"
+                style={{ ...rfpBtnStyle(busy), color: '#B91C1C' }}
+              >Remove</button>
+            </div>
+          </div>
+          {missingBytes && (
+            <div style={{
+              fontSize: '0.72rem', color: '#92400E', lineHeight: 1.45, marginTop: 5,
+              padding: '0.5rem 0.6rem', borderRadius: 4,
+              background: '#FEF3C7', border: '1px solid #FCD34D',
+            }}>
+              This file is recorded but isn’t on this device — a workbook too big to back up stays on
+              the machine it was attached from, and a backup that never went through can’t come back.
+              Use Replace to upload it again here.
+            </div>
+          )}
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={onPick}
+          disabled={busy || !canSave}
+          style={{
+            display: 'block', width: '100%', padding: '0.9rem 1rem',
+            border: `1px dashed ${dragging ? '#2563EB' : 'var(--color-border)'}`,
+            borderRadius: 8, background: dragging ? '#EFF6FF' : 'var(--color-bg)',
+            cursor: busy || !canSave ? 'default' : 'pointer',
+            fontFamily: 'inherit', color: 'var(--color-text)', textAlign: 'center',
+          }}
+        >
+          <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>{busy ? 'Attaching…' : emptyTitle}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 3 }}>{emptyHint}</div>
+        </button>
+      )}
     </div>
   );
 }
@@ -10612,6 +10874,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
+  // The Solutions list and the rate card behind Dropdowns › Services Pricing.
+  // Both are read per row while the table renders — a Scope value is resolved
+  // to the service it names, and that service is priced — so they're taken
+  // once here rather than rebuilt inside the cell.
+  const solutionOptions = useMemo(
+    () => listRegistry.get('solutions')?.options || [],
+    [listRegistry],
+  );
+  const servicePricing = useMemo(() => getServicePricing(settings), [settings]);
   const records = useMemo(() => data?.records || [], [data]);
 
   // Drop any selection ids that no longer match a live record (e.g.
@@ -10852,6 +11123,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 services={cellServices}
                 bfoName={row['BFO Link']}
                 bfoAddress={row['BFO Address']}
+                // What's in the deal, and what the rate card says each of
+                // those services is worth in year 1. Names are resolved
+                // through the Solutions list so a shorthand Scope value
+                // prices under the service it means.
+                scopeNames={scopeServices(row, solutionOptions)}
+                pricing={servicePricing}
+                serviceOverrides={settings?.serviceOverrides}
+                sites={row['Sites']}
               />
             );
           }

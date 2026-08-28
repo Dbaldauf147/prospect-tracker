@@ -626,7 +626,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span
               className={styles.pricingTotalValueMain}
               title="The first twelve months: each recurring service's annual fee plus every one-off project in full. The sum of the Estimated Year 1 Fee column."
-            >{formatMoney(totals.yearOne) || '$0'}</span>
+            >{formatMoney(totals.year1Total) || '$0'}</span>
           </div>
         </div>
       </div>

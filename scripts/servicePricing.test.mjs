@@ -11,6 +11,7 @@
 // a contract value.
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
+  feeBasisLabel,
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -122,6 +123,48 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('a typed fee reads back off the entry', pricingFor({ A: { avgFee: '12,500' } }, 'A').avgFee, 12500);
   check('whole dollars for deal figures', formatMoney(2500), '$2,500');
   check('cents survive on a small rate', formatMoney(12.5), '$12.50');
+}
+
+// --- Year 1, and saying where a fee came from -----------------------------
+//
+// The Deal Size popup lists a deal's scope with the fee each service is worth
+// in its FIRST year, so two things have to hold: that figure is the recurring
+// annual money plus the one-off money (they only agree in year one, which is
+// why the contract value keeps them apart), and every line can say how it was
+// arrived at — a number the reader watches move needs a reason on the row.
+{
+  const rows = [
+    { name: 'Bill Pay', meta: { serviceType: 'Recurring', years: '3 years' } },
+    { name: 'Budgets', meta: { serviceType: 'Project' } },
+    { name: 'Risk', meta: { serviceType: 'Recurring', years: '2 years' } },
+    { name: 'Data', meta: { serviceType: 'Project' } },
+  ];
+  const pricing = {
+    'Bill Pay': { avgFee: 40000 },
+    'Budgets': { basis: 'per_site', rate: 500, minFee: 2000 },
+    'Risk': { basis: 'pct_deal', rate: 3 },
+    'Data': {},
+  };
+  const est = estimateScope({
+    rows, services: rows.map(r => r.name), pricing,
+    counts: { sites: 12 }, dealSize: 100000,
+  });
+  check('year 1 is the recurring year plus the one-off work',
+    est.year1Total, est.recurringAnnual + est.oneTime);
+  check('…which is what the priced lines bill in their first year',
+    est.year1Total, 40000 + 6000 + 3000);
+  check('…and not the contract value, which runs the recurring years out',
+    est.contractValue, 40000 * 3 + 6000 + 3000 * 2);
+  check('an unpriced service is named rather than counted as nothing', est.unpriced, ['Data']);
+
+  const by = Object.fromEntries(est.lines.map(l => [l.name, feeBasisLabel(l)]));
+  check('a typed fee says so', by['Bill Pay'], 'Est. Fee');
+  check('a per-unit fee shows its rate and the count it multiplied', by.Budgets, '$500 per site × 12');
+  check('a percentage says what it is a percentage of', by.Risk, '3% of deal size');
+  check('an unpriced service has nothing to say', by.Data, '');
+  check('a flat fee names its basis',
+    feeBasisLabel({ entry: { basis: 'flat', rate: 9000 } }), 'Flat fee');
+  check('and junk is tolerated', feeBasisLabel(null), '');
 }
 
 console.log(`${passed} passed, ${failed} failed`);
