@@ -4,7 +4,7 @@
 // uploads their tracker workbook.
 
 import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
 
 const KEY = 'deals-list-override';
 // Fired whenever the deals roster is saved or cleared, so same-window
@@ -34,7 +34,7 @@ export function saveDealsOverride(arr) {
   if (!Array.isArray(arr)) throw new Error('Deals override must be an array');
   userLsSet(KEY, JSON.stringify(arr));
   queueMirrorPush(KEY);
-  try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
+  dispatchStoreEvent(DEALS_LIST_EVENT);
 }
 
 export function clearDealsOverride() {
@@ -43,7 +43,7 @@ export function clearDealsOverride() {
   // emptiness is the thing to sync. A browser that merely LOST its copy
   // never reaches here, and so can't wipe the cloud one.
   queueMirrorPush(KEY, { allowEmpty: true });
-  try { window.dispatchEvent(new Event(DEALS_LIST_EVENT)); } catch { /* no window */ }
+  dispatchStoreEvent(DEALS_LIST_EVENT);
 }
 
 export function hasDealsOverride() {

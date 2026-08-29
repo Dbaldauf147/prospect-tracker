@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { DateCell } from '../common/DateCell';
@@ -11,7 +11,7 @@ import {
   LinkColumnsModal,
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
+import { loadDealsList, saveDealsOverride, clearDealsOverride, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
 import { DEAL_IGNORED_KEY } from '../../utils/postSaleFollowUp';
 import { HANDOFF_FIELDS, isFilled, isHandoffFieldDone } from '../../utils/dealHandoff';
@@ -1143,12 +1143,18 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     // This page only READS commissions, so reacting to the change event
     // can't feed back into its own writes.
     const onCommissions = () => setCommissionsData(loadCommissions().data || []);
+    // The deals roster changed under us — another tab, or the Firestore
+    // mirror hydrating a restored copy at signin. Safe to listen for our
+    // own writes too now that commitDeals saves outside the state updater.
+    const onDealsList = () => setStore(loadDealsList());
     window.addEventListener('storage', onStorage);
+    window.addEventListener(DEALS_LIST_EVENT, onDealsList);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
     window.addEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
     return () => {
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
       window.removeEventListener(COMMISSIONS_LIST_EVENT, onCommissions);
@@ -1243,56 +1249,75 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return out;
   }, [prospects]);
 
+  // The roster as of the last write, tracked in a ref alongside the state.
+  //
+  // Every mutation below used to compute its next roster inside a
+  // setStore(prev => …) updater and save from in there. That had to stop:
+  // saveDealsOverride dispatches DEALS_LIST_EVENT, this page now listens
+  // for it (so a Firestore-restored roster lands without a reload), and a
+  // listener firing from inside this component's own updater would recurse.
+  //
+  // Reading plain `data` from the render closure instead would have been a
+  // regression: importOppYear1 calls updateCells once per fill in a loop,
+  // and every iteration would have read the same stale roster, so only the
+  // last fill would survive. The ref is updated synchronously by
+  // commitDeals, so a batch in one tick still chains write on write.
+  const dealsRef = useRef(data);
+  useEffect(() => { dealsRef.current = data; }, [data]);
+
+  // Persist a new roster and put it on screen. The single place that
+  // writes deals, so the save stays outside every state updater.
+  //
+  // These four are useCallback'd with no dependencies — they read the
+  // roster from the ref rather than from the render, so their identity
+  // never has to change. That keeps the `rows` and column memos below
+  // from rebuilding on every render just to pick up a new closure.
+  const commitDeals = useCallback((next) => {
+    dealsRef.current = next;
+    setStore({ data: next, source: 'override' });
+    try { saveDealsOverride(next); } catch (err) { console.warn('Save deals failed', err); }
+  }, []);
+
   // Per-cell saves write the new value into the stored deal and
   // persist through dealsStore (localStorage + Firestore mirror).
   // Used by inline cell editing (double-click) and the progress
   // popover's checkbox toggles. Falsy / empty saves drop the key
   // entirely so empty cells render the muted "—" placeholder.
-  function updateCell(rowId, key, value) {
+  const updateCell = useCallback((rowId, key, value) => {
     const idx = Number(rowId);
     if (!Number.isFinite(idx)) return;
-    setStore(prev => {
-      const next = [...prev.data];
-      const current = { ...(next[idx] || {}) };
-      if (value === '' || value == null) delete current[key];
-      else current[key] = value;
-      next[idx] = current;
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
-      return { data: next, source: 'override' };
-    });
-  }
+    const next = [...dealsRef.current];
+    const current = { ...(next[idx] || {}) };
+    if (value === '' || value == null) delete current[key];
+    else current[key] = value;
+    next[idx] = current;
+    commitDeals(next);
+  }, [commitDeals]);
 
   // Write several cells on one row in a single pass — a projection saves
   // four keys at once, and routing each through updateCell would persist
   // the whole roster four times over.
-  function updateCells(rowId, patch) {
+  const updateCells = useCallback((rowId, patch) => {
     const idx = Number(rowId);
     if (!Number.isFinite(idx)) return;
-    setStore(prev => {
-      const next = [...prev.data];
-      const current = { ...(next[idx] || {}) };
-      for (const [key, value] of Object.entries(patch || {})) {
-        if (value === '' || value == null) delete current[key];
-        else current[key] = value;
-      }
-      next[idx] = current;
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
-      return { data: next, source: 'override' };
-    });
-  }
+    const next = [...dealsRef.current];
+    const current = { ...(next[idx] || {}) };
+    for (const [key, value] of Object.entries(patch || {})) {
+      if (value === '' || value == null) delete current[key];
+      else current[key] = value;
+    }
+    next[idx] = current;
+    commitDeals(next);
+  }, [commitDeals]);
 
   function addNewDeal() {
-    setStore(prev => {
-      // Pre-fill Due Date 60 days from today so the Days/Paid on
-      // delta has something to render against the moment the row
-      // appears. Stored in the same M/D/YYYY shape Excel exports use.
-      const due = new Date();
-      due.setDate(due.getDate() + 60);
-      const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-      const next = [{ 'Due Date': dueDateStr }, ...prev.data];
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
-      return { data: next, source: 'override' };
-    });
+    // Pre-fill Due Date 60 days from today so the Days/Paid on
+    // delta has something to render against the moment the row
+    // appears. Stored in the same M/D/YYYY shape Excel exports use.
+    const due = new Date();
+    due.setDate(due.getDate() + 60);
+    const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+    commitDeals([{ 'Due Date': dueDateStr }, ...dealsRef.current]);
   }
 
   // A new deal seeded from a flagged Sold opp. Carries over the BFO opp
@@ -1317,11 +1342,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   }
 
   function addDealFromOpp(opp) {
-    setStore(prev => {
-      const next = [dealRowFromOpp(opp, seedDueDate()), ...prev.data];
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
-      return { data: next, source: 'override' };
-    });
+    commitDeals([dealRowFromOpp(opp, seedDueDate()), ...dealsRef.current]);
   }
 
   // Every flagged opp at once, in the order the banner lists them, in a
@@ -1341,12 +1362,8 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         ? `\n\n${noBfo} of them ${noBfo === 1 ? 'has' : 'have'} no BFO opp name, so ${noBfo === 1 ? 'that opp' : 'those opps'} will keep warning until you set one.`
         : '');
     if (!window.confirm(ask)) return;
-    setStore(prev => {
-      const dueDateStr = seedDueDate();
-      const next = [...opps.map(o => dealRowFromOpp(o, dueDateStr)), ...prev.data];
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deals failed', err); }
-      return { data: next, source: 'override' };
-    });
+    const dueDateStr = seedDueDate();
+    commitDeals([...opps.map(o => dealRowFromOpp(o, dueDateStr)), ...dealsRef.current]);
   }
 
   // Bulk-edit helpers. Selection lives in DealsView state (Set of row
@@ -1371,18 +1388,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
 
   function applyBulkEdit() {
     if (!bulkEditColumn || selectedIds.size === 0) return;
-    setStore(prev => {
-      const next = prev.data.map((row, idx) => {
-        if (!selectedIds.has(idx)) return row;
-        const updated = { ...row };
-        const v = bulkEditValue;
-        if (v === '' || v == null) delete updated[bulkEditColumn];
-        else updated[bulkEditColumn] = v;
-        return updated;
-      });
-      try { saveDealsOverride(next); } catch (err) { console.warn('Bulk save failed', err); }
-      return { data: next, source: 'override' };
-    });
+    commitDeals(dealsRef.current.map((row, idx) => {
+      if (!selectedIds.has(idx)) return row;
+      const updated = { ...row };
+      const v = bulkEditValue;
+      if (v === '' || v == null) delete updated[bulkEditColumn];
+      else updated[bulkEditColumn] = v;
+      return updated;
+    }));
   }
 
   // Flip the Handoff-progress "ignored" flag on every selected deal.
@@ -1390,32 +1403,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // column pill, restore removes the flag.
   function applyBulkIgnore(mode) {
     if (selectedIds.size === 0) return;
-    setStore(prev => {
-      const next = prev.data.map((row, idx) => {
-        if (!selectedIds.has(idx)) return row;
-        const updated = { ...row };
-        if (mode === 'ignore') updated[PROGRESS_IGNORED_KEY] = '1';
-        else delete updated[PROGRESS_IGNORED_KEY];
-        return updated;
-      });
-      try { saveDealsOverride(next); } catch (err) { console.warn('Bulk ignore save failed', err); }
-      return { data: next, source: 'override' };
-    });
+    commitDeals(dealsRef.current.map((row, idx) => {
+      if (!selectedIds.has(idx)) return row;
+      const updated = { ...row };
+      if (mode === 'ignore') updated[PROGRESS_IGNORED_KEY] = '1';
+      else delete updated[PROGRESS_IGNORED_KEY];
+      return updated;
+    }));
   }
 
   // Drop a deal row entirely. Wired into the Progress popover's
   // "Delete deal" button so the user can prune rows that shouldn't be
   // in the tracker without hunting for the underlying source.
-  function deleteDeal(rowId) {
+  const deleteDeal = useCallback((rowId) => {
     const idx = Number(rowId);
     if (!Number.isFinite(idx)) return;
-    setStore(prev => {
-      if (idx < 0 || idx >= prev.data.length) return prev;
-      const next = prev.data.filter((_, i) => i !== idx);
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save deals failed', err); }
-      return { data: next, source: 'override' };
-    });
-  }
+    const current = dealsRef.current;
+    if (idx < 0 || idx >= current.length) return;
+    commitDeals(current.filter((_, i) => i !== idx));
+  }, [commitDeals]);
 
   // Open the commission breakdown popup for a deal's Revenue Recorded /
   // Paid to Date cell. Wired to a double-click on the auto-populated pill;
@@ -1449,7 +1455,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       // contract-value denominator can count it before anyone imports.
       __oppYear1__: oppYear1ForDeal(oppYear1ByBfo, r),
     })),
-    [data, oppYear1ByBfo]
+    // updateCell is useCallback'd with a stable identity, so listing it
+    // here satisfies the exhaustive-deps rule without costing a rebuild.
+    [data, oppYear1ByBfo, updateCell]
   );
   // Sold Opps 2 opps that don't line up with any deal here. The link
   // between the two is the BFO opportunity name — "BFO Link" on an opp,
@@ -1749,7 +1757,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     };
     // Order: select · history · progress · client name · mapped-to-client · status · rest.
     return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect]);
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
