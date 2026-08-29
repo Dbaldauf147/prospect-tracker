@@ -12,8 +12,8 @@
 //              or a Lead Source name)
 //   field    — the plotted dataKey being overridden (e.g. 'count', 'sold')
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 
 const KEY = 'yoy-chart-overrides';
 

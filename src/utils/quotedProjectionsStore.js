@@ -5,8 +5,8 @@
 // Agreements Sent, and bfoPipe is the total BFO pipeline $ (plotted on
 // its own right-hand axis since it runs larger). Keyed by month "YYYY-MM".
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 
 const KEY = 'yoy-quoted-projections';
 

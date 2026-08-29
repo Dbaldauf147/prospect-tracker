@@ -6,8 +6,8 @@
 // All keys are scoped per user so accounts sharing a browser don't
 // share client-tab notes / statuses.
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const MANAGER_KEY = 'clients-manager-map';
 const IN_PERSON_KEY = 'clients-inperson-map';

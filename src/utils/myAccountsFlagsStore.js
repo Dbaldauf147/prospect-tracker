@@ -6,8 +6,8 @@
 // and announced with a custom event so the Issues tab and the sidebar
 // badge refresh cross-tab, mirroring the deals / snooze stores.
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const FLAGS_KEY = 'my-accounts:flags';
 export const MY_ACCOUNTS_FLAGS_KEY = FLAGS_KEY;

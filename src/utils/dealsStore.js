@@ -3,8 +3,8 @@
 // No bundled default — the Deals sub-tab starts empty until the user
 // uploads their tracker workbook.
 
-import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
+import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 
 const KEY = 'deals-list-override';
 // Fired whenever the deals roster is saved or cleared, so same-window

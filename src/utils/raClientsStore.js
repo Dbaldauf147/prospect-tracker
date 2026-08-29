@@ -2,8 +2,8 @@
 // scoped per user) takes precedence over the bundled default in
 // src/data/raClients.json.
 import defaultRaClients from '../data/raClients.json';
-import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
+import { userLsGet, userLsSet, userLsRemove, userLsHas } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 
 const KEY = 'ra-clients-override';
 

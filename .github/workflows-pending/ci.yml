@@ -1,0 +1,85 @@
+# NOT ACTIVE YET — this file has to move to .github/workflows/ to run.
+#
+#   git mv .github/workflows-pending/ci.yml .github/workflows/
+#
+# It lives here because creating anything under .github/workflows/ requires
+# a GitHub token with the `workflow` scope, which the assistant that wrote
+# this doesn't have; the move is a one-liner for a human who does.
+#
+# ---------------------------------------------------------------------------
+# Runs the test suite and the production build on every pull request.
+#
+# Why this exists: the repo had 92 test files and nothing that ran them. They
+# only executed when somebody remembered to type the filename of the one they
+# had just edited, which meant a test could sit broken indefinitely — two were
+# failing when this was written, and one of those (scripts/prospectWrites) had
+# never once run to completion on Windows, so the guard it implements had
+# never actually guarded anything.
+#
+# What it protects, concretely:
+#
+#   * scripts/mirroredStores.test.mjs — the reason this pipeline exists. It
+#     fails the build when a new store keeps user data only in the browser
+#     without either mirroring it to Firestore or declaring why that is safe.
+#     A "clear cookies and site data" destroyed the Deals roster on 28 Aug
+#     2026 because nothing enforced that; the gap had been open since May.
+#
+#   * scripts/prospectWrites.test.mjs — keeps the "same company?" dedupe rule
+#     in one place by refusing direct writes to the prospects collection.
+#
+#   * The build. Catches an import that Vite cannot resolve before it reaches
+#     production, rather than after.
+#
+# Deliberately NOT here: `npm run lint`. It reports 594 problems (440 errors)
+# on master today, so gating on it would paint every PR red on arrival and
+# teach everyone to ignore the check. Worth adding once that backlog is dealt
+# with — the rule to add is `npm run lint`, and nothing else changes.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# A second push to the same PR makes the first run's answer irrelevant.
+# master is excluded from cancellation so every merged commit gets a verdict.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # ci, not install: the lockfile decides, and a drifted lockfile should
+      # fail here rather than silently resolving to something else.
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      # The bundle is thrown away — this is a compile check. It runs without
+      # VITE_FIREBASE_* on purpose: Vite inlines those at build time and the
+      # missing-config error is raised in the browser, not here, so the build
+      # still exercises every import and transform. Do not add fake secrets
+      # to "fix" a failure here; a failure here is a real one.
+      #
+      # The `prebuild` hook (scripts/deployFirestoreRules.mjs --build) is a
+      # no-op outside Vercel production and never fails a build, so it costs
+      # nothing in this job.
+      - name: Build
+        run: npm run build
