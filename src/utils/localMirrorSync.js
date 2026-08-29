@@ -25,9 +25,24 @@
 // single-document write fails and cross-device sync stalls silently.
 
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
-import { db } from '../firebase';
-import { userLsGet, userLsSet, userLsRemove } from './userLs';
-import { dbGet, dbPut, dbDelete } from './db';
+import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
+import { dbGet, dbPut, dbDelete } from './db.js';
+
+// src/firebase.js reads import.meta.env and THROWS while it is still
+// evaluating when the config is absent — which is every plain-Node context,
+// including the scripts/*.test.mjs suite. Registering a mirrored key has to
+// work without a configured Firebase, so the app module is pulled in only
+// when a read or write actually needs the database.
+//
+// This is not hypothetical tidiness: dealCommissions.js imports
+// commissionsStore.js for one constant (COMMISSION_MONTH_NAMES), so once
+// that store began mirroring, a static import here took the whole Firebase
+// SDK down that chain and broke scripts/dealOppYear1.test.mjs.
+let dbPromise = null;
+function getDb() {
+  if (!dbPromise) dbPromise = import('../firebase.js').then((m) => m.db);
+  return dbPromise;
+}
 
 const COL = 'userSettings';
 const SUB = 'localMirrors';
@@ -152,8 +167,8 @@ function splitByUtf8Bytes(str, maxBytes) {
   return parts;
 }
 
-function mirrorDoc(userId, key) {
-  return doc(db, COL, userId, SUB, key);
+async function mirrorDoc(userId, key) {
+  return doc(await getDb(), COL, userId, SUB, key);
 }
 
 // Announce a store's change to same-window listeners, one microtask later.
@@ -180,7 +195,7 @@ function fire(eventName) {
 // Firestore document I/O
 
 async function readMirror(userId, key) {
-  const ref = mirrorDoc(userId, key);
+  const ref = await mirrorDoc(userId, key);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
   const raw = snap.data() || {};
@@ -204,7 +219,7 @@ async function readMirror(userId, key) {
 async function dropChunks(ref, count) {
   if (!(count > 0)) return;
   try {
-    const batch = writeBatch(db);
+    const batch = writeBatch(await getDb());
     for (let i = 0; i < count; i++) batch.delete(doc(ref, 'chunks', String(i)));
     await batch.commit();
   } catch (err) {
@@ -213,7 +228,7 @@ async function dropChunks(ref, count) {
 }
 
 async function writeMirror(userId, key, json, updatedAt) {
-  const ref = mirrorDoc(userId, key);
+  const ref = await mirrorDoc(userId, key);
   let priorChunkCount = 0;
   try { priorChunkCount = Number((await getDoc(ref)).data()?.chunkCount) || 0; } catch { /* first write */ }
 
@@ -224,7 +239,7 @@ async function writeMirror(userId, key, json, updatedAt) {
   }
 
   const parts = splitByUtf8Bytes(json, CHUNK_BYTES);
-  const batch = writeBatch(db);
+  const batch = writeBatch(await getDb());
   parts.forEach((s, i) => batch.set(doc(ref, 'chunks', String(i)), { s }));
   // The parent lands last so a reader never sees a chunkCount whose chunks
   // aren't all written yet.
@@ -232,7 +247,7 @@ async function writeMirror(userId, key, json, updatedAt) {
   await batch.commit();
   if (priorChunkCount > parts.length) {
     try {
-      const cleanup = writeBatch(db);
+      const cleanup = writeBatch(await getDb());
       for (let i = parts.length; i < priorChunkCount; i++) cleanup.delete(doc(ref, 'chunks', String(i)));
       await cleanup.commit();
     } catch (err) {
@@ -341,17 +356,17 @@ export async function hydrateLocalMirrors(userId) {
   // Force the stores to register their keys. They register at import time,
   // and a store whose view hasn't mounted yet wouldn't otherwise be loaded.
   await Promise.all([
-    import('./dealsStore'),
-    import('./dealClientMap'),
-    import('./clientManagerStore'),
-    import('./issueSnoozeStore'),
-    import('./myAccountsFlagsStore'),
-    import('./pipelineDashboardStore'),
-    import('./bfoActivityStore'),
-    import('./quotedProjectionsStore'),
-    import('./commissionsStore'),
-    import('./yoyOverridesStore'),
-    import('./raClientsStore'),
+    import('./dealsStore.js'),
+    import('./dealClientMap.js'),
+    import('./clientManagerStore.js'),
+    import('./issueSnoozeStore.js'),
+    import('./myAccountsFlagsStore.js'),
+    import('./pipelineDashboardStore.js'),
+    import('./bfoActivityStore.js'),
+    import('./quotedProjectionsStore.js'),
+    import('./commissionsStore.js'),
+    import('./yoyOverridesStore.js'),
+    import('./raClientsStore.js'),
   ]).catch(err => console.warn('localMirror: store registration import failed', err));
 
   const entries = [...registry.entries()];

@@ -18,9 +18,13 @@
 // this test is failing, the fix is to call addProspectsIfNew /
 // readAllProspects rather than to widen ALLOWED.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../src/', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: on Windows the latter yields
+// "/C:/Users/Dan%20Baldauf/…" — a leading slash and percent-encoded
+// spaces — which readdirSync then resolves to "C:\C:\Users\Dan%20…".
+const ROOT = fileURLToPath(new URL('../src/', import.meta.url));
 
 // The only module allowed to name the collection, relative to src/.
 const ALLOWED = new Set(['utils/firestoreSync.js']);
@@ -49,7 +53,11 @@ const offenders = [];
 let scanned = 0;
 
 for (const file of walk(ROOT)) {
-  const rel = file.slice(ROOT.length);
+  // Normalise to forward slashes: ALLOWED is written with them, and on
+  // Windows this slice yields "utils\firestoreSync.js", which matched
+  // nothing — so the one module that IS allowed to touch the collection
+  // was reported as the offender.
+  const rel = file.slice(ROOT.length).split(sep).join('/');
   scanned++;
   if (ALLOWED.has(rel)) continue;
   const src = readFileSync(file, 'utf8');

@@ -7,8 +7,8 @@
 // and hidden columns) is per-browser display state, cheap to redo, and not
 // worth a document.
 
-import { dbGet } from './db';
-import { registerMirroredDbKey, mirrorDbPut } from './localMirrorSync';
+import { dbGet } from './db.js';
+import { registerMirroredDbKey, mirrorDbPut } from './localMirrorSync.js';
 
 export const BFO_ACTIVITY_STORE = 'bfo-activity';
 export const BFO_ACTIVITY_KEY = 'current';

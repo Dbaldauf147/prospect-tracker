@@ -5,7 +5,7 @@
 // prompt.
 
 import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync';
+import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 
 const KEY = 'commissions-list-override';
 

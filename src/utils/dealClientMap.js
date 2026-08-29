@@ -4,8 +4,8 @@
 // doesn't fragment the map across imports of the same tracker. Scoped
 // per user so accounts sharing a browser don't share mapping state.
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const KEY = 'deals-client-map';
 const IGNORE_KEY = 'deals-client-ignore';

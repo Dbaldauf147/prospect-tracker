@@ -11,8 +11,8 @@
 // `true` and normalize to the no-end-date form, so nothing that was
 // snoozed before comes back on its own.
 
-import { userLsGet, userLsSet } from './userLs';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync';
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const SNOOZED_KEY = 'issues-snoozed-map';
 export const ISSUE_SNOOZED_EVENT = 'issue-snoozed-changed';

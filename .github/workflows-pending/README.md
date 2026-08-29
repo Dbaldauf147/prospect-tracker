@@ -143,3 +143,33 @@ above.
 - One caveat from the CLI's own help for `--dry-run`: *"In order to provide
   better validation, this may still enable APIs on the target project."* So
   the PR-triggered job is not purely read-only against `tracker-3161a`.
+
+### `ci.yml`
+
+Runs `npm test` (all 92 files in `scripts/`) and `npm run build` on every
+pull request and on pushes to `master`.
+
+**The drift this prevents has already happened, twice.** The repo had 92
+test files and nothing that ran them, so they only executed when somebody
+remembered to type the filename of the one they had just edited:
+
+* `scripts/dealOppYear1.test.mjs` was broken for a day by a mirrored store
+  gaining an extensionless `import './localMirrorSync'` — fine under Vite,
+  unresolvable under plain Node. Nothing noticed.
+* `scripts/prospectWrites.test.mjs` had **never once run to completion on
+  Windows**. It built its scan root with `new URL(...).pathname`, which
+  yields `/C:/Users/Dan%20Baldauf/…`, and then compared POSIX paths against
+  Windows backslashes — so the one module allowed to touch the prospects
+  collection was reported as the offender. The guard had never guarded
+  anything on the machine it was written on.
+
+It also runs `scripts/mirroredStores.test.mjs`, which is the enforcement
+half of the Firestore mirror: it fails the build when a new store keeps
+user data only in the browser without either mirroring it or declaring in
+`LOCAL_BY_DESIGN` why losing it is acceptable. That check is the one that
+would have caught the Deals roster gap in May 2026, three months before a
+"clear cookies and site data" destroyed it.
+
+`npm run lint` is deliberately **not** in the workflow: it reports 594
+problems (440 errors) on master today, so gating on it would paint every PR
+red on arrival. Add it once that backlog is cleared.

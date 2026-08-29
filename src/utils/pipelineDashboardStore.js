@@ -4,8 +4,8 @@
 // Coverage" services so it can warn about the rows sitting under 100%.
 // PipelineView announces every save with PIPELINE_DASHBOARD_EVENT so those
 // readers refresh as soon as the user adds or removes a service.
-import { dbGet } from './db';
-import { registerMirroredDbKey } from './localMirrorSync';
+import { dbGet } from './db.js';
+import { registerMirroredDbKey } from './localMirrorSync.js';
 
 export const PIPELINE_STORE = 'pipeline-dashboard';
 export const PIPELINE_KEY = 'current';

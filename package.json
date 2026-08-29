@@ -8,6 +8,7 @@
     "deploy:rules": "node scripts/deployFirestoreRules.mjs",
     "prebuild": "node scripts/deployFirestoreRules.mjs --build",
     "build": "vite build",
+    "test": "node scripts/runTests.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
