@@ -1972,6 +1972,19 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         if (ignoreSet.has(norm)) return '(ignored)';
         return clientMap[norm] || '';
       },
+      // Underscore-keyed columns are skipped by the filter row unless they
+      // say what they hold, so the one column naming the client had no
+      // Filter box while its neighbours did. Mirrors exportValue, which
+      // means a search matches whether the row auto-matched on its own
+      // name or was mapped to a client by hand.
+      getFilterValue: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return '';
+        const norm = normClient(raw);
+        if (clientNameSet.has(norm)) return raw;
+        if (ignoreSet.has(norm)) return '(ignored)';
+        return clientMap[norm] || '';
+      },
     };
     // Looks up the prospect status for each deal row. Uses the
     // mapped target when the user has hand-mapped this source name,
