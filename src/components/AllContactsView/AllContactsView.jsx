@@ -10,9 +10,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
+import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
+import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadClientStatusMap, CLIENT_STATUS_EVENT, loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT } from '../../utils/clientManagerStore';
 import { isLocalTagVerdict, tagAnswerFrom, tagKey, findTagRecord } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 
@@ -74,24 +74,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // tab's own stores and re-read on the events it fires, so a company
   // switched to "Cancelling for Sure" or ticked "Don't Track" drops off this
   // page without a reload.
-  const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
-  const [clientUntrackedMap, setClientUntrackedMap] = useState(() => loadClientUntrackedMap());
-  useEffect(() => {
-    function onStorage(e) {
-      if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
-      if (e.key === 'clients-untracked-map') setClientUntrackedMap(loadClientUntrackedMap());
-    }
-    function onStatus() { setClientStatusMap(loadClientStatusMap()); }
-    function onUntracked() { setClientUntrackedMap(loadClientUntrackedMap()); }
-    window.addEventListener('storage', onStorage);
-    window.addEventListener(CLIENT_STATUS_EVENT, onStatus);
-    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    return () => {
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener(CLIENT_STATUS_EVENT, onStatus);
-      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntracked);
-    };
-  }, []);
+  const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
 
   // "Show hidden contacts" toggle. Same review-mode behaviour the
   // dedicated Active page exposes — when on, the page becomes a list

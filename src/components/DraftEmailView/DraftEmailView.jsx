@@ -17,6 +17,8 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { htmlSectionLines } from '../../utils/inlineImages.js';
 import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import styles from './DraftEmailView.module.css';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
@@ -500,7 +502,42 @@ function CoverageWarning({ gaps, affected, total }) {
 // remove the contact from the campaign. The columns and their
 // filled/total counts come from computeVariableCoverage, run once on the
 // page and passed in.
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField }) {
+// One recipient's roster pills, in the colours ROSTER_CATEGORIES defines —
+// the same source the All Contacts Category column reads, so a contact that
+// shows "Client Key" there shows "Client Key" here.
+function CategoryCell({ categories, cellStyle }) {
+  const cats = categories || [];
+  if (cats.length === 0) {
+    return (
+      <td style={cellStyle} title="On none of the Key / Active / Client / Key Prospect rosters">
+        <span style={{ color: '#CBD5E1' }}>-</span>
+      </td>
+    );
+  }
+  return (
+    <td style={{ ...cellStyle, maxWidth: 220 }} title={cats.join(', ')}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexWrap: 'nowrap' }}>
+        {cats.map(cat => {
+          const c = ROSTER_CATEGORIES.find(r => r.label === cat);
+          return (
+            <span
+              key={cat}
+              style={{
+                padding: '0 6px', borderRadius: 999,
+                background: c?.bg || '#F1F5F9',
+                border: `1px solid ${c?.border || '#CBD5E1'}`,
+                color: c?.color || '#475569',
+                fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap',
+              }}
+            >{cat}</span>
+          );
+        })}
+      </span>
+    </td>
+  );
+}
+
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize }) {
   if (contacts.length === 0) {
     return (
       <>
@@ -528,7 +565,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
     <>
       <h3 className={styles.cardTitle}>Variable Coverage ({contacts.length})</h3>
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; each column is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / Key Prospect), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
       <div style={{
         // Grow with the viewport — leaves enough room for the page
@@ -546,6 +583,11 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
           <thead>
             <tr>
               <th style={headStyle}>Recipient</th>
+              {categorize && (
+                <th style={headStyle} title="Which contact rosters this recipient is on — the same Key / Active / Client / Key Prospect gates the Contacts pages run">
+                  Category
+                </th>
+              )}
               {usedTokens.map(v => {
                 const cov = coverage[v.token] || { filled: 0, total: contacts.length };
                 const partial = cov.filled < cov.total;
@@ -568,6 +610,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
                 <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
                   {c.name || c.email || '(unnamed)'}
                 </td>
+                {categorize && <CategoryCell categories={categorize(c)} cellStyle={cellStyle} />}
                 {usedTokens.map(v => {
                   const val = String(resolve(c, v.token) || '').trim();
                   const editable = !!(isEditable && isEditable(v.token));
@@ -998,7 +1041,7 @@ const SELF_RECIPIENT = Object.freeze({
   company: '',
 });
 
-export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath }) {
+export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
@@ -1191,6 +1234,33 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     }
     return m;
   }, [rawContacts]);
+
+  // Which rosters each recipient is on — the same Key / Active / Client /
+  // Key Prospect gates the contacts pages run, so the Category column below
+  // reads identically to the one on All Contacts. Built here rather than in
+  // the table because the gates need page-level data (the prospect roster,
+  // Opps 2, the Clients-tab flags) that the presentational table has no
+  // business loading.
+  const oppsRecords = useOppsRecords(user?.uid);
+  const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
+  const rosterGates = useMemo(
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+  );
+  // The gates read raw HubSpot fields (dans_tags above all), which the
+  // flattened composer contact doesn't carry — so resolve back to the raw
+  // record first. A recipient the cache doesn't hold (a Marketing Lead added
+  // straight to the draft) still gets its company and email checked, which is
+  // enough for the Client gate; it just can't be Key or a Key Prospect
+  // without tags to read.
+  const categorizeRecipient = useCallback((flat) => {
+    if (!flat) return [];
+    const raw = flat.id != null ? rawById.get(String(flat.id)) : null;
+    return rosterGates.categorize(raw || {
+      company: flat.company || '',
+      email: flat.email || '',
+    });
+  }, [rawById, rosterGates]);
 
   // Resolve a clicked recipient (a flattened composer contact) to the raw
   // HubSpot record. When it isn't in the cache — e.g. a Marketing Lead added
@@ -2584,6 +2654,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               resolve={resolveVariable}
               isEditable={token => !!COVERAGE_EDITABLE[token]}
               onEditField={handleCoverageEdit}
+              categorize={categorizeRecipient}
             />
           </div>
 
