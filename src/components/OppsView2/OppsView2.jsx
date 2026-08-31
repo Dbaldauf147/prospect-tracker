@@ -4,6 +4,7 @@ import { doc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
@@ -9566,6 +9567,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     onSelectProspect(prospect);
   }, [onSelectProspect]);
 
+  // "Company ↗" in the contact popup: same destination, but starting from
+  // the popup's free-text company NAME rather than a resolved record, so it
+  // has to look the prospect up first. Closes the contact popup — the two
+  // are full-screen modals, so this is navigation, not a stack.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+
   // ContactEditModal saves through these handlers so per-contact
   // notes / nicknames / etc. land in the same Firestore settings
   // maps every other view writes to (Key Contacts uses the same
@@ -12989,6 +13001,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contact={editingContact}
           onSave={closeContactModal}
           onClose={() => setEditingContact(null)}
+          onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={saveContactNote}
           contactOldEmails={settings?.contactOldEmails || {}}

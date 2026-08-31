@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
 import { useOppsRecords } from '../../utils/rosterHooks';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
@@ -1583,6 +1584,16 @@ function KeyContactsViewInner({
   // `hubspot-cache-updated` event we do, so a save here lights up
   // there automatically (and vice-versa).
   const [editingContact, setEditingContact] = useState(null);
+  // "Company ↗" in the contact popup: close the contact and open the
+  // company it names. The two are full-screen modals, so this reads as
+  // navigation rather than a stack — going back is the company popup's own
+  // contact list, which lands on the same person.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target) return;
+    setEditingContact(null);
+    onSelectProspect?.(target);
+  }, [prospects, onSelectProspect]);
   // ContactEditModal calls onSave with { silent: true } from its
   // tag-autosave path so each tag toggle persists without dropping
   // the user out of the popup. We have to honour that flag — the
@@ -4780,6 +4791,7 @@ function KeyContactsViewInner({
             contact={editingContact}
             onSave={handleContactSaved}
             onClose={() => setEditingContact(null)}
+            onOpenCompany={openCompanyFromContact}
             contactNotes={settings?.contactNotes || {}}
             onSaveNote={handleSaveContactNote}
             contactOldEmails={settings?.contactOldEmails || {}}

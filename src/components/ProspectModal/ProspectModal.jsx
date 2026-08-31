@@ -44,6 +44,7 @@ import {
 } from '../../utils/scheduledOpps';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
@@ -712,7 +713,7 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1740,7 +1741,27 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
-            <label style={labelStyle}>Company</label>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <label style={labelStyle}>Company</label>
+              {/* Jump to the company's own popup. The field itself has to stay
+                  an input — it's the editable, autocompleting company name —
+                  so the way through sits beside the label, the same shape the
+                  LinkedIn deep links below use. The caller owns what "open"
+                  means (it holds the company popup) and closes this one. */}
+              {onOpenCompany && (f.company || '').trim() && (
+                <button
+                  type="button"
+                  onClick={() => onOpenCompany((f.company || '').trim())}
+                  title={`Open the company popup for ${(f.company || '').trim()}`}
+                  style={{
+                    background: 'none', border: 'none', padding: 0,
+                    fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+                    color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline',
+                    maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                >{(f.company || '').trim()} ↗</button>
+              )}
+            </div>
             {(() => {
               const q = (f.company || '').trim().toLowerCase();
               const seen = new Set();
@@ -2477,7 +2498,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
   ]));
   const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prev.onOpenCompany === next.onOpenCompany && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
@@ -5398,6 +5419,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setEditingContact(null);
     setAddingContact(false);
   }, []);
+
+  // "Company ↗" in the nested contact popup. Here the company popup is
+  // already the thing underneath, so for a contact at THIS company arriving
+  // is just closing the contact popup. A contact whose company is some other
+  // account — pinned there, or retyped — switches this popup over to it.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target) return;
+    handleCloseContactEdit();
+    const same = String(target.company || '').trim().toLowerCase()
+      === String(fields.company || '').trim().toLowerCase();
+    if (!same) onSelectProspect?.(target);
+  }, [prospects, fields.company, onSelectProspect, handleCloseContactEdit]);
 
   // Per-company slug used by the Opportunities section below.
   const companySlug = useMemo(
@@ -10491,6 +10525,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={handleCloseContactEdit}
+          onOpenCompany={openCompanyFromContact}
           tagOptions={allTagOptions}
           contactNotes={settings.contactNotes || {}}
           onSaveNote={handleSaveContactNote}

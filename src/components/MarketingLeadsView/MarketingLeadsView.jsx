@@ -7,6 +7,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { STATUS_COLORS } from '../../data/enums';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
@@ -1396,6 +1397,16 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
   // Same-company HubSpot contacts + company-name autocomplete list for the
   // popup's Reports-To / company fields, mirroring the Key Contacts wiring.
   const editContact = editingLead ? buildLeadContact(editingLead) : null;
+  // "Company ↗" in the contact popup: close the lead's contact editor and
+  // open the company it names. A lead's company usually isn't in Table View
+  // yet, so companyPopupTarget's name-only fallback is the common case here
+  // — the popup opens on the name so it can be added.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingLead(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
   const editCompanyContacts = useMemo(() => {
     if (!editContact) return [];
     const k = companyKey(editContact.company);
@@ -2686,6 +2697,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           contact={editContact}
           onSave={handleContactSaved}
           onClose={() => setEditingLead(null)}
+          onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
           contactOldEmails={settings?.contactOldEmails || {}}
