@@ -32,6 +32,7 @@ import {
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { suggestClients, exactClientMatch } from '../../utils/clientSuggest';
 import { STATUSES } from '../../data/enums';
 import {
   loadDealClientMap, setDealClientMapping,
@@ -603,15 +604,187 @@ function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
   );
 }
 
-// Render the helper column as a lazy editor. We were previously
-// mounting a full <select> with every client option (often 100+) for
-// every unmapped row — 250 rows × 130 options = 30k+ DOM nodes just
-// for the dropdowns, which can balloon paint cost on large lists and
-// leaves the table looking blank while the browser catches up. The
-// button form keeps the cell DOM tiny; the <select> only mounts when
-// the user clicks the cell to assign a client.
+// The picker the "Mapped to Client" cell opens: a type-to-search box
+// over the client roster rather than a <select>. Two reasons it isn't
+// a plain dropdown. The roster runs to 100+ names, so scrolling for
+// one is slow and you have to know how the name was spelled on the
+// Table View side to find it. And mounting a full <select> per
+// unmapped row — 250 rows × 130 options — is 30k+ DOM nodes of
+// dropdown, which alone can leave the table looking blank while the
+// browser catches up. So the cell renders a tiny button until it's
+// clicked, and the list that opens is filtered by what you type,
+// ranked so prefix matches lead (see utils/clientSuggest).
+//
+// The list is portalled to the body: the table cell clips its
+// overflow, and a dropdown that renders inside it would be cut off
+// after two rows.
+const SUGGEST_LIMIT = 50;
+
+// Where the suggestion list goes for a cell at `rect`: under it
+// normally, flipped above when the row sits near the bottom of the
+// viewport, and never wider than the screen. Measured from the cell
+// at the moment it's clicked — the input that replaces it occupies
+// the same box — so the list has its position on first paint.
+function suggestAnchor(rect) {
+  const margin = 8;
+  const wanted = 260;
+  const width = Math.max(rect.width, 240);
+  const viewportH = window.innerHeight || document.documentElement.clientHeight;
+  const viewportW = window.innerWidth || document.documentElement.clientWidth;
+  const spaceBelow = viewportH - rect.bottom - margin;
+  const spaceAbove = rect.top - margin;
+  const placeAbove = spaceBelow < wanted && spaceAbove > spaceBelow;
+  return {
+    left: Math.max(margin, Math.min(rect.left, viewportW - width - margin)),
+    top: placeAbove
+      ? Math.max(margin, rect.top - 4 - Math.min(wanted, spaceAbove))
+      : rect.bottom + 4,
+    width,
+    maxHeight: Math.min(wanted, Math.max(120, placeAbove ? spaceAbove : spaceBelow)),
+  };
+}
+
+function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onClose }) {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const listRef = useRef(null);
+
+  const matches = useMemo(
+    () => suggestClients(clientOptions, query, { limit: SUGGEST_LIMIT }),
+    [clientOptions, query]
+  );
+  // "(Unmap)" only earns a row when there's a mapping to clear, and
+  // only while the box is empty — once you're searching it's noise.
+  const showUnmap = !!manual && !query.trim();
+  const rows = showUnmap ? ['', ...matches] : matches;
+
+  // Keep the highlighted row in view as the arrows walk past the fold.
+  useEffect(() => {
+    const el = listRef.current?.querySelector('[data-active="1"]');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [active, matches]);
+
+  function commit(name) {
+    onChange(raw, name);
+    onClose();
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (rows.length === 0) return;
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setActive(i => (i + step + rows.length) % rows.length);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (rows.length === 0) return;
+      commit(rows[Math.min(active, rows.length - 1)]);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Tabbing away commits what was typed only when it names an
+      // option outright — a half-typed name is not a pick.
+      const exact = exactClientMatch(clientOptions, query);
+      if (exact) commit(exact); else onClose();
+    }
+  }
+
+  const rowStyle = (isActive, muted) => ({
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '0.25rem 0.5rem', border: 'none',
+    background: isActive ? '#EFF6FF' : 'transparent',
+    color: muted ? '#64748B' : '#1E293B',
+    fontSize: '0.7rem', fontFamily: 'inherit', fontStyle: muted ? 'italic' : 'normal',
+    cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  });
+
+  return (
+    <>
+      <input
+        autoFocus
+        type="text"
+        value={query}
+        placeholder={manual || 'Search clients…'}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); }}
+        onKeyDown={handleKeyDown}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title="Type part of the client name — matches are ranked as you type"
+        style={{
+          width: '100%', padding: '0.2rem 0.3rem',
+          border: '1px solid #3B82F6', borderRadius: 4,
+          fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff',
+          color: '#1E293B', minWidth: 0,
+        }}
+      />
+      {createPortal(
+        <>
+          <div
+            onMouseDown={(e) => { e.preventDefault(); onClose(); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }}
+          />
+          <div
+            ref={listRef}
+            onMouseDown={(e) => e.preventDefault() /* keep focus in the input */}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed', left: anchor?.left ?? -9999, top: anchor?.top ?? -9999,
+              width: anchor?.width ?? 240, maxWidth: 'calc(100vw - 16px)',
+              maxHeight: anchor?.maxHeight ?? 260, overflowY: 'auto',
+              zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1',
+              borderRadius: 6, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)',
+              padding: '0.15rem 0',
+            }}
+          >
+            {rows.length === 0 && (
+              <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                No client matches “{query.trim()}”
+              </div>
+            )}
+            {rows.map((name, i) => (
+              <button
+                key={name || '__unmap__'}
+                type="button"
+                data-active={i === active ? '1' : '0'}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => commit(name)}
+                title={name || 'Clear this mapping'}
+                style={rowStyle(i === active, !name)}
+              >{name || '(Unmap)'}</button>
+            ))}
+            {matches.length >= SUGGEST_LIMIT && (
+              <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.62rem', color: '#94A3B8', borderTop: '1px solid #F1F5F9' }}>
+                Showing the first {SUGGEST_LIMIT} — keep typing to narrow.
+              </div>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+
+// Render the helper column as a lazy editor: a small button per cell
+// that swaps for the search box above when clicked.
 function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onToggleIgnore }) {
-  const [editing, setEditing] = useState(false);
+  // Non-null while the search box is open; carries the screen position
+  // the suggestion list renders at, measured off the cell on click.
+  const [openAt, setOpenAt] = useState(null);
+  const btnRef = useRef(null);
+
+  function openPicker(e) {
+    e.stopPropagation();
+    const rect = btnRef.current?.getBoundingClientRect();
+    setOpenAt(rect ? suggestAnchor(rect) : {});
+  }
   if (ignored) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
@@ -627,14 +800,15 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
       </span>
     );
   }
-  if (!editing) {
+  if (!openAt) {
     const label = manual || 'Map to client…';
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
         <button
+          ref={btnRef}
           type="button"
-          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-          title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to pick the matching client'}
+          onClick={openPicker}
+          title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search for the matching client'}
           style={{
             flex: 1, minWidth: 0, padding: '0.2rem 0.4rem',
             border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
@@ -657,22 +831,14 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
     );
   }
   return (
-    <select
-      autoFocus
-      value={manual || ''}
-      onChange={(e) => { onChange(raw, e.target.value); setEditing(false); }}
-      onBlur={() => setEditing(false)}
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        width: '100%', padding: '0.2rem 0.3rem',
-        border: '1px solid #3B82F6', borderRadius: 4,
-        fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff',
-        color: '#1E293B',
-      }}
-    >
-      <option value="">(Unmap)</option>
-      {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
-    </select>
+    <MappedClientPicker
+      raw={raw}
+      manual={manual}
+      anchor={openAt}
+      clientOptions={clientOptions}
+      onChange={onChange}
+      onClose={() => setOpenAt(null)}
+    />
   );
 }
 
