@@ -10,6 +10,7 @@ import { asDate, fmtDate } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
+import { buildOppNumberMap } from './oppNumbers';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
 import {
@@ -397,7 +398,7 @@ const CLOSED_OPP_STAGES = new Set(['sold', 'not sold']);
 // opp would otherwise be flagged. Blank / "-" / "#N/A" BFO Link values
 // are skipped — those are the "no name yet" placeholders the New BFO Opp
 // flow handles, not a mismatch.
-function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [] }) {
+function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [], oppNumbers = new Map() }) {
   const cols = bfoActivityColumns(bfoActivity);
   if (!cols) return [];
   const activityNames = new Set();
@@ -431,6 +432,7 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [] 
       source: 'Opps',
       type: 'BFO Opp name not on Activity',
       company: account || name,
+      oppNumber: oppNumbers.get(r._id) ?? null,
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
@@ -450,7 +452,7 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [] 
 // Suppressed until BOTH the Opps cache and the Table View prospects have
 // loaded, so we don't flag every opp's "BFO Company Name" as missing
 // during the pre-load window (empty prospects → empty lookup).
-function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOverrides = {} }) {
+function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOverrides = {}, oppNumbers = new Map() }) {
   if (!oppsCache?.records?.length || prospects.length === 0) return [];
   const newBfoOpps = computeNewBfoOpps({ oppsCache, prospects, serviceOverrides });
   const missingList = computeNewBfoMissingData(newBfoOpps);
@@ -468,6 +470,7 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
     source: 'Agents',
     type: 'New BFO Opp missing data',
     company: m.company || '-',
+    oppNumber: oppNumbers.get(m.oppId) ?? null,
     prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.company)) || null,
     daysUntil: null,
     expirationDate: null,
@@ -484,7 +487,7 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
 // no BFO Status / Reason can be derived and the row is dropped from the
 // prompt block). One issue row per opp so each can be snoozed / actioned
 // on its own. Suppressed until the Opps cache has loaded.
-function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, prospects = [] }) {
+function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, prospects = [], oppNumbers = new Map() }) {
   if (!oppsCache?.records?.length) return [];
   const missingList = computeCloseNotSoldMissingData(computeCloseNotSoldOpps({ oppsCache, bfoActivity }));
   if (missingList.length === 0) return [];
@@ -501,6 +504,7 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
     source: 'Agents',
     type: 'Close Not Sold missing data',
     company: m.account || m.name || '-',
+    oppNumber: oppNumbers.get(m.oppId) ?? null,
     prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.account)) || null,
     daysUntil: null,
     expirationDate: null,
@@ -705,6 +709,10 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
 export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
+  // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
+  // handed to the opp-derived detectors so every issue row names its opp by
+  // the same number the user reads off Opps.
+  const oppNumbers = buildOppNumberMap(oppsCache?.records);
   const issues = [];
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
@@ -712,9 +720,9 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
-  issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects }));
-  issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides }));
-  issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects }));
+  issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects, oppNumbers }));
+  issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
+  issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
   issues.push(...detectIncompleteHandoff({ dealsList, prospects }));
   return issues;
