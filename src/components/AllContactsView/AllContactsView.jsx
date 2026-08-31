@@ -40,6 +40,15 @@ const TAG_STATUSES = [
   { key: 'no',      label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
 ];
 
+// The statuses a freshly-picked tag starts on — the contacts carrying it and
+// the ones still undecided, which together are the list there's work in. The
+// other three are one click away on their own pills.
+const DEFAULT_TAG_STATUSES = ['yes', 'unsure'];
+const DEFAULT_TAG_STATUS_LABEL = DEFAULT_TAG_STATUSES
+  .map(k => TAG_STATUSES.find(s => s.key === k)?.label)
+  .filter(Boolean)
+  .join(' + ');
+
 // One contact's answer for one tag, resolved by the same helper the contact
 // popup's table runs on, so the pill here and the row there can't disagree.
 // The tag being present is the Yes — HubSpot only ever holds tags that apply
@@ -136,6 +145,17 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // Empty means no status gate — the tag filter behaves as it always has,
   // showing the contacts that carry the tag. Transient, like the tag itself.
   const [tagStatusFilter, setTagStatusFilter] = useState(() => new Set());
+  // Choosing a tag starts on the answers worth working: the people who carry
+  // it and the ones nobody has decided about yet. Sold is settled business,
+  // Not sold is deliberately held off and No is a decided no — all three are
+  // one pill away, but none of them is what you opened the tag to see.
+  // Clearing the tag drops the statuses with it, since an answer only means
+  // anything against a tag.
+  const pickTag = useCallback((tag) => {
+    setTagFilter(tag);
+    setTagStatusFilter(tag ? new Set(DEFAULT_TAG_STATUSES) : new Set());
+  }, []);
+
   useEffect(() => {
     try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
   }, [showHidden]);
@@ -459,8 +479,8 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         <select
           id="all-contacts-tag-filter"
           value={activeTag}
-          onChange={e => setTagFilter(e.target.value)}
-          title="Show only contacts carrying this tag. Unlike the Tags column filter, this matches a contact by any one of its tags."
+          onChange={e => pickTag(e.target.value)}
+          title={`Show only contacts carrying this tag. Picking one starts on ${DEFAULT_TAG_STATUS_LABEL} — toggle the status pills for the rest. Unlike the Tags column filter, this matches a contact by any one of its tags.`}
           style={{
             padding: '2px 6px', borderRadius: 4,
             border: '1px solid ' + (activeTag ? '#6366F1' : '#CBD5E1'),
@@ -478,7 +498,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         {activeTag ? (
           <button
             type="button"
-            onClick={() => { setTagFilter(''); setTagStatusFilter(new Set()); }}
+            onClick={() => pickTag('')}
             title="Clear the tag filter"
             style={{
               padding: '1px 8px', borderRadius: 999,
@@ -509,7 +529,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
                 return next;
               })}
               title={activeTag
-                ? `${tip}. Toggle to show only the answers you pick; with none picked the tag filter behaves as before.`
+                ? `${tip}. Toggle to show only the answers you pick; a tag opens on ${DEFAULT_TAG_STATUS_LABEL}, and with none picked the filter falls back to every contact carrying the tag.`
                 : 'Pick a tag first — an answer is recorded per contact per tag'}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
