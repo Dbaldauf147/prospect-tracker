@@ -3778,10 +3778,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // not a shape: folding it in here would hand Mass Edit its own table
   // id, and the widths / visibility / renames the user arranged would
   // vanish the moment they turned the mode on.
-  const tableId = useMemo(
-    () => `sites-list:${columns.map(c => c.key).sort().join('|')}`,
-    [columns]
-  );
+  // Stable — see the note on DealsView's tableId.
+  const tableId = 'sites-list';
 
   // The columns as rendered: the data columns, plus a checkbox column
   // while Mass Edit is on. Appended rather than prepended — DataTable

@@ -1351,10 +1351,9 @@ export function UploadedListView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, accountLabel, accountSource]
   );
-  const tableId = useMemo(
-    () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
-    [columns, tableIdPrefix]
-  );
+  // Per uploaded list, but no longer per column lineup — see the note on
+  // DealsView's tableId.
+  const tableId = tableIdPrefix;
   const alwaysVisible = useMemo(() => {
     // Pin the leftmost helper columns plus the first uploaded-data
     // column (the company name) so the user can't accidentally hide the

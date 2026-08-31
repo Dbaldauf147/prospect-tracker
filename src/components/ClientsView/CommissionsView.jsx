@@ -1089,7 +1089,8 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [oppsCache, selectedIds]
   );
-  const tableId = useMemo(() => 'commissions:' + columns.map(c => c.key).sort().join('|'), [columns]);
+  // Stable — see the note on DealsView's tableId.
+  const tableId = 'commissions';
 
   // Page-level autocomplete pool for the Account Name column —
   // mirrors the Deals tab's Client Name suggestions so the user gets
