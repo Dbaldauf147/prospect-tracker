@@ -28,7 +28,7 @@ import {
   DEAL_SETUP_KEY, DEAL_RECURRING_KEY,
 } from '../../utils/dealOppYear1';
 import {
-  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
+  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate, isExpiredDeal,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -1436,6 +1436,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     [companySuggestions]
   );
 
+  // Which ordering band a row belongs to: 0 live, 1 expired. Held in a
+  // stable callback because DataTable memoizes the grouped order against
+  // this identity — a fresh arrow every render would re-sort the whole
+  // table on each keystroke in the search box.
+  const expiredRowGroup = useCallback((row) => (isExpiredDeal(row) ? 1 : 0), []);
+
   // Lookup from normalized company name to prospect, so the Client
   // Status column can resolve each deal row to its prospect record.
   // Picks the first prospect with a non-empty status when more than
@@ -2649,7 +2655,17 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             rows={filtered}
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
+            // Expired deals sink below the live ones whatever the sort —
+            // they're worth keeping visible as history but shouldn't be
+            // interleaved with the deals still being worked. Mirrors what
+            // the Clients tab's contract drill-down already does.
+            rowGroup={expiredRowGroup}
             rowStyle={(row) => {
+              // Expired first, ahead of the green and amber below: those
+              // say "this deal needs (or doesn't need) chasing", which is
+              // moot once the contract is over, and a green expired row
+              // would read as live at a glance.
+              if (isExpiredDeal(row)) return { background: '#E2E8F0' };
               // A deal marked On track or Completed reads green down the
               // whole row — the point of the status is to see, without
               // reading a column, which deals still need chasing.

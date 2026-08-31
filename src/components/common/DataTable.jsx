@@ -584,6 +584,13 @@ export function DataTable({
   onRowClick,
   rowClassName,
   rowStyle,
+  // Optional primary ordering, applied ahead of whatever sort is active:
+  // rowGroup(row) returns a number and lower groups render first. Lets a
+  // table pin a class of rows to the bottom — expired deals, say — no
+  // matter which column the user sorts by, which a comparator on one
+  // column can't do because the next header click replaces it. Stable:
+  // rows within a group keep the order the sort gave them.
+  rowGroup,
   // Inline expansion: when both are provided, rows whose id is in
   // expandedRowIds get a follow-up <tr> rendered immediately below
   // them with the JSX returned by renderExpansion(row). Virtualization
@@ -924,7 +931,7 @@ export function DataTable({
     };
   }, [rows, colByKey]);
 
-  const sortedRows = useMemo(() => {
+  const baseSortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
     // When the active sort was captured against a `freezeSortOrder`
     // column, use the snapshotted ID order rather than re-running the
@@ -972,6 +979,21 @@ export function DataTable({
     });
     return sorted;
   }, [filteredRows, internalSort, externalSortConfig, colByKey, sortSnapshot]);
+
+  // Group ordering sits on top of the sort rather than inside it, so it
+  // applies to all three exits above — unsorted, freeze snapshot, and the
+  // comparator alike — and every consumer of the ordered rows (the table
+  // body, the Excel export, the row count) sees the same arrangement.
+  const sortedRows = useMemo(() => {
+    if (!rowGroup) return baseSortedRows;
+    // Decorate with the pre-group index so rows sharing a group keep the
+    // order the sort just gave them. Array#sort is stable in modern
+    // engines, but saying so explicitly beats depending on it.
+    return baseSortedRows
+      .map((row, i) => ({ row, i, group: Number(rowGroup(row)) || 0 }))
+      .sort((a, b) => (a.group - b.group) || (a.i - b.i))
+      .map(entry => entry.row);
+  }, [baseSortedRows, rowGroup]);
 
   // Report the rows in their on-screen order (post-filter, post-sort) so a
   // parent can do order-aware work like shift-click range selection.

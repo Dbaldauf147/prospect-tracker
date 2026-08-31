@@ -51,6 +51,35 @@ export function asDate(v) {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+// The Paperwork column doubles as a status field — "Cancelled" / "Expired"
+// mark agreements that no longer count regardless of their End Date.
+const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
+export function isInactiveAgreement(deal) {
+  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
+  return INACTIVE_STATUSES.has(status);
+}
+
+// A deal that's finished, for the purposes of getting it out of the way:
+// its contract term has run out, or the Paperwork column marks it
+// Expired / Cancelled. Those are two separate ways for a deal to die and
+// neither implies the other — a contract killed early still carries the
+// future End Date it was signed with, and one that simply ran its course
+// often was never marked — so the Deals page sinks and greys either.
+//
+// A contract ending TODAY is still live: it has the rest of the day to
+// run, and calling it expired would drop the deal off the active list a
+// day early.
+export function isExpiredDeal(deal) {
+  if (isInactiveAgreement(deal)) return true;
+  const end = asDate(deal?.['End Date']);
+  if (!end) return false;
+  const endDay = new Date(end);
+  endDay.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return endDay.getTime() < today.getTime();
+}
+
 // The calendar year a deal belongs to, derived from its Original Contract
 // Start date. This is what the Deals tab renders in its read-only Year
 // column, so anything that buckets deals by year (e.g. the YOY Commissions

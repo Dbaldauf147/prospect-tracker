@@ -6,7 +6,7 @@
 // and the Clients tab agree on what's expired — there's one definition
 // of soonest expiration, not two that can drift apart.
 import { RENEWAL_WARNING_DAYS } from './renewalWindow';
-import { asDate, fmtDate } from './dealsFormat';
+import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
@@ -22,14 +22,6 @@ import {
 } from './serviceCoverage';
 
 const MS_PER_DAY = 86400000;
-
-// The Paperwork column doubles as a status field — "Cancelled" / "Expired"
-// mark agreements that no longer count regardless of their End Date.
-const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
-export function isInactiveAgreement(deal) {
-  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
-  return INACTIVE_STATUSES.has(status);
-}
 
 export function normClientName(s) {
   return String(s || '').trim().toLowerCase();
