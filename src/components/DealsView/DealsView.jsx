@@ -606,10 +606,10 @@ function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
 }
 
 // The picker the "Mapped to Client" cell opens: a type-to-search box
-// over the client roster rather than a <select>. Two reasons it isn't
-// a plain dropdown. The roster runs to 100+ names, so scrolling for
-// one is slow and you have to know how the name was spelled on the
-// Table View side to find it. And mounting a full <select> per
+// over the Table View company roster rather than a <select>. Two
+// reasons it isn't a plain dropdown. The roster runs to 100+ names, so
+// scrolling for one is slow and you have to know how the name was
+// spelled on the Table View side to find it. And mounting a full <select> per
 // unmapped row — 250 rows × 130 options — is 30k+ DOM nodes of
 // dropdown, which alone can leave the table looking blank while the
 // browser catches up. So the cell renders a tiny button until it's
@@ -713,12 +713,12 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
         autoFocus
         type="text"
         value={query}
-        placeholder={current || 'Search clients…'}
+        placeholder={current || 'Search companies…'}
         onChange={(e) => { setQuery(e.target.value); setActive(0); }}
         onKeyDown={handleKeyDown}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        title="Type part of the client name — matches are ranked as you type"
+        title="Type part of the company name — matches are ranked as you type"
         style={{
           width: '100%', padding: '0.2rem 0.3rem',
           border: '1px solid #3B82F6', borderRadius: 4,
@@ -748,7 +748,7 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
           >
             {rows.length === 0 && (
               <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                No client matches “{query.trim()}”
+                No company matches “{query.trim()}”
               </div>
             )}
             {rows.map((name, i) => (
@@ -849,7 +849,7 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
       value={manual || ''}
       placeholder="Map to client…"
       clearLabel="(Unmap)"
-      title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search for the matching client'}
+      title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search any Table View company'}
       onPick={(name) => onChange(raw, name)}
       wrapperStyle={{ width: '100%' }}
       buttonStyle={{
@@ -1385,7 +1385,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return () => { cancelled = true; };
   }, [user?.uid]);
 
-  // Active + Old Client roster the helper-column dropdown picks from.
+  // The user's own Active + Old Client roster. Feeds the head of the
+  // Mapped-to-Client search list (see mapTargetOptions below), so their
+  // accounts win ties against the wider Table View roster.
   // CDM-matching Client / Old Client prospects come first, but any
   // Old Client in the pool — even ones whose CDM has drifted to
   // another rep — is included too, since a deal row often points at
@@ -1432,12 +1434,26 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return out;
   }, [prospects]);
 
+  // What the "Mapped to Client" picker searches: EVERY company in the
+  // Table View roster, not just the CDM/status-filtered client pool.
+  // A deal row can point at any account the user has on file — one
+  // owned by another rep, or a prospect that isn't flagged Client yet
+  // — and the old narrow list left those unmappable. The user's own
+  // client roster still leads the array so that when two companies
+  // score the same in the ranked search (see utils/clientSuggest, which
+  // breaks ties on the caller's original order) their account wins.
+  const mapTargetOptions = useMemo(() => {
+    const seen = new Set(clientOptions.map(n => n.toLowerCase()));
+    const rest = companySuggestions.filter(n => !seen.has(n.toLowerCase()));
+    return [...clientOptions, ...rest];
+  }, [clientOptions, companySuggestions]);
+
   // Normalized set a deal's Client Name auto-maps against. Built from
   // EVERY company in the Table View roster (companySuggestions), not just
   // the CDM/status-filtered client pool — so an exact name match auto-maps
   // regardless of who owns the account or whether it's tagged Client / Old
-  // Client. The Mapped-to-Client dropdown still offers the narrower
-  // clientOptions pool for manual assignment.
+  // Client. The Mapped-to-Client picker searches the same full roster
+  // (mapTargetOptions) for manual assignment.
   const clientNameSet = useMemo(
     () => new Set(companySuggestions.map(n => normClient(n))),
     [companySuggestions]
@@ -1938,7 +1954,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             raw={raw}
             manual={manual}
             ignored={ignored}
-            clientOptions={clientOptions}
+            clientOptions={mapTargetOptions}
             onChange={setDealClientMapping}
             onToggleIgnore={setDealClientIgnore}
           />
@@ -1995,7 +2011,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     };
     // Order: select · history · progress · client name · mapped-to-client · status · rest.
     return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
+  }, [baseColumns, mapTargetOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
   // Stable: keyed on the table, not on its column list. The id used to
   // carry the sorted column keys, so every column the page gained sent the
   // user's widths / hidden columns / renames to a fresh empty bucket and
@@ -2053,7 +2069,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         && PROGRESS_FIELDS.some(f => !isHandoffFieldDone(r, f)));
     }
     return out;
-  }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet]);
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -2152,7 +2168,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       if (!out.has(norm)) out.set(norm, raw);
     }
     return out;
-  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [rows, clientNameSet, clientMap, ignoreSet]);
 
   function handleBulkIgnore() {
     if (distinctUnmappedNames.size === 0) return;
@@ -2618,11 +2634,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               the roster is long enough that scrolling a <select> for one
               name was the slow part of clearing an unmapped batch. */}
           <ClientSearchButton
-            options={clientOptions}
+            options={mapTargetOptions}
             value={bulkPick}
             placeholder="(Map all to client…)"
             clearLabel="(Clear)"
-            title={bulkPick ? `Every unmapped name maps to ${bulkPick}. Click to change.` : 'Click to search for the client to map every unmapped name to'}
+            title={bulkPick ? `Every unmapped name maps to ${bulkPick}. Click to change.` : 'Click to search any Table View company to map every unmapped name to'}
             onPick={setBulkPick}
             inputStyle={{ width: 200, fontSize: '0.72rem', padding: '0.25rem 0.4rem' }}
             buttonStyle={{
