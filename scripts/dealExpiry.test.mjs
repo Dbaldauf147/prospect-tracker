@@ -3,16 +3,18 @@
 // none). Run:
 //   node scripts/dealExpiry.test.mjs
 //
-// A deal dies two independent ways and the page has to catch both: the
-// contract term runs out (End Date in the past), or somebody kills it early
-// and marks the Paperwork column Cancelled / Expired, which leaves a future
-// End Date sitting on a dead deal. Neither implies the other, so testing one
-// route says nothing about the other.
+// Expiry here is a hand-set flag, not a derived one: the Paperwork column
+// reads "Expired" and nothing else counts. The rule that matters most is the
+// one that ISN'T here — a past End Date. Agreements outlive the date on them
+// routinely (auto-renewal, amendments, or just a stale sheet while the money
+// still comes in), so deriving expiry from the date greys out live contracts.
+// Most of these cases exist to pin that down, because it's the mistake the
+// page made before and would silently make again.
 //
-// The boundary that actually bites is today: a contract ending today still
-// has the day to run, and treating it as expired drops a live deal off the
-// active list early. Dates here are built relative to today rather than
-// hard-coded so the suite doesn't rot.
+// isExpiredDeal is deliberately NARROWER than isInactiveAgreement, which also
+// counts Cancelled and drives the Clients tab's contract drill-down. Cancelled
+// and expired are different events; the last block guards the gap so widening
+// one doesn't quietly widen the other.
 import { isExpiredDeal, isInactiveAgreement } from '../src/utils/dealsFormat.js';
 
 let failures = 0;
@@ -30,44 +32,49 @@ function dayOffset(offset) {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
-// ---- End Date ------------------------------------------------------------
-check('End Date yesterday → expired', isExpiredDeal({ 'End Date': dayOffset(-1) }), true);
-check('End Date last year → expired', isExpiredDeal({ 'End Date': dayOffset(-400) }), true);
-check('End Date TODAY → still live (the day has yet to run)', isExpiredDeal({ 'End Date': dayOffset(0) }), false);
-check('End Date tomorrow → live', isExpiredDeal({ 'End Date': dayOffset(1) }), false);
+// ---- The one thing that expires a deal -----------------------------------
+check('Paperwork "Expired" → expired', isExpiredDeal({ 'Paperwork completed': 'Expired' }), true);
+check('lower case → expired', isExpiredDeal({ 'Paperwork completed': 'expired' }), true);
+check('padded and shouted → expired', isExpiredDeal({ 'Paperwork completed': '  EXPIRED  ' }), true);
 
-// ---- Missing / unparseable dates -----------------------------------------
-// A blank End Date is "we don't know", not "it's over" — greying those out
-// would hide deals on the strength of a missing cell.
-check('no End Date → live', isExpiredDeal({ 'Client Name': 'Acme' }), false);
-check('blank End Date → live', isExpiredDeal({ 'End Date': '' }), false);
-check('dash placeholder → live', isExpiredDeal({ 'End Date': '-' }), false);
-check('unparseable End Date → live', isExpiredDeal({ 'End Date': 'sometime next year' }), false);
+// ---- A past End Date does NOT expire a deal -------------------------------
+// The Prologis case: "1st Amendment to Statement of Work No. 7", fully
+// executed, End Date long past, still a live agreement.
+check('past End Date alone → live',
+  isExpiredDeal({ 'End Date': dayOffset(-30) }), false);
+check('years-old End Date alone → live',
+  isExpiredDeal({ 'End Date': dayOffset(-900) }), false);
+check('fully executed agreement with a past End Date → live',
+  isExpiredDeal({ 'End Date': dayOffset(-400), 'Paperwork completed': 'Fully Executed Agreement' }), false);
+check('auto-renewing contract past its End Date → live',
+  isExpiredDeal({ 'End Date': dayOffset(-60), 'Auto renewal?': 'Yes' }), false);
+check('still being paid past its End Date → live',
+  isExpiredDeal({ 'End Date': dayOffset(-60), 'Currently being paid': 'Yes' }), false);
+check('…and a past End Date does not rescue a row marked Expired',
+  isExpiredDeal({ 'End Date': dayOffset(-60), 'Paperwork completed': 'Expired' }), true);
+check('a future End Date does not rescue one either',
+  isExpiredDeal({ 'End Date': dayOffset(365), 'Paperwork completed': 'Expired' }), true);
+
+// ---- Everything else stays live -------------------------------------------
+check('Cancelled is NOT expired on this page',
+  isExpiredDeal({ 'Paperwork completed': 'Cancelled' }), false);
+check('an ordinary completed value → live', isExpiredDeal({ 'Paperwork completed': 'Yes' }), false);
+check('blank Paperwork → live', isExpiredDeal({ 'Paperwork completed': '' }), false);
+check('no Paperwork key at all → live', isExpiredDeal({ 'Client Name': 'Prologis' }), false);
 check('null deal → live', isExpiredDeal(null), false);
+// "Expired" has to be the whole value, not a word inside a sentence.
+check('a note mentioning expiry does not count',
+  isExpiredDeal({ 'Paperwork completed': 'Renewed before it expired' }), false);
 
-// ---- Paperwork status ----------------------------------------------------
-// The independent route in: killed early, so the End Date is still ahead.
-check('Cancelled with a future End Date → expired',
-  isExpiredDeal({ 'End Date': dayOffset(200), 'Paperwork completed': 'Cancelled' }), true);
-check('American spelling "Canceled" → expired',
-  isExpiredDeal({ 'End Date': dayOffset(200), 'Paperwork completed': 'Canceled' }), true);
-check('Expired with a future End Date → expired',
-  isExpiredDeal({ 'End Date': dayOffset(200), 'Paperwork completed': 'expired' }), true);
-check('padded / mixed case status still matches',
-  isExpiredDeal({ 'Paperwork completed': '  CANCELLED  ' }), true);
-check('an ordinary Paperwork value does not expire a live deal',
-  isExpiredDeal({ 'End Date': dayOffset(30), 'Paperwork completed': 'Yes' }), false);
-check('…and does not rescue one whose term ran out',
-  isExpiredDeal({ 'End Date': dayOffset(-30), 'Paperwork completed': 'Yes' }), true);
-
-// ---- The predicate the Clients tab shares ---------------------------------
-// isInactiveAgreement keeps its narrower meaning: paperwork status only. The
-// Clients drill-down sorts on it, so widening it here would silently change
-// that page too.
-check('isInactiveAgreement ignores a passed End Date',
-  isInactiveAgreement({ 'End Date': dayOffset(-30) }), false);
-check('isInactiveAgreement reads the Paperwork column',
+// ---- The Clients-tab predicate keeps its wider meaning ---------------------
+check('isInactiveAgreement still counts Cancelled',
+  isInactiveAgreement({ 'Paperwork completed': 'Cancelled' }), true);
+check('isInactiveAgreement still counts the American spelling',
+  isInactiveAgreement({ 'Paperwork completed': 'Canceled' }), true);
+check('isInactiveAgreement still counts Expired',
   isInactiveAgreement({ 'Paperwork completed': 'Expired' }), true);
+check('isInactiveAgreement ignores a past End Date too',
+  isInactiveAgreement({ 'End Date': dayOffset(-30) }), false);
 
 console.log(failures === 0 ? '\nAll deal-expiry tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
