@@ -4,6 +4,7 @@ import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/for
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
+import { resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar } from '../../utils/tableColumnPrefs';
 import styles from './TableView.module.css';
 
 const ASSET_TYPES_ALL = ASSET_TYPES;
@@ -42,6 +43,14 @@ const COLUMNS = [
 const COL_WIDTHS_KEY = 'prospect-col-widths';
 const COL_VISIBLE_KEY = 'prospect-col-visible';
 const COL_REMOVED_KEY = 'prospect-col-removed';
+// What the user has hidden, and what they've starred as their own default
+// view — the same model the shared DataTable uses, for the same reason:
+// a stored list of VISIBLE columns can't tell "hidden on purpose" from
+// "added after you last chose", so every new column arrived hidden.
+// Company names the row, so it can't be hidden or deleted.
+const ALWAYS_VISIBLE_COLS = ['company'];
+const COL_HIDDEN_KEY = 'prospect-col-hidden';
+const COL_STARRED_KEY = 'prospect-col-starred';
 
 function loadRemovedCols() {
   try { return new Set(JSON.parse(localStorage.getItem(COL_REMOVED_KEY)) || []); } catch { return new Set(); }
@@ -53,14 +62,21 @@ function loadColWidths() {
 }
 function saveColWidths(w) { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(w)); }
 
-function loadColVisible() {
+// The pre-hidden-list visible set, as stored, for the one-time conversion.
+function loadColVisibleRaw() {
   try {
     const saved = JSON.parse(localStorage.getItem(COL_VISIBLE_KEY));
-    if (saved) return new Set(saved);
-    return null;
+    return Array.isArray(saved) && saved.length > 0 ? saved : null;
   } catch { return null; }
 }
-function saveColVisible(set) { localStorage.setItem(COL_VISIBLE_KEY, JSON.stringify([...set])); }
+function loadColHidden() {
+  try { const v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return Array.isArray(v) ? v : null; } catch { return null; }
+}
+function saveColHidden(set) { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify([...set])); }
+function loadColStarred() {
+  try { const v = JSON.parse(localStorage.getItem(COL_STARRED_KEY)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
+}
+function saveColStarred(set) { localStorage.setItem(COL_STARRED_KEY, JSON.stringify([...set])); }
 
 function TagsCell({ value, prospect, colDef, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
@@ -225,7 +241,7 @@ export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onE
 }
 
 // Column visibility toggle dropdown with remove option
-function ColumnToggle({ visibleCols, onToggle, removedCols, onRemove, onRestore }) {
+function ColumnToggle({ visibleCols, starredCols, onToggle, onStar, removedCols, onRemove, onRestore, onReset }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -240,6 +256,7 @@ function ColumnToggle({ visibleCols, onToggle, removedCols, onRemove, onRestore 
 
   const activeCols = COLUMNS.filter(c => !removedCols.has(c.key));
   const removed = COLUMNS.filter(c => removedCols.has(c.key));
+  const starCount = activeCols.filter(c => starredCols.has(c.key)).length;
 
   return (
     <div className={styles.colToggleWrap} ref={ref}>
@@ -248,16 +265,41 @@ function ColumnToggle({ visibleCols, onToggle, removedCols, onRemove, onRestore 
       </button>
       {open && (
         <div className={styles.colToggleDropdown}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
+            <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35 }} title="★ marks your default columns. Reset shows the starred ones, hides the rest and restores anything deleted.">
+              {starCount > 0
+                ? `★ ${starCount} default${starCount === 1 ? '' : 's'} · Reset restores`
+                : '★ = your defaults · Reset restores'}
+            </span>
+            <button
+              type="button"
+              onClick={onReset}
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.62rem', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              title={starCount > 0
+                ? `Show your ${starCount} starred column${starCount === 1 ? '' : 's'}, hide the rest and restore every deleted column`
+                : `Show every column${removed.length ? ` (incl. ${removed.length} deleted)` : ''}. Star columns first to reset to those instead.`}
+            >{`Reset${removed.length ? ` (${removed.length} deleted)` : ''}`}</button>
+          </div>
           {activeCols.map(col => (
             <div key={col.key} className={styles.colToggleItem} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
               <input
                 type="checkbox"
                 checked={visibleCols.has(col.key)}
                 onChange={() => onToggle(col.key)}
-                disabled={col.key === 'company'}
+                disabled={ALWAYS_VISIBLE_COLS.includes(col.key)}
               />
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onStar(col.key); }}
+                title={starredCols.has(col.key)
+                  ? `${col.label} is one of your default columns: Reset brings it back. Click to unstar.`
+                  : `Make ${col.label} one of your default columns: Reset brings back every starred column and hides the rest.`}
+                aria-label={starredCols.has(col.key) ? `Unstar ${col.label}` : `Star ${col.label}`}
+                aria-pressed={starredCols.has(col.key)}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px', lineHeight: 1, color: starredCols.has(col.key) ? '#F59E0B' : 'var(--color-text-muted)', opacity: starredCols.has(col.key) ? 1 : 0.45 }}
+              >{starredCols.has(col.key) ? '★' : '☆'}</button>
               <span style={{ flex: 1, fontSize: '0.75rem' }}>{col.label}</span>
-              {col.key !== 'company' && (
+              {!ALWAYS_VISIBLE_COLS.includes(col.key) && (
                 <button
                   style={{ border: 'none', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px', lineHeight: 1 }}
                   title={`Remove "${col.label}" column`}
@@ -487,11 +529,20 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     });
   }, [dynamicTypeOptions, dynamicCdmOptions, dynamicAssetTypeOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
-  const [visibleCols, setVisibleCols] = useState(() => {
-    const saved = loadColVisible();
-    return saved || new Set(COLUMNS.map(c => c.key));
-  });
+  const [hiddenPref, setHiddenPref] = useState(loadColHidden);
+  const [legacyVisible, setLegacyVisible] = useState(loadColVisibleRaw);
+  const [starredCols, setStarredCols] = useState(loadColStarred);
   const [removedCols, setRemovedCols] = useState(loadRemovedCols);
+  const hiddenCols = useMemo(
+    () => resolveHiddenKeys({ hidden: hiddenPref, legacyVisible, columnKeys: COLUMNS.map(c => c.key) }),
+    [hiddenPref, legacyVisible],
+  );
+  const visibleCols = useMemo(
+    () => new Set(COLUMNS
+      .filter(c => isColumnVisible(c.key, { hidden: hiddenCols, removed: removedCols, alwaysVisible: ALWAYS_VISIBLE_COLS }))
+      .map(c => c.key)),
+    [hiddenCols, removedCols],
+  );
   const resizingRef = useRef(null);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -667,13 +718,6 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
       saveRemovedCols(next);
       return next;
     });
-    // Also remove from visible
-    setVisibleCols(prev => {
-      const next = new Set(prev);
-      next.delete(key);
-      saveColVisible(next);
-      return next;
-    });
   }
 
   function restoreCol(key) {
@@ -683,13 +727,42 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
       saveRemovedCols(next);
       return next;
     });
-    // Add back to visible
-    setVisibleCols(prev => {
-      const next = new Set(prev);
-      next.add(key);
-      saveColVisible(next);
-      return next;
+    // It was deleted, not hidden — restoring it should show it.
+    commitHidden(new Set([...hiddenCols].filter(k => k !== key)));
+  }
+
+  // Persist the hidden set and drop the older visible list, so the table
+  // stops reading the pre-conversion shape from here on.
+  function commitHidden(nextHidden) {
+    setHiddenPref([...nextHidden]);
+    setLegacyVisible(null);
+    saveColHidden(nextHidden);
+  }
+
+  // Star / un-star: the starred set is the user's own default view, which
+  // Reset restores. Starring shows the column, since a default you can't
+  // see isn't one.
+  function toggleStar(key) {
+    const star = !starredCols.has(key);
+    const next = applyStar({ key, star, starred: starredCols, hidden: hiddenCols, removed: removedCols });
+    setStarredCols(next.starred);
+    saveColStarred(next.starred);
+    setRemovedCols(next.removed);
+    saveRemovedCols(next.removed);
+    commitHidden(next.hidden);
+  }
+
+  // Reset: every deleted column back, and visibility set to the starred
+  // view — or to everything when nothing is starred.
+  function resetColumns() {
+    const { hidden, removed } = resetToStarred({
+      columnKeys: COLUMNS.map(c => c.key),
+      starred: starredCols,
+      alwaysVisible: ALWAYS_VISIBLE_COLS,
     });
+    setRemovedCols(removed);
+    saveRemovedCols(removed);
+    commitHidden(hidden);
   }
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth;
@@ -697,13 +770,10 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   const visibleColumns = RESOLVED_COLUMNS.filter(c => visibleCols.has(c.key) && !removedCols.has(c.key));
 
   function toggleCol(key) {
-    if (key === 'company') return; // always visible
-    setVisibleCols(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      saveColVisible(next);
-      return next;
-    });
+    if (ALWAYS_VISIBLE_COLS.includes(key)) return;
+    const next = new Set(hiddenCols);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    commitHidden(next);
   }
 
   // Column resize via drag
@@ -742,7 +812,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     return (
       <div>
         <div className={styles.tableToolbar}>
-          <ColumnToggle visibleCols={visibleCols} onToggle={toggleCol} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} />
+          <ColumnToggle visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} />
         </div>
         <div className={styles.empty}>No prospects found</div>
       </div>
@@ -752,7 +822,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   return (
     <div className={styles.outerWrap}>
       <div className={styles.tableToolbar}>
-        <ColumnToggle visibleCols={visibleCols} onToggle={toggleCol} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} />
+        <ColumnToggle visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} />
         <button className={styles.resetWidthsBtn} onClick={() => { setColWidths({}); saveColWidths({}); }}>
           Reset widths
         </button>

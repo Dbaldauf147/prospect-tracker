@@ -1996,10 +1996,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     // Order: select · history · progress · client name · mapped-to-client · status · rest.
     return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
   }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
-  const tableId = useMemo(
-    () => 'deals:' + columns.map(c => c.key).sort().join('|'),
-    [columns]
-  );
+  // Stable: keyed on the table, not on its column list. The id used to
+  // carry the sorted column keys, so every column the page gained sent the
+  // user's widths / hidden columns / renames to a fresh empty bucket and
+  // the whole grid came back. DataTable stores what's HIDDEN now, so one
+  // bucket copes with the lineup changing under it.
+  const tableId = 'deals';
   // Bulk-select, the history drill-down and the progress pill are
   // affordances rather than data, so they stay on screen whatever the
   // user hides from the column picker.

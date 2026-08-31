@@ -75,10 +75,9 @@ export function RAClientsView({ settings, updateSettings } = {}) {
   const columns = useMemo(() => buildColumns(rows), [rows]);
   // Namespace the table by the column-key signature so that uploading a
   // different-shape file doesn't inherit stale hidden-columns state.
-  const tableId = useMemo(
-    () => 'ra-clients:' + columns.map(c => c.key).sort().join('|'),
-    [columns]
-  );
+  // Stable — see the note on DealsView's tableId: hashing the column list
+  // into the id reset the layout every time the lineup changed.
+  const tableId = 'ra-clients';
   const alwaysVisible = useMemo(() => {
     const first = columns[0];
     return first ? [first.key] : [];

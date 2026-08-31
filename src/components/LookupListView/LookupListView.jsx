@@ -210,10 +210,9 @@ export function LookupListView({
   }, [previewKeys, title, onSelectProspect]);
 
   const alwaysVisible = useMemo(() => ['company', '__matchIndicator__'], []);
-  const tableId = useMemo(
-    () => `${tableIdPrefix}:lookup:` + columns.map(c => c.key).sort().join('|'),
-    [tableIdPrefix, columns]
-  );
+  // Per lookup list, but no longer per column lineup — see the note on
+  // DealsView's tableId.
+  const tableId = `${tableIdPrefix}:lookup`;
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
