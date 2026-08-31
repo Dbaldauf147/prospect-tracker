@@ -1739,12 +1739,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 textDecoration: match ? 'underline' : 'none',
                               }}
                             >{top.companyName}</span>
-                            <span
-                              style={{
-                                flex: '0 0 auto', fontSize: '0.68rem', fontWeight: 700, color: '#0F172A',
-                                background: '#E0E7FF', borderRadius: 4, padding: '0.05rem 0.3rem',
-                              }}
-                            >{top.score}</span>
                           </div>
                         );
                       })()}
