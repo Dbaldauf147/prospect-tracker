@@ -154,6 +154,33 @@ export async function dbGetAll(storeName) {
   });
 }
 
+// Like dbGetAll, but keeps the keys — with the uid partition stripped off,
+// since every caller wants the key the store names, not the storage detail
+// in front of it. Used where a store has to be walked rather than read by
+// a key already known (the backup export, the cloud-backup repair pass).
+export async function dbGetAllEntries(storeName) {
+  if (!activeUid) return [];
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const keysReq = store.getAllKeys();
+    const valsReq = store.getAll();
+    let keys, vals;
+    keysReq.onsuccess = () => { keys = keysReq.result; if (vals !== undefined) finish(); };
+    valsReq.onsuccess = () => { vals = valsReq.result; if (keys !== undefined) finish(); };
+    keysReq.onerror = () => reject(keysReq.error);
+    valsReq.onerror = () => reject(valsReq.error);
+    function finish() {
+      const out = [];
+      for (let i = 0; i < keys.length; i++) {
+        if (isScopedKey(keys[i])) out.push({ key: keys[i].slice(activeUid.length + 1), value: vals[i] });
+      }
+      resolve(out);
+    }
+  });
+}
+
 export async function dbPut(storeName, value, key) {
   if (!activeUid) return;
   const db = await openDB();

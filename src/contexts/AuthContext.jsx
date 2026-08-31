@@ -97,7 +97,7 @@ export function AuthProvider({ children }) {
       try {
         const { hydrateLargeStores } = await import('../utils/hydrateLargeStores');
         if (firebaseUser?.uid) {
-          hydrateLargeStores(firebaseUser.uid)
+          hydrateLargeStores(firebaseUser.uid, firebaseUser.email)
             .catch(err => console.warn('Failed to hydrate large stores', err));
         }
       } catch (err) {

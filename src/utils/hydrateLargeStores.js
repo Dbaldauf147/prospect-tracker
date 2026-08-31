@@ -14,11 +14,16 @@
 // the opp record itself carries the metadata that says the file exists,
 // so the page always knows to ask.
 
-export async function hydrateLargeStores(userId) {
+export async function hydrateLargeStores(userId, email) {
   if (!userId) return;
   const results = await Promise.allSettled([
     import('./quotedMonthRows.js').then(m => m.hydrateQuotedMonthRows(userId)),
     import('./marketUpdatesStore.js').then(m => m.hydrateMarketUpdates(userId)),
+    // Hydrating pulls DOWN what this browser is missing; the repair pass
+    // pushes UP what the cloud is missing. They belong together: a file
+    // whose backup silently failed looks identical, from here, to one
+    // that was never uploaded.
+    import('./repairCloudBackups.js').then(m => m.repairCloudBackups(userId, email)),
   ]);
   results.forEach((r) => {
     if (r.status === 'rejected') console.warn('largeStores: hydrate failed', r.reason);

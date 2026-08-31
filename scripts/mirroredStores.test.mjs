@@ -33,7 +33,13 @@ const UTILS = fileURLToPath(new URL('../src/utils/', import.meta.url));
 
 // Infrastructure, not stores: these implement the persistence the scan is
 // looking for, so they always "call" it.
-const INFRASTRUCTURE = new Set(['userLs.js', 'db.js', 'localMirrorSync.js']);
+const INFRASTRUCTURE = new Set([
+  'userLs.js', 'db.js', 'localMirrorSync.js',
+  // The chunked-document writer every large store's cloud copy goes
+  // through, and the pass that pushes up what the cloud is missing. Both
+  // implement the backup this scan looks for.
+  'chunkedDoc.js', 'repairCloudBackups.js',
+]);
 
 // Stores that persist locally ON PURPOSE. A reason is required — the point
 // of the list is that the decision is written down, not that the file is
