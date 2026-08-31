@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import styles from './DataTable.module.css';
 import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar, pickLegacyBucket,
+  orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
 
 const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
@@ -26,29 +27,13 @@ function loadColOrder(tableId) {
 }
 function saveColOrder(tableId, order) { localStorage.setItem(COL_ORDER_PREFIX + tableId, JSON.stringify(order)); }
 
-// Reorder the columns array by a saved key order. Keys in `order` lead
-// (in that order); any column not in the saved order — e.g. a column
-// added to the code after the user last arranged the table — keeps its
-// original relative position at the tail so it never goes missing.
-function orderColumns(columns, order) {
-  let out;
-  if (!Array.isArray(order) || order.length === 0) {
-    out = columns;
-  } else {
-    const byKey = new Map(columns.map(c => [c.key, c]));
-    out = [];
-    const used = new Set();
-    for (const k of order) {
-      const c = byKey.get(k);
-      if (c) { out.push(c); used.add(k); }
-    }
-    for (const c of columns) {
-      if (!used.has(c.key)) out.push(c);
-    }
-  }
-  // A selection checkbox column always belongs at the far left, even when a
-  // stale saved order (from before the column was added) would push it to
-  // the tail. Non-mutating so the caller's array is untouched.
+// The saved key order applied (see utils/tableColumnPrefs), plus one rule
+// of this table's own: a selection checkbox column always belongs at the
+// far left, even when a stale saved order — from before that column
+// existed — would push it to the tail. Non-mutating, so the caller's array
+// is untouched.
+function orderTableColumns(columns, order) {
+  let out = orderColumns(columns, order);
   const selIdx = out.findIndex(c => c.key === '__select__');
   if (selIdx > 0) out = [out[selIdx], ...out.slice(0, selIdx), ...out.slice(selIdx + 1)];
   return out;
@@ -836,7 +821,7 @@ export function DataTable({
 
   // The columns in the user's saved order (defaults to prop order). All
   // rendering — header, body, visibility list, export — runs off this.
-  const orderedColumns = useMemo(() => orderColumns(presentColumns, colOrder), [presentColumns, colOrder]);
+  const orderedColumns = useMemo(() => orderTableColumns(presentColumns, colOrder), [presentColumns, colOrder]);
 
   // The hidden set, resolved from whichever of the two stored shapes this
   // table has (see utils/tableColumnPrefs), and the visible set the rest of
@@ -939,8 +924,12 @@ export function DataTable({
   }, [tableId, columns, settingsLoaded]);
 
   function reorderCols(nextKeys) {
-    setColOrder(nextKeys);
-    persistPrefs(tableId, settings, updateSettings, { order: nextKeys });
+    // The picker only lists the columns it shows, so the keys it hands back
+    // leave out anything deleted. Merge rather than replace, or a restored
+    // column would come back at the far right instead of where it sat.
+    const merged = mergeColumnOrder(colOrder, nextKeys);
+    setColOrder(merged);
+    persistPrefs(tableId, settings, updateSettings, { order: merged });
   }
   // Reset: every deleted column back, the default order back, and
   // visibility set to the user's starred view — or to everything when they

@@ -8,6 +8,7 @@
 // rather than visible ones.
 import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar, pickLegacyBucket,
+  orderColumns, mergeColumnOrder,
 } from '../src/utils/tableColumnPrefs.js';
 
 let failures = 0;
@@ -93,6 +94,42 @@ check('no current columns, nothing to adopt', pickLegacyBucket(entries, []), '')
 // user's widths and renames, so it wins the tie.
 check('ties go to the bigger layout',
   pickLegacyBucket([{ id: 'small', keys: ['a'] }, { id: 'big', keys: ['a', 'q'] }], COLS), 'big');
+
+// --- column order ----------------------------------------------------------
+
+const cols = (...keys) => keys.map(k => ({ key: k, label: k.toUpperCase() }));
+const keysOf = (list) => list.map(c => c.key);
+
+same('no saved order leaves the columns alone',
+  keysOf(orderColumns(cols('a', 'b', 'c'), [])), ['a', 'b', 'c']);
+same('a saved order leads',
+  keysOf(orderColumns(cols('a', 'b', 'c'), ['c', 'a', 'b'])), ['c', 'a', 'b']);
+// The case this is all for: the page ships a new column and the arrangement
+// has to survive it.
+same('a column the order never saw lands at the tail',
+  keysOf(orderColumns(cols('a', 'b', 'c', 'brandNew'), ['c', 'a', 'b'])), ['c', 'a', 'b', 'brandNew']);
+same('and several keep their own relative order',
+  keysOf(orderColumns(cols('a', 'new1', 'b', 'new2'), ['b', 'a'])), ['b', 'a', 'new1', 'new2']);
+same('a saved key for a column that is gone is skipped',
+  keysOf(orderColumns(cols('a', 'b'), ['b', 'ghost', 'a'])), ['b', 'a']);
+same('a duplicated saved key does not duplicate the column',
+  keysOf(orderColumns(cols('a', 'b'), ['b', 'b', 'a'])), ['b', 'a']);
+
+// --- merging a drag back into the stored order -----------------------------
+
+same('a drag among shown columns is stored as dragged',
+  mergeColumnOrder(['a', 'b', 'c'], ['c', 'a', 'b']), ['c', 'a', 'b']);
+// `deleted` isn't in the picker's list, but it sat after `a` and should
+// still be there when it's restored.
+same('a column the picker did not show keeps its slot',
+  mergeColumnOrder(['a', 'deleted', 'b', 'c'], ['c', 'a', 'b']), ['c', 'a', 'deleted', 'b']);
+same('one that led the old order still leads',
+  mergeColumnOrder(['deleted', 'a', 'b'], ['b', 'a']), ['deleted', 'b', 'a']);
+same('two adjacent hidden keys keep their run',
+  mergeColumnOrder(['a', 'x', 'y', 'b'], ['b', 'a']), ['b', 'a', 'x', 'y']);
+same('no stored order yet just takes the drag',
+  mergeColumnOrder([], ['b', 'a']), ['b', 'a']);
+same('a junk stored order is ignored', mergeColumnOrder(null, ['b', 'a']), ['b', 'a']);
 
 console.log(failures === 0 ? '\nAll tableColumnPrefs tests passed.' : `\n${failures} test(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

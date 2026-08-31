@@ -4,7 +4,10 @@ import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/for
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
-import { resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar } from '../../utils/tableColumnPrefs';
+import {
+  resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
+  orderColumns, mergeColumnOrder,
+} from '../../utils/tableColumnPrefs';
 import styles from './TableView.module.css';
 
 const ASSET_TYPES_ALL = ASSET_TYPES;
@@ -49,6 +52,7 @@ const COL_REMOVED_KEY = 'prospect-col-removed';
 // "added after you last chose", so every new column arrived hidden.
 // Company names the row, so it can't be hidden or deleted.
 const ALWAYS_VISIBLE_COLS = ['company'];
+const COL_ORDER_KEY = 'prospect-col-order';
 const COL_HIDDEN_KEY = 'prospect-col-hidden';
 const COL_STARRED_KEY = 'prospect-col-starred';
 
@@ -77,6 +81,15 @@ function loadColStarred() {
   try { const v = JSON.parse(localStorage.getItem(COL_STARRED_KEY)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
 }
 function saveColStarred(set) { localStorage.setItem(COL_STARRED_KEY, JSON.stringify([...set])); }
+
+// The order the user dragged the columns into. Survives a page update the
+// same way the hidden and starred lists do: a column added to the code
+// later isn't in the list, so orderColumns leaves it at the tail instead
+// of throwing the arrangement away.
+function loadColOrder() {
+  try { const v = JSON.parse(localStorage.getItem(COL_ORDER_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function saveColOrder(order) { localStorage.setItem(COL_ORDER_KEY, JSON.stringify(order)); }
 
 function TagsCell({ value, prospect, colDef, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
@@ -241,8 +254,12 @@ export function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onE
 }
 
 // Column visibility toggle dropdown with remove option
-function ColumnToggle({ visibleCols, starredCols, onToggle, onStar, removedCols, onRemove, onRestore, onReset }) {
+function ColumnToggle({ columns, visibleCols, starredCols, onToggle, onStar, removedCols, onRemove, onRestore, onReset, onReorder }) {
   const [open, setOpen] = useState(false);
+  // Drag-to-reorder: the key being dragged, and the one it's hovering over
+  // (which gets the drop-position line).
+  const [dragKey, setDragKey] = useState(null);
+  const [overKey, setOverKey] = useState(null);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -254,9 +271,25 @@ function ColumnToggle({ visibleCols, starredCols, onToggle, onStar, removedCols,
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
-  const activeCols = COLUMNS.filter(c => !removedCols.has(c.key));
-  const removed = COLUMNS.filter(c => removedCols.has(c.key));
+  const activeCols = columns.filter(c => !removedCols.has(c.key));
+  const removed = columns.filter(c => removedCols.has(c.key));
   const starCount = activeCols.filter(c => starredCols.has(c.key)).length;
+
+  // Drop `dragKey` where `targetKey` sits and hand the parent the whole new
+  // key order.
+  function handleDrop(targetKey) {
+    setOverKey(null);
+    const from = dragKey;
+    setDragKey(null);
+    if (!from || from === targetKey || !onReorder) return;
+    const keys = activeCols.map(c => c.key);
+    const fromIdx = keys.indexOf(from);
+    const toIdx = keys.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, from);
+    onReorder(keys);
+  }
 
   return (
     <div className={styles.colToggleWrap} ref={ref}>
@@ -268,8 +301,8 @@ function ColumnToggle({ visibleCols, starredCols, onToggle, onStar, removedCols,
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '2px 6px 6px', borderBottom: '1px solid var(--color-border-light)', marginBottom: 4 }}>
             <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35 }} title="★ marks your default columns. Reset shows the starred ones, hides the rest and restores anything deleted.">
               {starCount > 0
-                ? `★ ${starCount} default${starCount === 1 ? '' : 's'} · Reset restores`
-                : '★ = your defaults · Reset restores'}
+                ? `★ ${starCount} default${starCount === 1 ? '' : 's'} · drag ⠿ to reorder`
+                : '★ = your defaults · drag ⠿ to reorder'}
             </span>
             <button
               type="button"
@@ -281,7 +314,24 @@ function ColumnToggle({ visibleCols, starredCols, onToggle, onStar, removedCols,
             >{`Reset${removed.length ? ` (${removed.length} deleted)` : ''}`}</button>
           </div>
           {activeCols.map(col => (
-            <div key={col.key} className={styles.colToggleItem} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <div
+              key={col.key}
+              className={styles.colToggleItem}
+              onDragOver={(e) => { e.preventDefault(); if (overKey !== col.key) setOverKey(col.key); }}
+              onDrop={() => handleDrop(col.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.3rem',
+                ...(dragKey === col.key ? { opacity: 0.4 } : null),
+                ...(overKey === col.key && dragKey && dragKey !== col.key ? { borderTop: '2px solid var(--color-accent)' } : null),
+              }}
+            >
+              <span
+                draggable
+                onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+                title="Drag to reorder"
+                style={{ cursor: 'grab', color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}
+              >⠿</span>
               <input
                 type="checkbox"
                 checked={visibleCols.has(col.key)}
@@ -529,19 +579,23 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     });
   }, [dynamicTypeOptions, dynamicCdmOptions, dynamicAssetTypeOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
+  const [colOrder, setColOrder] = useState(loadColOrder);
   const [hiddenPref, setHiddenPref] = useState(loadColHidden);
   const [legacyVisible, setLegacyVisible] = useState(loadColVisibleRaw);
   const [starredCols, setStarredCols] = useState(loadColStarred);
   const [removedCols, setRemovedCols] = useState(loadRemovedCols);
+  // The columns in the user's own order — what the picker lists and what
+  // the table renders, so a drag in one shows up in the other.
+  const orderedColumns = useMemo(() => orderColumns(COLUMNS, colOrder), [colOrder]);
   const hiddenCols = useMemo(
     () => resolveHiddenKeys({ hidden: hiddenPref, legacyVisible, columnKeys: COLUMNS.map(c => c.key) }),
     [hiddenPref, legacyVisible],
   );
   const visibleCols = useMemo(
-    () => new Set(COLUMNS
+    () => new Set(orderedColumns
       .filter(c => isColumnVisible(c.key, { hidden: hiddenCols, removed: removedCols, alwaysVisible: ALWAYS_VISIBLE_COLS }))
       .map(c => c.key)),
-    [hiddenCols, removedCols],
+    [orderedColumns, hiddenCols, removedCols],
   );
   const resizingRef = useRef(null);
   const [uploadStatus, setUploadStatus] = useState(null);
@@ -752,8 +806,19 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     commitHidden(next.hidden);
   }
 
-  // Reset: every deleted column back, and visibility set to the starred
-  // view — or to everything when nothing is starred.
+  // Store a drag. The picker lists only the columns it shows, so merge
+  // rather than replace: a deleted column keeps the slot it will come back
+  // to. Columns the saved order has never seen stay at the tail, which is
+  // what makes an arrangement survive a page update.
+  function reorderCols(nextKeys) {
+    const merged = mergeColumnOrder(colOrder, nextKeys);
+    setColOrder(merged);
+    saveColOrder(merged);
+  }
+
+  // Reset: every deleted column back, the default order back, and
+  // visibility set to the starred view — or to everything when nothing is
+  // starred.
   function resetColumns() {
     const { hidden, removed } = resetToStarred({
       columnKeys: COLUMNS.map(c => c.key),
@@ -762,12 +827,15 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     });
     setRemovedCols(removed);
     saveRemovedCols(removed);
+    setColOrder([]);
+    saveColOrder([]);
     commitHidden(hidden);
   }
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth;
 
-  const visibleColumns = RESOLVED_COLUMNS.filter(c => visibleCols.has(c.key) && !removedCols.has(c.key));
+  const visibleColumns = orderColumns(RESOLVED_COLUMNS, colOrder)
+    .filter(c => visibleCols.has(c.key) && !removedCols.has(c.key));
 
   function toggleCol(key) {
     if (ALWAYS_VISIBLE_COLS.includes(key)) return;
@@ -812,7 +880,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     return (
       <div>
         <div className={styles.tableToolbar}>
-          <ColumnToggle visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} />
+          <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} onReorder={reorderCols} />
         </div>
         <div className={styles.empty}>No prospects found</div>
       </div>
@@ -822,7 +890,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   return (
     <div className={styles.outerWrap}>
       <div className={styles.tableToolbar}>
-        <ColumnToggle visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} />
+        <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} onReorder={reorderCols} />
         <button className={styles.resetWidthsBtn} onClick={() => { setColWidths({}); saveColWidths({}); }}>
           Reset widths
         </button>
