@@ -53,22 +53,15 @@ export function saveQuotedProjections(map) {
   dispatchStoreEvent(QUOTED_PROJECTIONS_EVENT);
 }
 
-// June 2026 was filled once with the then-current live totals as a stand-in,
-// before past months could be rebuilt from the Opps data — so it ended up
-// carrying July's numbers. This one-shot flag lets the rebuild replace that
-// value exactly once per user, leaving any later hand correction alone.
-const JUNE_REBUILD_KEY = 'yoy-quoted-june-2026-rebuilt';
-
-// Mirrored alongside the values themselves. The flag is what makes the
-// rebuild one-shot, so a browser that restored the projections but not the
-// flag would run it a second time and overwrite a hand-corrected June.
-registerMirroredKey(JUNE_REBUILD_KEY, QUOTED_PROJECTIONS_EVENT);
-
-export function juneRebuildDone() {
-  return userLsGet(JUNE_REBUILD_KEY) === '1';
-}
-
-export function markJuneRebuildDone() {
-  try { userLsSet(JUNE_REBUILD_KEY, '1'); } catch { /* ignore quota */ }
-  queueMirrorPush(JUNE_REBUILD_KEY);
-}
+// A stored month carries how it got there, which is what decides whether the
+// YOY rebuild may re-derive it:
+//   _auto     — captured from the live Opps + BFO figures, with `_capturedAt`
+//               saying when. A capture taken at the month end is the month's
+//               record; one taken mid-month is not, and gets re-derived.
+//   _rebuilt  — reconstructed from the Opps data for a month that was never
+//               captured. Always re-derived, so a fix to the reconstruction
+//               reaches months already stored.
+//   neither   — typed in through "Edit values" (or seeded above). The user's
+//               figure, and it stands.
+// The June-2026 one-shot rebuild flag this file used to carry is gone: the
+// rule above covers that month like any other.
