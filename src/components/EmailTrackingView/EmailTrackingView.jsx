@@ -16,7 +16,8 @@
 
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useEmailTracking } from '../../hooks/useEmailTracking';
+import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
+import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
 
 function toDate(ts) {
@@ -118,10 +119,32 @@ export function EmailTrackingView({ onOpenCampaign }) {
   // campaign's index (subjects aren't unique, so the index is the identity).
   const [campaignFilter, setCampaignFilter] = useState('');
 
-  // Attribute every tracked send to a saved campaign once, up front.
+  // Attribute every tracked send to a saved campaign once, up front, and
+  // count its opens while we're there.
+  //
+  // The raw openCount on a doc is every hit on the pixel, and the pixel is
+  // injected into the Outlook DRAFT — so it fires while the draft is still
+  // being proof-read, again for link scanners, and again each time the
+  // message is re-rendered. countOpens() drops those (src/utils/emailOpens.js).
+  // The pre-send rule needs a send time, which a tracking doc doesn't have —
+  // it only knows when its draft was created — so it comes from the saved
+  // campaign that claims this send. Unclaimed sends keep their raw timeline.
+  const sentAtByCampaign = useMemo(() => {
+    const map = new Map();
+    (campaigns || []).forEach((c, index) => map.set(index, sentAtByRecipient(c?.contacts)));
+    return map;
+  }, [campaigns]);
   const linked = useMemo(
-    () => rows.map(r => ({ row: r, link: campaignForSubject(campaigns, r.subject) })),
-    [rows, campaigns],
+    () => rows.map(r => {
+      const link = campaignForSubject(campaigns, r.subject);
+      const sent = link ? sentAtByCampaign.get(link.index) : null;
+      const key = normalizeTrackedEmail(r.to);
+      const opens = sent?.has(key)
+        ? countOpens(r, { sentAt: sent.get(key) ?? null })
+        : countOpens(r);
+      return { row: r, link, opens };
+    }),
+    [rows, campaigns, sentAtByCampaign],
   );
 
   // How many tracked sends each campaign claims — shown in the picker so an
@@ -153,8 +176,8 @@ export function EmailTrackingView({ onOpenCampaign }) {
   const stats = useMemo(() => {
     const list = scoped.map(l => l.row);
     const trackedEmails = list.length;
-    const totalOpens = list.reduce((a, r) => a + (r.openCount || 0), 0);
-    const openedEmails = list.filter(r => (r.openCount || 0) > 0).length;
+    const totalOpens = scoped.reduce((a, l) => a + l.opens.count, 0);
+    const openedEmails = scoped.filter(l => l.opens.count > 0).length;
     const totalClicks = list.reduce((a, r) => a + (r.clickCount || 0), 0);
     const clickedEmails = list.filter(r => (r.clickCount || 0) > 0).length;
     const openRate = trackedEmails ? Math.round((openedEmails / trackedEmails) * 100) : 0;
@@ -175,7 +198,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
     }
     const ms = (l) => { const d = toDate(l.row.createdAt); return d ? d.getTime() : 0; };
     const sorted = [...list];
-    if (sortBy === 'opens') sorted.sort((a, b) => (b.row.openCount || 0) - (a.row.openCount || 0) || ms(b) - ms(a));
+    if (sortBy === 'opens') sorted.sort((a, b) => b.opens.count - a.opens.count || ms(b) - ms(a));
     else if (sortBy === 'clicks') sorted.sort((a, b) => (b.row.clickCount || 0) - (a.row.clickCount || 0) || ms(b) - ms(a));
     else sorted.sort((a, b) => ms(b) - ms(a)); // most recent
     return sorted;
@@ -203,7 +226,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
 
       {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
-        <strong>Reading these numbers:</strong> opens are a directional signal: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
+        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
       </div>
 
       {/* Shown only when the realtime read was blocked and we fell back to
@@ -287,25 +310,24 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th}>Recipient</th>
                 <th style={th}>Subject</th>
                 <th style={th}>Campaign</th>
-                <th style={th}>Sent</th>
+                <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
                 <th style={{ ...th, textAlign: 'center' }}>Opens</th>
                 <th style={th}>Last open</th>
                 <th style={{ ...th, textAlign: 'center' }}>Clicks</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map(({ row: r, link }) => {
+              {visible.map(({ row: r, link, opens }) => {
                 const isOpen = expanded === r.id;
-                const opened = (r.openCount || 0) > 0;
                 const clicked = (r.clickCount || 0) > 0;
                 return (
                   <FragmentRow
                     key={r.id}
                     r={r}
                     link={link}
+                    opens={opens}
                     onOpenCampaign={onOpenCampaign}
                     isOpen={isOpen}
-                    opened={opened}
                     clicked={clicked}
                     onToggle={() => setExpanded(isOpen ? null : r.id)}
                   />
@@ -319,8 +341,22 @@ export function EmailTrackingView({ onOpenCampaign }) {
   );
 }
 
-function FragmentRow({ r, link, onOpenCampaign, isOpen, opened, clicked, onToggle }) {
-  const opens = Array.isArray(r.opens) ? [...r.opens].reverse() : [];
+// Why an individual pixel hit didn't make the open count, as shown next to
+// it in the expanded detail. 'counted' events get no label.
+const OPEN_VERDICT_LABEL = {
+  'pre-send': ['· before send', 'The pixel is inside the Outlook draft, so this hit landed before the email was sent — a preview of the draft, not a recipient.'],
+  machine: ['· automated', "A scanner or preview bot fetched the pixel; no human read anything."],
+  repeat: ['· repeat', 'The same client re-loaded the pixel within 5 minutes of its last hit — one read, re-rendered.'],
+};
+
+function FragmentRow({ r, link, opens: openSummary, onOpenCampaign, isOpen, clicked, onToggle }) {
+  const opened = openSummary.count > 0;
+  const excluded = describeExcludedOpens(openSummary);
+  // Newest first, carrying each event's verdict. Falls back to the raw
+  // events for a doc countOpens couldn't classify (no stored event detail).
+  const opens = openSummary.events.length
+    ? [...openSummary.events].reverse()
+    : (Array.isArray(r.opens) ? [...r.opens].reverse().map(event => ({ event, verdict: 'counted' })) : []);
   const clicks = Array.isArray(r.clicks) ? [...r.clicks].reverse() : [];
   return (
     <>
@@ -356,10 +392,14 @@ function FragmentRow({ r, link, onOpenCampaign, isOpen, opened, clicked, onToggl
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>{fmtDateTime(r.createdAt)}</td>
         <td style={{ ...td, textAlign: 'center' }}>
-          {opened ? <Pill tone="green">{r.openCount}</Pill> : <Pill tone="grey">0</Pill>}
+          <span title={excluded || undefined}>
+            {opened ? <Pill tone="green">{openSummary.count}</Pill> : <Pill tone="grey">0</Pill>}
+          </span>
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>
-          {r.lastOpenAt ? <span title={fmtDateTime(r.lastOpenAt)}>{fmtRelative(r.lastOpenAt)}</span> : '-'}
+          {openSummary.lastOpenAt
+            ? <span title={fmtDateTime(openSummary.lastOpenAt)}>{fmtRelative(openSummary.lastOpenAt)}</span>
+            : '-'}
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
           {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}
@@ -370,19 +410,26 @@ function FragmentRow({ r, link, onOpenCampaign, isOpen, opened, clicked, onToggl
           <td colSpan={8} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>Opens ({r.openCount || 0})</div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
+                  Opens ({openSummary.count})
+                  {excluded && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600, color: '#B45309' }} title={excluded}> · {openSummary.raw - openSummary.count} hit{openSummary.raw - openSummary.count === 1 ? '' : 's'} not counted</span>}
+                </div>
                 {opens.length === 0 ? (
                   <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No opens recorded yet.</div>
                 ) : (
                   <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {opens.map((ev, i) => (
-                      <li key={i} style={{ fontSize: '0.76rem', color: '#334155', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600 }}>{fmtDateTime(ev.at)}</span>
-                        <span style={{ color: '#64748B' }}>· {location(ev)}</span>
-                        <span style={{ color: '#94A3B8' }}>· {deviceFromUa(ev.ua)}</span>
-                        {ev.proxied && <span style={{ color: '#B45309' }} title="Likely a mail-client image proxy or privacy pre-fetch, not necessarily a human open">· auto/proxy</span>}
-                      </li>
-                    ))}
+                    {opens.map(({ event: ev, verdict }, i) => {
+                      const label = OPEN_VERDICT_LABEL[verdict];
+                      return (
+                        <li key={i} style={{ fontSize: '0.76rem', color: label ? '#94A3B8' : '#334155', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, textDecoration: label ? 'line-through' : 'none' }}>{fmtDateTime(ev.at)}</span>
+                          <span style={{ color: '#64748B' }}>· {location(ev)}</span>
+                          <span style={{ color: '#94A3B8' }}>· {deviceFromUa(ev.ua)}</span>
+                          {ev.proxied && <span style={{ color: '#B45309' }} title="Fetched through a mail-client image proxy, so the location is the proxy's, not the reader's. Still counted: the proxy fetches because someone opened the message.">· proxy</span>}
+                          {label && <span style={{ color: '#B45309', fontWeight: 600 }} title={label[1]}>{label[0]}</span>}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
