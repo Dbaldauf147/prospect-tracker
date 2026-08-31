@@ -19,6 +19,7 @@ import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlin
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './DraftEmailView.module.css';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
@@ -1041,7 +1042,7 @@ const SELF_RECIPIENT = Object.freeze({
   company: '',
 });
 
-export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
+export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect }) {
   const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
@@ -1226,6 +1227,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // the modal edits raw fields (firstname / lastname / jobtitle / tags…),
   // not the flattened { name, title } shape the composer carries.
   const [editingContact, setEditingContact] = useState(null);
+  // "Company ↗" in the contact popup: close the contact and open the company
+  // it names, through the app-level company popup App.jsx owns. Only wired
+  // when the page was given a way to open one.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
   const rawById = useMemo(() => {
     const m = new Map();
     for (const c of rawContacts) {
@@ -2781,6 +2791,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={() => setEditingContact(null)}
+          onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
           contactOldEmails={settings?.contactOldEmails || {}}

@@ -39,6 +39,7 @@ import {
 } from '../../utils/prospectingPlaybook';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -625,6 +626,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   const [editingContact, setEditingContact] = useState(null);
   const openContact = useCallback((contact) => { if (contact) setEditingContact(contact); }, []);
   const closeContact = useCallback(() => setEditingContact(null), []);
+  // "Company ↗" in the contact popup: close the contact and open the company
+  // it names, through the app-level company popup this page already routes
+  // its other company links to.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
   // The popup saves through HubSpot and the shared cache itself, so there's
   // nothing for this page to write back — the coverage above recomputes off
   // the hubspot-cache-updated event like every other reader. A `silent` save
@@ -958,6 +968,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
             contact={editingContact}
             onSave={saveContact}
             onClose={closeContact}
+            onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
             {...contactEditSettings}
             companyContacts={editCompanyContacts}
             allContacts={allContacts}
