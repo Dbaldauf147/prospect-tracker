@@ -5,7 +5,10 @@ import {
   loadCommissions, saveCommissionsOverride, clearCommissionsOverride,
   COMMISSION_MONTH_NAMES, COMMISSIONS_LIST_EVENT,
 } from '../../utils/commissionsStore';
-import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL, normProjectName } from './CommissionsPasteImportModal';
+import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL } from './CommissionsPasteImportModal';
+import {
+  planCommissionsPaste, describeCommissionsPaste, normProjectName,
+} from '../../utils/commissionsPasteMerge';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 
 // Lookup columns the user adds at the front of the table. Account Name
@@ -104,14 +107,6 @@ function nowStamp() { return new Date().toISOString(); }
 const CURRENCY_KEYS = new Set();
 const DATE_KEYS = new Set(['Comm Start Date', 'Comm End Date']);
 const PERCENT_KEYS = new Set(['%']);
-
-// Month/period cells a "replace months" import clears before overlaying the
-// paste — the 12 revenue columns, the 12 commission columns, and the stored
-// FY Revenue (recomputed from the months at render time anyway). Identity
-// and user-mapped columns (Comm dates, %, Account/BFO/Scope, Name) are not
-// period cells, so they survive a replace.
-const PERIOD_KEYS = new Set(['FY Revenue']);
-for (const m of COMMISSION_MONTH_NAMES) { PERIOD_KEYS.add(`${m} Revenue`); PERIOD_KEYS.add(m); }
 
 function defaultWidth(k) {
   if (k === ACCOUNT_NAME_KEY) return 200;
@@ -397,106 +392,9 @@ function plainTextRender(v) {
   return <span>{String(v)}</span>;
 }
 
-// normProjectName (the dedup key) lives in CommissionsPasteImportModal so
-// the paste preview and this merge classify duplicates identically — see
-// the import there.
-
-// Concatenate existing + newly-pasted commission rows and dedup by
-// normalized Project Name. Rows without a project name pass through
-// untouched (we have no key to group them by).
-//
-// Rows that share a project name are merged CELL BY CELL rather than
-// picking one whole row and discarding the other. This matters because a
-// commission's fiscal year straddles two calendar years (Griffis runs
-// 7/1/2025 → 6/30/2026, so its revenue lands in July–December one paste and
-// January–June the next), and the 12 columns here are plain calendar
-// months. Under the old "whichever copy has more filled cells wins" rule,
-// re-pasting the second half either clobbered the first half's months or —
-// because the on-file row also carries the hand-added Account Name / BFO
-// Name / Scope — lost to the existing row and dropped the fresh figures
-// entirely. Unioning fills each month into its own calendar slot so the
-// full fiscal year assembles across successive snapshot pastes.
-//
-// Merge rule per cell: a non-blank incoming value wins (so a corrected
-// month or a freshly-pasted one updates in place); a blank incoming value
-// leaves the existing value alone (so months this snapshot didn't include —
-// and the user-mapped Account Name / BFO Name / Scope the paste never
-// carries — are preserved). The existing row seeds the base, so its
-// __ignored flag and any earlier months ride along untouched.
-//
-// `replaceMonths` flips the month-handling for projects the paste touches:
-// the existing row's month/period cells (PERIOD_KEYS) are cleared first, so
-// only the months in this paste survive — a clean per-project reset without
-// deleting the row and losing its Account Name / BFO Name / Scope. Identity
-// columns (Comm dates, %, Name) and the user-mapped lookups are never period
-// cells, so they still ride along. Projects the paste doesn't mention are
-// untouched either way.
-export function mergeAndDedupCommissions(existing, incoming, { replaceMonths = false } = {}) {
-  const isBlank = (v) => v == null || String(v).trim() === '';
-  // Overlay `addition`'s non-blank cells onto `base`, returning a new row.
-  const unionInto = (base, addition) => {
-    const merged = { ...base };
-    for (const [k, v] of Object.entries(addition)) {
-      if (isBlank(v)) continue;
-      merged[k] = v;
-    }
-    return merged;
-  };
-
-  const out = [];
-  const order = [];               // keyed projects, in first-seen order
-  const existingByKey = new Map();
-  const incomingByKey = new Map();
-  const noteKey = (key) => { if (!existingByKey.has(key) && !incomingByKey.has(key)) order.push(key); };
-  // Rows that repeat a Project Name *within this single paste*. The first
-  // copy of a project merges/updates the on-file row as usual; a genuine
-  // second copy in the same paste is two distinct deals that happen to share
-  // a name, so it's kept as its own row (appended below) instead of being
-  // unioned away. The table flags these live so they read differently — see
-  // duplicateIdsFrom / rowStyle in CommissionsView.
-  const pasteDuplicates = [];
-
-  // Existing rows seed the base (and lead the output order); incoming rows
-  // are gathered separately so a "replace months" import can wipe the base's
-  // months before overlaying only what this paste carries.
-  for (const row of (existing || [])) {
-    const key = normProjectName(row['Project Name']);
-    if (!key) { out.push(row); continue; }   // no key to group by → keep as-is
-    noteKey(key);
-    existingByKey.set(key, unionInto(existingByKey.get(key) || {}, row));
-  }
-  for (const row of (incoming || [])) {
-    const key = normProjectName(row['Project Name']);
-    if (!key) { out.push(row); continue; }
-    if (incomingByKey.has(key)) {
-      // Second (or later) occurrence of this project in the same paste →
-      // preserve it as a separate row rather than collapsing the two.
-      pasteDuplicates.push({ ...row });
-      continue;
-    }
-    noteKey(key);
-    incomingByKey.set(key, unionInto({}, row));
-  }
-
-  for (const key of order) {
-    const base = existingByKey.get(key) || {};
-    const add = incomingByKey.get(key);
-    if (!add) { out.push(base); continue; }   // project not in this paste → untouched
-    let seed = base;
-    if (replaceMonths) {
-      seed = {};
-      for (const [k, v] of Object.entries(base)) {
-        if (PERIOD_KEYS.has(k)) continue;     // drop existing months; paste repopulates
-        seed[k] = v;
-      }
-    }
-    out.push(unionInto(seed, add));
-  }
-  // Append the genuine within-paste duplicates last so they land right after
-  // the roster they duplicate.
-  out.push(...pasteDuplicates);
-  return out;
-}
+// The paste merge (and the dedup key the table's duplicate flag shares with
+// it) lives in utils/commissionsPasteMerge — see planCommissionsPaste for how
+// a pasted project reconciles with the one already on file.
 
 // Indices of rows that duplicate an earlier row's Project Name, computed off
 // the underlying data order so the flag is stable regardless of how the table
@@ -1058,6 +956,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [showActiveOnly, setShowActiveOnly] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [initialPaste, setInitialPaste] = useState('');
+  // One-line report of what the last paste import did. A merge fills cells
+  // scattered through a long table, so without this it's invisible.
+  const [pasteNote, setPasteNote] = useState('');
   // Transient result banner for the "Fill Account Names from BFO" action.
   const [fillStatus, setFillStatus] = useState('');
   // Cached Opps records, used by the Scope lookup column. Refreshes on
@@ -1459,29 +1360,33 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setSelectedIds(new Set());
   }
 
-  function handleImport(records, { replaceMonths = false } = {}) {
-    setStore(prev => {
-      // Stamp every incoming row with "now" as its Last Updated time. The
-      // merge overlays each incoming row's non-blank cells (including this
-      // stamp) onto the matching project, so a project the paste touches
-      // carries the fresh stamp while an existing project the paste doesn't
-      // mention keeps its prior stamp — an unrelated row never looks
-      // freshly-updated just because a different row pasted.
-      const stamp = nowStamp();
-      const stamped = (records || []).map(r => ({ ...r, [UPDATED_AT_KEY]: stamp }));
-      // Merge the freshly-pasted records into whatever's already on file,
-      // deduping by Project Name so re-pasting a refreshed roster doesn't
-      // pile duplicate rows on top of the existing data. Rows sharing a
-      // project name are unioned cell by cell (see mergeAndDedupCommissions)
-      // so a snapshot covering one half of the fiscal year fills its months
-      // without dropping the months an earlier snapshot already recorded —
-      // unless the user asked to replace months, in which case each touched
-      // project's existing months are cleared and repopulated from the paste.
-      const merged = mergeAndDedupCommissions(prev.data || [], stamped, { replaceMonths });
-      try { saveCommissionsOverride(merged); } catch (err) { console.warn('Save commissions failed', err); }
-      return { data: merged, source: 'override' };
-    });
+  function handleImport(records, { dupeMode = 'fill' } = {}) {
+    // Merge the freshly-pasted records into whatever's already on file,
+    // deduping by Project Name so re-pasting a refreshed roster doesn't pile
+    // duplicate rows on top of the existing data. Rows sharing a project name
+    // are unioned cell by cell (see planCommissionsPaste) so a snapshot
+    // covering one half of the fiscal year fills its months without dropping
+    // the months an earlier snapshot already recorded. `dupeMode` decides
+    // only what happens to a cell BOTH sides filled in: keep what's on file
+    // (default), take the pasted value, or clear the project's months first
+    // and repopulate them from this paste.
+    //
+    // Planned out here rather than inside a setStore updater: it saves, and
+    // reports what it did, which an updater must not do.
+    const { next, summary, touched } = planCommissionsPaste(data || [], records, { dupeMode });
+    // Stamp "now" as the Last Updated time on the rows this paste actually
+    // added to or changed, so a project the paste doesn't mention keeps its
+    // prior stamp — an unrelated row never looks freshly-updated just because
+    // a different row pasted. Stamped after the merge rather than onto the
+    // incoming rows: under the default fill mode an incoming value doesn't
+    // overwrite a cell that already has one, and the stamp always would.
+    const stamp = nowStamp();
+    for (const i of touched) next[i] = { ...next[i], [UPDATED_AT_KEY]: stamp };
+    try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+    setStore({ data: next, source: 'override' });
+    setPasteNote(describeCommissionsPaste(summary));
     setShowPaste(false);
+    setInitialPaste('');
   }
 
   function handleClear() {
@@ -1543,7 +1448,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Commissions</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.15rem' }}>
             {rows.length === 0
-              ? 'Paste your monthly commission roster from Excel: the next step maps each pasted column to a destination.'
+              ? 'Paste your monthly commission roster from Excel (Cmd/Ctrl+V anywhere here): the next step maps each pasted column to a destination.'
               : `${rows.length} commission row${rows.length === 1 ? '' : 's'} on file.`}
           </div>
         </div>
@@ -1551,7 +1456,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <button
             type="button"
             onClick={() => setShowPaste(true)}
-            title="Paste tab-separated rows copied from Excel. The next step lets you confirm which pasted column maps to each commission field."
+            title="Paste tab-separated rows copied from Excel — or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each commission field. New projects are added and projects already on file fill in their blank cells; figures already recorded are left alone."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid #16A34A', background: '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >Paste from Excel</button>
           {rows.length > 0 && (
@@ -1572,6 +1477,18 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           )}
         </div>
       </div>
+      {/* What the last paste import actually changed. A merge fills cells
+          scattered through a long table, so the counts are the only way to
+          see it happened — dismissible, since it's a receipt, not a task. */}
+      {pasteNote && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, color: '#166534', fontSize: '0.75rem' }}>
+            <span style={{ flex: 1 }}>{pasteNote}</span>
+            <button type="button" onClick={() => setPasteNote('')} aria-label="Dismiss import summary" style={{ background: 'transparent', border: 'none', color: '#166534', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px' }}>×</button>
+          </div>
+        </div>
+      )}
+
       {fillStatus && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, color: '#1E3A8A', fontSize: '0.75rem' }}>
@@ -1753,7 +1670,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No commissions yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>Paste from Excel</strong> to drop in copied commission rows. The popup will map each pasted column (Name, Account Name, BFO Name, Project Name, monthly revenue, monthly commission…) onto its destination.
+              Click <strong>Paste from Excel</strong> — or just hit Cmd/Ctrl+V on this page — to drop in copied commission rows. The popup will map each pasted column (Name, Account Name, BFO Name, Project Name, monthly revenue, monthly commission…) onto its destination.
             </div>
           </div>
         ) : (
