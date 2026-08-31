@@ -5,7 +5,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
-import { loadOpps2Newest } from '../../utils/opps2Store';
+import { useOppsRecords } from '../../utils/rosterHooks';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
@@ -402,27 +402,10 @@ function companiesMatch(a, b) {
   return false;
 }
 
-export function useOppsRecords(userId) {
-  const [records, setRecords] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // Read the canonical Opps 2 store the way the rest of the app does:
-      // the strictly-newer of the local IndexedDB cache and the Firestore
-      // doc, with Firestore's chunked payload reassembled. The inline
-      // reader this replaced only read the doc's `json` field and bailed
-      // when the doc was chunked (large datasets), and it always preferred
-      // local IDB even when Firestore was newer.
-      try {
-        const data = await loadOpps2Newest(userId);
-        const recs = Array.isArray(data?.records) ? data.records : null;
-        if (!cancelled && recs && recs.length > 0) setRecords(recs);
-      } catch { /* leave records empty on failure */ }
-    })();
-    return () => { cancelled = true; };
-  }, [userId]);
-  return records;
-}
+// Lives in utils/rosterHooks.js now — the Draft Emails page needs it too and
+// shouldn't pull this whole module in for it. Re-exported here because every
+// contacts page already imports it from this path.
+export { useOppsRecords };
 
 // Defaults for the original "Dan Key Target" page. Other tabs (e.g. the
 // Active Contacts tab) override these to reuse the same UI.

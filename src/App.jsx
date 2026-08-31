@@ -486,7 +486,7 @@ function App() {
           ) : view === 'drafts' || view === 'campaigns' || view === 'tracking' ? (
             // Campaigns and Tracking are sub-tabs of Draft Emails; the view
             // keys stay routable so existing links land on the right tab.
-            <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} initialTab={view === 'drafts' ? 'drafts' : view} />
+            <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} cdmName={cdmName} initialTab={view === 'drafts' ? 'drafts' : view} />
           ) : view === 'charts' ? (
             <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'vibe' ? (
