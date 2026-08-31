@@ -4,7 +4,10 @@
 // dataURL storage, adding ~33% overhead). IDB typically allows hundreds
 // of MB per origin without prompting the user.
 
+import { doc } from 'firebase/firestore';
+import { db as firestore } from '../firebase';
 import { getDbUserId } from './db';
+import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
 
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'portfolio-source-files';
@@ -45,6 +48,21 @@ function slugKey(companyName) {
   return uid ? `${uid}:${base}` : base;
 }
 
+// The Firestore copy of one company's attachment. Keyed by the UNSCOPED
+// slug — the uid is already in the path, and repeating it would bury the
+// company name under it.
+//
+// These were IndexedDB and nothing else. An uploaded portfolio workbook is
+// a file somebody sent once; "clear cookies and site data" was enough to
+// need it sent again.
+function itemDoc(userId, legacyKey) {
+  return doc(firestore, 'portfolioSourceFiles', String(userId), 'items', legacyKey);
+}
+
+// Past this the file stays local (and in the downloaded full backup)
+// rather than costing dozens of document writes on one upload.
+export const PORTFOLIO_FILE_MAX_SYNC_BYTES = 20 * 1024 * 1024;
+
 function idbGet(db, key) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
@@ -57,20 +75,36 @@ function idbGet(db, key) {
 export async function saveSourceFile(companyName, file) {
   const key = slugKey(companyName);
   if (!key || !file) return;
+  const rec = {
+    key,
+    name: file.name,
+    type: file.type || 'application/octet-stream',
+    size: file.size,
+    uploadedAt: new Date().toISOString(),
+    blob: file,
+  };
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put({
-      key,
-      name: file.name,
-      type: file.type || 'application/octet-stream',
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-      blob: file,
-    });
+    tx.objectStore(STORE).put(rec);
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
+
+  const userId = getDbUserId();
+  if (!userId) return;
+  if (file.size > PORTFOLIO_FILE_MAX_SYNC_BYTES) {
+    console.warn(`Portfolio source file for ${companyName} is ${file.size} bytes — too big to back up to Firestore; it stays on this device.`);
+    return;
+  }
+  // Best-effort: an offline browser must not lose the file just uploaded.
+  try {
+    await writeChunkedDoc(itemDoc(userId, legacySlugKey(companyName)), rec, {
+      meta: { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt },
+    });
+  } catch (err) {
+    console.warn('Portfolio source file Firestore backup failed', companyName, err);
+  }
 }
 
 export async function loadSourceFile(companyName) {
@@ -120,13 +154,33 @@ export async function loadSourceFile(companyName) {
             tx.oncomplete = resolve;
             tx.onerror = () => reject(tx.error);
           });
-          try { localStorage.removeItem(legacyKey); } catch {}
+          try { localStorage.removeItem(legacyKey); } catch { /* storage blocked */ }
           return migrated;
         }
       }
-    } catch {}
-    return null;
-  } catch {
+    } catch { /* no legacy localStorage entry */ }
+  } catch { /* fall through to the backup */ }
+
+  // Nothing on this machine — fetch the backup and cache it locally.
+  const userId = getDbUserId();
+  if (!userId) return null;
+  try {
+    const remote = await readChunkedDoc(itemDoc(userId, legacyKey));
+    const rec = remote?.value;
+    if (!rec?.blob) return null;
+    const restored = { ...rec, key };
+    try {
+      const db = await openDB();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(restored);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch { /* cache only */ }
+    return restored;
+  } catch (err) {
+    console.warn('Portfolio source file restore failed', companyName, err);
     return null;
   }
 }
@@ -163,6 +217,19 @@ export async function renameSourceFile(oldCompanyName, newCompanyName) {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
+    // The backup follows the rename, or the next machine to open the
+    // renamed company restores nothing and the file looks lost.
+    const userId = getDbUserId();
+    if (userId) {
+      try {
+        await writeChunkedDoc(itemDoc(userId, legacySlugKey(newCompanyName)), { ...rec, key: newKey }, {
+          meta: { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt },
+        });
+        await deleteChunkedDoc(itemDoc(userId, legacySlugKey(oldCompanyName)));
+      } catch (err) {
+        console.warn('Portfolio source file Firestore rename failed', oldCompanyName, err);
+      }
+    }
     return true;
   } catch {
     return false;
@@ -180,7 +247,11 @@ export async function clearSourceFile(companyName) {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
-  } catch {}
-  try { localStorage.removeItem(key); } catch {}
-  try { localStorage.removeItem(legacySlugKey(companyName)); } catch {}
+  } catch { /* nothing stored, or the DB is closed */ }
+  try { localStorage.removeItem(key); } catch { /* storage blocked */ }
+  try { localStorage.removeItem(legacySlugKey(companyName)); } catch { /* storage blocked */ }
+  const userId = getDbUserId();
+  if (!userId) return;
+  try { await deleteChunkedDoc(itemDoc(userId, legacySlugKey(companyName))); }
+  catch (err) { console.warn('Portfolio source file Firestore clear failed', companyName, err); }
 }

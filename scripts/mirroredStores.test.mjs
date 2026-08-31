@@ -14,8 +14,14 @@
 // there for three months until it cost a day's work to find out.
 //
 // So this is a scan, not a unit test. A new store that persists to
-// localStorage or IndexedDB and is neither mirrored nor listed below fails
-// the build, and whoever adds it has to make the call on purpose.
+// localStorage or IndexedDB and neither keeps a cloud copy nor is listed
+// below fails the build, and whoever adds it has to make the call on
+// purpose.
+//
+// "Keeps a cloud copy" is two things: registering with localMirrorSync
+// (the small keyed stores), or writing its own Firestore documents (the
+// big ones, through utils/chunkedDoc). Both are detected, so a store that
+// does either needs no entry in the lists below.
 //
 // Run: node scripts/mirroredStores.test.mjs
 
@@ -36,8 +42,6 @@ const LOCAL_BY_DESIGN = {
   // Caches. The real copy is server-side; losing these costs a refetch.
   'callHistoryCache.js': 'cache — the call history itself is one document per call in Firestore',
   'hubspotContactsCache.js': 'cache — refetched from HubSpot',
-  'opps2Store.js': 'has its own Firestore sync (chunked), predating localMirrorSync',
-  'oppRfpTemplate.js': 'writes its own Firestore copy',
 
   // Backup layers. Mirroring a backup to the cloud defeats its purpose:
   // these exist to survive a bad cloud write, not to be one.
@@ -63,27 +67,18 @@ const LOCAL_BY_DESIGN = {
 
   // Not a store: helpers that write through to other stores' keys.
   'companyRenameCascade.js': 'rename helper — writes through the stores it cascades into',
+  'fullBackup.js': 'IS the export/restore path — it reads and writes every other store by definition',
 };
 
-// Should be mirrored and is not. Listed rather than ignored so the debt is
-// visible on every run; the scan reports these but does not fail on them.
+// Should have a cloud copy and does not. Listed rather than ignored so the
+// debt is visible on every run; the scan reports these but does not fail
+// on them.
 //
-// These are no longer single-copy in the sense the header describes: the
-// Backups page's "Download full backup" (utils/fullBackup) writes every
-// localStorage key and every IndexedDB record to a file, so what is left
-// here is data that survives a wipe only if the user took one. That is a
-// weaker guarantee than a mirror, which is why they stay on the list.
-const KNOWN_GAPS = {
-  'quotedMonthRows.js':
-    'the opp rows captured behind each Quoted Projections month-end. Its companion '
-    + 'quotedProjectionsStore IS mirrored, so the figures survive a wipe but the rows '
-    + 'behind them do not, and a past-month export then falls back to the lossy rebuild '
-    + 'this store was added to replace.',
-  'marketUpdatesStore.js':
-    'emails dropped on the Market Updates tab, with attachments. Multi-MB blobs, so a mirror '
-    + 'needs the chunking oppRfpTemplate does — until then the full backup is the only copy.',
-  'oppPricingSourceFile.js': 'uploaded SIA workbook bytes saved against an opp',
-};
+// Empty, as of the commit that gave the captured Quoted Projections rows,
+// the Market Update attachments and the saved SIA workbooks a chunked
+// Firestore copy. Anything added here should be a deliberate, temporary
+// admission — not a resting place.
+const KNOWN_GAPS = {};
 
 let passed = 0, failed = 0;
 function ok(cond, name, detail = '') {
@@ -97,19 +92,30 @@ const source = new Map(files.map((f) => [f, read(f)]));
 
 // A file persists to the browser if it writes a user-scoped localStorage key
 // or an IndexedDB record. Both are wiped by "clear cookies and site data".
-const persistsLocally = (src) => /\buserLsSet\s*\(/.test(src) || /\bdbPut\s*\(/.test(src) || /\bmirrorDbPut\s*\(/.test(src);
+const persistsLocally = (src) =>
+  /\buserLsSet\s*\(/.test(src) || /\bdbPut\s*\(/.test(src) || /\bmirrorDbPut\s*\(/.test(src)
+  // uploadedListStore opens its own database rather than going through
+  // db.js, and was invisible to this scan until this line.
+  || /\bindexedDB\.open\s*\(/.test(src);
 const isMirrored = (src) => /\bregisterMirroredKey\s*\(|\bregisterMirroredDbKey\s*\(/.test(src);
+// A store that writes its own Firestore documents rather than registering
+// a mirrored key — the payloads too big for one, which go through
+// utils/chunkedDoc (or, for the uploaded lists, listBackupSync).
+const keepsOwnCloudCopy = (src) =>
+  /from '(firebase\/firestore|\.\.\/firebase)'/.test(src)
+  || /from '\.\/(chunkedDoc|listBackupSync)(\.js)?'/.test(src);
 
 const local = files.filter((f) => persistsLocally(source.get(f)));
 const mirrored = local.filter((f) => isMirrored(source.get(f)));
+const cloudBacked = local.filter((f) => isMirrored(source.get(f)) || keepsOwnCloudCopy(source.get(f)));
 
 // ── 1. Nothing persists locally without a decision ─────────────────────
 const undeclared = local.filter(
-  (f) => !isMirrored(source.get(f)) && !(f in LOCAL_BY_DESIGN) && !(f in KNOWN_GAPS),
+  (f) => !cloudBacked.includes(f) && !(f in LOCAL_BY_DESIGN) && !(f in KNOWN_GAPS),
 );
 ok(
   undeclared.length === 0,
-  'every browser-only store is mirrored, or listed with a reason',
+  'every browser-only store keeps a cloud copy, or is listed with a reason',
   undeclared.length === 0 ? '' :
     `${undeclared.join(', ')}\n        `
     + 'This store keeps data only in the browser, where "clear cookies and site data" destroys it.\n        '
@@ -151,17 +157,20 @@ ok(
     `${stale.join(', ')} — no longer persists locally (or was renamed/deleted). Remove the entry.`,
 );
 
-const contradiction = mirrored.filter((f) => f in LOCAL_BY_DESIGN || f in KNOWN_GAPS);
+const contradiction = cloudBacked.filter((f) => f in LOCAL_BY_DESIGN || f in KNOWN_GAPS);
 ok(
   contradiction.length === 0,
-  'no store is both mirrored and listed as unmirrored',
-  contradiction.length === 0 ? '' : `${contradiction.join(', ')} — now mirrored, so remove the entry.`,
+  'no store is both backed up and listed as not backed up',
+  contradiction.length === 0 ? '' : `${contradiction.join(', ')} — now has a cloud copy, so remove the entry.`,
 );
 
 // ── Report ─────────────────────────────────────────────────────────────
-console.log(`\n${mirrored.length} mirrored · ${Object.keys(LOCAL_BY_DESIGN).length} local by design · ${Object.keys(KNOWN_GAPS).length} known gaps`);
+console.log(
+  `\n${mirrored.length} mirrored · ${cloudBacked.length - mirrored.length} keep their own cloud copy`
+  + ` · ${Object.keys(LOCAL_BY_DESIGN).length} local by design · ${Object.keys(KNOWN_GAPS).length} known gaps`,
+);
 if (Object.keys(KNOWN_GAPS).length) {
-  console.log('\nKnown gaps — no cloud mirror; a downloaded full backup is the only copy:');
+  console.log('\nKnown gaps — no cloud copy; a downloaded full backup is the only one:');
   for (const [file, why] of Object.entries(KNOWN_GAPS)) console.log(`  ${file}\n      ${why}`);
 }
 

@@ -4,12 +4,24 @@
 // object { zipMap, meta } so it round-trips through structured clone
 // without any surprises.
 
+import { doc } from 'firebase/firestore';
+import { db as firestore } from '../firebase';
 import { getDbUserId } from './db';
+import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
 
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'uploaded-lists';
 const DB_VERSION = 2;
 const BASE_KEY = '__utility-rates__';
+
+// The Firestore copy. An uploaded rate table is thousands of zips — well
+// past one document — so it goes through the chunked store. This table is
+// uploaded once and then relied on by every Utility Lookup run; before
+// this it lived in one browser and clearing site data meant finding the
+// file and uploading it again.
+function ratesDoc(userId) {
+  return doc(firestore, 'lookupTables', String(userId), 'items', 'utility-rates');
+}
 
 // Per-user record key so two accounts on the same browser don't share
 // one cached rate table. Pre-auth callers fall back to the bare key.
@@ -76,6 +88,15 @@ export async function saveUtilityRates(zipMap, meta = {}) {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
+  const userId = getDbUserId();
+  if (!userId) return;
+  try {
+    await writeChunkedDoc(ratesDoc(userId), { zipMap, meta }, {
+      meta: { savedAt: Date.now(), zipCount: Object.keys(zipMap || {}).length },
+    });
+  } catch (err) {
+    console.warn('Utility rates Firestore backup failed', err);
+  }
 }
 
 export async function loadUtilityRates() {
@@ -88,10 +109,35 @@ export async function loadUtilityRates() {
       req.onerror = () => reject(req.error);
     });
     if (rec?.data?.zipMap) return rec.data;
-    return null;
-  } catch {
+  } catch { /* fall through to the backup */ }
+  return restoreUtilityRates();
+}
+
+// Nothing local — a cleared browser or another machine. Pull the table
+// down and write it back to IndexedDB so the next read is local again.
+async function restoreUtilityRates() {
+  const userId = getDbUserId();
+  if (!userId) return null;
+  try {
+    const remote = await readChunkedDoc(ratesDoc(userId));
+    const data = remote?.value;
+    if (!data?.zipMap) return null;
+    try { await saveUtilityRatesLocally(data); } catch { /* cache only */ }
+    return data;
+  } catch (err) {
+    console.warn('Utility rates restore failed', err);
     return null;
   }
+}
+
+async function saveUtilityRatesLocally(data) {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put({ key: ratesKey(), data, savedAt: Date.now() });
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 export async function clearUtilityRates() {
@@ -103,5 +149,9 @@ export async function clearUtilityRates() {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
-  } catch {}
+  } catch { /* nothing stored, or the DB is closed */ }
+  const userId = getDbUserId();
+  if (!userId) return;
+  try { await deleteChunkedDoc(ratesDoc(userId)); }
+  catch (err) { console.warn('Utility rates Firestore clear failed', err); }
 }

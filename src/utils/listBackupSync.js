@@ -25,23 +25,18 @@
 // so the admin's lists move to the shared collection without manual
 // migration. On clear, both paths are deleted.
 //
-// Each chunk targets ~600KB to stay comfortably under the 1MB
-// per-doc Firestore limit. Larger lists span multiple chunks; chunk
-// count is bounded only by the per-doc field count (1500), so up to
-// ~900MB of raw JSON per list is supported in theory.
+// The chunk fields above are the LEGACY layout, and they were wrong:
+// Firestore's 1 MB cap is on the document, not on each field, so any list
+// that needed a second chunk failed the write outright — and saveList
+// fire-and-forgets the promise, so the big lists (CDP, GRESB — the ones it
+// would actually hurt to lose) quietly had no backup at all. Writes now go
+// through utils/chunkedDoc, which puts each chunk in its own document
+// under the parent. Reads still understand the old layout, since anything
+// stored that way is by definition small enough to have succeeded.
 
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-
-const CHUNK_BYTES = 600_000;
-
-function chunkString(str, size) {
-  const chunks = [];
-  for (let i = 0; i < str.length; i += size) {
-    chunks.push(str.slice(i, i + size));
-  }
-  return chunks;
-}
+import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
 
 function sharedDoc(storageKey) {
   return doc(db, 'listBackups', storageKey);
@@ -51,6 +46,7 @@ function legacyDoc(userId, storageKey) {
   return doc(db, 'users', userId, 'listBackups', storageKey);
 }
 
+// The legacy inline-chunk layout.
 function unpackChunks(data) {
   const n = Number(data?.chunkCount) || 0;
   if (n === 0) return null;
@@ -66,52 +62,42 @@ function unpackChunks(data) {
   } catch { return null; }
 }
 
-function buildPayload(rows) {
-  const json = JSON.stringify(rows);
-  const chunks = chunkString(json, CHUNK_BYTES);
-  const payload = {
-    chunkCount: chunks.length,
-    count: rows.length,
-    savedAt: Date.now(),
-  };
-  chunks.forEach((c, i) => { payload[`chunk${i}`] = c; });
-  return payload;
-}
-
 export async function saveListBackup(userId, storageKey, rows) {
   if (!storageKey) return;
   if (!Array.isArray(rows) || rows.length === 0) {
     // Empty list = clear backup so the auto-restore path doesn't
     // surface stale data after the user explicitly cleared.
-    try { await deleteDoc(sharedDoc(storageKey)); } catch {}
-    if (userId) { try { await deleteDoc(legacyDoc(userId, storageKey)); } catch {} }
+    await clearListBackup(userId, storageKey);
     return;
   }
-  const payload = buildPayload(rows);
-  await setDoc(sharedDoc(storageKey), payload);
+  await writeChunkedDoc(sharedDoc(storageKey), rows, {
+    meta: { count: rows.length, savedAt: Date.now() },
+  });
+}
+
+// A list from a document, whichever layout it was written in.
+async function readList(ref) {
+  const entry = await readChunkedDoc(ref);
+  if (Array.isArray(entry?.value)) return entry.value;
+  const snap = await getDoc(ref);
+  return snap.exists() ? unpackChunks(snap.data()) : null;
 }
 
 export async function loadListBackup(userId, storageKey) {
   if (!storageKey) return null;
   try {
     // Shared path is the canonical store.
-    const shared = await getDoc(sharedDoc(storageKey));
-    if (shared.exists()) {
-      const rows = unpackChunks(shared.data());
-      if (rows) return rows;
-    }
+    const rows = await readList(sharedDoc(storageKey));
+    if (rows) return rows;
     // Legacy per-user fallback. If found, opportunistically promote
     // into the shared collection so future reads (including for other
     // signed-in users) hit the fast path. Best-effort: if the write
     // fails (e.g. permission rules), still return the legacy data.
     if (userId) {
-      const legacy = await getDoc(legacyDoc(userId, storageKey));
-      if (legacy.exists()) {
-        const rows = unpackChunks(legacy.data());
-        if (rows) {
-          try { await setDoc(sharedDoc(storageKey), buildPayload(rows)); } catch {}
-          return rows;
-        }
+      const legacyRows = await readList(legacyDoc(userId, storageKey));
+      if (legacyRows) {
+        try { await saveListBackup(userId, storageKey, legacyRows); } catch { /* still return the data */ }
+        return legacyRows;
       }
     }
     return null;
@@ -123,6 +109,6 @@ export async function loadListBackup(userId, storageKey) {
 
 export async function clearListBackup(userId, storageKey) {
   if (!storageKey) return;
-  try { await deleteDoc(sharedDoc(storageKey)); } catch {}
-  if (userId) { try { await deleteDoc(legacyDoc(userId, storageKey)); } catch {} }
+  try { await deleteChunkedDoc(sharedDoc(storageKey)); } catch { /* best-effort */ }
+  if (userId) { try { await deleteChunkedDoc(legacyDoc(userId, storageKey)); } catch { /* best-effort */ } }
 }
