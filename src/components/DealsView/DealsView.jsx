@@ -28,7 +28,7 @@ import {
   DEAL_SETUP_KEY, DEAL_RECURRING_KEY,
 } from '../../utils/dealOppYear1';
 import {
-  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
+  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate, isExpiredDeal,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -284,7 +284,11 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
   const onChange = (v) => onSave?.(row.id, field.key, v);
 
   let editor;
-  if (field.yesno) {
+  if (field.date) {
+    // The same click-to-pick calendar the grid's date cells use, so a date
+    // set here reads and stores exactly like one set in the column.
+    editor = <DateCell value={raw} onChange={onChange} />;
+  } else if (field.yesno) {
     editor = <SelectCell value={raw} onChange={onChange} options={['Yes', 'No']} />;
   } else if (link) {
     const opts = listRegistry?.get(link.listKey)?.options || [];
@@ -606,10 +610,10 @@ function ClientNameWarning({ name, cdmName, onAdd, onIgnore }) {
 }
 
 // The picker the "Mapped to Client" cell opens: a type-to-search box
-// over the client roster rather than a <select>. Two reasons it isn't
-// a plain dropdown. The roster runs to 100+ names, so scrolling for
-// one is slow and you have to know how the name was spelled on the
-// Table View side to find it. And mounting a full <select> per
+// over the Table View company roster rather than a <select>. Two
+// reasons it isn't a plain dropdown. The roster runs to 100+ names, so
+// scrolling for one is slow and you have to know how the name was
+// spelled on the Table View side to find it. And mounting a full <select> per
 // unmapped row — 250 rows × 130 options — is 30k+ DOM nodes of
 // dropdown, which alone can leave the table looking blank while the
 // browser catches up. So the cell renders a tiny button until it's
@@ -713,12 +717,12 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
         autoFocus
         type="text"
         value={query}
-        placeholder={current || 'Search clients…'}
+        placeholder={current || 'Search companies…'}
         onChange={(e) => { setQuery(e.target.value); setActive(0); }}
         onKeyDown={handleKeyDown}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        title="Type part of the client name — matches are ranked as you type"
+        title="Type part of the company name — matches are ranked as you type"
         style={{
           width: '100%', padding: '0.2rem 0.3rem',
           border: '1px solid #3B82F6', borderRadius: 4,
@@ -748,7 +752,7 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
           >
             {rows.length === 0 && (
               <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                No client matches “{query.trim()}”
+                No company matches “{query.trim()}”
               </div>
             )}
             {rows.map((name, i) => (
@@ -849,7 +853,7 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
       value={manual || ''}
       placeholder="Map to client…"
       clearLabel="(Unmap)"
-      title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search for the matching client'}
+      title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search any Table View company'}
       onPick={(name) => onChange(raw, name)}
       wrapperStyle={{ width: '100%' }}
       buttonStyle={{
@@ -949,6 +953,13 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   // Year is always present since it's computed from Original Contract
   // Start — surface the column even when no workbook cell populated it.
   keys.add('Year');
+  // Follow Up On Sale is app-managed, not a workbook column: it's stamped
+  // from the post-sale follow-up editors on the Clients tab and the
+  // Pipeline dashboard. Until one deal had been stamped, no row carried
+  // the key and the column simply wasn't on this table — so the one place
+  // you'd go to see which deals still need chasing didn't have it. Seed
+  // it like Year so it's always there to read and to set.
+  keys.add('Follow Up On Sale');
   // Empty new-row case: nothing in the data has populated keys yet
   // (the user just clicked New Deal on a clean slate). Seed with the
   // canonical lineup so they have somewhere to type instead of staring
@@ -1378,7 +1389,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return () => { cancelled = true; };
   }, [user?.uid]);
 
-  // Active + Old Client roster the helper-column dropdown picks from.
+  // The user's own Active + Old Client roster. Feeds the head of the
+  // Mapped-to-Client search list (see mapTargetOptions below), so their
+  // accounts win ties against the wider Table View roster.
   // CDM-matching Client / Old Client prospects come first, but any
   // Old Client in the pool — even ones whose CDM has drifted to
   // another rep — is included too, since a deal row often points at
@@ -1425,20 +1438,36 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     return out;
   }, [prospects]);
 
+  // What the "Mapped to Client" picker searches: EVERY company in the
+  // Table View roster, not just the CDM/status-filtered client pool.
+  // A deal row can point at any account the user has on file — one
+  // owned by another rep, or a prospect that isn't flagged Client yet
+  // — and the old narrow list left those unmappable. The user's own
+  // client roster still leads the array so that when two companies
+  // score the same in the ranked search (see utils/clientSuggest, which
+  // breaks ties on the caller's original order) their account wins.
+  const mapTargetOptions = useMemo(() => {
+    const seen = new Set(clientOptions.map(n => n.toLowerCase()));
+    const rest = companySuggestions.filter(n => !seen.has(n.toLowerCase()));
+    return [...clientOptions, ...rest];
+  }, [clientOptions, companySuggestions]);
+
   // Normalized set a deal's Client Name auto-maps against. Built from
   // EVERY company in the Table View roster (companySuggestions), not just
   // the CDM/status-filtered client pool — so an exact name match auto-maps
   // regardless of who owns the account or whether it's tagged Client / Old
-  // Client. The Mapped-to-Client search box offers this same full roster,
-  // so a name that auto-maps and a name picked by hand can never disagree
-  // about which companies exist — picking by hand was previously limited
-  // to the CDM's own Client / Old Client rows, which left ordinary Table
-  // View companies unreachable even though an exact match to one would
-  // have auto-mapped.
+  // Client. The Mapped-to-Client picker searches the same full roster
+  // (mapTargetOptions) for manual assignment.
   const clientNameSet = useMemo(
     () => new Set(companySuggestions.map(n => normClient(n))),
     [companySuggestions]
   );
+
+  // Which ordering band a row belongs to: 0 live, 1 expired. Held in a
+  // stable callback because DataTable memoizes the grouped order against
+  // this identity — a fresh arrow every render would re-sort the whole
+  // table on each keystroke in the search box.
+  const expiredRowGroup = useCallback((row) => (isExpiredDeal(row) ? 1 : 0), []);
 
   // Lookup from normalized company name to prospect, so the Client
   // Status column can resolve each deal row to its prospect record.
@@ -1929,7 +1958,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             raw={raw}
             manual={manual}
             ignored={ignored}
-            clientOptions={companySuggestions}
+            clientOptions={mapTargetOptions}
             onChange={setDealClientMapping}
             onToggleIgnore={setDealClientIgnore}
           />
@@ -1999,11 +2028,13 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     };
     // Order: select · history · progress · client name · mapped-to-client · status · rest.
     return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, companySuggestions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
-  const tableId = useMemo(
-    () => 'deals:' + columns.map(c => c.key).sort().join('|'),
-    [columns]
-  );
+  }, [baseColumns, mapTargetOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
+  // Stable: keyed on the table, not on its column list. The id used to
+  // carry the sorted column keys, so every column the page gained sent the
+  // user's widths / hidden columns / renames to a fresh empty bucket and
+  // the whole grid came back. DataTable stores what's HIDDEN now, so one
+  // bucket copes with the lineup changing under it.
+  const tableId = 'deals';
   // Bulk-select, the history drill-down and the progress pill are
   // affordances rather than data, so they stay on screen whatever the
   // user hides from the column picker.
@@ -2055,7 +2086,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         && PROGRESS_FIELDS.some(f => !isHandoffFieldDone(r, f)));
     }
     return out;
-  }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet]);
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -2154,7 +2185,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       if (!out.has(norm)) out.set(norm, raw);
     }
     return out;
-  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [rows, clientNameSet, clientMap, ignoreSet]);
 
   function handleBulkIgnore() {
     if (distinctUnmappedNames.size === 0) return;
@@ -2620,11 +2651,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               the roster is long enough that scrolling a <select> for one
               name was the slow part of clearing an unmapped batch. */}
           <ClientSearchButton
-            options={clientOptions}
+            options={mapTargetOptions}
             value={bulkPick}
             placeholder="(Map all to client…)"
             clearLabel="(Clear)"
-            title={bulkPick ? `Every unmapped name maps to ${bulkPick}. Click to change.` : 'Click to search for the client to map every unmapped name to'}
+            title={bulkPick ? `Every unmapped name maps to ${bulkPick}. Click to change.` : 'Click to search any Table View company to map every unmapped name to'}
             onPick={setBulkPick}
             inputStyle={{ width: 200, fontSize: '0.72rem', padding: '0.25rem 0.4rem' }}
             buttonStyle={{
@@ -2666,7 +2697,17 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             rows={filtered}
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
+            // Expired deals sink below the live ones whatever the sort —
+            // they're worth keeping visible as history but shouldn't be
+            // interleaved with the deals still being worked. Mirrors what
+            // the Clients tab's contract drill-down already does.
+            rowGroup={expiredRowGroup}
             rowStyle={(row) => {
+              // Expired first, ahead of the green and amber below: those
+              // say "this deal needs (or doesn't need) chasing", which is
+              // moot once the contract is over, and a green expired row
+              // would read as live at a glance.
+              if (isExpiredDeal(row)) return { background: '#E2E8F0' };
               // A deal marked On track or Completed reads green down the
               // whole row — the point of the status is to see, without
               // reading a column, which deals still need chasing.

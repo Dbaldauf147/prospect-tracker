@@ -77,6 +77,50 @@ function isPlaceholder(v) {
 }
 
 /**
+ * The BFO Activity column carrying the BFO Opportunity Name.
+ *
+ * Prefer the exact header BFO's printable view emits. A paste can also
+ * carry near-misses — a "Local Opportunity Name" column, or the
+ * "Opportunity Name (2)" that parseTSV renames a duplicate to — and
+ * taking the first loose match lets one of those win purely by sorting
+ * earlier. That indexes a column of blanks, which is indistinguishable
+ * from having no BFO data at all.
+ */
+function findOppNameColumn(headers) {
+  const list = headers || [];
+  return list.find(h => /^opportunity\s*name$/i.test(String(h || '').trim()))
+    || list.find(h => /opportunity\s*name/i.test(String(h || '')))
+    || '';
+}
+
+/**
+ * Normalized BFO Opportunity Name → its BFO Activity row, over the rows
+ * pasted on the BFO Activity tab. Empty in the three cases that all mean
+ * the same thing — no paste, no Opportunity Name column in it, or no
+ * names in that column — so one size check covers all of them.
+ */
+export function bfoOppNameIndex(bfoActivity) {
+  const index = new Map();
+  const oppCol = findOppNameColumn(bfoActivity?.headers);
+  if (!oppCol) return index;
+  for (const r of (bfoActivity?.rows || [])) {
+    const k = normalizeName(r[oppCol]);
+    if (k && !index.has(k)) index.set(k, r);
+  }
+  return index;
+}
+
+/**
+ * Whether the pasted BFO Activity data can answer "is this opp still open
+ * in BFO?" at all. False means an empty Close Not Solds list says nothing
+ * about the opps — there was nothing to check them against — which is a
+ * different message to the user than "none are still open".
+ */
+export function hasBfoOppNameIndex(bfoActivity) {
+  return bfoOppNameIndex(bfoActivity).size > 0;
+}
+
+/**
  * Not-Sold opps that still have a corresponding BFO row open. Each pulls
  * its Reason Not Sold + Competition from Opps and maps the pair to the
  * Status + Reason values BFO expects when closing the opp out. Rows whose
@@ -86,26 +130,29 @@ function isPlaceholder(v) {
  * Filter:
  *   • Stage is "Not Sold"
  *   • "BFO Link" is set (not blank / "-" / "#N/A")
- *   • the BFO Opportunity Name is still on the BFO Activity paste (when
- *     Activity data with an Opportunity Name column is loaded at all)
+ *   • the BFO Opportunity Name is still on the BFO Activity paste
  *
  * A missing BFO Address isn't a gate: the row still surfaces (with an
  * empty `bfoUrl`) so the user can patch the Opps row.
+ *
+ * Returns nothing at all when the BFO Activity paste can't answer the
+ * third question — see hasBfoOppNameIndex.
  */
 export function computeCloseNotSoldOpps({ oppsCache, bfoActivity }) {
   const records = oppsCache?.records || [];
   if (!records.length) return [];
   // Index BFO Activity by opportunity name so we can quickly check
   // whether an Opps row has a corresponding open BFO opp.
-  const bfoByName = new Map();
-  const headers = bfoActivity?.headers || [];
-  const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
-  if (oppCol) {
-    for (const r of (bfoActivity?.rows || [])) {
-      const k = normalizeName(r[oppCol]);
-      if (k && !bfoByName.has(k)) bfoByName.set(k, r);
-    }
-  }
+  const bfoByName = bfoOppNameIndex(bfoActivity);
+  // Nothing to check against — fail closed. Every row this returns
+  // asserts "Not Sold on Opps but STILL OPEN in BFO", and with no BFO
+  // rows in hand there is no evidence for the second half. An empty
+  // index used to mean "no opinion", which let every Not-Sold opp
+  // carrying a BFO Link through: a page whose paste hadn't loaded yet
+  // (or whose paste had no Opportunity Name column) produced a full
+  // list of opps to close out, most of them closed already. Callers
+  // that want to explain the empty list ask hasBfoOppNameIndex.
+  if (bfoByName.size === 0) return [];
   const rows = [];
   const seen = new Set();
   for (const r of records) {
@@ -117,7 +164,7 @@ export function computeCloseNotSoldOpps({ oppsCache, bfoActivity }) {
     if (seen.has(key)) continue;
     // Only surface opps that still exist on the BFO Activity tab — the
     // prompt is about closing them out in BFO, so a BFO row is required.
-    if (bfoByName.size > 0 && !bfoByName.has(key)) continue;
+    if (!bfoByName.has(key)) continue;
     const bfoUrl = detectBfoUrl(r);
     const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
     // Competition (set via the Sold / Not Sold close-out popups or

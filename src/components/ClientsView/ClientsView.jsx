@@ -20,7 +20,7 @@ import {
 } from '../../utils/clientManagerStore';
 import { ClientFieldsPasteModal } from './ClientFieldsPasteModal';
 import {
-  asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
+  asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy, isInactiveAgreement,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import {
@@ -30,7 +30,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 // Shared with the Issues tab so both surfaces agree on what's expired.
-import { isInactiveAgreement, normClientName, soonestExpiration } from '../../utils/clientIssues';
+import { normClientName, soonestExpiration } from '../../utils/clientIssues';
 import { dealSoldDate, postSaleFollowUpRows } from '../../utils/postSaleFollowUp';
 
 const MS_PER_DAY = 86400000;

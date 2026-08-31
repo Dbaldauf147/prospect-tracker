@@ -51,6 +51,32 @@ export function asDate(v) {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+// The Paperwork column doubles as a status field — "Cancelled" / "Expired"
+// mark agreements that no longer count regardless of their End Date.
+const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
+export function isInactiveAgreement(deal) {
+  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
+  return INACTIVE_STATUSES.has(status);
+}
+
+// Expired, as the Deals page greys and sinks it: the user has marked the
+// Paperwork column "Expired". Nothing else — a hand-set flag, not a
+// derived one.
+//
+// A past End Date deliberately does NOT count. Agreements outlive the
+// date on them all the time: they auto-renew, get amended, or are simply
+// still being paid on while the sheet's date goes stale. Deriving expiry
+// from the date greyed out live contracts, which is worse than missing
+// one that was never marked — the user can mark it.
+//
+// Narrower than isInactiveAgreement above, which also counts Cancelled.
+// Cancelled and expired are different events and the Deals page is only
+// asked to show the second, so the two predicates stay separate rather
+// than one calling the other.
+export function isExpiredDeal(deal) {
+  return String(deal?.['Paperwork completed'] || '').trim().toLowerCase() === 'expired';
+}
+
 // The calendar year a deal belongs to, derived from its Original Contract
 // Start date. This is what the Deals tab renders in its read-only Year
 // column, so anything that buckets deals by year (e.g. the YOY Commissions

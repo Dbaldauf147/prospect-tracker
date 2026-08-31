@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
-import { countOverdueCallIns } from '../utils/oppsCallIn';
+import { countCallInDue } from '../utils/oppsCallIn';
 import { collectTopPcIntros } from '../utils/topPcOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
 import {
@@ -67,7 +67,7 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // still in flight is "unknown", which shows nothing, rather than an
   // unearned "all caught up" that would also let the step below it go red.
   const counts = useMemo(() => ({
-    opps: oppsRecords ? countOverdueCallIns(oppsRecords) : null,
+    opps: oppsRecords ? countCallInDue(oppsRecords) : null,
     renewals: countRenewalWork(issues),
     'targeted-services': countServiceGaps(serviceGaps),
     'pe-intros': topPcIntros ? topPcIntros.length : null,

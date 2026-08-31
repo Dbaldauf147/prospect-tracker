@@ -8,11 +8,9 @@ import { dbGet } from '../utils/db';
 import { loadOppsFromCache } from '../utils/oppsCache';
 import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
 import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
-
-// BFO Activity rows are pasted on the BFO Activity tab and persisted in this
-// IndexedDB store; the Opps cache backs the "not tagged to an opp" check.
-const BFO_ACTIVITY_STORE = 'bfo-activity';
-const BFO_ACTIVITY_KEY = 'current';
+// BFO Activity rows are pasted on the BFO Activity tab and persisted in that
+// store; the Opps cache backs the "not tagged to an opp" check.
+import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../utils/bfoActivityStore';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -93,8 +91,14 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
     // BFO Activity (IndexedDB) + Opps cache (IndexedDB): refresh on window
-    // focus (a fresh paste on either tab) and on the opps2 cache-updated
-    // event, mirroring how the BFO Activity / Agents pages reload them.
+    // focus (a fresh paste on either tab), on the BFO Activity store's own
+    // change event, and on the opps2 cache-updated event, mirroring how the
+    // BFO Activity / Agents pages reload them. The store event covers what
+    // focus can't: the mirror landing a cloud copy locally — another
+    // device's paste, or first hydration on a browser that didn't hold the
+    // record — while this hook is already mounted and the window focused.
+    // Until it does, the Close Not Sold detector has no BFO rows to check
+    // against and reports nothing.
     function refreshBfo() { dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {}); }
     function refreshOpps() { loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {}); }
     // Pipeline dashboard (IndexedDB): the tracked coverage services. Refreshed
@@ -115,6 +119,7 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
     window.addEventListener('focus', refreshOpps);
     window.addEventListener('focus', refreshPipeline);
     window.addEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
+    window.addEventListener(BFO_ACTIVITY_EVENT, refreshBfo);
     window.addEventListener('opps2-cache-updated', refreshOpps);
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_LIST_EVENT, onDealsList);
@@ -130,6 +135,7 @@ export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], 
       window.removeEventListener('focus', refreshOpps);
       window.removeEventListener('focus', refreshPipeline);
       window.removeEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
+      window.removeEventListener(BFO_ACTIVITY_EVENT, refreshBfo);
       window.removeEventListener('opps2-cache-updated', refreshOpps);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_LIST_EVENT, onDealsList);

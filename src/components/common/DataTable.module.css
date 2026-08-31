@@ -57,7 +57,10 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 0.4rem;
-  min-width: 180px;
+  /* Wide enough for the row's checkbox · star · name · delete lineup plus
+     the header's hint and Reset button, which read as a jumble when the
+     panel is only as wide as the longest column name. */
+  min-width: 260px;
   max-height: 320px;
   overflow-y: auto;
   z-index: 50;

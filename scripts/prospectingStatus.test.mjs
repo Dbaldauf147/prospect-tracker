@@ -17,6 +17,7 @@ import {
   todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
 import { readSteps } from '../src/utils/prospectingPlaybook.js';
+import { countCallInDue } from '../src/utils/oppsCallIn.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -179,6 +180,42 @@ eq(countDueSteps([]), 0, 'no steps at all means no dot');
 // A tracked step is never talked over by this: its count still decides.
 eq(stateOf(STEPS, { opps: 4 }, { opps: TODAY }, 'opps'), 'work',
   'a real count still outranks a manual mark inside the ladder walk');
+
+// --- the dot and the Opps badge, end to end -------------------------------
+//
+// The walk above was always right; what broke was the number fed into it.
+// The opps step ran its own stricter count, so an opp due TODAY badged the
+// Opps nav item red while this step read 0 and let market-updates go 'due'
+// — a Prospecting dot over calls the user hadn't made. Feeding both from
+// countCallInDue is the fix, so drive the ladder from real opp records the
+// way App does and check the two readouts can't disagree.
+{
+  const iso = (offset) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const fromRecords = (records) => ladder(STEPS, { opps: countCallInDue(records), renewals: 0 }, {});
+
+  // The reported shape: one opp due today, nothing else outstanding.
+  const dueToday = [{ Stage: 'Qualifying', 'Follow Up': iso(0) }];
+  eq(countCallInDue(dueToday), 1, 'the badge shows 1 for an opp due today');
+  eq(statesByKey(fromRecords(dueToday))['opps'].state, 'work',
+    'so the opps step is work, not caught up');
+  eq(countDueSteps(fromRecords(dueToday)), 0,
+    'and no Prospecting dot while that badge is up');
+
+  // The closed-opp case the old count also dropped.
+  const closedOverdue = [{ Stage: 'Sold', 'Follow Up': iso(-5) }];
+  eq(countDueSteps(fromRecords(closedOverdue)), 0,
+    'a badged closed opp holds the dot back too — the two readouts agree or neither fires');
+
+  // Clear the badge and the dot is free to fire again.
+  const settled = [{ Stage: 'Qualifying', 'Follow Up': iso(0), 'No Further Action Today': 'Yes' }];
+  eq(countCallInDue(settled), 0, 'marking it settles the badge');
+  eq(countDueSteps(fromRecords(settled)), 1, 'and the dot comes back for the next step down');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
