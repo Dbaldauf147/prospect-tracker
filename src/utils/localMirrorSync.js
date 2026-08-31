@@ -346,15 +346,11 @@ async function hydrateKey(userId, key, entry) {
   return false;
 }
 
-// Pull every mirrored key for this user, newest-wins, firing each store's
-// change event for the ones that actually changed. Called once per signin,
-// after the localStorage user scope is set — the keys are per-user
-// prefixed, so running this earlier would read the wrong browser slot.
-export async function hydrateLocalMirrors(userId) {
-  if (!userId) return;
-  setMirrorUserId(userId);
-  // Force the stores to register their keys. They register at import time,
-  // and a store whose view hasn't mounted yet wouldn't otherwise be loaded.
+// Force the stores to register their keys. They register at import time,
+// and a store whose view hasn't mounted yet wouldn't otherwise be loaded —
+// so anything that walks the whole registry (hydration at signin, a full
+// backup restore) has to pull them in first.
+async function loadMirroredStores() {
   await Promise.all([
     import('./dealsStore.js'),
     import('./dealClientMap.js'),
@@ -367,7 +363,45 @@ export async function hydrateLocalMirrors(userId) {
     import('./commissionsStore.js'),
     import('./yoyOverridesStore.js'),
     import('./raClientsStore.js'),
+    import('./dealTimelineHiddenStore.js'),
+    import('./timelineTypeOptions.js'),
+    import('./prospectingStatus.js'),
+    import('./soldWarningIgnore.js'),
+    import('./fillerIgnoreStore.js'),
+    import('./pricingOptionLinks.js'),
   ]).catch(err => console.warn('localMirror: store registration import failed', err));
+}
+
+// Every key that has a cloud copy, with the stores loaded so the answer is
+// the whole list rather than whatever happened to be imported. utils/fullBackup
+// asks so a restore knows which of the keys it just wrote have to be
+// republished.
+export async function mirroredKeyList() {
+  await loadMirroredStores();
+  return [...registry.keys()];
+}
+
+// Push one key NOW, skipping the debounce. queueMirrorPush is right for
+// typing; a restore is about to reload the page, and a pending timer would
+// be thrown away with it.
+export async function pushMirrorNow(key) {
+  clearTimeout(timers.get(key));
+  timers.delete(key);
+  const at = Date.now();
+  try { userLsSet(key + AT_SUFFIX, String(at)); } catch { /* quota */ }
+  // allowEmpty stays off: a key with nothing behind it locally must not
+  // travel up as a deliberate clear and take the cloud copy with it.
+  await pushNow(key);
+}
+
+// Pull every mirrored key for this user, newest-wins, firing each store's
+// change event for the ones that actually changed. Called once per signin,
+// after the localStorage user scope is set — the keys are per-user
+// prefixed, so running this earlier would read the wrong browser slot.
+export async function hydrateLocalMirrors(userId) {
+  if (!userId) return;
+  setMirrorUserId(userId);
+  await loadMirroredStores();
 
   const entries = [...registry.entries()];
   const results = await Promise.allSettled(

@@ -21,9 +21,14 @@
 // Imported with the extension so this module also loads under plain Node
 // (scripts/prospectingStatus.test.mjs), not just through the bundler.
 import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 export const PROSPECTING_CAUGHT_UP_KEY = 'prospecting-caught-up';
 export const PROSPECTING_CAUGHT_UP_EVENT = 'prospecting-caught-up-changed';
+
+// Mirrored: which ladder steps you have cleared today is a record of work
+// done, and it decided what the ladder asked of you next.
+registerMirroredKey(PROSPECTING_CAUGHT_UP_KEY, PROSPECTING_CAUGHT_UP_EVENT);
 
 // Step 3 counts exactly the rows the Clients tab tints red: the client's
 // soonest contract expires inside the renewal window AND the Status column
@@ -87,6 +92,7 @@ export function setStepCaughtUp(stepKey, on, today = todayISO()) {
   else delete next[stepKey];
   try {
     userLsSet(PROSPECTING_CAUGHT_UP_KEY, JSON.stringify(next));
+    queueMirrorPush(PROSPECTING_CAUGHT_UP_KEY);
     window.dispatchEvent(new CustomEvent(PROSPECTING_CAUGHT_UP_EVENT));
   } catch { /* quota / private mode: nothing was stored, so nothing changed */ }
   return next;

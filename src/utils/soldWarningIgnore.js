@@ -8,10 +8,17 @@
 // sharing a browser keep their own choices.
 
 import { userLsGet, userLsSet, userLsRemove } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const KEY = 'deals-sold-warning-ignore';
 const COLLAPSED_KEY = 'deals-sold-warning-collapsed';
 export const SOLD_WARNING_IGNORE_EVENT = 'deals-sold-warning-ignore-changed';
+
+// Mirrored: dismissing the banner on a deal is a judgement about that
+// deal. Losing it puts every warning you have already dealt with back on
+// the screen. (COLLAPSED_KEY below stays local — it is where one browser
+// left a disclosure triangle.)
+registerMirroredKey(KEY, SOLD_WARNING_IGNORE_EVENT);
 
 export function loadSoldWarningIgnore() {
   try {
@@ -24,6 +31,7 @@ export function loadSoldWarningIgnore() {
 function persist(set) {
   try {
     userLsSet(KEY, JSON.stringify([...set]));
+    queueMirrorPush(KEY);
     window.dispatchEvent(new Event(SOLD_WARNING_IGNORE_EVENT));
   } catch (err) {
     console.warn('Failed to persist sold-warning ignore set', err);

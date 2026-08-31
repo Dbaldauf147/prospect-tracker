@@ -508,7 +508,11 @@ export function OptionsTab({ options, setOptions }) {
     loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
     const onLinks = (e) => {
       const detail = e?.detail;
-      if (detail && typeof detail === 'object') setOptionLinks(detail);
+      if (detail && typeof detail === 'object') { setOptionLinks(detail); return; }
+      // The Firestore mirror dispatches a plain Event when it pulls a newer
+      // copy of the links down at signin — no detail to read, so go and get
+      // the value it just wrote.
+      loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
     };
     window.addEventListener(OPTION_LINKS_EVENT, onLinks);
     return () => {

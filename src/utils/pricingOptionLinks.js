@@ -23,11 +23,16 @@
 // are broadcast via the `pricing:optionLinksChanged` window event so
 // the Opps 2 view re-renders the moment the user saves from Pricing.
 
-import { dbGet, dbPut } from './db';
+import { dbGet } from './db';
+import { registerMirroredDbKey, mirrorDbPut } from './localMirrorSync.js';
 
 const PRICING_STORE = 'pricing-cache';
 const LINKS_KEY = 'optionLinks';
 const EVENT_NAME = 'pricing:optionLinksChanged';
+
+// Mirrored: an opp's link to its pricing option is typed once and read
+// for the life of the deal, and nothing can rebuild it from the workbook.
+registerMirroredDbKey(PRICING_STORE, LINKS_KEY, EVENT_NAME);
 
 // --- value accessors (tolerate the legacy string shape) -------------
 
@@ -89,7 +94,7 @@ export async function loadOptionLinks() {
 }
 
 async function persistOptionLinks(links) {
-  try { await dbPut(PRICING_STORE, links, LINKS_KEY); } catch { /* idb best-effort */ }
+  try { await mirrorDbPut(PRICING_STORE, LINKS_KEY, links); } catch { /* idb best-effort */ }
   try {
     window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: links }));
   } catch { /* SSR / non-DOM environment */ }

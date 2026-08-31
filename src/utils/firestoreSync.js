@@ -158,6 +158,25 @@ export async function readAllProspects() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// Write backed-up company records back, keyed by their original document
+// id. Restoring is recovery, not reconciliation: it never deletes a record
+// that exists today and isn't in the file, and it keeps ids intact because
+// settings.targetMap / divisionsMap / hqRegionMap are keyed by them — a
+// restore that minted new ids would orphan every mapping it touched, the
+// same way replaceAllProspects used to. Returns how many were written.
+export async function restoreProspectDocs(rows, { batchSize = 400 } = {}) {
+  const list = (Array.isArray(rows) ? rows : []).filter(r => r && r.id);
+  for (let i = 0; i < list.length; i += batchSize) {
+    const batch = writeBatch(db);
+    for (const row of list.slice(i, i + batchSize)) {
+      const { id, ...data } = row;
+      batch.set(getDoc(id), data, { merge: true });
+    }
+    await batch.commit();
+  }
+  return list.length;
+}
+
 function waitFrame() {
   return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listBackups, getBackup, deleteBackup } from '../utils/settingsBackup';
 import { OppsBackupPanel } from './OppsBackupPanel';
+import { FullBackupPanel } from './FullBackupPanel';
 
 function fmtTime(ts) {
   try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
@@ -88,7 +89,7 @@ export function SettingsBackupsModal({ open, onClose, onRestore }) {
         onClick={e => e.stopPropagation()}
         style={{
           background: '#fff', borderRadius: 10, width: 'min(720px, 92vw)',
-          maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+          maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'auto',
           boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
         }}
       >
@@ -99,6 +100,13 @@ export function SettingsBackupsModal({ open, onClose, onRestore }) {
             onClick={onClose}
             style={{ fontSize: '0.85rem', padding: '0.3rem 0.6rem', border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B' }}
           >Close</button>
+        </div>
+        <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 2 }}>Everything</div>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem' }}>
+            One file you can keep off this machine, and restore from.
+          </div>
+          <FullBackupPanel />
         </div>
         <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 2 }}>Opps data</div>
