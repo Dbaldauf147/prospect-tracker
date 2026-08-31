@@ -1,4 +1,9 @@
-import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { Component, Fragment, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { ColumnToggle } from '../common/ColumnToggle';
+import {
+  resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
+  orderColumns, mergeColumnOrder,
+} from '../../utils/tableColumnPrefs';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { apiFetch } from '../../utils/apiFetch';
@@ -502,6 +507,48 @@ export function KeyContactsView(props) {
       <KeyContactsViewInner {...props} />
     </ContactsErrorBoundary>
   );
+}
+
+// Every column the flat contacts table can show, in its default order.
+//
+// Module-level and pure so the picker, the header, the filter row and the
+// body all read the same list. It used to be built inside the table's own
+// render, with the Columns menu keeping a hand-maintained second copy —
+// which had drifted: Tags and Tagged % were in the table and not in the
+// menu, so there was no way to turn them off.
+function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, storagePrefix }) {
+  return [
+    { key: 'name',     label: 'Name', alwaysOn: true },
+    ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
+    { key: 'title',    label: 'Title' },
+    { key: 'company',  label: 'Company' },
+    ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+    ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
+    ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
+    { key: 'email',    label: 'Email' },
+    { key: 'phone',    label: 'Phone' },
+    { key: 'location', label: 'Location' },
+    { key: 'city',     label: 'City' },
+    { key: 'state',    label: 'State' },
+    { key: 'country',  label: 'Country' },
+    { key: 'linkedin', label: 'LinkedIn', sortable: false },
+    { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
+    { key: 'met',      label: 'Met' },
+    { key: 'events',   label: 'Events' },
+    // Custom free-text column — only on the All Contacts page.
+    // Reads/writes the same per-contact `settings.customField`
+    // value used by the {custom} email variable.
+    ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
+    // Combined To / CC recipients from the contact popup — All Contacts only.
+    ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
+    { key: 'tags',     label: 'Tags', sortable: false },
+    // How much of this contact's tag review is done, from the
+    // popup's Yes / No / Not sure table. All Contacts only, like
+    // the other columns that report on the popup's local fields.
+    ...(storagePrefix === 'all-contacts' ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
+    { key: 'lastOutreach', label: 'Last Outreach' },
+    ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
+  ].filter(Boolean);
 }
 
 function KeyContactsViewInner({
@@ -1672,8 +1719,20 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
+  // Which columns show, on the same model the shared DataTable picker uses
+  // (utils/tableColumnPrefs): store what is HIDDEN, not what is visible.
+  //
+  // The five one-time migrations below are what the visible-list model
+  // costs. Every column this page has gained since a user last touched
+  // their layout — Last Outreach, New Company, Expected Email, Reached
+  // Out, Custom, Email Campaigns, Tagged % — needed a hand-written,
+  // sticky-flagged injection, because a key missing from a saved visible
+  // list is indistinguishable from a column the user hid. Storing hidden
+  // keys removes the guess: anything not on the list shows, so the next
+  // column to ship here needs none of this. They stay only to convert a
+  // layout saved under the old model, once.
   const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', ...(storagePrefix === 'all-contacts' ? ['taggedPct'] : []), 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
-  const [visibleCols, setVisibleCols] = useState(() => {
+  function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
       if (Array.isArray(saved) && saved.length > 0) {
@@ -1752,20 +1811,121 @@ function KeyContactsViewInner({
         return next;
       }
     } catch {}
-    return DEFAULT_VISIBLE_COLS;
-  });
-  useEffect(() => { try { localStorage.setItem(lsKey('visible-cols'), JSON.stringify(visibleCols)); } catch {} }, [visibleCols, storagePrefix]);
-  const [colsMenuOpen, setColsMenuOpen] = useState(false);
-  const colsMenuRef = useRef(null);
-  useEffect(() => {
-    if (!colsMenuOpen) return;
-    const onDown = (e) => { if (!colsMenuRef.current?.contains(e.target)) setColsMenuOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [colsMenuOpen]);
-  function toggleVisibleCol(key) {
-    setVisibleCols(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+    return null;
   }
+
+  // Every column this page can show, in its default order. Hoisted out of
+  // the table's render so the picker and the table read one list — they
+  // used to keep two, and the picker's copy was missing Tags and Tagged %,
+  // which is why neither could be hidden.
+  const contactColumns = useMemo(
+    () => buildContactColumns({ categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, storagePrefix }),
+    [categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, storagePrefix],
+  );
+  const alwaysVisibleCols = useMemo(
+    () => contactColumns.filter(c => c.alwaysOn).map(c => c.key),
+    [contactColumns],
+  );
+
+  const readStoredList = (suffix) => {
+    try {
+      const v = JSON.parse(localStorage.getItem(lsKey(suffix)));
+      return Array.isArray(v) ? v : null;
+    } catch { return null; }
+  };
+  const writeStoredList = (suffix, value) => {
+    try { localStorage.setItem(lsKey(suffix), JSON.stringify([...value])); } catch { /* private mode */ }
+  };
+
+  const [hiddenPref, setHiddenPref] = useState(() => {
+    const stored = readStoredList('hidden-cols');
+    if (stored) return stored;
+    const columnKeys = buildContactColumns({ categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, storagePrefix })
+      .filter(c => !c.alwaysOn).map(c => c.key);
+    const legacy = loadLegacyVisibleCols();
+    // No saved layout at all: hide the columns the page never showed by
+    // default (Suggested Company), so a first visit looks as it always has.
+    if (!legacy) return columnKeys.filter(k => !DEFAULT_VISIBLE_COLS.includes(k));
+    return [...resolveHiddenKeys({ legacyVisible: legacy, columnKeys })];
+  });
+  const [starredCols, setStarredCols] = useState(() => new Set(readStoredList('starred-cols') || []));
+  const [removedCols, setRemovedCols] = useState(() => new Set(readStoredList('removed-cols') || []));
+  const [colOrder, setColOrder] = useState(() => readStoredList('col-order') || []);
+
+  // The columns still in the layout, in the user's order. Deleted columns
+  // are dropped here so they don't render, don't export and don't appear in
+  // the picker's main list — they come back through Restore or Reset.
+  const orderedContactColumns = useMemo(
+    () => orderColumns(contactColumns.filter(c => !removedCols.has(c.key)), colOrder),
+    [contactColumns, removedCols, colOrder],
+  );
+  const removedContactColumns = useMemo(
+    () => contactColumns.filter(c => removedCols.has(c.key)),
+    [contactColumns, removedCols],
+  );
+  const hiddenColsSet = useMemo(() => new Set(hiddenPref || []), [hiddenPref]);
+  const visibleColsSet = useMemo(
+    () => new Set(orderedContactColumns
+      .filter(c => isColumnVisible(c.key, { hidden: hiddenColsSet, removed: removedCols, alwaysVisible: alwaysVisibleCols }))
+      .map(c => c.key)),
+    [orderedContactColumns, hiddenColsSet, removedCols, alwaysVisibleCols],
+  );
+
+  function commitHidden(next) {
+    setHiddenPref([...next]);
+    writeStoredList('hidden-cols', next);
+  }
+  function toggleVisibleCol(key) {
+    if (alwaysVisibleCols.includes(key)) return;
+    const next = new Set(hiddenColsSet);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    commitHidden(next);
+  }
+  function starVisibleCol(key) {
+    const next = applyStar({ key, starred: starredCols, hidden: hiddenColsSet, removed: removedCols, star: !starredCols.has(key) });
+    setStarredCols(next.starred);
+    writeStoredList('starred-cols', next.starred);
+    commitHidden(next.hidden);
+    setRemovedCols(next.removed);
+    writeStoredList('removed-cols', next.removed);
+  }
+  function removeVisibleCol(key) {
+    if (alwaysVisibleCols.includes(key)) return;
+    const next = new Set(removedCols);
+    next.add(key);
+    setRemovedCols(next);
+    writeStoredList('removed-cols', next);
+  }
+  function restoreVisibleCol(key) {
+    const next = new Set(removedCols);
+    next.delete(key);
+    setRemovedCols(next);
+    writeStoredList('removed-cols', next);
+  }
+  function reorderVisibleCols(nextKeys) {
+    // The picker lists only the columns still in the layout, so merge
+    // rather than replace — a restored column belongs where it sat, not
+    // at the far right.
+    const merged = mergeColumnOrder(colOrder, nextKeys);
+    setColOrder(merged);
+    writeStoredList('col-order', merged);
+  }
+  // Reset: every deleted column back, the default order back, and
+  // visibility set to the user's starred view — or to everything when
+  // they haven't starred any, which is what Reset has always done.
+  function resetVisibleCols() {
+    const { hidden, removed } = resetToStarred({
+      columnKeys: contactColumns.map(c => c.key),
+      starred: starredCols,
+      alwaysVisible: alwaysVisibleCols,
+    });
+    commitHidden(hidden);
+    setRemovedCols(removed);
+    writeStoredList('removed-cols', removed);
+    setColOrder([]);
+    writeStoredList('col-order', []);
+  }
+
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {};
@@ -2987,79 +3147,21 @@ function KeyContactsViewInner({
             }}
           >{categorizeContact ? 'Download All (Excel)' : 'Download Combined (Key + Active + Client)'}</button>
           {isContactList && (
-            <div ref={colsMenuRef} style={{ position: 'relative' }}>
-              <button
-                type="button"
-                onClick={() => setColsMenuOpen(o => !o)}
-                title="Choose which columns are visible on the All Contacts table. Persists per page."
-                style={{
-                  padding: '0.35rem 0.75rem',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  border: '1px solid #CBD5E1',
-                  borderRadius: 6,
-                  background: '#fff',
-                  color: '#334155',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >Columns ▾</button>
-              {colsMenuOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: '100%',
-                    marginTop: 4,
-                    zIndex: 30,
-                    background: '#fff',
-                    border: '1px solid #CBD5E1',
-                    borderRadius: 6,
-                    boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
-                    minWidth: 200,
-                    padding: '0.4rem 0',
-                  }}
-                >
-                  {[
-                    ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
-                    { key: 'title', label: 'Title' },
-                    { key: 'company', label: 'Company' },
-                    ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
-                    ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email' }] : []),
-                    ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
-                    { key: 'email', label: 'Email' },
-                    { key: 'phone', label: 'Phone' },
-                    { key: 'location', label: 'Location' },
-                    { key: 'city', label: 'City' },
-                    { key: 'state', label: 'State' },
-                    { key: 'country', label: 'Country' },
-                    { key: 'linkedin', label: 'LinkedIn' },
-                    { key: 'salesNav', label: 'LinkedIn Search' },
-                    { key: 'met', label: 'Met' },
-                    { key: 'events', label: 'Events' },
-                    ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC' }] : []),
-                    { key: 'lastOutreach', label: 'Last Outreach' },
-                    ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
-                  ].map(opt => (
-                    <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.75rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={visibleCols.includes(opt.key)}
-                        onChange={() => toggleVisibleCol(opt.key)}
-                      />
-                      {opt.label}
-                    </label>
-                  ))}
-                  <div style={{ padding: '0.35rem 0.75rem', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => setVisibleCols(DEFAULT_VISIBLE_COLS)}
-                      style={{ background: 'transparent', border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: '0.68rem', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
-                    >Reset to default</button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <ColumnToggle
+              align="right"
+              columns={orderedContactColumns}
+              visibleCols={visibleColsSet}
+              starredCols={starredCols}
+              removedColumns={removedContactColumns}
+              alwaysVisible={alwaysVisibleCols}
+              colNames={{}}
+              onToggle={toggleVisibleCol}
+              onStar={starVisibleCol}
+              onRemove={removeVisibleCol}
+              onRestore={restoreVisibleCol}
+              onReorder={reorderVisibleCols}
+              onResetColumns={resetVisibleCols}
+            />
           )}
           {isContactList && (
             <button
@@ -3577,39 +3679,10 @@ function KeyContactsViewInner({
               <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
             </div>
           ) : (() => {
-            const ALL_CONTACT_COLS = [
-              { key: 'name',     label: 'Name', alwaysOn: true },
-              ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
-              { key: 'title',    label: 'Title' },
-              { key: 'company',  label: 'Company' },
-              ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
-              ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
-              ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
-              { key: 'email',    label: 'Email' },
-              { key: 'phone',    label: 'Phone' },
-              { key: 'location', label: 'Location' },
-              { key: 'city',     label: 'City' },
-              { key: 'state',    label: 'State' },
-              { key: 'country',  label: 'Country' },
-              { key: 'linkedin', label: 'LinkedIn', sortable: false },
-              { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
-              { key: 'met',      label: 'Met' },
-              { key: 'events',   label: 'Events' },
-              // Custom free-text column — only on the All Contacts page.
-              // Reads/writes the same per-contact `settings.customField`
-              // value used by the {custom} email variable.
-              ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
-              // Combined To / CC recipients from the contact popup — All Contacts only.
-              ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
-              { key: 'tags',     label: 'Tags', sortable: false },
-              // How much of this contact's tag review is done, from the
-              // popup's Yes / No / Not sure table. All Contacts only, like
-              // the other columns that report on the popup's local fields.
-              ...(storagePrefix === 'all-contacts' ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
-              { key: 'lastOutreach', label: 'Last Outreach' },
-              ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
-            ].filter(Boolean);
-            const visibleSet = new Set(visibleCols);
+            // The list, the deletions and the user's order all come from
+            // the picker's state above; alwaysOn columns ignore visibility.
+            const ALL_CONTACT_COLS = orderedContactColumns;
+            const visibleSet = visibleColsSet;
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
             // Single 32px checkbox column at the front, meaning the same
             // thing whether or not Mass Edit is on: these are the rows
@@ -3777,28 +3850,15 @@ function KeyContactsViewInner({
                     No contacts match the current filters{query ? ` for "${query}"` : ''}: clear a filter or column search to see results.
                   </div>
                 )}
-                {filteredContacts.map((c, i) => (
-                  <div
-                    key={`${c.rowKey}|${c.id}`}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: CONTACT_GRID,
-                      alignItems: 'center',
-                      borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
-                      background: massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
-                    }}
-                  >
-                    <div
-                      style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      title={massSelected.has(c.id) ? 'Deselect this contact' : 'Select this contact'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={massSelected.has(c.id)}
-                        onChange={() => toggleMassSelect(c.id)}
-                        onClick={e => e.stopPropagation()}
-                      />
-                    </div>
+                {filteredContacts.map((c, i) => {
+                  // One entry per column key, rendered in the order the picker
+                  // has the columns in. This used to be a run of
+                  // `visibleSet.has(…) && <cell>` in fixed source order, which is
+                  // why the header could be reordered and the body could not — and
+                  // why Suggested Company drew a cell with no header above it, since
+                  // its guard never checked visibility at all.
+                  const cells = {
+                    name: (
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Click to edit ${c.name}`}>
                       <span
                         role="button"
@@ -3808,7 +3868,8 @@ function KeyContactsViewInner({
                         style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span>
                     </div>
-                    {categorizeContact && visibleSet.has('category') && (
+                    ),
+                    category: (
                       <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                         {(() => {
                           const cats = categorizeContact(c.raw || c) || [];
@@ -3839,16 +3900,16 @@ function KeyContactsViewInner({
                           });
                         })()}
                       </div>
-                    )}
-                    {visibleSet.has('title') && (
+                    ),
+                    title: (
                     <InlineCell
                       value={c.jobtitle}
                       onCommit={v => inlineUpdateField(c.raw || c, 'jobtitle', v)}
                       textColor="#475569"
                       title={c.jobtitle ? `Click to edit: ${c.jobtitle}` : 'Click to edit'}
                     />
-                    )}
-                    {visibleSet.has('company') && (
+                    ),
+                    company: (
                     <div
                       style={{
                         display: 'flex',
@@ -3903,8 +3964,8 @@ function KeyContactsViewInner({
                         >⚠</span>
                       ) : null}
                     </div>
-                    )}
-                    {showSuggestedCompany && (
+                    ),
+                    suggestedCompany: (
                       <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }} title={c.suggestedCompany || ''}>
                         {c.suggestedCompany ? (
                           <>
@@ -3932,8 +3993,8 @@ function KeyContactsViewInner({
                           <span style={{ color: '#CBD5E1' }}>-</span>
                         )}
                       </div>
-                    )}
-                    {showNewCompanyEmail && visibleSet.has('newCompany') && (
+                    ),
+                    newCompany: (
                       <InlineCell
                         value={c.newCompany}
                         onCommit={v => setNewCompanyMapping(c.raw || c, v)}
@@ -3945,11 +4006,11 @@ function KeyContactsViewInner({
                         placeholder="Map new company…"
                         title="The company this person moved to. Pick one to predict their new email (autocomplete lists companies with a known email format first)."
                       />
-                    )}
-                    {showNewCompanyEmail && visibleSet.has('expectedEmail') && (
+                    ),
+                    expectedEmail: (
                       <ExpectedEmailCell info={c.expectedEmail} name={c.name} />
-                    )}
-                    {showReachedOut && visibleSet.has('reachedOut') && (
+                    ),
+                    reachedOut: (
                       <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center' }}>
                         <button
                           type="button"
@@ -3968,22 +4029,22 @@ function KeyContactsViewInner({
                           }}
                         >{c.reachedOut ? '✓ Reached out' : 'Mark reached out'}</button>
                       </div>
-                    )}
-                    {visibleSet.has('email') && (
+                    ),
+                    email: (
                     <InlineCell
                       value={c.email}
                       onCommit={v => inlineUpdateField(c.raw || c, 'email', v)}
                       type="email"
                     />
-                    )}
-                    {visibleSet.has('phone') && (
+                    ),
+                    phone: (
                     <InlineCell
                       value={c.phone}
                       onCommit={v => inlineUpdateField(c.raw || c, 'phone', v)}
                       textColor="#64748B"
                     />
-                    )}
-                    {visibleSet.has('location') && (
+                    ),
+                    location: (
                     <InlineCell
                       value={[c.city, c.state].filter(Boolean).join(', ')}
                       onCommit={async (v) => {
@@ -3997,8 +4058,8 @@ function KeyContactsViewInner({
                       title="Click to edit. Type 'City, State'."
                       fontSize="0.7rem"
                     />
-                    )}
-                    {visibleSet.has('city') && (() => {
+                    ),
+                    city: (() => {
                       const flag = checkCity(c.city);
                       return (
                         <InlineCell
@@ -4018,8 +4079,8 @@ function KeyContactsViewInner({
                           flagFix={flag?.fix || null}
                         />
                       );
-                    })()}
-                    {visibleSet.has('state') && (() => {
+                    })(),
+                    state: (() => {
                       // The raw check, not stateFlagOf: an ignored contact
                       // still needs its issue text for the muted marker's
                       // tooltip, so the cell is told both what the warning
@@ -4038,23 +4099,23 @@ function KeyContactsViewInner({
                           onToggleFlagIgnored={on => toggleStateWarningIgnored(c, on)}
                         />
                       );
-                    })()}
-                    {visibleSet.has('country') && (
+                    })(),
+                    country: (
                     <InlineCell
                       value={c.country}
                       onCommit={v => inlineUpdateField(c.raw || c, 'country', v)}
                       textColor="#64748B"
                       fontSize="0.7rem"
                     />
-                    )}
-                    {visibleSet.has('linkedin') && (
+                    ),
+                    linkedin: (
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
                       {c.linkedin
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
                         : <span style={{ color: '#CBD5E1' }}>-</span>}
                     </div>
-                    )}
-                    {visibleSet.has('salesNav') && (() => {
+                    ),
+                    salesNav: (() => {
                       const parts = [c.firstname, c.lastname, c.companyName].map(s => String(s || '').trim()).filter(Boolean);
                       if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>-</div>;
                       const keywords = encodeURIComponent(parts.join(' '));
@@ -4078,15 +4139,15 @@ function KeyContactsViewInner({
                           >Sales Nav ↗</a>
                         </div>
                       );
-                    })()}
-                    {visibleSet.has('met') && (
+                    })(),
+                    met: (
                     <div style={{ padding: '0.45rem 0.6rem' }}>
                       {c.metInPerson
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>}
                     </div>
-                    )}
-                    {visibleSet.has('events') && (
+                    ),
+                    events: (
                     <InlineCell
                       value={contactEvents[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactEvents(String(c.id || ''), v)}
@@ -4095,8 +4156,8 @@ function KeyContactsViewInner({
                       fontSize="0.7rem"
                       textColor="#475569"
                     />
-                    )}
-                    {storagePrefix === 'all-contacts' && visibleSet.has('custom') && (
+                    ),
+                    custom: (
                     <InlineCell
                       value={(settings?.customField || {})[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactCustom(String(c.id || ''), v)}
@@ -4105,8 +4166,8 @@ function KeyContactsViewInner({
                       fontSize="0.7rem"
                       textColor="#475569"
                     />
-                    )}
-                    {storagePrefix === 'all-contacts' && visibleSet.has('toCc') && (() => {
+                    ),
+                    toCc: (() => {
                       const entry = toCcEntryFor(c);
                       const hasOwn = !!entry && (entry.to.length > 0 || entry.cc.length > 0);
                       // Other contacts that list THIS contact on their own
@@ -4167,8 +4228,8 @@ function KeyContactsViewInner({
                           )}
                         </div>
                       );
-                    })()}
-                    {visibleSet.has('tags') && (() => {
+                    })(),
+                    tags: (() => {
                       // Read-only, comma-separated tag list. The HubSpot
                       // tags live on the un-normalized `raw` contact
                       // (dans_tags), so read from there first — the
@@ -4193,8 +4254,8 @@ function KeyContactsViewInner({
                           }}
                         >{tagStr || '-'}</div>
                       );
-                    })()}
-                    {storagePrefix === 'all-contacts' && visibleSet.has('taggedPct') && (() => {
+                    })(),
+                    taggedPct: (() => {
                       // How far through the popup's Yes / No / Not sure table
                       // this contact is. Banded rather than plain text so a
                       // column of numbers reads as "which of these still need
@@ -4216,8 +4277,8 @@ function KeyContactsViewInner({
                           }}>{pct}%</span>
                         </div>
                       );
-                    })()}
-                    {visibleSet.has('lastOutreach') && (() => {
+                    })(),
+                    lastOutreach: (() => {
                       const entry = contactLastOutreach.get(String(c.id || ''));
                       if (!entry) {
                         return (
@@ -4245,8 +4306,8 @@ function KeyContactsViewInner({
                           {days == null ? '' : `${days} ${days === 1 ? 'day' : 'days'}`}
                         </div>
                       );
-                    })()}
-                    {storagePrefix === 'all-contacts' && visibleSet.has('emailCampaigns') && (() => {
+                    })(),
+                    emailCampaigns: (() => {
                       const entry = contactCampaign.get(String(c.email || '').toLowerCase().trim());
                       if (!entry) {
                         return (
@@ -4271,7 +4332,33 @@ function KeyContactsViewInner({
                           </span>
                         </div>
                       );
-                    })()}
+                    })(),
+                  };
+                  return (
+                  <div
+                    key={`${c.rowKey}|${c.id}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: CONTACT_GRID,
+                      alignItems: 'center',
+                      borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                      background: massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
+                    }}
+                  >
+                    <div
+                      style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      title={massSelected.has(c.id) ? 'Deselect this contact' : 'Select this contact'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={massSelected.has(c.id)}
+                        onChange={() => toggleMassSelect(c.id)}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </div>
+                    {CONTACT_COLS.map(col => (
+                      <Fragment key={col.key}>{cells[col.key] ?? <div />}</Fragment>
+                    ))}
                     <div style={{ padding: '0.2rem 0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <button
                         type="button"
@@ -4292,7 +4379,8 @@ function KeyContactsViewInner({
                       >Hide</button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })()

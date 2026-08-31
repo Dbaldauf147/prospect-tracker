@@ -66,6 +66,14 @@
   z-index: 50;
 }
 
+/* Anchored to the button's right edge instead of its left. The contacts
+   pages put this button at the far right of a full-width toolbar, where a
+   left-anchored dropdown runs off the side of the window. */
+.colToggleDropdownRight {
+  left: auto;
+  right: 0;
+}
+
 .colToggleItem {
   display: flex;
   align-items: center;
