@@ -10341,6 +10341,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     });
     const detailCols = [
       { label: 'Site Name', get: (s) => s.siteName, width: 28 },
+      // City sits with the other address fields, ahead of ST / Prov, so the
+      // sheet reads City / State / Country / Zip. Same value the compliance
+      // subtabs read (mapped column first, then the utility-rates lookup),
+      // so a site names the same city on every tab of the workbook.
+      { label: 'City', get: (s) => s.city, width: 18 },
       { label: 'ST / Prov', get: (s) => s.state, width: 14 },
       { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
@@ -10488,6 +10493,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const allFlags = [mxFlag, propertyTypeFlag].filter(Boolean).join('\n');
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+          // Mapped City column when the upload has one, else the city the
+          // utility-rates lookup resolved from the ZIP — the same
+          // expression complianceSites uses.
+          city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
           state: stateProvince,
           zip: r.__zipNorm__ || '',
           country,
