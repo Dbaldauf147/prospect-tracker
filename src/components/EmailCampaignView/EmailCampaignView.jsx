@@ -4,7 +4,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
-import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail } from '../../hooks/useEmailTracking';
+import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
+import { describeExcludedOpens } from '../../utils/emailOpens';
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
@@ -690,9 +691,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // subject + recipient address. A contact row can list several addresses
   // ("a@x; b@y"), so every address is checked and the best signal wins.
   const { rows: trackingRows, error: trackingError } = useEmailTracking();
+  // When each contact was actually emailed, keyed the same way the tracking
+  // rows are. The pixel rides along in the Outlook DRAFT, so it fires while
+  // the user is still proof-reading — without this gate a row that HubSpot
+  // says was never sent still shows opens. A contact with no send date maps
+  // to null on purpose: "known not sent", not "unknown".
+  const sentAtByEmail = useMemo(
+    () => sentAtByRecipient(displayResults?.contacts),
+    [displayResults?.contacts],
+  );
   const trackingFor = useMemo(
-    () => trackingByRecipient(trackingRows, displayResults?.subject),
-    [trackingRows, displayResults?.subject],
+    () => trackingByRecipient(trackingRows, displayResults?.subject, { sentAtByEmail }),
+    [trackingRows, displayResults?.subject, sentAtByEmail],
   );
   const lookupTracking = useMemo(() => (contactEmail) => {
     let best = null;
@@ -814,7 +824,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <>
                 <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
                   <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Opened</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Opens are directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Pixel hits before the send (proof-reading the draft), automated fetches and repeat loads within 5 minutes don't count. What's left is still directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
                     {trackingStats.opened} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.openRate}%)</span>
                   </div>
                 </div>
@@ -997,7 +1007,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         was actually sent with tracking on. */}
                     {trackingStats.tracked > 0 && (
                       <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-                        title="Opens are directional (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
+                        title="Opens exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes — hover a count to see what was dropped. What remains is still directional (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
                       >Opens / Clicks</th>
                     )}
                     <SortHeader label="Replied By" sortKey="repliedBy" />
@@ -1034,7 +1044,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                             if (!t) {
                               return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
                             }
-                            const openTitle = t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded';
+                            const excluded = describeExcludedOpens(t);
+                            const openTitle = [
+                              t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded',
+                              excluded,
+                              t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
+                            ].filter(Boolean).join(' ');
                             const clickTitle = t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded';
                             return (
                               <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
