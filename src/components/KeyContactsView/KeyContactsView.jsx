@@ -546,10 +546,13 @@ function KeyContactsViewInner({
   // each label the function returns. Used by All Contacts to mark
   // each row as Key / Active / Client (or any combination thereof).
   categorizeContact = null,
-  // Optional controlled category filter. When set to a label (e.g.
-  // 'Key'), the flat contacts list is narrowed to rows whose
-  // categorizeContact() output includes that label. Driven by the
-  // clickable Totals pills on the All Contacts page. null = no filter.
+  // Optional controlled category filter: a label, or a Set / array of
+  // them, narrowing the contacts list to rows whose categorizeContact()
+  // output includes ANY of the labels. Several pills can be lit at once
+  // on All Contacts and the categories overlap (a contact is often both
+  // Client and Key), so the labels union rather than intersect —
+  // intersecting would make most pairs return nothing. Driven by the
+  // clickable Totals pills there. null / empty = no filter.
   categoryFilter = null,
   // When true, a contact's company name renders as a hyperlink that opens
   // the company popup (via onSelectProspect) instead of an inline-edit
@@ -2797,13 +2800,23 @@ function KeyContactsViewInner({
   const activeValueFilters = Object.entries(contactColValueFilters)
     .filter(([, v]) => Array.isArray(v) && v.length > 0)
     .map(([k, v]) => [k, new Set(v)]);
+  // The category labels in force, as a Set. Accepts a bare label as well
+  // as a Set / array so a caller passing one category still works. An
+  // empty selection is no gate at all, same as null.
+  const categoryFilterSet = (() => {
+    if (!categoryFilter) return null;
+    if (typeof categoryFilter === 'string') return new Set([categoryFilter]);
+    const set = categoryFilter instanceof Set ? categoryFilter : new Set(categoryFilter);
+    return set.size > 0 ? set : null;
+  })();
+
   // Page-level gates (category pills, travel, location flag, search box)
   // that every column's filter dropdown should respect when listing the
   // values available to pick from.
   const passesNonColumnFilters = (c, opts) => {
-    if (categoryFilter && categorizeContact) {
+    if (categoryFilterSet && categorizeContact) {
       const cats = categorizeContact(c.raw || c) || [];
-      if (!cats.includes(categoryFilter)) return false;
+      if (!cats.some(cat => categoryFilterSet.has(cat))) return false;
     }
     if (isTravel) {
       if (travelState && String(c.state || '').trim().toLowerCase() !== travelState.trim().toLowerCase()) return false;

@@ -113,10 +113,22 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     try { localStorage.setItem('all-contacts:show-about', showAbout ? '1' : '0'); } catch {}
   }, [showAbout]);
 
-  // Clickable category filter driven by the Totals pills. null = show
-  // all; otherwise narrow to 'Key' / 'Active' / 'Client'. Clicking the
-  // active pill again clears it.
-  const [categoryFilter, setCategoryFilter] = useState(null);
+  // Clickable category filter driven by the Totals pills: the set of lit
+  // labels ('Key' / 'Active' / 'Client' / 'Key Prospect'). Empty = show
+  // all. Pills toggle independently and several can be lit at once —
+  // clicking a lit one turns it back off, and "All" clears the lot. The
+  // labels union rather than intersect (see KeyContactsView's
+  // categoryFilter prop): the categories overlap heavily, so an
+  // intersection would leave most pairs empty.
+  const [categoryFilter, setCategoryFilter] = useState(() => new Set());
+  const toggleCategory = useCallback((cat) => {
+    if (cat === null) { setCategoryFilter(new Set()); return; }
+    setCategoryFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  }, []);
   // Chosen Dan's Tag, or '' for no tag gate. Transient like categoryFilter
   // (not persisted) — it's an exploration filter, not a page preference.
   const [tagFilter, setTagFilter] = useState('');
@@ -329,13 +341,16 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
 
   // The Totals pills. Defined once and used by both the count row and the
   // Tagged row below it, so the two can't drift apart in order, colour or
-  // wording — they're the same five groups read two ways.
+  // wording — they're the same five groups read two ways. The counts are
+  // each category's own total and stay put as pills are lit: they're what
+  // the dedicated tabs hold, not a readout of the current selection (the
+  // table's own row count says that).
   const categoryPills = [
-    { cat: null,     bucket: 'total',       label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show all contacts (clear the category filter)' },
-    { cat: 'Key',    bucket: 'key',         label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Click to show only contacts tagged Dan Key Target' },
-    { cat: 'Active', bucket: 'active',      label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Click to show only contacts in the active window with an open opp (mirrors the Active Contacts page)' },
-    { cat: 'Client', bucket: 'client',      label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Click to show only contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)' },
-    { cat: 'Key Prospect', bucket: 'keyProspect', label: 'Key Prospect', count: categoryCounts.keyProspect, bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6', tip: 'Click to show only Decision Maker contacts at Tier 1 / Tier 2 accounts on your CDM whose company has no opps yet (mirrors the Key Prospects page)' },
+    { cat: null,     bucket: 'total',       label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show all contacts (clear every category pill)' },
+    { cat: 'Key',    bucket: 'key',         label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Show contacts tagged Dan Key Target. Click again to turn it off; light more than one pill to see contacts on any of them.' },
+    { cat: 'Active', bucket: 'active',      label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Show contacts in the active window with an open opp (mirrors the Active Contacts page). Click again to turn it off; light more than one pill to see contacts on any of them.' },
+    { cat: 'Client', bucket: 'client',      label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Show contacts whose company is a current Client on your CDM (mirrors the Client Contacts page). Click again to turn it off; light more than one pill to see contacts on any of them.' },
+    { cat: 'Key Prospect', bucket: 'keyProspect', label: 'Key Prospect', count: categoryCounts.keyProspect, bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6', tip: 'Show Decision Maker contacts at Tier 1 / Tier 2 accounts on your CDM whose company has no opps yet (mirrors the Key Prospects page). Click again to turn it off; light more than one pill to see contacts on any of them.' },
   ];
 
   const subtitle = (
@@ -357,19 +372,21 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. The <strong>Totals</strong> pills double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
         {categoryPills.map(({ cat, label, count, bg, border, color, tip }) => {
-          const selected = categoryFilter === cat;
+          const selected = cat === null ? categoryFilter.size === 0 : categoryFilter.has(cat);
           return (
             <button
               key={label}
               data-category-pill={label}
+              data-selected={selected ? '1' : '0'}
               type="button"
-              onClick={() => setCategoryFilter(cat)}
+              aria-pressed={selected}
+              onClick={() => toggleCategory(cat)}
               title={tip}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
