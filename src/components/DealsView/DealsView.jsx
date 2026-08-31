@@ -645,19 +645,20 @@ function suggestAnchor(rect) {
   };
 }
 
-function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onClose }) {
+function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, onPick, onClose }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listRef = useRef(null);
 
   const matches = useMemo(
-    () => suggestClients(clientOptions, query, { limit: SUGGEST_LIMIT }),
-    [clientOptions, query]
+    () => suggestClients(options, query, { limit: SUGGEST_LIMIT }),
+    [options, query]
   );
-  // "(Unmap)" only earns a row when there's a mapping to clear, and
-  // only while the box is empty — once you're searching it's noise.
-  const showUnmap = !!manual && !query.trim();
-  const rows = showUnmap ? ['', ...matches] : matches;
+  // The clear row ("(Unmap)", "(Clear)") only earns its place when
+  // there's a pick to undo, and only while the box is empty — once
+  // you're searching it's noise.
+  const showClear = !!current && !!clearLabel && !query.trim();
+  const rows = showClear ? ['', ...matches] : matches;
 
   // Keep the highlighted row in view as the arrows walk past the fold.
   useEffect(() => {
@@ -666,7 +667,7 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
   }, [active, matches]);
 
   function commit(name) {
-    onChange(raw, name);
+    onPick(name);
     onClose();
   }
 
@@ -692,7 +693,7 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
     if (e.key === 'Tab') {
       // Tabbing away commits what was typed only when it names an
       // option outright — a half-typed name is not a pick.
-      const exact = exactClientMatch(clientOptions, query);
+      const exact = exactClientMatch(options, query);
       if (exact) commit(exact); else onClose();
     }
   }
@@ -712,7 +713,7 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
         autoFocus
         type="text"
         value={query}
-        placeholder={manual || 'Search clients…'}
+        placeholder={current || 'Search clients…'}
         onChange={(e) => { setQuery(e.target.value); setActive(0); }}
         onKeyDown={handleKeyDown}
         onClick={(e) => e.stopPropagation()}
@@ -723,6 +724,7 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
           border: '1px solid #3B82F6', borderRadius: 4,
           fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff',
           color: '#1E293B', minWidth: 0,
+          ...inputStyle,
         }}
       />
       {createPortal(
@@ -751,14 +753,14 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
             )}
             {rows.map((name, i) => (
               <button
-                key={name || '__unmap__'}
+                key={name || '__clear__'}
                 type="button"
                 data-active={i === active ? '1' : '0'}
                 onMouseEnter={() => setActive(i)}
                 onClick={() => commit(name)}
-                title={name || 'Clear this mapping'}
+                title={name || 'Clear the current pick'}
                 style={rowStyle(i === active, !name)}
-              >{name || '(Unmap)'}</button>
+              >{name || clearLabel}</button>
             ))}
             {matches.length >= SUGGEST_LIMIT && (
               <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.62rem', color: '#94A3B8', borderTop: '1px solid #F1F5F9' }}>
@@ -773,11 +775,19 @@ function MappedClientPicker({ raw, manual, anchor, clientOptions, onChange, onCl
   );
 }
 
-// Render the helper column as a lazy editor: a small button per cell
-// that swaps for the search box above when clicked.
-function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onToggleIgnore }) {
+// The trigger for the search box: a compact button showing the current
+// pick (or a placeholder), which swaps for ClientSearchPicker in place
+// when clicked. Shared by the "Mapped to Client" cells and the bulk
+// "apply to all" bar, so both search the roster the same way. The
+// anchor is measured off the button here, not inside the picker: the
+// input takes the button's box, so the list has its position on first
+// paint.
+function ClientSearchButton({
+  options, value, placeholder, title, clearLabel,
+  onPick, buttonStyle, inputStyle, wrapperStyle, trailing,
+}) {
   // Non-null while the search box is open; carries the screen position
-  // the suggestion list renders at, measured off the cell on click.
+  // the suggestion list renders at.
   const [openAt, setOpenAt] = useState(null);
   const btnRef = useRef(null);
 
@@ -786,6 +796,38 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
     const rect = btnRef.current?.getBoundingClientRect();
     setOpenAt(rect ? suggestAnchor(rect) : {});
   }
+
+  if (openAt) {
+    return (
+      <ClientSearchPicker
+        options={options}
+        current={value}
+        clearLabel={clearLabel}
+        anchor={openAt}
+        inputStyle={inputStyle}
+        onPick={onPick}
+        onClose={() => setOpenAt(null)}
+      />
+    );
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, ...wrapperStyle }}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openPicker}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title={title}
+        style={buttonStyle}
+      >{value || placeholder}</button>
+      {trailing}
+    </span>
+  );
+}
+
+// Render the helper column as a lazy editor: a small button per cell
+// that swaps for the search box when clicked.
+function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onToggleIgnore }) {
   if (ignored) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
@@ -801,44 +843,32 @@ function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onTog
       </span>
     );
   }
-  if (!openAt) {
-    const label = manual || 'Map to client…';
-    return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
-        <button
-          ref={btnRef}
-          type="button"
-          onClick={openPicker}
-          title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search for the matching client'}
-          style={{
-            flex: 1, minWidth: 0, padding: '0.2rem 0.4rem',
-            border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
-            borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
-            background: manual ? '#F0FDF4' : '#FFFBEB',
-            color: manual ? '#166534' : '#92400E',
-            textAlign: 'left', cursor: 'pointer',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-        >{label}</button>
-        {!manual && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onToggleIgnore(raw, true); }}
-            title="Ignore this row: it won't count against the unmapped tally"
-            style={{ padding: '0 6px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
-          >✕</button>
-        )}
-      </span>
-    );
-  }
   return (
-    <MappedClientPicker
-      raw={raw}
-      manual={manual}
-      anchor={openAt}
-      clientOptions={clientOptions}
-      onChange={onChange}
-      onClose={() => setOpenAt(null)}
+    <ClientSearchButton
+      options={clientOptions}
+      value={manual || ''}
+      placeholder="Map to client…"
+      clearLabel="(Unmap)"
+      title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to search for the matching client'}
+      onPick={(name) => onChange(raw, name)}
+      wrapperStyle={{ width: '100%' }}
+      buttonStyle={{
+        flex: 1, minWidth: 0, padding: '0.2rem 0.4rem',
+        border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
+        borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
+        background: manual ? '#F0FDF4' : '#FFFBEB',
+        color: manual ? '#166534' : '#92400E',
+        textAlign: 'left', cursor: 'pointer',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}
+      trailing={manual ? null : (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleIgnore(raw, true); }}
+          title="Ignore this row: it won't count against the unmapped tally"
+          style={{ padding: '0 6px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
+        >✕</button>
+      )}
     />
   );
 }
@@ -2569,14 +2599,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             {distinctUnmappedNames.size} distinct unmapped Client Name{distinctUnmappedNames.size === 1 ? '' : 's'}
           </strong>
           <span style={{ fontSize: '0.7rem', color: '#92400E' }}>· apply to all:</span>
-          <select
+          {/* Same type-to-search picker the Mapped to Client cells use:
+              the roster is long enough that scrolling a <select> for one
+              name was the slow part of clearing an unmapped batch. */}
+          <ClientSearchButton
+            options={clientOptions}
             value={bulkPick}
-            onChange={(e) => setBulkPick(e.target.value)}
-            style={{ padding: '0.25rem 0.4rem', border: '1px solid #FCD34D', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 280 }}
-          >
-            <option value="">(Map all to client…)</option>
-            {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+            placeholder="(Map all to client…)"
+            clearLabel="(Clear)"
+            title={bulkPick ? `Every unmapped name maps to ${bulkPick}. Click to change.` : 'Click to search for the client to map every unmapped name to'}
+            onPick={setBulkPick}
+            inputStyle={{ width: 200, fontSize: '0.72rem', padding: '0.25rem 0.4rem' }}
+            buttonStyle={{
+              padding: '0.25rem 0.4rem', border: '1px solid #FCD34D', borderRadius: 4,
+              fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff',
+              color: bulkPick ? '#1E293B' : '#92400E',
+              minWidth: 200, maxWidth: 280, textAlign: 'left', cursor: 'pointer',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          />
           <button
             type="button"
             onClick={handleBulkMap}
