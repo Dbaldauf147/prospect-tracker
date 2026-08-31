@@ -949,6 +949,13 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   // Year is always present since it's computed from Original Contract
   // Start — surface the column even when no workbook cell populated it.
   keys.add('Year');
+  // Follow Up On Sale is app-managed, not a workbook column: it's stamped
+  // from the post-sale follow-up editors on the Clients tab and the
+  // Pipeline dashboard. Until one deal had been stamped, no row carried
+  // the key and the column simply wasn't on this table — so the one place
+  // you'd go to see which deals still need chasing didn't have it. Seed
+  // it like Year so it's always there to read and to set.
+  keys.add('Follow Up On Sale');
   // Empty new-row case: nothing in the data has populated keys yet
   // (the user just clicked New Deal on a clean slate). Seed with the
   // canonical lineup so they have somewhere to type instead of staring
