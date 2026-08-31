@@ -16,8 +16,14 @@ import { isIgnoredDeal } from './postSaleFollowUp.js';
 // `label` is what shows up in the Progress popover (and in the Issues
 // row's detail); `key` is the canonical field name on the deal row;
 // `href` hangs a link off the label; `yesno` marks a field whose only
-// completed answer is "Yes".
+// completed answer is "Yes"; `date` gets the shared calendar picker in
+// the popover instead of a text box.
 export const HANDOFF_FIELDS = [
+  // First on the list because it's the date everything else on the deal is
+  // measured from — the Year column derives from it, and the post-sale
+  // follow-up clock starts there. Still its own column on the grid; this is
+  // the same value, editable from the popover as well.
+  { key: 'Original Contract Start', label: 'Original Contract Start', date: true },
   { key: 'BFO - Close after contract execution email has been sent', label: 'BFO opp name' },
   { key: 'Commission Sheet Sent to Kathy', label: 'Commission Sheet Sent to Kathy' },
   { key: 'Paperwork completed', label: 'Paperwork' },
