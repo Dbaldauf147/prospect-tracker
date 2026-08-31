@@ -71,18 +71,6 @@ export function callInDateISO(row) {
   return toISODate(row?.['Follow Up']);
 }
 
-// Stages that mean the opp is finished, and stage values that are
-// spreadsheet errors rather than real stages. Mirrors the filter the
-// Activity and Contacts pages already apply to these same Opps 2 records.
-const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
-const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-
-// An opp still being worked: it has a real stage and hasn't closed.
-export function isActiveOpp(row) {
-  const stage = String(row?.Stage || '').trim();
-  return !!stage && !INVALID_STAGES.has(stage) && !CLOSED_STAGES.has(stage);
-}
-
 // True when the row's "No Further Action Today" cell is empty. That column
 // is a tristate (✓ / ✗ / blank), and any mark on it means the user has
 // already dealt with the row today — so only a blank counts as outstanding.
@@ -90,35 +78,24 @@ export function nfatUnmarked(row) {
   return String(row?.['No Further Action Today'] ?? '').trim() === '';
 }
 
-// How many active opps have gone negative on Call In — the Follow Up date
-// is already behind them. Closed and error-stage rows are skipped, since an
-// overdue follow-up on a dead opp isn't work anyone owes.
-//
-// Rows marked "No Further Action Today" are skipped too, for the same
-// reason the sidebar's Opps badge skips them: the mark means the user has
-// already been through the row today and settled it, so counting it as
-// work still to do sends them back to an opp they just closed out. The
-// column clears on its own schedule (Settings → No Further Action Today),
-// so a row that stays overdue is back in the count on the next clear.
-export function countOverdueCallIns(records) {
-  if (!Array.isArray(records)) return 0;
-  let n = 0;
-  for (const row of records) {
-    if (!isActiveOpp(row)) continue;
-    if (!nfatUnmarked(row)) continue;
-    const days = resolveCallIn(row);
-    if (typeof days === 'number' && Number.isFinite(days) && days < 0) n += 1;
-  }
-  return n;
-}
-
 // How many opps are due to be called: the Call In number has reached zero
 // or gone negative (the Follow Up date is today or already past) and the
-// row hasn't been marked "No Further Action Today". This is the number the
-// sidebar's Opps badge shows — the calls still owed right now.
+// row hasn't been marked "No Further Action Today". The mark means the
+// user has already been through the row today and settled it, so counting
+// it would send them back to an opp they just closed out; the column
+// clears on its own schedule (Settings → No Further Action Today), which
+// puts a still-due row back in the count.
 //
 // Rows with no resolvable Call In (no Follow Up date, or the value was
 // manually cleared) aren't on a callback schedule, so they never count.
+//
+// THE one count of owed calls, deliberately: the sidebar's Opps badge and
+// the Prospecting ladder's "Follow up on current opps" step both read it.
+// They used to run separate rules — this one, and a stricter "overdue"
+// that wanted the date strictly past and the stage still open — so an opp
+// due TODAY badged Opps red while the ladder called that step clear and
+// let the step below it raise the Prospecting dot. Two rules for one
+// question is what made that possible, so there is now one.
 export function countCallInDue(records) {
   if (!Array.isArray(records)) return 0;
   let n = 0;
