@@ -118,6 +118,10 @@ import { DealTimelineModal } from './DealTimelineModal';
 import { getServicePricing, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
+// The blank RFP workbook the RFP Template button hands out, served from
+// public/ so the team can drop in a new revision without a code change.
+const RFP_TEMPLATE_URL = '/rfp-template.xlsx';
+
 // Second Opps tab — user-entered opps stored in Firestore
 // (`opps2Data/{uid}`) with an IndexedDB cache (`opps2-cache`, key
 // `data`) for instant rehydration on reload. The original Opps tab
@@ -5617,6 +5621,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               DealTimelineButton renders a label and a button as siblings, and
               the header's 1rem gap would space them like separate controls. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <RfpTemplateButton />
             <DealTimelineButton
               opp={opp}
               solutionOptions={solutionOptions}
@@ -7529,6 +7534,68 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
         >+ Add step</button>
       </div>
     </>
+  );
+}
+
+// The "RFP Template" button in the Follow Up Notes popup header: hands the
+// user the blank RFP workbook the team fills in, so the template lives one
+// click from the deal it's being written for rather than in a shared drive
+// someone has to go find.
+//
+// The file is served verbatim out of public/ rather than generated with
+// exceljs the way the Bulk Add Contacts export is. It's a document the team
+// maintains, not a shape this code knows — rebuilding it here would mean
+// this file had to be edited every time a column moved.
+//
+// Fetched rather than linked so a missing or unreadable file says so. A bare
+// <a download> would quietly navigate to a 404 page instead.
+function RfpTemplateButton() {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(RFP_TEMPLATE_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      // A host that rewrites unknown paths to the SPA answers a missing
+      // template with index.html and a 200, so res.ok isn't enough on its
+      // own — without this the user gets an .xlsx full of HTML that Excel
+      // refuses to open, and no idea why.
+      if (blob.type && blob.type.includes('text/html')) {
+        throw new Error('the template file is missing from the server');
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'RFP Template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error('RFP template download failed:', err);
+      alert('Could not download the RFP template: ' + (err.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={busy}
+      title="Download the blank RFP workbook to fill in for this deal"
+      // Same pill as the Timelines / KTM Mapping / activity-mark buttons
+      // beside it, so the header reads as one row of controls.
+      style={{
+        display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+        fontSize: '0.72rem', fontWeight: 700, whiteSpace: 'nowrap',
+        cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit',
+        background: '#fff', color: '#64748B', border: '1px dashed #CBD5E1',
+        opacity: busy ? 0.6 : 1,
+      }}
+    >📄 {busy ? 'Downloading…' : 'RFP Template'}</button>
   );
 }
 
