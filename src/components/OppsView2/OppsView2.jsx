@@ -10,6 +10,7 @@ import { DataTable } from '../common/DataTable';
 import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, NOTE_LINEBREAK } from '../../utils/nextSteps';
 import { loadCallRecord } from '../../utils/callRecordingsStore';
 import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
+import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { DateCell } from '../common/DateCell';
 import { toISODate, formatDateDisplay } from '../../utils/isoDate';
 import {
@@ -6857,15 +6858,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
   // column the parent table renders). Lets the dedup reasons and the
   // Excel export name a colliding opp by its visible number rather
   // than its raw internal id.
-  const rankById = useMemo(() => {
-    const map = new Map();
-    const ids = (existingRecords || [])
-      .map(r => r?._id)
-      .filter(id => id != null)
-      .sort((a, b) => (Number(a) || 0) - (Number(b) || 0));
-    ids.forEach((id, idx) => map.set(id, idx + 1));
-    return map;
-  }, [existingRecords]);
+  const rankById = useMemo(() => buildOppNumberMap(existingRecords), [existingRecords]);
 
   // Esc / backdrop closes (but not while a commit is mid-flight).
   useEffect(() => {
@@ -10961,15 +10954,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // id. Stays a stable per-opp value across sort/filter (it's a
   // property of the row's `_id`, not the rendered position), but does
   // shift when opps are added or deleted.
-  const oppNumberById = useMemo(() => {
-    const map = new Map();
-    const ids = (data?.records || [])
-      .map(r => r?._id)
-      .filter(id => id != null)
-      .sort((a, b) => (Number(a) || 0) - (Number(b) || 0));
-    ids.forEach((id, idx) => map.set(id, idx + 1));
-    return map;
-  }, [data?.records]);
+  const oppNumberById = useMemo(() => buildOppNumberMap(data?.records), [data?.records]);
 
   const columns = useMemo(() => {
     const seen = new Set();

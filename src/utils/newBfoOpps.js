@@ -136,7 +136,9 @@ function isBlankBfoField(v) {
  * emits "BFO Company Name | Project Name | Product Line | Local Project
  * Name" per opp, with Project Name composed from the Product Line code,
  * Type, Region and Scope — so any blank among those fields leaves a hole.
- * Returns one entry per affected opp: { id, company, scope, missing }.
+ * Returns one entry per affected opp: { id, oppId, company, scope, missing }.
+ * `oppId` is the opp's `_id` where the cached row has one — it's what the
+ * Issues tab ranks into the visible "Opp #".
  */
 export function computeNewBfoMissingData(newBfoOpps) {
   const out = [];
@@ -148,7 +150,7 @@ export function computeNewBfoMissingData(newBfoOpps) {
     if (isBlankBfoField(o.region)) missing.push('Region');
     if (isBlankBfoField(o.scope)) missing.push('Scope');
     if (isBlankBfoField(o.localProjectName)) missing.push('Local Project Name');
-    if (missing.length) out.push({ id: o.id, company: o.company, scope: o.scope, missing });
+    if (missing.length) out.push({ id: o.id, oppId: o.raw?._id ?? null, company: o.company, scope: o.scope, missing });
   }
   return out;
 }

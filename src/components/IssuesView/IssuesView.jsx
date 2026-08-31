@@ -399,6 +399,25 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       },
     },
     {
+      // Only the opp-derived rows carry a number (the Opps / Agents
+      // detectors); a client- or lead-level issue isn't about one opp and
+      // shows a dash. Same 1..N rank the Opps tab's "Opp #" column shows,
+      // so a row can be found there by the number printed here.
+      key: 'oppNumber', label: 'Opp #', defaultWidth: 80,
+      getFilterValue: (row) => (row.oppNumber == null ? '' : String(row.oppNumber)),
+      getSortValue: (row) => (row.oppNumber == null ? null : row.oppNumber),
+      render: (row) => (row.oppNumber == null
+        ? <span style={{ color: '#94A3B8' }}>-</span>
+        : (
+          <span
+            title={`Opp #${row.oppNumber} on the Opps tab`}
+            style={{ color: '#475569', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+          >
+            {row.oppNumber}
+          </span>
+        )),
+    },
+    {
       key: 'clientManager', label: 'Client Manager', defaultWidth: 180,
       getFilterValue: (row) => managerMap[normClientName(row.company)] || '',
       getSortValue: (row) => (managerMap[normClientName(row.company)] || '').toLowerCase(),
