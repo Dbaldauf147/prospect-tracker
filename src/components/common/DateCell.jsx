@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toISODate, formatDateDisplay, parseTypedDate } from '../../utils/isoDate';
+import { buildMonthGrid } from '../../utils/monthGrid';
 
 // Shared click-to-pick date cell. Renders the value as M/D/YYYY and opens a
 // calendar popup on click, storing the chosen day as ISO (YYYY-MM-DD) so it
@@ -30,10 +31,12 @@ const MONTHS = [
 ];
 
 const POPUP_WIDTH = 250;
-// Header row + typed box + grid + footer, measured on the tallest case: a
-// month whose days span six rows. Only used to decide whether the popup fits
-// below the cell or has to flip above it, so it tracks the real panel height
-// — a figure left behind when the panel grows puts it half off-screen.
+// Header row + typed box + grid + footer, measured on the six-week grid the
+// popup now always draws (see utils/monthGrid) — so the panel no longer
+// changes height as you page between a four-row month and a six-row one.
+// Only used to decide whether the popup fits below the cell or has to flip
+// above it, so it tracks the real panel height: a figure left behind when
+// the panel grows puts it half off-screen.
 const POPUP_HEIGHT = 326;
 
 // ISO (YYYY-MM-DD) → {y, m, d} in local time. Parsing the parts by hand
@@ -51,10 +54,6 @@ function toIso(y, m, d) {
 function todayParts() {
   const now = new Date();
   return { y: now.getFullYear(), m: now.getMonth(), d: now.getDate() };
-}
-
-function daysInMonth(y, m) {
-  return new Date(y, m + 1, 0).getDate();
 }
 
 // Small square button used for the month/year arrows.
@@ -147,12 +146,11 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
     setBrowsed({ y: next.getFullYear(), m: next.getMonth() });
   };
 
-  const leading = new Date(view.y, view.m, 1).getDay();
-  const total = daysInMonth(view.y, view.m);
-  const cells = [
-    ...Array.from({ length: leading }, () => null),
-    ...Array.from({ length: total }, (_, i) => i + 1),
-  ];
+  // Six weeks of days, the ends filled from the neighbouring months so the
+  // 1st of next month is a click away rather than a page-forward — which is
+  // most of what a follow-up date is set to late in a month. Those days are
+  // drawn muted but pick like any other.
+  const cells = buildMonthGrid(view.y, view.m);
 
   return createPortal(
     <div
@@ -224,23 +222,23 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
         {WEEKDAYS.map(w => (
           <span key={w} style={{ textAlign: 'center', fontSize: '0.68rem', color: 'var(--color-text-muted)', padding: '2px 0' }}>{w}</span>
         ))}
-        {cells.map((day, i) => {
-          if (day == null) return <span key={`blank-${i}`} />;
-          const isSelected = !!selected && selected.y === view.y && selected.m === view.m && selected.d === day;
-          const isToday = today.y === view.y && today.m === view.m && today.d === day;
+        {cells.map((cell) => {
+          const isSelected = !!selected && selected.y === cell.y && selected.m === cell.m && selected.d === cell.d;
+          const isToday = today.y === cell.y && today.m === cell.m && today.d === cell.d;
           return (
             <button
-              key={day}
+              key={`${cell.y}-${cell.m}-${cell.d}`}
               type="button"
-              onClick={() => onPick(toIso(view.y, view.m, day))}
+              onClick={() => onPick(toIso(cell.y, cell.m, cell.d))}
+              title={cell.outside ? `${MONTHS[cell.m]} ${cell.d}, ${cell.y}` : undefined}
               style={{
                 padding: '4px 0', border: isToday && !isSelected ? '1px solid var(--color-accent)' : '1px solid transparent',
                 borderRadius: 4, cursor: 'pointer', font: 'inherit', fontSize: '0.78rem',
                 fontWeight: isSelected ? 700 : 400,
                 background: isSelected ? 'var(--color-accent)' : 'transparent',
-                color: isSelected ? '#fff' : 'var(--color-text)',
+                color: isSelected ? '#fff' : cell.outside ? 'var(--color-text-muted)' : 'var(--color-text)',
               }}
-            >{day}</button>
+            >{cell.d}</button>
           );
         })}
       </div>
