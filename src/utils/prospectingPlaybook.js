@@ -8,7 +8,7 @@
 // owns the rendering.
 //
 // What CAN'T move into settings is the behaviour attached to five of the
-// steps — the overdue-opps count, the renewals count, the service-coverage
+// steps — the due-opps count, the renewals count, the service-coverage
 // and Top-PC lists, and the market-updates step going red once the ladder
 // reaches it. Those are wired to a step's `key`, so a stored step is
 // a thin overlay: it carries the key plus whatever text the user changed,
@@ -65,13 +65,16 @@ export const DEFAULT_STEPS = [
     detail: 'Opportunities already in flight. Nothing new gets worked until these are moving.',
     view: 'opps2',
     viewLabel: 'Opps',
-    workLabel: n => `${n} overdue`,
-    // Opps marked "No Further Action Today" are settled for the day, so
-    // they're left out of the count — same rule the sidebar's Opps badge
-    // uses. The tooltips say so, since a number that skips rows the user
-    // can see on the Opps tab is otherwise just wrong-looking.
-    workTitle: n => `${n} open ${n === 1 ? 'opp is' : 'opps are'} past their Call In date, not counting any marked "No Further Action Today"`,
-    clearTitle: 'No open opp is past its Call In date, other than ones marked "No Further Action Today"',
+    workLabel: n => `${n} due`,
+    // Literally the number on the sidebar's Opps badge — countCallInDue,
+    // the one count of owed calls. Sharing it is what keeps this step from
+    // reading "All caught up" beside a red Opps badge, which used to let
+    // the step below it raise the Prospecting dot over work still owed
+    // here. Opps marked "No Further Action Today" are settled for the day
+    // and left out of both; the tooltips say so, since a number that skips
+    // rows the user can see on the Opps tab is otherwise just wrong-looking.
+    workTitle: n => `${n} ${n === 1 ? 'opp is' : 'opps are'} due to be called (Call In 0 or less), not counting any marked "No Further Action Today"`,
+    clearTitle: 'No opp is due to be called, other than ones marked "No Further Action Today"',
   },
   {
     key: 'market-updates',

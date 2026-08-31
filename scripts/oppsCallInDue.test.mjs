@@ -14,11 +14,14 @@
 //
 // Follow Up dates are built off the local calendar (same clock resolveCallIn
 // reads) so the tests don't drift with the runner's timezone.
-// The Prospecting tab's "Follow up on current opps" count shares this module
-// and the same "No Further Action Today" rule, with two differences of its
-// own: it only counts opps already *past* their date, and it skips closed /
-// error-stage rows. Both are covered at the bottom.
-import { countCallInDue, countOverdueCallIns, nfatUnmarked, resolveCallIn } from '../src/utils/oppsCallIn.js';
+// The Prospecting ladder's "Follow up on current opps" step shows THIS
+// number too — not one of its own. It used to keep a stricter "overdue"
+// count (date strictly past, stage still open), which let the step read
+// "All caught up" beside a red Opps badge and freed the step below it to
+// raise the Prospecting dot over unworked calls. The last block pins the
+// cases where the two rules diverged, so a step-specific count can't come
+// back without a failure saying so.
+import { countCallInDue, nfatUnmarked, resolveCallIn } from '../src/utils/oppsCallIn.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -77,35 +80,36 @@ check('mixed set totals correctly', countCallInDue([
 check('non-array input is 0', countCallInDue(null), 0);
 check('empty set is 0', countCallInDue([]), 0);
 
-// --- the Prospecting step's overdue count ---------------------------------
+// --- the cases where the ladder used to disagree with the badge -----------
+//
+// Each of these counted 0 under the old "overdue" rule and non-zero here.
+// That gap is the whole bug: 0 meant step 1 was clear, which let the market
+// -updates step below it go 'due' and dot the Prospecting nav while these
+// very rows sat red on the Opps badge.
 
-// Same rows, plus a Stage (that count only looks at opps still in flight).
-const active = (followUp, nfat) => ({ Stage: 'Qualifying', ...opp(followUp, nfat) });
+// Same rows, plus a Stage — the old count looked at it, this one doesn't.
+const staged = (followUp, stage = 'Qualifying', nfat) => ({ Stage: stage, ...opp(followUp, nfat) });
 
-check('counts an overdue active opp', countOverdueCallIns([active(isoOffset(-3))]), 1);
-check('due today is not yet overdue', countOverdueCallIns([active(isoOffset(0))]), 0);
-check('future is skipped', countOverdueCallIns([active(isoOffset(4))]), 0);
+check('an opp due TODAY counts (the reported case: badge 1, step said clear)',
+  countCallInDue([staged(isoOffset(0))]), 1);
+check('a closed opp past its date still counts',
+  countCallInDue([staged(isoOffset(-3), 'Sold')]), 1);
+check('an error-stage row past its date still counts',
+  countCallInDue([staged(isoOffset(-3), '#N/A')]), 1);
+check('a row with no Stage at all counts',
+  countCallInDue([opp(isoOffset(-3))]), 1);
+check('…and "No Further Action Today" still wins over all of it',
+  countCallInDue([staged(isoOffset(0), 'Qualifying', 'Yes'), staged(isoOffset(-3), 'Sold', 'Yes')]), 0);
 
-// The change: an overdue opp the user already settled today drops out, so
-// the step can reach "clear" instead of counting work that's been handled.
-check('overdue but marked is excluded', countOverdueCallIns([active(isoOffset(-3), 'Yes')]), 0);
-check('an x-ed mark is excluded too', countOverdueCallIns([active(isoOffset(-3), 'No')]), 0);
-check('a blank mark still counts', countOverdueCallIns([active(isoOffset(-3), '')]), 1);
-check('whitespace-only still counts', countOverdueCallIns([active(isoOffset(-3), '  ')]), 1);
-
-// Closed and error-stage rows stay out, mark or no mark.
-check('a closed opp is skipped', countOverdueCallIns([{ ...active(isoOffset(-3)), Stage: 'Sold' }]), 0);
-check('an error stage is skipped', countOverdueCallIns([{ ...active(isoOffset(-3)), Stage: '#N/A' }]), 0);
-
-check('mixed set totals correctly', countOverdueCallIns([
-  active(isoOffset(-10)),                          // overdue           → counts
-  active(isoOffset(-1), 'Yes'),                    // overdue, handled  → no
-  active(isoOffset(0)),                            // due today         → no
-  { ...active(isoOffset(-6)), Stage: 'Not Sold' }, // closed            → no
-  active(isoOffset(-2)),                           // overdue           → counts
-]), 2);
-check('non-array input is 0', countOverdueCallIns(null), 0);
-check('empty set is 0', countOverdueCallIns([]), 0);
+// The mixed set the old count scored 2 on: every row bar the handled one
+// is owed work by the badge's rule, so the ladder now sees 4.
+check('mixed set: the badge rule counts what the old step rule dropped', countCallInDue([
+  staged(isoOffset(-10)),                     // overdue           → counts
+  staged(isoOffset(-1), 'Qualifying', 'Yes'), // overdue, handled  → no
+  staged(isoOffset(0)),                       // due today         → counts (was not)
+  staged(isoOffset(-6), 'Not Sold'),          // closed            → counts (was not)
+  staged(isoOffset(-2)),                      // overdue           → counts
+]), 4);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);
