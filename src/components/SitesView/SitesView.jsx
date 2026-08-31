@@ -7775,6 +7775,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // sites in whichever market the reader picks from the dropdown.
         siteRecords.push({
           siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : String(r.__siteName__ || '').trim(),
+          // Canonical type where the upload's value resolved to one, else the
+          // raw string it carried — the same fallback the Property Type
+          // column on the sites table shows.
+          propertyType: String(r.__propertyType__ || r.__propertyTypeRaw__ || '').trim(),
           city: String(r.__city__ || '').trim(),
           state: String(r.__stateProvinceDisplay__ || r.__state__ || '').trim(),
           zip: String(r.__zipNorm__ || '').trim(),
@@ -8264,24 +8268,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const listStart = listHdrRow + 1;   // first site row
         const pickRef = `$B$${pickRow}`;
 
-        // Hidden source table (cols O–W): 7 display columns, the ISO label as
-        // the match key (V), and a running match-rank helper (W) that numbers
+        // Hidden source table (cols O–X): 8 display columns, the ISO label as
+        // the match key (W), and a running match-rank helper (X) that numbers
         // 1,2,3… down the rows of whichever market is picked. Kept in hidden
         // columns clear of the visible layout so only the assembled list shows.
-        const SRC_DISP0 = 15;  // first display column (O)
-        const SRC_ISO = 22;    // ISO match-key column (V)
-        const SRC_RANK = 23;   // running match-rank column (W)
+        const LIST_COLS = 8;
+        const SRC_DISP0 = 15;              // first display column (O)
+        const SRC_ISO = SRC_DISP0 + LIST_COLS;   // ISO match-key column (W)
+        const SRC_RANK = SRC_ISO + 1;            // running match-rank column (X)
         const SRC_FIRST = 2;
         const SRC_LAST = SRC_FIRST + siteRecords.length - 1;
         const L = (n) => ws.getColumn(n).letter;
         const vCol = L(SRC_ISO);
         const wCol = L(SRC_RANK);
 
-        // The list defaults to the top market; cache that view as each
-        // formula's stored result so the list is right on open even in a
-        // viewer that doesn't recalculate (the Master Analysis file is
-        // re-zipped after export, which can drop the recalc-on-open flag).
-        const defaultIso = regionRows[0].region.label;
+        // The list opens on PJM when the portfolio has sites there — it's the
+        // market these reports are read for most — and on the top market by
+        // cost otherwise. Either way that view is cached as each formula's
+        // stored result, so the list is right on open even in a viewer that
+        // doesn't recalculate (the Master Analysis file is re-zipped after
+        // export, which can drop the recalc-on-open flag).
+        const PREFERRED_ISO = 'PJM';
+        const regionLabels = regionRows.map(x => x.region.label);
+        const defaultIso = regionLabels.includes(PREFERRED_ISO) ? PREFERRED_ISO : regionLabels[0];
         const defaultMatches = siteRecords.filter(s => s.iso === defaultIso);
 
         let defRank = 0;
@@ -8289,12 +8298,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const rowNum = SRC_FIRST + i;
           const sr = ws.getRow(rowNum);
           sr.getCell(SRC_DISP0 + 0).value = s.siteName;
-          sr.getCell(SRC_DISP0 + 1).value = s.city;
-          sr.getCell(SRC_DISP0 + 2).value = s.state;
-          sr.getCell(SRC_DISP0 + 3).value = s.zip;
-          sr.getCell(SRC_DISP0 + 4).value = s.electric;
-          sr.getCell(SRC_DISP0 + 5).value = s.kwh;
-          sr.getCell(SRC_DISP0 + 6).value = s.cost;
+          sr.getCell(SRC_DISP0 + 1).value = s.propertyType;
+          sr.getCell(SRC_DISP0 + 2).value = s.city;
+          sr.getCell(SRC_DISP0 + 3).value = s.state;
+          sr.getCell(SRC_DISP0 + 4).value = s.zip;
+          sr.getCell(SRC_DISP0 + 5).value = s.electric;
+          sr.getCell(SRC_DISP0 + 6).value = s.kwh;
+          sr.getCell(SRC_DISP0 + 7).value = s.cost;
           sr.getCell(SRC_ISO).value = s.iso;
           const isDefault = s.iso === defaultIso;
           if (isDefault) defRank += 1;
@@ -8354,14 +8364,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ws.getRow(pickRow).height = 20;
 
         // Site-list header row.
-        const listHeaders = ['Site Name', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const listHeaders = ['Site Name', 'Property Type', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const FIRST_NUM_COL = LIST_COLS - 1;  // Load and Annual Cost, right-aligned
         const lh = ws.getRow(listHdrRow);
         listHeaders.forEach((label, i) => {
           const cell = lh.getCell(i + 1);
           cell.value = label;
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: (i >= 5) ? 'right' : 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: (i >= FIRST_NUM_COL - 1) ? 'right' : 'left', indent: 1 };
           cell.border = {
             top:    { style: 'thin', color: { argb: SE_BORDER } },
             bottom: { style: 'thin', color: { argb: SE_BORDER } },
@@ -8378,13 +8389,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // they re-evaluate whenever the dropdown changes. Cached results show
         // the default market on open.
         const maxListRows = Math.max(1, ...regionRows.map(x => x.agg.sites));
-        const fieldByCol = ['siteName', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
+        const fieldByCol = ['siteName', 'propertyType', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
         for (let k = 0; k < maxListRows; k++) {
           const rowNum = listStart + k;
           const rank = k + 1;
           const rec = defaultMatches[k];
           const rr = ws.getRow(rowNum);
-          for (let c = 1; c <= 7; c++) {
+          for (let c = 1; c <= LIST_COLS; c++) {
             const srcCol = L(SRC_DISP0 + (c - 1));
             const cell = rr.getCell(c);
             const cached = rec ? rec[fieldByCol[c - 1]] : '';
@@ -8393,16 +8404,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               result: (cached === undefined || cached === null) ? '' : cached,
             };
             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            cell.alignment = { vertical: 'middle', horizontal: (c >= 6) ? 'right' : 'left', indent: 1 };
+            cell.alignment = { vertical: 'middle', horizontal: (c >= FIRST_NUM_COL) ? 'right' : 'left', indent: 1 };
             cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
-            if (c === 6) cell.numFmt = '#,##0';
-            if (c === 7) cell.numFmt = '"$"#,##0';
+            if (c === FIRST_NUM_COL) cell.numFmt = '#,##0';
+            if (c === LIST_COLS) cell.numFmt = '"$"#,##0';
           }
           rr.height = 18;
         }
-        // The Cost column is width 6 (map underlay) — widen it so currency
-        // fits. The map image is pixel-sized, so this doesn't shift it.
-        if ((ws.getColumn(7).width || 0) < 14) ws.getColumn(7).width = 14;
+        // The Load and Cost columns sit over the map underlay's narrow columns
+        // — widen them so the figures fit. The map image is pixel-sized, so
+        // this doesn't shift it.
+        if ((ws.getColumn(FIRST_NUM_COL).width || 0) < 14) ws.getColumn(FIRST_NUM_COL).width = 14;
+        if ((ws.getColumn(LIST_COLS).width || 0) < 14) ws.getColumn(LIST_COLS).width = 14;
 
         // Recalculate on open so the list reflects the current pick.
         wb.calcProperties = wb.calcProperties || {};
