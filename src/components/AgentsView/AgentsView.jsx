@@ -11,7 +11,8 @@ import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoOpps';
-import { computeCloseNotSoldOpps, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
+import { computeCloseNotSoldOpps, hasBfoOppNameIndex, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
+import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
 import { buildActivityAddressLines } from '../../utils/activityAddressLines';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { loadCallRecords } from '../../utils/callRecordingsStore';
@@ -58,11 +59,6 @@ const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
 const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
 
-// IndexedDB store + key the BFO Activity tab persists its pasted rows
-// into. The Close Dates + Amount Updates prompts read it so each row's
-// BFO Sales Stage + Amount can be joined to the Opps tab data.
-const BFO_ACTIVITY_STORE = 'bfo-activity';
-const BFO_ACTIVITY_KEY = 'current';
 // The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
 // printable view) persists under its own key in the same store. The
 // Marketing Lead Status Update agent reads it to compare each lead's
@@ -2136,18 +2132,6 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     setActivityRefreshProgress(null);
   }
 
-  // BFO Activity rows (pasted on the BFO Activity tab, persisted in
-  // IndexedDB). Stages live there — the Opps sheet only has free-text
-  // status labels ("Not Started" / "Sold" / etc.), not the 1-6 Sales
-  // Stage we need for the close-date slip filter.
-  useEffect(() => {
-    let cancelled = false;
-    dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY)
-      .then(d => { if (!cancelled) setBfoActivity(d || null); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
   // HubSpot contacts cache — email → company lookup for tagging.
   useEffect(() => {
     let cancelled = false;
@@ -2184,8 +2168,18 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   }, []);
 
   // BFO Activity rows — pasted on the BFO Activity tab, persisted in
-  // IndexedDB. Read here so each row's Amount can be compared against
-  // the Opps tab's Quoted Amount and a discrepancy list surfaced.
+  // IndexedDB. Nearly every prompt on this page joins against them: the
+  // Sales Stage the Opps sheet doesn't carry (Close Dates, Stage Change),
+  // the Amount to compare against Quoted Amount, and the "is this opp
+  // still open in BFO?" check behind Close Not Solds.
+  //
+  // Refreshed on the store's own change event as well as window focus.
+  // That event fires when the mirror lands a cloud copy locally — another
+  // device's paste, or the first hydration on a browser that didn't hold
+  // the record yet. Window focus doesn't cover either: the record can
+  // arrive while this page is already open and focused, leaving it on an
+  // empty copy while the BFO Activity tab shows a full one. Close Not
+  // Solds then has nothing to check its opps against.
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -2195,7 +2189,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     };
     refresh();
     window.addEventListener('focus', refresh);
-    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+    window.addEventListener(BFO_ACTIVITY_EVENT, refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener(BFO_ACTIVITY_EVENT, refresh);
+    };
   }, []);
 
   // Leads subtab rows — pasted on the BFO Activity page's "Leads" tab
@@ -2940,6 +2939,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     () => computeCloseNotSoldOpps({ oppsCache, bfoActivity }),
     [oppsCache, bfoActivity],
   );
+  // False when the pasted BFO Activity data can't answer "is this opp
+  // still open in BFO?" — no paste, or no Opportunity Name column in it.
+  // computeCloseNotSoldOpps returns nothing in that case, so without
+  // this the section would show its ordinary "none to close out" empty
+  // state and read like the work is done.
+  const closeNotSoldBfoReady = useMemo(() => hasBfoOppNameIndex(bfoActivity), [bfoActivity]);
 
   // AI BFO Prep — live Opps 2 opps (Stage not Sold / Not Sold) that have
   // a non-blank Call In, carry a BFO Opportunity Name (BFO Link), but
@@ -4504,6 +4509,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             <p className={styles.subnote}>
               Not-Sold Opps rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold + Competition → BFO mapping. Rows whose combination isn&rsquo;t in the mapping table (including a blank or N/A Competition) are listed (highlighted) so you can update them on Opps or extend the mapping.
             </p>
+            {!closeNotSoldBfoReady && (
+              <div className={styles.warning}>
+                <strong>⚠ No BFO Activity data to check against</strong>
+                <div className={styles.warningHint}>
+                  This list only holds opps still open in BFO, and there are no BFO Activity rows with an Opportunity Name column to test that against &mdash; so nothing is listed. Paste the BFO Opportunity printable view into the <strong>BFO Activity</strong> tab (the &ldquo;Update BFO Activity&rdquo; prompt below walks through it), then come back.
+                </div>
+              </div>
+            )}
             {revealedPrompts.closeNotSolds && (
               <textarea
                 className={styles.aiPromptInput}
@@ -4544,7 +4557,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 <tbody>
                   {closeNotSoldOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={7}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
+                      <td colSpan={7}>{closeNotSoldBfoReady
+                        ? 'No Not-Sold opps with a matching BFO Activity row — every Not-Sold opp is already closed out in BFO.'
+                        : 'Nothing to show until the BFO Activity tab has data: without it there is no way to tell which Not-Sold opps are still open in BFO.'}</td>
                     </tr>
                   ) : closeNotSoldOpps.map(o => (
                     <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
