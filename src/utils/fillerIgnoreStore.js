@@ -16,9 +16,19 @@
 // here changes what was counted, only which counts are shown.
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import { FILLER_IDS } from './fillerWords';
 
 const KEY = 'filler-words-ignored';
+
+// Fired when the ignored set changes — and the event the Firestore mirror
+// dispatches when hydration pulls a newer copy down.
+export const FILLER_IGNORED_EVENT = 'filler-words-ignored-changed';
+
+// Mirrored: the words you have decided not to be told about again are a
+// choice, and re-making it on a second machine is the same tedium as
+// making it the first time.
+registerMirroredKey(KEY, FILLER_IGNORED_EVENT);
 
 const KNOWN = new Set(FILLER_IDS);
 
@@ -41,6 +51,7 @@ export function saveIgnoredFillers(ids) {
   const list = clean(ids);
   try {
     userLsSet(KEY, JSON.stringify(list));
+    queueMirrorPush(KEY);
   } catch (err) {
     // A preference is not worth failing a render over — the toggle still
     // applies for this session, it just won't survive a reload.

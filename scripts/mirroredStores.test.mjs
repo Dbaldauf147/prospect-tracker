@@ -46,6 +46,10 @@ const LOCAL_BY_DESIGN = {
 
   // Cannot meaningfully leave this browser.
   'localRecordings.js': 'holds a FileSystemDirectoryHandle — not serialisable, and machine-specific',
+  'nfatSchedules.js':
+    'the schedules themselves live on userSettings (Firestore); the only key written here is '
+    + "this browser's shadow copy of the newest config it has seen, which exists to REPAIR that "
+    + 'document. Mirroring a repair shadow would let it repair itself and defeat the check.',
 
   // Transient queues, emptied in the same session they are filled.
   'draftCampaignQueue.js': 'session-scoped queue for the Draft Emails page',
@@ -56,7 +60,6 @@ const LOCAL_BY_DESIGN = {
   // between a laptop and an external monitor.
   'stageTableColumns.js': 'per-browser column layout',
   'yoyHiddenChartsStore.js': 'per-browser chart visibility',
-  'dealTimelineHiddenStore.js': 'per-browser timeline visibility',
 
   // Not a store: helpers that write through to other stores' keys.
   'companyRenameCascade.js': 'rename helper — writes through the stores it cascades into',
@@ -64,20 +67,22 @@ const LOCAL_BY_DESIGN = {
 
 // Should be mirrored and is not. Listed rather than ignored so the debt is
 // visible on every run; the scan reports these but does not fail on them.
+//
+// These are no longer single-copy in the sense the header describes: the
+// Backups page's "Download full backup" (utils/fullBackup) writes every
+// localStorage key and every IndexedDB record to a file, so what is left
+// here is data that survives a wipe only if the user took one. That is a
+// weaker guarantee than a mirror, which is why they stay on the list.
 const KNOWN_GAPS = {
   'quotedMonthRows.js':
     'the opp rows captured behind each Quoted Projections month-end. Its companion '
     + 'quotedProjectionsStore IS mirrored, so the figures survive a wipe but the rows '
     + 'behind them do not, and a past-month export then falls back to the lossy rebuild '
     + 'this store was added to replace.',
-  'nfatSchedules.js': 'user-configured "No Further Action Today" clear schedules',
-  'prospectingStatus.js': 'user-marked "caught up?" state per Prospecting ladder step',
-  'soldWarningIgnore.js': 'per-opp "ignore this warning" choices on the Deals banner',
-  'fillerIgnoreStore.js': 'per-account filler words the user chose to ignore',
-  'timelineTypeOptions.js': 'custom Timeline Type options the user has typed',
-  'marketUpdatesStore.js': 'emails dropped on the Market Updates tab, with attachments',
+  'marketUpdatesStore.js':
+    'emails dropped on the Market Updates tab, with attachments. Multi-MB blobs, so a mirror '
+    + 'needs the chunking oppRfpTemplate does — until then the full backup is the only copy.',
   'oppPricingSourceFile.js': 'uploaded SIA workbook bytes saved against an opp',
-  'pricingOptionLinks.js': 'per-user map of oppId → pricing-option link',
 };
 
 let passed = 0, failed = 0;
@@ -119,7 +124,10 @@ ok(
 // cleared browser restores nothing from it — silently, because the push side
 // still works from the page that owns the store.
 const hydrateSrc = readFileSync(join(UTILS, 'localMirrorSync.js'), 'utf8');
-const hydrateBody = hydrateSrc.slice(hydrateSrc.indexOf('export async function hydrateLocalMirrors'));
+// The force-imports live in loadMirroredStores, which both hydration and the
+// full-backup restore call. Slice from there rather than from
+// hydrateLocalMirrors, which now delegates to it.
+const hydrateBody = hydrateSrc.slice(hydrateSrc.indexOf('async function loadMirroredStores'));
 const hydrateImports = new Set(
   [...hydrateBody.matchAll(/import\(\s*'\.\/([A-Za-z0-9_]+)(?:\.js)?'\s*\)/g)].map((m) => `${m[1]}.js`),
 );
@@ -153,7 +161,7 @@ ok(
 // ── Report ─────────────────────────────────────────────────────────────
 console.log(`\n${mirrored.length} mirrored · ${Object.keys(LOCAL_BY_DESIGN).length} local by design · ${Object.keys(KNOWN_GAPS).length} known gaps`);
 if (Object.keys(KNOWN_GAPS).length) {
-  console.log('\nKnown gaps — single-copy data that is not backed up anywhere:');
+  console.log('\nKnown gaps — no cloud mirror; a downloaded full backup is the only copy:');
   for (const [file, why] of Object.entries(KNOWN_GAPS)) console.log(`  ${file}\n      ${why}`);
 }
 

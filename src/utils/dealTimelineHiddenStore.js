@@ -15,8 +15,17 @@
 // Extension spelled out so this module loads under plain Node for the tests
 // in scripts/, which Vite's resolver isn't there to help with.
 import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const KEY = 'deal-timeline-hidden';
+
+// Fired when the hidden set changes, and the event the Firestore mirror
+// dispatches after hydration pulls a newer copy down.
+export const DEAL_TIMELINE_HIDDEN_EVENT = 'deal-timeline-hidden-changed';
+
+// Mirrored: which bands you hid on a deal's rollout chart is a choice you
+// made about that deal, and it used to live in one browser only.
+registerMirroredKey(KEY, DEAL_TIMELINE_HIDDEN_EVENT);
 
 // Names are compared the way the composer compares them — lowercased and
 // trimmed — so a Scope that changed capitalisation between visits doesn't
@@ -72,6 +81,7 @@ export function saveHiddenServices(planKey, names) {
   if (!String(planKey || '')) return;
   try {
     userLsSet(KEY, JSON.stringify(writeHiddenTo(loadMap(), planKey, names)));
+    queueMirrorPush(KEY);
   } catch (err) {
     // A view preference is not worth breaking the popup over.
     console.warn('Failed to persist hidden timeline services', err);

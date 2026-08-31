@@ -10,6 +10,7 @@
 // refreshes its datalist the moment a new option is added.
 
 import { userLsGet, userLsSet } from './userLs';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 // Seed presets. Kept here so the editor imports the merged list from one
 // place; the defaults always lead the dropdown, custom entries follow.
@@ -20,6 +21,10 @@ const STORAGE_KEY = 'opps-timeline-type-options';
 // re-read without waiting for a focus / reload. Cross-tab updates ride the
 // native `storage` event instead.
 export const TIMELINE_TYPE_OPTIONS_EVENT = 'timeline-type-options-updated';
+
+// Mirrored to Firestore: the custom entries here are typed once and then
+// expected to be in the dropdown forever, including on the other machine.
+registerMirroredKey(STORAGE_KEY, TIMELINE_TYPE_OPTIONS_EVENT);
 
 function readCustom() {
   try {
@@ -62,6 +67,7 @@ export function addTimelineTypeOption(value) {
   const nextCustom = [...readCustom(), label];
   try {
     userLsSet(STORAGE_KEY, JSON.stringify(nextCustom));
+    queueMirrorPush(STORAGE_KEY);
   } catch (err) {
     console.warn('Saving timeline type option failed', err);
     return false;
