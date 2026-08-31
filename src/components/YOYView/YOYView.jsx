@@ -19,12 +19,15 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { asNumber, dealYear } from '../../utils/dealsFormat';
 import {
   loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS, QUOTED_HISTORICAL_SEED,
-  juneRebuildDone, markJuneRebuildDone, QUOTED_PROJECTIONS_EVENT,
+  QUOTED_PROJECTIONS_EVENT,
 } from '../../utils/quotedProjectionsStore';
 import {
   saveQuotedMonthRows, loadQuotedMonthRows, loadAllQuotedMonthRows,
   capturedValuesMatch, QUOTED_ROW_FIELDS,
 } from '../../utils/quotedMonthRows';
+import {
+  stageAsOf, monthEndMs, sameQuotedValues, rebuildOwnsMonth,
+} from '../../utils/quotedMonthRebuild';
 import { loadYoyOverrides, saveYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
 import styles from './YOYView.module.css';
@@ -243,16 +246,23 @@ const REBUILD_SENSITIVE_FIELDS = [
 
 const NOT_TRACKED = 'Not tracked: no edit history on this row';
 
-function changedSinceMonthEnd(record, monthEndMs) {
+// Stage is excluded from the suspect list on a row whose stage history
+// reaches back to the month end: the rebuild reads that history rather than
+// today's Stage, so a move since is already accounted for and flagging it
+// would point at a row that is in fact correct.
+const STAGE_RECONSTRUCTED = new Set(['Stage']);
+
+function changedSinceMonthEnd(record, cutoffMs, exclude) {
   const stamps = record && typeof record._fieldUpdatedAt === 'object' && record._fieldUpdatedAt
     ? record._fieldUpdatedAt : null;
   if (!stamps) return { label: NOT_TRACKED, latest: null };
   const hits = [];
   let latest = null;
   for (const field of REBUILD_SENSITIVE_FIELDS) {
+    if (exclude && exclude.has(field.label)) continue;
     for (const key of field.keys) {
       const stamp = stamps[key];
-      if (Number.isFinite(stamp) && stamp > monthEndMs) {
+      if (Number.isFinite(stamp) && stamp > cutoffMs) {
         hits.push(field.label);
         if (latest == null || stamp > latest) latest = stamp;
         break;
@@ -261,7 +271,6 @@ function changedSinceMonthEnd(record, monthEndMs) {
   }
   return { label: hits.length ? hits.join(', ') : 'No', latest };
 }
-
 
 // Total pipeline $ from the BFO Activity table — sum of its "Amount"
 // column across every pasted row. Returns null when no BFO data is
@@ -321,11 +330,6 @@ function quotedValueSource(row, quotedTable) {
 }
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-// June 2026 was never captured before the month-end auto-persist existed. Its
-// first fill was a stand-in copy of the then-live totals; it's rebuilt once
-// from the Opps data as the pipeline stood at that month end.
-const JUNE_2026_KEY = '2026-06';
 
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
 // December of the previous calendar year and ending in November of the
@@ -637,36 +641,43 @@ export function YOYView() {
     // 1) Mirror the live current month under an `_auto` flag. The flag keeps
     //    the month "live" — still recomputed for display and overwritable —
     //    until it rolls over into a fixed month-end figure. A manual save
-    //    clears it and always wins.
+    //    clears it and always wins. `_capturedAt` records when the reading
+    //    was taken, so once the month rolls over it's possible to tell a
+    //    genuine month-end capture from one taken on the 12th.
     const curKey = currentMonthKey();
     const curExisting = quotedTable[curKey];
     if (!curExisting || curExisting._auto) {
       const snap = liveSnap();
-      const unchanged = snap && curExisting && curExisting._auto &&
+      // Re-stamp a capture from an earlier day even when the figures haven't
+      // moved: the stamp is what marks the last-day reading as the month end.
+      const sameDay = String(curExisting?._capturedAt || '').slice(0, 10)
+        === new Date().toISOString().slice(0, 10);
+      const unchanged = snap && curExisting && curExisting._auto && sameDay &&
         QUOTED_FIELDS.every(f => (curExisting[f] ?? null) === (snap[f] ?? null));
-      if (snap && !unchanged) patch[curKey] = { ...snap, _auto: true };
+      if (snap && !unchanged) {
+        patch[curKey] = { ...snap, _auto: true, _capturedAt: new Date().toISOString() };
+      }
     }
-    // 2) Any already-finished month on the chart with nothing recorded gets
-    //    rebuilt from the Opps data as the pipeline stood at that month end
-    //    (the same reconstruction the per-month Excel export attaches), not
-    //    from today's totals. A month only gets filled once — the write makes
-    //    it a recorded entry that "Edit values" can correct.
+    // 2) Every finished month on the chart the rebuild owns — nothing
+    //    recorded, a previous rebuild, or an auto-capture that wasn't taken
+    //    at the month end — is rebuilt from the Opps data as the pipeline
+    //    stood then (the same reconstruction the per-month Excel export
+    //    attaches), not from today's totals. Re-deriving instead of filling
+    //    once means a fix to the reconstruction reaches months already
+    //    stored; a correction typed into "Edit values" saves without the
+    //    `_rebuilt` flag, which takes the month back off the rebuild.
     for (const m of fiscalMonths(quotedYear)) {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
-      if (key >= curKey || quotedTable[key]) continue; // in progress / future / already recorded
+      if (key >= curKey) continue; // in progress / future
+      const saved = quotedTable[key] || null;
+      if (!rebuildOwnsMonth(saved, key)) continue;
       const snap = quotedMonthSnapshot(key);
-      if (snap) patch[key] = snap;
-    }
-    // 3) June 2026 was filled once with today's live totals as a stand-in
-    //    before the reconstruction above existed, so it's carrying July's
-    //    numbers rather than its own month end. Replace it with the rebuild,
-    //    once per user — a manual correction after that stands.
-    if (quotedYear === 2026 && !juneRebuildDone()) {
-      const snap = quotedMonthSnapshot(JUNE_2026_KEY);
-      if (snap) {
-        patch[JUNE_2026_KEY] = snap;
-        markJuneRebuildDone();
-      }
+      if (!snap) continue;
+      // BFO Pipe Total can't be reconstructed — BFO Activity is a pasted
+      // current snapshot with no history — so a figure already recorded for
+      // the month is carried across rather than dropped by the re-derive.
+      const next = saved && saved.bfoPipe != null ? { ...snap, bfoPipe: saved.bfoPipe } : snap;
+      if (!sameQuotedValues(saved, next)) patch[key] = next;
     }
     if (Object.keys(patch).length === 0) return;
     updateQuotedTable({ ...quotedTable, ...patch });
@@ -1649,37 +1660,44 @@ export function YOYView() {
   // chart sums. A past month is a recorded snapshot with no opp rows kept
   // behind it, so this rebuilds the pipeline as it stood at that month end
   // out of today's Opps data: every opp carrying a quoted amount that had
-  // been quoted by then and hadn't closed yet. Chance? and Stage are today's
-  // values, so an opp re-graded or advanced since is counted where it sits
-  // now — the totals land close to the recorded figures rather than on them,
-  // and the Totals check sheet shows by how much.
+  // been quoted by then and hadn't closed yet. Stage comes from each opp's
+  // stage history, so it's the stage the opp was actually in at that month
+  // end; Chance? is still today's value (nothing records what it held then),
+  // so an opp re-graded since is bucketed where it sits now and the Totals
+  // check sheet shows by how much the totals miss.
   function quotedMonthOpps(monthKey, isLive) {
     if (isLive) return contributingRecords.quotedSource;
-    const m = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ''));
-    if (!m) return [];
-    const y = Number(m[1]);
-    const mo = Number(m[2]);
     // Last day of the month, end of day — the month-end the snapshot recorded.
-    const monthEndMs = Date.UTC(y, mo, 0) + 86399999;
+    const cutoff = monthEndMs(monthKey);
+    if (cutoff == null) return [];
     const out = [];
     for (const r of records) {
       const amt = parseMoney(r['Quoted Amount']) || 0;
       if (!amt) continue;
-      const stage = String(r.Stage || '').trim();
-      const closed = CLOSED_STAGES.has(stage);
+      const stageNow = String(r.Stage || '').trim();
+      // The Stage the opp carried at THAT month end, from its stage history —
+      // not the one it carries today. This is what puts an opp sold since
+      // back into the Agreements Sent months it was actually in, and keeps
+      // one that has only just reached Agreement Sent out of them.
+      const asOf = stageAsOf(r, cutoff);
+      const stage = asOf.stage;
       const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
       const closeDate = r['Close Date'] || '';
       const qts = Date.parse(quotedOn);
       const cts = Date.parse(closeDate);
       const quotedKnown = !Number.isNaN(qts);
       // Quoted after this month end — it wasn't in the pipeline yet.
-      if (quotedKnown && qts > monthEndMs) continue;
-      // Closed on or before this month end — it had already left.
-      if (closed && !Number.isNaN(cts) && cts <= monthEndMs) continue;
-      // Closed at some unknown date: nothing places it in this month.
-      if (closed && Number.isNaN(cts)) continue;
+      if (quotedKnown && qts > cutoff) continue;
+      // Had it already left the pipeline by this month end? The stage history
+      // answers that directly when it reaches back; otherwise it's the same
+      // Close Date fallback as before, where an undated close leaves nothing
+      // that places the opp in this month.
+      const gone = asOf.tracked
+        ? CLOSED_STAGES.has(stage)
+        : CLOSED_STAGES.has(stage) && (Number.isNaN(cts) || cts <= cutoff);
+      if (gone) continue;
       const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim();
-      const changed = changedSinceMonthEnd(r, monthEndMs);
+      const changed = changedSinceMonthEnd(r, cutoff, asOf.tracked ? STAGE_RECONSTRUCTED : null);
       const lower = chance.toLowerCase();
       const series =
         lower === 'weak' ? 'Quoted Weak'
@@ -1689,6 +1707,10 @@ export function YOYView() {
       out.push({
         Account: String(r.Account || '').trim(),
         Stage: stage,
+        'Stage today': stageNow,
+        'Stage read from': asOf.tracked
+          ? 'Stage history: the stage this opp was in at that month end'
+          : 'Today\u2019s Stage: no stage history reaches back that far',
         Status: String(r.Status || '').trim(),
         'Chance?': chance,
         'Quoted Amount ($)': amt,
@@ -1722,9 +1744,11 @@ export function YOYView() {
   // rows the per-month export attaches — the opps that were quoted by that
   // month end and hadn't closed yet. Values in whole $K, matching the store.
   //
-  // It reads today's Chance? / Stage on those opps, so a bucket an opp has
-  // since moved between lands where it sits now; that's the same caveat the
-  // export's "Totals check" sheet already spells out. `bfoPipe` is left out
+  // Stage comes from each opp's stage history (so Agreements Sent is what was
+  // out at that month end), but Chance? is still today's value — nothing
+  // records what an opp was graded at back then — so a re-graded opp lands in
+  // the bucket it sits in now; that's the caveat the export's "Totals check"
+  // sheet spells out. `bfoPipe` is left out
   // entirely — BFO Activity is a pasted current snapshot with no history, so
   // there's nothing to reconstruct it from and a blank beats today's total
   // wearing a past month's label.
@@ -1810,7 +1834,7 @@ export function YOYView() {
       : 'Live Opps (source rows)';
     const notes = [
       { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': oppSheet },
-      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent": the same $ also sits in its Chance bucket.', 'Raw rows in this file': oppSheet },
+      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent": the same $ also sits in its Chance bucket. On a rebuilt month that is the stage each opp held at that month end, from its stage history — not the stage it sits in today.', 'Raw rows in this file': oppSheet },
       { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? (capture?.useCapturedBfo ? 'BFO Activity (captured at month end)' : 'Not available: BFO Activity was not captured for this month') : 'BFO Activity' },
     ];
     if (live === false && useCaptured) {
@@ -1824,15 +1848,15 @@ export function YOYView() {
       notes.push({
         Series: 'How this month\'s opp rows were built',
         'Where the number comes from': captured
-          ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead (quoted by that month end, not yet closed), and carry today\'s Chance? and Stage. The Totals check sheet shows the gap.'
+          ? 'Opp rows WERE captured for this month, but the plotted figures have been edited since (via "Edit values") and no longer match them. The attached rows are rebuilt from today\'s Opps data instead (quoted by that month end, not yet closed), with the Stage each opp was in at that month end read from its stage history and today\'s Chance?. The Totals check sheet shows the gap.'
           : quotedTable[row.monthKey]?._rebuilt
-            ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data: the opps quoted by that month end that hadn\'t closed yet, carrying today\'s Chance? and Stage. They were reconstructed at different moments, so any Opps edit in between shows up on the Totals check sheet. Months captured live from now on carry their own rows and tie exactly.'
-            : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data (quoted by that month end, not yet closed), and carry today\'s Chance? and Stage. Opps edited, re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
+            ? 'This month was never captured live, so both the plotted figures and these rows are reconstructions from the Opps data: the opps quoted by that month end that hadn\'t closed yet, each under the Stage it was in at that month end (from its stage history) and today\'s Chance?. Months captured live from now on carry their own rows and tie exactly.'
+            : 'This month is a recorded month-end snapshot from before the opp rows were kept, so the rows behind it were never stored. The attached rows are rebuilt from today\'s Opps data (quoted by that month end, not yet closed), under the Stage each opp was in at that month end (from its stage history) and today\'s Chance?. Opps re-graded or deleted since won\'t tie back exactly; the Totals check sheet shows the gap. Months captured from now on carry their own rows and tie exactly.',
         'Raw rows in this file': 'Totals check',
       });
       notes.push({
         Series: 'Which rebuilt rows to trust',
-        'Where the number comes from': 'Every attached row carries a "Changed since month end" column: whether its Chance?, Stage or Quoted Amount has been edited since, from the per-field edit stamps Opps 2 keeps. A stamped row is one the rebuild is reading today\'s value for, so it is a suspect for the gap on the Totals check. The stamps record when a field changed, not what it held before, so a flagged row can be identified but not corrected. "Changed since" totals the quoted $ per group.',
+        'Where the number comes from': 'Every attached row carries a "Changed since month end" column: whether its Chance? or Quoted Amount has been edited since, from the per-field edit stamps Opps 2 keeps. A stamped row is one the rebuild is reading today\'s value for, so it is a suspect for the gap on the Totals check. The stamps record when a field changed, not what it held before, so a flagged row can be identified but not corrected. Stage is the exception: it is reconstructed from each opp\'s stage history, so it is only flagged on a row whose history does not reach back that far ("Stage read from" says which). "Changed since" totals the quoted $ per group.',
         'Raw rows in this file': 'Changed since',
       });
     }
@@ -2588,7 +2612,7 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
                   note: row._live
                     ? 'Live: computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._hasData
-                        ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end.'
+                        ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end — each under the Stage it was in then, from its stage history.'
                         : 'No values recorded for this month yet.'),
                 })}
               />
@@ -2704,7 +2728,21 @@ function QuotedProjectionsEditor({ rows, table, live, onClose, onSave }) {
       }
       // `_auto` keeps the month live — recomputed for display and
       // overwritten by the auto-capture effect until it rolls over.
-      if (any) next[r.monthKey] = isAutoRow(r.monthKey) ? { ...out, _auto: true } : out;
+      if (isAutoRow(r.monthKey)) {
+        if (any) next[r.monthKey] = { ...out, _auto: true, _capturedAt: new Date().toISOString() };
+        else delete next[r.monthKey];
+        continue;
+      }
+      // A month left exactly as it was found keeps how it got there. Saving
+      // writes every row, so without this one edited month would quietly
+      // re-badge every rebuilt month as hand-entered and freeze it — the
+      // rebuild only re-derives months that are still its own.
+      const prior = table[r.monthKey];
+      if (any && prior && (prior._rebuilt || prior._auto) && sameQuotedValues(prior, out)) {
+        next[r.monthKey] = prior;
+        continue;
+      }
+      if (any) next[r.monthKey] = out;
       else delete next[r.monthKey];
     }
     onSave(next);
