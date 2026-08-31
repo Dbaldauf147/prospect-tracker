@@ -59,25 +59,22 @@ export function isInactiveAgreement(deal) {
   return INACTIVE_STATUSES.has(status);
 }
 
-// A deal that's finished, for the purposes of getting it out of the way:
-// its contract term has run out, or the Paperwork column marks it
-// Expired / Cancelled. Those are two separate ways for a deal to die and
-// neither implies the other — a contract killed early still carries the
-// future End Date it was signed with, and one that simply ran its course
-// often was never marked — so the Deals page sinks and greys either.
+// Expired, as the Deals page greys and sinks it: the user has marked the
+// Paperwork column "Expired". Nothing else — a hand-set flag, not a
+// derived one.
 //
-// A contract ending TODAY is still live: it has the rest of the day to
-// run, and calling it expired would drop the deal off the active list a
-// day early.
+// A past End Date deliberately does NOT count. Agreements outlive the
+// date on them all the time: they auto-renew, get amended, or are simply
+// still being paid on while the sheet's date goes stale. Deriving expiry
+// from the date greyed out live contracts, which is worse than missing
+// one that was never marked — the user can mark it.
+//
+// Narrower than isInactiveAgreement above, which also counts Cancelled.
+// Cancelled and expired are different events and the Deals page is only
+// asked to show the second, so the two predicates stay separate rather
+// than one calling the other.
 export function isExpiredDeal(deal) {
-  if (isInactiveAgreement(deal)) return true;
-  const end = asDate(deal?.['End Date']);
-  if (!end) return false;
-  const endDay = new Date(end);
-  endDay.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return endDay.getTime() < today.getTime();
+  return String(deal?.['Paperwork completed'] || '').trim().toLowerCase() === 'expired';
 }
 
 // The calendar year a deal belongs to, derived from its Original Contract
