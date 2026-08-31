@@ -22,7 +22,7 @@ function eq(actual, expected, name) {
   else { failed++; console.log(`FAIL  ${name}\n        expected ${e}\n        got      ${a}`); }
 }
 
-// A deal with every handoff field filled in — 9/9, nothing outstanding.
+// A deal with every handoff field filled in — nothing outstanding.
 function complete(over = {}) {
   const row = {
     'Client Name': 'EOS Hospitality',
@@ -33,6 +33,10 @@ function complete(over = {}) {
   return { ...row, ...over };
 }
 const names = (rows) => rows.map(r => r.deal['Agreement Name']);
+// Totals are read off the checklist rather than hard-coded, so adding a
+// field to it doesn't fail these on arithmetic; what the assertions pin is
+// the behaviour — a full checklist is clear, one gap is one short.
+const TOTAL = HANDOFF_FIELDS.length;
 const missingLabels = (row) => handoffProgress(row).missing.map(f => f.label);
 
 {
@@ -41,9 +45,23 @@ const missingLabels = (row) => handoffProgress(row).missing.map(f => f.label);
   const done = complete({ 'Agreement Name': 'Finished' });
   const short = complete({ 'Agreement Name': 'Short', Setup: '' });
   eq(names(incompleteHandoffDeals([done, short])), ['Short'], 'only the deal with an outstanding item is flagged');
-  eq(handoffProgress(done), { done: 9, total: 9, missing: [] }, 'a full checklist reads 9/9');
-  eq(handoffProgress(short).done, 8, 'and one empty field drops it to 8/9');
+  eq(handoffProgress(done), { done: TOTAL, total: TOTAL, missing: [] }, `a full checklist reads ${TOTAL}/${TOTAL}`);
+  eq(handoffProgress(short).done, TOTAL - 1, `and one empty field drops it to ${TOTAL - 1}/${TOTAL}`);
   eq(missingLabels(short), ['Setup'], 'the outstanding item is named');
+}
+
+{
+  // Original Contract Start is a checklist item, not just a grid column:
+  // a deal with no start date is an unfinished handoff, and the popover
+  // edits the same field the column does.
+  const field = HANDOFF_FIELDS.find(f => f.key === 'Original Contract Start');
+  eq(!!field, true, 'Original Contract Start is on the checklist');
+  eq(field.date === true, true, 'and is marked as a date, so the popover picks it from a calendar');
+  const noStart = complete({ 'Agreement Name': 'No start', 'Original Contract Start': '' });
+  eq(missingLabels(noStart), ['Original Contract Start'], 'a deal with no start date is one short');
+  eq(names(incompleteHandoffDeals([noStart])), ['No start'], 'and the Issues page flags it');
+  const dashStart = complete({ 'Agreement Name': 'Dash', 'Original Contract Start': '-' });
+  eq(missingLabels(dashStart), ['Original Contract Start'], 'a dash placeholder does not count as a date');
 }
 
 {
@@ -84,11 +102,11 @@ const missingLabels = (row) => handoffProgress(row).missing.map(f => f.label);
 }
 
 {
-  // A row with a client but no filled fields at all is the 0/9 case —
+  // A row with a client but no filled fields at all is the 0/N case —
   // the red pill on the Deals subtab.
   const bare = { 'Client Name': 'Acme', 'Agreement Name': '' };
   const p = handoffProgress(bare);
-  eq([p.done, p.total], [0, 9], 'a bare row is 0/9');
+  eq([p.done, p.total], [0, TOTAL], `a bare row is 0/${TOTAL}`);
   eq(names(incompleteHandoffDeals([bare])), [''], 'and it is flagged even without an agreement name');
 }
 

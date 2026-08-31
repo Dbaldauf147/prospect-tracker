@@ -284,7 +284,11 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
   const onChange = (v) => onSave?.(row.id, field.key, v);
 
   let editor;
-  if (field.yesno) {
+  if (field.date) {
+    // The same click-to-pick calendar the grid's date cells use, so a date
+    // set here reads and stores exactly like one set in the column.
+    editor = <DateCell value={raw} onChange={onChange} />;
+  } else if (field.yesno) {
     editor = <SelectCell value={raw} onChange={onChange} options={['Yes', 'No']} />;
   } else if (link) {
     const opts = listRegistry?.get(link.listKey)?.options || [];
