@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { planDealPaste } from '../../utils/dealsPasteMerge';
 
 // Canonical destination columns recognised by the Deals subtab. Kept
 // in sync with COLUMN_ORDER + HEADER_ALIASES in DealsView so the
@@ -97,13 +98,30 @@ function parseTSV(text) {
   return { headers, rows: rows.slice(1) };
 }
 
-export function PasteImportModal({ onClose, onImport }) {
-  const [paste, setPaste] = useState('');
-  const [stage, setStage] = useState('paste');
-  const [headers, setHeaders] = useState([]);
-  const [rawRows, setRawRows] = useState([]);
-  const [mapping, setMapping] = useState({});
+export function PasteImportModal({ onClose, onImport, initialPaste = '', existingRows = [] }) {
+  // A paste that arrived from Ctrl/Cmd+V on the page itself is already the
+  // data — parse it up front and open straight on the mapping step, which is
+  // the whole point of the popup. Clicking "Paste from Sheets" with an empty
+  // clipboard still starts on the textarea.
+  const [seed] = useState(() => {
+    const text = String(initialPaste || '');
+    if (!text.trim()) return null;
+    const { headers: h, rows } = parseTSV(text);
+    if (h.length === 0 || rows.length === 0) return null;
+    const m = {};
+    for (const src of h) m[src] = autoMap(src);
+    return { headers: h, rows, mapping: m };
+  });
+  const [paste, setPaste] = useState(initialPaste);
+  const [stage, setStage] = useState(seed ? 'map' : 'paste');
+  const [headers, setHeaders] = useState(seed ? seed.headers : []);
+  const [rawRows, setRawRows] = useState(seed ? seed.rows : []);
+  const [mapping, setMapping] = useState(seed ? seed.mapping : {});
   const [parseError, setParseError] = useState('');
+  // What to do with a cell where the deal on file and the paste disagree.
+  // Default 'keep': the import fills blanks and otherwise leaves the roster
+  // alone. 'overwrite' is there for the case the paste IS the correction.
+  const [conflictMode, setConflictMode] = useState('keep');
 
   function handleNext() {
     setParseError('');
@@ -120,25 +138,51 @@ export function PasteImportModal({ onClose, onImport }) {
     setStage('map');
   }
 
+  // The pasted grid turned into deal records under the current mapping.
+  const records = useMemo(() => rawRows.map(cells => {
+    const obj = {};
+    for (let i = 0; i < headers.length; i++) {
+      const dest = mapping[headers[i]];
+      if (!dest) continue;
+      const v = cells[i];
+      if (v == null || v === '') continue;
+      obj[dest] = v;
+    }
+    return obj;
+  }), [rawRows, headers, mapping]);
+
+  // Live preview of what the import does to the roster on file. The same
+  // planner runs the actual import in DealsView, so the counts on the button
+  // are the counts the user gets.
+  const plan = useMemo(
+    () => planDealPaste(existingRows, records, { overwriteConflicts: conflictMode === 'overwrite' }),
+    [existingRows, records, conflictMode]
+  );
+  const { summary, results } = plan;
+  const mergedRows = useMemo(() => results.filter(r => r.status === 'merged'), [results]);
+  const conflictRows = useMemo(() => mergedRows.filter(r => r.conflicts.length > 0), [mergedRows]);
+  const skippedByReason = useMemo(() => {
+    const byReason = new Map();
+    for (const r of results) {
+      if (r.status !== 'skipped') continue;
+      if (!byReason.has(r.reason)) byReason.set(r.reason, []);
+      byReason.get(r.reason).push(r.rowNumber);
+    }
+    return [...byReason.entries()];
+  }, [results]);
+  const clientMapped = useMemo(
+    () => headers.some(h => mapping[h] === 'Client Name'),
+    [headers, mapping]
+  );
+
   function handleImport() {
-    const records = rawRows
-      .map(cells => {
-        const obj = {};
-        for (let i = 0; i < headers.length; i++) {
-          const dest = mapping[headers[i]];
-          if (!dest) continue;
-          const v = cells[i];
-          if (v == null || v === '') continue;
-          obj[dest] = v;
-        }
-        return obj;
-      })
-      .filter(r => Object.keys(r).length > 0);
-    if (records.length === 0) {
-      setParseError('No mapped columns: pick at least one destination column.');
+    if (summary.added === 0 && summary.merged === 0) {
+      setParseError(clientMapped
+        ? 'Nothing to import: every pasted row was blank or had no Client Name.'
+        : 'Map one pasted column to Client Name — that’s what each row is matched on.');
       return;
     }
-    onImport(records);
+    onImport(records, { overwriteConflicts: conflictMode === 'overwrite' });
   }
 
   const mappedCount = useMemo(
@@ -160,12 +204,14 @@ export function PasteImportModal({ onClose, onImport }) {
     return [...seen.entries()].filter(([, n]) => n > 1).map(([d]) => d);
   }, [headers, mapping]);
 
+  const nothingToImport = summary.added === 0 && summary.merged === 0;
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 8, width: 'min(1040px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>
-            {stage === 'paste' ? 'Paste deals from Google Sheets' : `Map columns: ${rawRows.length} rows`}
+            {stage === 'paste' ? 'Paste deals from Google Sheets' : `Map columns: ${rawRows.length} pasted rows`}
           </strong>
           <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
         </div>
@@ -173,7 +219,7 @@ export function PasteImportModal({ onClose, onImport }) {
         {stage === 'paste' && (
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
             <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-              In Google Sheets, select the rows you want (including the header row) and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste. The next step lets you confirm which pasted column maps to each deal field.
+              In Google Sheets, select the rows you want (including the header row) and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste — or just paste anywhere on the Deals page and this opens on the mapping step. Deals already on file are matched by <strong>Client Name</strong> (plus <strong>Agreement Name</strong> where there is one): new values fill in, and values already on the deal are left alone.
             </div>
             <textarea
               value={paste}
@@ -198,6 +244,70 @@ export function PasteImportModal({ onClose, onImport }) {
               {unmappedSourceNames.length > 0 && <> · <span style={{ color: '#92400E' }}>{unmappedSourceNames.length} pasted column{unmappedSourceNames.length === 1 ? '' : 's'} will be skipped</span></>}
               {duplicateDestinations.length > 0 && <> · <span style={{ color: '#991B1B' }}>Multiple sources point at: {duplicateDestinations.join(', ')}</span></>}
             </div>
+
+            {/* What the import does to the roster on file, recomputed as the
+                mapping changes. Nothing here replaces a deal: rows that
+                aren't on file are added, rows that are only gain values in
+                cells that were blank. */}
+            <div style={{ padding: '0.5rem 0.7rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, fontSize: '0.72rem', color: '#166534', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {!clientMapped ? (
+                <div style={{ color: '#991B1B', fontWeight: 700 }}>
+                  No pasted column maps to <strong>Client Name</strong> — that’s what each row is matched on, so nothing can be imported until one does.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <strong>{summary.added}</strong> new deal{summary.added === 1 ? '' : 's'} added
+                    {' · '}<strong>{summary.merged}</strong> already on file{summary.merged > 0 && <> — <strong>{summary.filledCells}</strong> blank cell{summary.filledCells === 1 ? '' : 's'} filled in, <strong>{summary.duplicateCells}</strong> duplicate value{summary.duplicateCells === 1 ? '' : 's'} ignored</>}
+                    {summary.skipped > 0 && <> · <span style={{ color: '#92400E' }}><strong>{summary.skipped}</strong> row{summary.skipped === 1 ? '' : 's'} skipped</span></>}
+                  </div>
+                  <div style={{ color: '#3F6212' }}>
+                    Deals this paste doesn’t mention are left exactly as they are — nothing is replaced.
+                  </div>
+                  {mergedRows.length > 0 && (
+                    <div style={{ color: '#3F6212' }}>
+                      Matched: {mergedRows.slice(0, 8).map(r => `${r.client}${r.agreement ? ` · ${r.agreement}` : ''}`).join(', ')}
+                      {mergedRows.length > 8 && <> +{mergedRows.length - 8} more</>}
+                    </div>
+                  )}
+                  {skippedByReason.map(([reason, nums]) => (
+                    <div key={reason} style={{ color: '#92400E' }}>
+                      {reason}: row{nums.length === 1 ? '' : 's'} {nums.slice(0, 12).join(', ')}{nums.length > 12 ? `, +${nums.length - 12} more` : ''}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+
+            {/* Cells where the deal on file and the paste disagree. These
+                aren't duplicates, so they get their own decision rather than
+                being quietly dropped. */}
+            {summary.conflictCells > 0 && (
+              <div style={{ padding: '0.5rem 0.7rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, fontSize: '0.72rem', color: '#92400E', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div>
+                  <strong>{summary.conflictCells}</strong> cell{summary.conflictCells === 1 ? '' : 's'} on {conflictRows.length} deal{conflictRows.length === 1 ? '' : 's'} already {summary.conflictCells === 1 ? 'carries' : 'carry'} a <em>different</em> value:
+                </div>
+                <div style={{ maxHeight: 90, overflowY: 'auto', color: '#78350F' }}>
+                  {conflictRows.slice(0, 8).map(r => (
+                    <div key={r.rowNumber} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <strong>{r.client}</strong>{r.agreement ? ` · ${r.agreement}` : ''}: {r.conflicts.slice(0, 4).map(c => `${c.field} "${c.existing}" → "${c.pasted}"`).join(', ')}{r.conflicts.length > 4 ? `, +${r.conflicts.length - 4} more` : ''}
+                    </div>
+                  ))}
+                  {conflictRows.length > 8 && <div>+{conflictRows.length - 8} more deals</div>}
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', paddingTop: 2 }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer' }} title="Fill blank cells only. A cell that already has a value keeps it, whether the paste repeats it or contradicts it.">
+                    <input type="radio" name="deals-conflict-mode" checked={conflictMode === 'keep'} onChange={() => setConflictMode('keep')} style={{ marginTop: 2, cursor: 'pointer' }} />
+                    <span><strong>Keep what’s on the deal</strong> (default): fill blanks only</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer' }} title="Let the pasted value overwrite the value already on the deal. Use this when the sheet is the correction.">
+                    <input type="radio" name="deals-conflict-mode" checked={conflictMode === 'overwrite'} onChange={() => setConflictMode('overwrite')} style={{ marginTop: 2, cursor: 'pointer' }} />
+                    <span><strong>Take the pasted value</strong> for {summary.conflictCells === 1 ? 'that cell' : `those ${summary.conflictCells} cells`}</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
             <div style={{ overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, flex: 1, minHeight: 0 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
                 <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -245,7 +355,12 @@ export function PasteImportModal({ onClose, onImport }) {
               <button onClick={() => setStage('paste')} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button onClick={handleImport} disabled={mappedCount === 0} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: mappedCount === 0 ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: mappedCount === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Replace deals with {rawRows.length} rows →</button>
+                <button
+                  onClick={handleImport}
+                  disabled={nothingToImport}
+                  title="New deals are added and deals already on file fill in their blank cells only. Values already on a deal — and every deal this paste doesn't mention — are left alone."
+                  style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: nothingToImport ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: nothingToImport ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                >Add {summary.added} · fill {summary.merged} →</button>
               </div>
             </div>
           </div>

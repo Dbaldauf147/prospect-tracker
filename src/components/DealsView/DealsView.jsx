@@ -40,6 +40,7 @@ import {
   DEALS_CLIENT_MAP_EVENT,
 } from '../../utils/dealClientMap';
 import { PasteImportModal } from './PasteImportModal';
+import { planDealPaste, describeDealPaste } from '../../utils/dealsPasteMerge';
 import { DealCommissionBreakdownModal } from './DealCommissionBreakdownModal';
 import { DealHistoryModal } from './DealHistoryModal';
 
@@ -1081,6 +1082,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [showPaste, setShowPaste] = useState(false);
+  // Clipboard text captured by the page-level paste handler, handed to the
+  // modal so it can open straight on the column-mapping step.
+  const [initialPaste, setInitialPaste] = useState('');
+  // One-line report of what the last paste import did, shown in the notice
+  // strip — a merge is quiet by design, so it has to say what it changed.
+  const [pasteNote, setPasteNote] = useState('');
   // Which deal cell's commission breakdown popup is open: { rowId, metric }
   // where metric is 'revenue' (Revenue Recorded) or 'paid' (Paid to Date).
   // Opened by double-clicking an auto-populated Revenue Recorded / Paid to
@@ -1309,6 +1316,28 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     next[idx] = current;
     commitDeals(next);
   }, [commitDeals]);
+
+  // Page-level paste handler. Ctrl/Cmd+V anywhere on the Deals tab — the
+  // empty state, the toolbar, the table — opens the column-mapping popup
+  // with the clipboard text already parsed, so pasting from Sheets is the
+  // one gesture it sounds like. Skipped while a real input / textarea has
+  // focus so the search box, the inline cell editors and the modal's own
+  // textarea keep pasting normally. Mirrors the Commissions subtab.
+  useEffect(() => {
+    function onPaste(e) {
+      if (showPaste) return;
+      const ae = document.activeElement;
+      const tag = ae && ae.tagName ? ae.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || (ae && ae.isContentEditable)) return;
+      const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (!text || !text.trim()) return;
+      e.preventDefault();
+      setInitialPaste(text);
+      setShowPaste(true);
+    }
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [showPaste]);
 
   function addNewDeal() {
     // Pre-fill Due Date 60 days from today so the Days/Paid on
@@ -1866,10 +1895,18 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     setStore(loadDealsList());
   }
 
-  function handlePasteImport(records) {
-    saveDealsOverride(records);
-    setStore(loadDealsList());
+  // Merge a pasted batch into the roster instead of replacing it. New deals
+  // are appended; a deal already on file fills in only the cells that were
+  // blank, so a value already recorded here survives a re-paste of the sheet
+  // (see planDealPaste). Appending — rather than prepending — keeps every
+  // existing row index pointing at the same deal, which the selection, the
+  // history drill-down and the per-cell saves all rely on.
+  function handlePasteImport(records, { overwriteConflicts = false } = {}) {
+    const { next, summary } = planDealPaste(dealsRef.current, records, { overwriteConflicts });
+    commitDeals(next);
+    setPasteNote(describeDealPaste(summary));
     setShowPaste(false);
+    setInitialPaste('');
   }
 
   // Count rows whose Client Name doesn't match any active client,
@@ -1934,7 +1971,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Deals</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export or paste from Google Sheets.
+            {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export, or paste from Google Sheets (Cmd/Ctrl+V anywhere here) to add new deals and fill in blanks on the ones already listed.
             {unmappedCount > 0 && (
               <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span>: use the <em>Mapped to Client</em> column to assign or ignore.</>
             )}
@@ -1960,7 +1997,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <button
             type="button"
             onClick={() => setShowPaste(true)}
-            title="Paste tab-separated rows copied from Google Sheets. The next step lets you confirm which pasted column maps to each deal field."
+            title="Paste tab-separated rows copied from Google Sheets — or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each deal field. New deals are added and deals already here fill in their blank cells; values already on a deal are left alone."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >Paste from Sheets</button>
           <button
@@ -2000,6 +2037,21 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       {uploadError && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
           {uploadError}
+        </div>
+      )}
+
+      {/* What the last paste import actually changed. A merge touches cells
+          scattered through a long table, so the counts are the only way to
+          see it happened — dismissible, since it's a receipt, not a task. */}
+      {pasteNote && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, color: '#166534', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ flex: 1 }}>{pasteNote}</span>
+          <button
+            type="button"
+            onClick={() => setPasteNote('')}
+            aria-label="Dismiss import summary"
+            style={{ background: 'transparent', border: 'none', color: '#166534', fontSize: '1rem', lineHeight: 1, cursor: 'pointer', padding: '0 2px' }}
+          >×</button>
         </div>
       )}
 
@@ -2379,7 +2431,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No deals yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>+ New Deal</strong> to add a blank row and type into the cells, <strong>Paste from Sheets</strong> to drop in copied Google Sheets rows, or <strong>Upload Excel</strong> for a workbook.
+              Click <strong>+ New Deal</strong> to add a blank row and type into the cells, <strong>Paste from Sheets</strong> (or just Cmd/Ctrl+V on this page) to drop in copied Google Sheets rows, or <strong>Upload Excel</strong> for a workbook.
             </div>
           </div>
         ) : (
@@ -2424,8 +2476,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       </div>
       {showPaste && (
         <PasteImportModal
-          onClose={() => setShowPaste(false)}
+          onClose={() => { setShowPaste(false); setInitialPaste(''); }}
           onImport={handlePasteImport}
+          initialPaste={initialPaste}
+          existingRows={data}
         />
       )}
       {linkModalOpen && (
