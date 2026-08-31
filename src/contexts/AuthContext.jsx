@@ -91,6 +91,18 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Failed to start local mirror sync', err);
       }
+      // Same idea for the stores that are too big for that path — the
+      // captured Quoted Projections rows and the Market Update emails with
+      // their attachments keep a document each. Also not awaited.
+      try {
+        const { hydrateLargeStores } = await import('../utils/hydrateLargeStores');
+        if (firebaseUser?.uid) {
+          hydrateLargeStores(firebaseUser.uid)
+            .catch(err => console.warn('Failed to hydrate large stores', err));
+        }
+      } catch (err) {
+        console.warn('Failed to start large store sync', err);
+      }
       // Partition encrypted token storage (Outlook OAuth tokens, etc.).
       try {
         const { setSecureUserId } = await import('../utils/secureStorage');

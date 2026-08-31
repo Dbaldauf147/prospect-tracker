@@ -57,6 +57,9 @@ service cloud.firestore {
     match /users/{userId}/listBackups/{storageKey} {
       allow read, write: if owns(userId);
     }
+    match /users/{userId}/listBackups/{storageKey}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
 
     // Shared uploaded list backups. The Lists tab is the same canonical
     // set of rows for every signed-in user (see CLAUDE.md). Authorized
@@ -64,6 +67,15 @@ service cloud.firestore {
     // user re-uploading or clearing a list would clobber the shared
     // store for everyone.
     match /listBackups/{storageKey} {
+      allow read: if isAuthorized();
+      allow write: if isAdmin();
+    }
+
+    // Payload chunks for a list too big for one document. A list past
+    // ~600 KB of JSON used to be split across FIELDS on the document
+    // above, which the 1 MB per-document cap rejects outright — so the
+    // big lists had no backup at all. See utils/chunkedDoc.
+    match /listBackups/{storageKey}/chunks/{chunkId} {
       allow read: if isAuthorized();
       allow write: if isAdmin();
     }
@@ -185,6 +197,74 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
     match /oppRfpTemplates/{userId}/items/{oppId} {
+      allow read, write: if owns(userId);
+    }
+    match /oppRfpTemplates/{userId}/items/{oppId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
+    // The SIA workbook saved against an opp from the Pricing tab
+    // ("Save to Opp"). Same shape as the RFP templates above; it was
+    // IndexedDB-only until then, so clearing site data destroyed it.
+    match /oppSourceFiles/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /oppSourceFiles/{userId}/items/{oppId} {
+      allow read, write: if owns(userId);
+    }
+    match /oppSourceFiles/{userId}/items/{oppId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
+    // Portfolio source-file attachments — the workbook uploaded against a
+    // PE portfolio company. Same shape as the opp files above.
+    match /portfolioSourceFiles/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /portfolioSourceFiles/{userId}/items/{companySlug} {
+      allow read, write: if owns(userId);
+    }
+    match /portfolioSourceFiles/{userId}/items/{companySlug}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
+    // The two uploaded tables the Utility Lookup runs off: zip -> utility
+    // rates, and the city/state -> zip fallback. Thousands of rows each,
+    // uploaded once and then relied on by every lookup.
+    match /lookupTables/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /lookupTables/{userId}/items/{tableId} {
+      allow read, write: if owns(userId);
+    }
+    match /lookupTables/{userId}/items/{tableId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
+    // Emails dropped on the Draft Emails page's Market Updates tab, with
+    // their attachments. One document per entry, chunked: a research PDF
+    // is several MB, which is what kept these local for so long.
+    match /marketUpdates/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /marketUpdates/{userId}/entries/{entryId} {
+      allow read, write: if owns(userId);
+    }
+    match /marketUpdates/{userId}/entries/{entryId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
+    // The opp rows captured behind each Quoted Projections month end. The
+    // figures they explain are mirrored through localMirrors; without
+    // these a past-month export falls back to rebuilding the pipeline out
+    // of today's opps, which re-grades every since-closed deal.
+    match /quotedMonthRows/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /quotedMonthRows/{userId}/months/{monthKey} {
+      allow read, write: if owns(userId);
+    }
+    match /quotedMonthRows/{userId}/months/{monthKey}/chunks/{chunkId} {
       allow read, write: if owns(userId);
     }
 

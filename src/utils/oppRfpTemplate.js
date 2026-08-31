@@ -9,18 +9,24 @@
 //     first. It holds a Blob natively, so the download path is a plain
 //     createObjectURL with no re-encoding.
 //   * Firestore (`oppRfpTemplates/<uid>/items/<oppId>`) is the backup
-//     that makes the file cross-device — the thing the pricing-source-file
-//     store never got, which is why a workbook saved on the laptop is
-//     invisible on the desktop. Bytes go over as base64 split across
-//     ~600 KB string fields, the same chunking listBackupSync uses to get
-//     past Firestore's 1 MB per-document cap.
+//     that makes the file cross-device. Bytes go through utils/chunkedDoc,
+//     a chunk per document under the parent.
+//
+//     They used to go as base64 split across ~600 KB string FIELDS on one
+//     document, copying listBackupSync — which does not work, because the
+//     1 MB cap is on the document. Any workbook over about a megabyte
+//     failed the write, and the failure was a console warning on a
+//     best-effort path, so the file looked attached and had no backup.
+//     Reads still understand that layout: whatever it holds is under a
+//     megabyte, or it would never have been stored.
 //
 // A load that misses IDB but finds Firestore writes the blob back into
 // IDB, so the restore happens once per device rather than per open.
 
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dbGet, dbPut, dbDelete, getDbUserId } from './db';
+import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
 
 const STORE = 'rfp-templates';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -40,10 +46,6 @@ function standardPointerDoc(userId) {
   return doc(db, 'oppRfpTemplates', String(userId));
 }
 
-// Chunk size in base64 characters. 600 KB per field leaves plenty of
-// head-room under the 1 MB document cap once the other fields are counted.
-const CHUNK_CHARS = 600_000;
-
 // Ceiling on what gets mirrored to Firestore. An RFP workbook is a form to
 // fill in, not a data dump — anything past this is almost certainly the
 // wrong file, and writing it would cost a document per open. The local IDB
@@ -54,18 +56,6 @@ function itemDoc(userId, oppId) {
   return doc(db, 'oppRfpTemplates', String(userId), 'items', String(oppId));
 }
 
-async function blobToBase64(blob) {
-  const buf = new Uint8Array(await blob.arrayBuffer());
-  // Convert in slices: String.fromCharCode(...bytes) on a multi-MB array
-  // overflows the argument limit and throws.
-  let binary = '';
-  const STEP = 0x8000;
-  for (let i = 0; i < buf.length; i += STEP) {
-    binary += String.fromCharCode.apply(null, buf.subarray(i, i + STEP));
-  }
-  return btoa(binary);
-}
-
 function base64ToBlob(b64, type) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -73,6 +63,7 @@ function base64ToBlob(b64, type) {
   return new Blob([bytes], { type: type || XLSX_MIME });
 }
 
+// The legacy inline-chunk layout.
 function unpackChunks(data) {
   const n = Number(data?.chunkCount) || 0;
   if (n === 0) return null;
@@ -117,18 +108,14 @@ export async function saveOppRfpTemplate(oppId, blob, fileName) {
   const userId = getDbUserId();
   if (userId && rec.sizeBytes <= RFP_MAX_SYNC_BYTES) {
     try {
-      const b64 = await blobToBase64(rec.blob);
-      const payload = {
-        chunkCount: Math.ceil(b64.length / CHUNK_CHARS),
-        fileName: rec.fileName,
-        sizeBytes: rec.sizeBytes,
-        contentType: rec.blob.type || XLSX_MIME,
-        savedAt: rec.savedAt,
-      };
-      for (let i = 0, n = 0; i < b64.length; i += CHUNK_CHARS, n++) {
-        payload[`chunk${n}`] = b64.slice(i, i + CHUNK_CHARS);
-      }
-      await setDoc(itemDoc(userId, oppId), payload);
+      await writeChunkedDoc(itemDoc(userId, oppId), rec, {
+        meta: {
+          fileName: rec.fileName,
+          sizeBytes: rec.sizeBytes,
+          contentType: rec.blob.type || XLSX_MIME,
+          savedAt: rec.savedAt,
+        },
+      });
     } catch (err) {
       console.warn('RFP template Firestore backup failed', err);
     }
@@ -153,17 +140,23 @@ export async function loadOppRfpTemplate(oppId, expectedSavedAt) {
   const userId = getDbUserId();
   if (!userId) return null;
   try {
-    const snap = await getDoc(itemDoc(userId, oppId));
-    if (!snap.exists()) return null;
-    const data = snap.data();
-    const blob = unpackChunks(data);
-    if (!blob) return null;
-    const rec = {
-      blob,
-      fileName: String(data.fileName || 'rfp.xlsx'),
-      sizeBytes: Number(data.sizeBytes) || blob.size,
-      savedAt: data.savedAt || new Date().toISOString(),
-    };
+    const ref = itemDoc(userId, oppId);
+    const stored = await readChunkedDoc(ref);
+    let rec = stored?.value?.blob ? stored.value : null;
+    if (!rec) {
+      // Nothing in the current layout — try the one the old code wrote.
+      const snap = await getDoc(ref);
+      if (!snap.exists()) return null;
+      const data = snap.data();
+      const blob = unpackChunks(data);
+      if (!blob) return null;
+      rec = {
+        blob,
+        fileName: String(data.fileName || 'rfp.xlsx'),
+        sizeBytes: Number(data.sizeBytes) || blob.size,
+        savedAt: data.savedAt || new Date().toISOString(),
+      };
+    }
     try { await dbPut(STORE, rec, String(oppId)); } catch { /* cache only */ }
     return rec;
   } catch (err) {
@@ -177,7 +170,7 @@ export async function deleteOppRfpTemplate(oppId) {
   try { await dbDelete(STORE, String(oppId)); } catch { /* best-effort */ }
   const userId = getDbUserId();
   if (!userId) return;
-  try { await deleteDoc(itemDoc(userId, oppId)); } catch { /* best-effort */ }
+  try { await deleteChunkedDoc(itemDoc(userId, oppId)); } catch { /* best-effort */ }
 }
 
 // ---- The standard template -------------------------------------------
