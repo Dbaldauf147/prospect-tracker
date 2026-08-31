@@ -58,6 +58,7 @@ import { classifyHqRegion, normalizeHqRegion } from '../../utils/hqRegion';
 import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
+import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
@@ -245,37 +246,13 @@ function parseSourceDate(v) {
 // Used to hold those columns out of the price detection below.
 const notUom = (h) => !/\b(uom|unit\s*of\s*measure|units?)\b/i.test(String(h));
 
-function detectColumn(headers, patterns) {
-  for (const pat of patterns) {
-    const hit = headers.find(h => pat.test(String(h)));
-    if (hit) return hit;
-  }
-  return '';
-}
-
-// The file's zip column, or '' when it hasn't got one. A sites file with
-// no zip is a normal case — the mapping modal marks Zip optional, and an
-// all-international portfolio has nothing to put there — so there is no
-// fallback guess. There used to be one (`|| headers[0]`), and on a file
-// with no zip header it declared the FIRST column the zip: that column is
-// almost always Site Name, so the Site column rendered the zip cell's
-// "no estimate available" instead of the site, and a numeric site name
-// (store numbers) was read as a zip and looked up as one.
-function pickZipColumn(headers) {
-  if (!headers.length) return '';
-  return detectColumn(headers, [
-    /^zip\s*code$/i, /^postal\s*code$/i, /^post\s*code$/i, /^zip$/i,
-    /zip/i, /postal/i, /\bpost\s*code\b/i,
-  ]);
-}
-
 // Auto-detect every Utility-Lookup target field on a fresh sites
 // header list. Ordered patterns inside each detectColumn call go from
 // most-specific to most-generic so that e.g. "Annual Electric Spend ($)"
 // wins over "Electricity" when picking the cost column.
 function detectSitesMapping(headers) {
   if (!headers.length) return { siteName: '', zip: '' };
-  const siteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0];
+  const siteName = pickSiteNameColumn(headers);
   return {
     siteName,
     companyName: detectColumn(headers, [/^company\s*name$/i, /^company$/i, /\bcompany\b/i, /\bportfolio\b/i, /parent\s*(co|company|org)/i, /\baccount\s*name\b/i, /\bcustomer\s*name\b/i, /\borganization\b/i, /\bclient\b/i]) || '',
@@ -1993,8 +1970,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (!sitesData.length) return '';
     const headers = Object.keys(sitesData[0]);
     if (siteNameOverride && headers.includes(siteNameOverride)) return siteNameOverride;
-    const match = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h)));
-    return match || headers[0] || '';
+    return pickSiteNameColumn(headers) || '';
   }, [sitesData, siteNameOverride]);
 
   // Rows that don't carry a site name are junk for this analysis —
