@@ -1429,8 +1429,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // EVERY company in the Table View roster (companySuggestions), not just
   // the CDM/status-filtered client pool — so an exact name match auto-maps
   // regardless of who owns the account or whether it's tagged Client / Old
-  // Client. The Mapped-to-Client dropdown still offers the narrower
-  // clientOptions pool for manual assignment.
+  // Client. The Mapped-to-Client search box offers this same full roster,
+  // so a name that auto-maps and a name picked by hand can never disagree
+  // about which companies exist — picking by hand was previously limited
+  // to the CDM's own Client / Old Client rows, which left ordinary Table
+  // View companies unreachable even though an exact match to one would
+  // have auto-mapped.
   const clientNameSet = useMemo(
     () => new Set(companySuggestions.map(n => normClient(n))),
     [companySuggestions]
@@ -1925,13 +1929,26 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
             raw={raw}
             manual={manual}
             ignored={ignored}
-            clientOptions={clientOptions}
+            clientOptions={companySuggestions}
             onChange={setDealClientMapping}
             onToggleIgnore={setDealClientIgnore}
           />
         );
       },
       exportValue: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return '';
+        const norm = normClient(raw);
+        if (clientNameSet.has(norm)) return raw;
+        if (ignoreSet.has(norm)) return '(ignored)';
+        return clientMap[norm] || '';
+      },
+      // Underscore-keyed columns are skipped by the filter row unless they
+      // say what they hold, so the one column naming the client had no
+      // Filter box while its neighbours did. Mirrors exportValue, which
+      // means a search matches whether the row auto-matched on its own
+      // name or was mapped to a client by hand.
+      getFilterValue: (row) => {
         const raw = String(row['Client Name'] || '').trim();
         if (!raw) return '';
         const norm = normClient(raw);
@@ -1982,7 +1999,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     };
     // Order: select · history · progress · client name · mapped-to-client · status · rest.
     return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
+  }, [baseColumns, companySuggestions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
