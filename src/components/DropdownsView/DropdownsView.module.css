@@ -2118,6 +2118,103 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Project work in the current scope, itemised under the estimator.
+   A count box per service, because how many projects is a fact about the
+   service and not about the account — see PROJECT_UNIT in servicePricing. */
+.projectPanel {
+  margin: 0 1.25rem 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.projectPanelHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.projectPanelHint {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+}
+
+.projectTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+/* The service name takes the slack so the three narrow columns cluster on
+   the right, where they read as one block of figures. */
+.projectTableName {
+  width: 100%;
+}
+
+.projectTable th {
+  padding: 0.2rem 0.5rem;
+  text-align: left;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.projectTable td {
+  padding: 0.28rem 0.5rem;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.projectTable tfoot td {
+  border-bottom: none;
+  font-weight: 700;
+}
+
+.projectTableNum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.projectTableRate {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* A count typed for this estimate, marked the way the Units column in the
+   table below marks one — same fact, same colour, so the two read as one
+   thing rather than two features. A blank box shows the shared count as its
+   placeholder, in the browser's own grey, which is the difference. */
+.projectTableInputTyped {
+  font-weight: 700;
+  color: #7C3AED;
+  border-color: #C4B5FD;
+}
+
+.projectTableInput {
+  width: 72px;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.76rem;
+  font-family: inherit;
+  text-align: right;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.projectTableInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 /* Which ticked services the total is missing, said once under the bar. */
 .pricingWarn {
   margin: 0 1.25rem 0.4rem;

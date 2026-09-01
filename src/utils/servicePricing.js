@@ -175,6 +175,33 @@ export function pricingUnits(bases = PRICING_BASES) {
 
 export const PRICING_UNITS = pricingUnits(PRICING_BASES);
 
+// The unit the built-in "Per project" basis counts.
+//
+// Projects are the one unit a single shared count can't answer. Sites,
+// accounts and meters are facts about the ACCOUNT — 819 sites is 819 sites,
+// whichever service is reading it. A project count is a fact about the
+// SERVICE: a scope of three lighting retrofits and one chiller replacement
+// is four projects, and neither service is priced on four. So the estimator
+// asks per service for these — see projectServiceLines, and the panel it
+// feeds on the Services Pricing tab.
+export const PROJECT_UNIT = 'projects';
+
+/**
+ * The lines of an estimate that are priced per project, in the order they
+ * came. `lines` is estimateScope()'s output for the services in scope.
+ *
+ * A line whose fee was typed straight into the rate card is still one of
+ * them: it belongs in the panel because it is part of the project work,
+ * even though its count no longer moves its fee. The caller says so on the
+ * row rather than dropping it, which would read as the service having
+ * fallen out of scope.
+ */
+export function projectServiceLines(lines, bases = PRICING_BASES) {
+  return (lines || []).filter(
+    line => basisFor(line?.entry?.basis, bases)?.unit === PROJECT_UNIT,
+  );
+}
+
 // How many services are priced on each basis, keyed by basis key. What the
 // editor needs before it lets someone delete one: a basis with rows behind
 // it takes their pricing with it.
@@ -398,8 +425,11 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     const entry = own === null ? card : { ...card, units: own };
     const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
     // A row carrying its own unit count doesn't need the shared one, so it
-    // doesn't put a box on the estimator asking for it.
-    if (est.unit && !est.unitsTyped) unitsUsed.add(est.unit);
+    // doesn't put a box on the estimator asking for it. Neither does a row
+    // whose fee was typed straight in: its basis still names a unit, but
+    // the fee stopped depending on the count, so asking for one would be
+    // asking for a number that changes nothing.
+    if (est.unit && !est.unitsTyped && !est.typed) unitsUsed.add(est.unit);
     if (!est.priced) { unpriced.push(row.name); }
     else if (est.recurring) { recurringAnnual += est.fee; contractValue += est.value; }
     else { oneTime += est.fee; contractValue += est.value; }
