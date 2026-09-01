@@ -45,6 +45,7 @@ import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../..
 import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope } from './ownershipScope.js';
+import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
@@ -2801,6 +2802,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     [complianceSites, complianceExcludeLeased],
   );
 
+  // The savings side of the same question, and the export toolbar's toggle.
+  // Indicative savings are a motion on the supply contract behind the meter,
+  // which on a leased building is usually the landlord's — so the exports
+  // leave leased locations out by default. "Usually" isn't "always" though:
+  // a triple-net portfolio often holds its own supply contracts, and this
+  // puts those sites back into the projection without anyone having to
+  // unmap the Ownership column. Read by the Master Analysis / Indicative
+  // Savings export and by the per-company / per-division roll-ups, which
+  // is why it lives up here rather than inside either.
+  const [includeLeasedSavings, setIncludeLeasedSavings] = useState(false);
+  // How many loaded sites are leased — what the toolbar button counts, and
+  // whether it renders at all. With nothing leased the toggle decides
+  // nothing.
+  const leasedSiteCount = useMemo(() => savingsOwnershipScope(rows).leased, [rows]);
+
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
     const term = search.toLowerCase();
@@ -4255,6 +4271,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       g.totalSites++;
       const isLeased = isLeasedUtilityRow(r);
       if (isLeased) g.leasedSites++;
+      // Whether a leased site is out of the savings basis is the toolbar
+      // toggle's call; that it is leased is the upload's.
+      const outOfSavingsScope = isLeased && !includeLeasedSavings;
       // Same classifier as the page's Market card and the Indicative
       // Savings by State sheets — this tab used to gate electric on the
       // state map but let gas through on the provider alone, so its
@@ -4268,7 +4287,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const cost = r[costKey];
       if (typeof cost === 'number' && Number.isFinite(cost)) {
         g.deregulatedSpend += cost;
-        if (!isLeased) g.savingsEligibleSpend += cost;
+        if (!outOfSavingsScope) g.savingsEligibleSpend += cost;
       }
     }
 
@@ -4342,7 +4361,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       gas: buildMarketOverview('gas', groupOf),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, utility, siteCompanyColumn]);
+  }, [rows, utility, siteCompanyColumn, includeLeasedSavings]);
 
   // Roll a pair of per-(group, state) overview lists up to one row per
   // group, combining both commodities across every state the group operates
@@ -4469,7 +4488,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, utility]);
+  }, [rows, utility, includeLeasedSavings]);
 
   // Cell text for a contract price whose unit isn't the one the page reads
   // it in. Empty for a price that is (or that the file said nothing about),
@@ -5817,14 +5836,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
-    // Leased locations never carry a savings projection — see the gate
-    // in buildBucket. When the portfolio has any, the by-state tables
-    // grow two columns that show the exclusion rather than leaving the
-    // gap between spend and savings unexplained; a portfolio with none
-    // (every upload that didn't map an Ownership column included)
-    // exports exactly the sheet it did before.
+    // Leased locations don't carry a savings projection unless the
+    // toolbar's savings-scope button says they do — see the gate in
+    // buildBucket. When they are being left out, the by-state tables grow
+    // two columns that show the exclusion rather than leaving the gap
+    // between spend and savings unexplained. A portfolio with nothing
+    // leased (every upload that didn't map an Ownership column included)
+    // exports exactly the sheet it did before, and so does one whose
+    // leased sites are being counted in — with a line in the Savings
+    // Summary band saying which basis this workbook was built on, since
+    // the same portfolio can now produce two different headlines.
     const leasedScope = savingsOwnershipScope(rows);
-    const showLeasedColumns = leasedScope.leased > 0;
+    const excludeLeasedSavings = !includeLeasedSavings;
+    const showLeasedColumns = excludeLeasedSavings && leasedScope.leased > 0;
+    const noteLeasedScope = leasedScope.leased > 0;
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -6182,6 +6207,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // applied to, here or in the reg-rate motion below.
         const isLeased = isLeasedUtilityRow(r);
         if (isLeased) g.leasedSites += 1;
+        // Whether that removes the site from the savings basis is the
+        // toolbar toggle's call: a triple-net portfolio holding its own
+        // supply contracts counts them in.
+        const outOfSavingsScope = isLeased && excludeLeasedSavings;
         // Track consumption across every site (including regulated ones)
         // so flags that fire on "any electric load" or "single-site load
         // above N" can see sites the dereg gate would otherwise skip.
@@ -6212,14 +6241,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               // Spend, not the site count, is what the flat 0.25 % is
               // taken off — so a leased location is counted here and
               // still contributes nothing to the reg-rate savings.
-              if (!isLeased && typeof regCost === 'number' && Number.isFinite(regCost)) {
+              if (!outOfSavingsScope && typeof regCost === 'number' && Number.isFinite(regCost)) {
                 g.regulatedRateOpportunitySpend += regCost;
               }
             }
           } else if (isRegulatedRateOpportunity(state, provider)) {
             g.regulatedRateOpportunitySites += 1;
             const regCost = r[costKey];
-            if (!isLeased && typeof regCost === 'number' && Number.isFinite(regCost)) {
+            if (!outOfSavingsScope && typeof regCost === 'number' && Number.isFinite(regCost)) {
               g.regulatedRateOpportunitySpend += regCost;
             }
           }
@@ -6256,7 +6285,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const spend = (typeof cost === 'number' && Number.isFinite(cost)) ? cost : 0;
         if (spend) {
           g.spend += spend;
-          if (!isLeased) g.savingsEligibleSpend += spend;
+          if (!outOfSavingsScope) g.savingsEligibleSpend += spend;
         }
         // Only count an actual supplier here — never fall back to the
         // utility name. A deregulated site with no supplier on file
@@ -6277,7 +6306,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // A leased location gets a zero savings vector rather than a
         // skipped one: it stays on the Monthly Savings sheet with its
         // spend and its contract dates intact, showing $0 every month.
-        const savingsSpend = isLeased ? 0 : spend;
+        const savingsSpend = outOfSavingsScope ? 0 : spend;
         const annualLow = (savingsSpend > 0 && lowPct != null) ? savingsSpend * lowPct : 0;
         const annualHigh = (savingsSpend > 0 && highPct != null) ? savingsSpend * highPct : 0;
         const annualMid = (annualLow + annualHigh) / 2;
@@ -6318,8 +6347,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // A leased location has no savings band applied, so the band
           // reads blank here rather than showing a rate that produced
           // nothing.
-          lowPct: isLeased ? null : lowPct,
-          highPct: isLeased ? null : highPct,
+          lowPct: outOfSavingsScope ? null : lowPct,
+          highPct: outOfSavingsScope ? null : highPct,
           annualLow: Math.round(annualLow),
           annualMid: Math.round(annualMid),
           annualHigh: Math.round(annualHigh),
@@ -9056,7 +9085,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend: Year N columns zero out below it. The Low % and High % cells per state are editable (yellow): type a new range and Savings %, Indicative Annual Savings, and Year 1–5 Cumulative all recompute live.'
       + (showLeasedColumns
         ? ' Leased locations are excluded from the projection: their spend is still reported under Deregulated Spend/yr, but the savings are taken off Savings-Eligible Spend/yr, which leaves them out.'
-        : '');
+        : noteLeasedScope
+          ? ' Leased locations are included in this projection, at the request of the analysis: they carry the same savings range as every other site.'
+          : '');
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
@@ -9660,18 +9691,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const summaryBandHeaderRow = r;
     const summaryBandValueRow = r + 1;
     const summaryBandCumulativeRow = r + 2;
-    // Scope line, only on a portfolio with leased locations: the two
-    // headline figures above cover fewer sites than the portfolio has,
-    // and this is where the band says so.
-    const summaryBandLeasedRow = showLeasedColumns ? r + 3 : null;
+    // Scope line, on any portfolio with leased locations: which basis the
+    // two headline figures above were built on. Written whether they were
+    // left out or counted in — the same portfolio produces two different
+    // headlines depending on that answer, and a reader who wasn't at the
+    // screen when the button was set can't tell them apart otherwise.
+    const summaryBandLeasedRow = noteLeasedScope ? r + 3 : null;
     // Two data-quality lines (estimated usage / estimated cost shares).
     // Written even later than the rest of the band — the per-site
     // estimate flags only exist once the Site Detail rows are built.
-    const summaryBandUsageQualityRow = r + (showLeasedColumns ? 4 : 3);
+    const summaryBandUsageQualityRow = r + (noteLeasedScope ? 4 : 3);
     const summaryBandCostQualityRow = summaryBandUsageQualityRow + 1;
     // band header + annual + cumulative + (leased scope) + 2 data-quality
     // lines + a breather row
-    r += showLeasedColumns ? 7 : 6;
+    r += noteLeasedScope ? 7 : 6;
 
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
@@ -9879,19 +9912,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (summaryBandLeasedRow) {
         ws.mergeCells(summaryBandLeasedRow, 1, summaryBandLeasedRow, 9);
         const lLabel = ws.getCell(summaryBandLeasedRow, 1);
-        lLabel.value = 'Leased Sites (excluded from the savings projection)';
+        lLabel.value = `Leased Sites (${excludeLeasedSavings ? 'excluded from' : 'included in'} the savings projection)`;
         lLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
         lLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
         const lValue = ws.getCell(summaryBandLeasedRow, 10);
         lValue.value = leasedScope.leased;
         lValue.numFmt = '#,##0';
-        lValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_EST } };
+        lValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: excludeLeasedSavings ? SE_EST : SE_GREEN_DARK } };
         lValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
         ws.mergeCells(summaryBandLeasedRow, 11, summaryBandLeasedRow, SPAN);
         const lNote = ws.getCell(summaryBandLeasedRow, 11);
-        lNote.value = `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased: their supply contracts aren't the portfolio's to re-source, so the savings above are taken off the remaining ${leasedScope.scoped.toLocaleString()}.`;
+        lNote.value = excludeLeasedSavings
+          ? `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased: their supply contracts aren't taken to be the portfolio's to re-source, so the savings above are taken off the remaining ${leasedScope.scoped.toLocaleString()}.`
+          : `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased and are counted in the savings above: this analysis was run on the basis that the portfolio holds their supply contracts.`;
         lNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
         lNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
         ws.getRow(summaryBandLeasedRow).height = 24;
@@ -14534,6 +14569,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             >
               Update Column Mapping
             </button>
+          )}
+          {/* Whether the leased locations in this list carry procurement
+              savings. Sits with the export buttons because that's all it
+              changes — the exports' savings figures — and only shows up
+              when the list has leased sites to decide about. */}
+          {sitesData.length > 0 && leasedSiteCount > 0 && (
+            <SavingsScopeToggle
+              count={leasedSiteCount}
+              included={includeLeasedSavings}
+              onChange={setIncludeLeasedSavings}
+            />
           )}
           {sitesData.length > 0 && (
             <button
