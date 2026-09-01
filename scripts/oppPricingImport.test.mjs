@@ -60,6 +60,38 @@ const SERVICES = ['Bill payment', 'Comp GHG', 'Budgets', 'Audits', 'CSRD readine
   check('no account source leaves accounts unset', noProspect.counts.accounts, undefined);
 }
 
+// ── The rest of the company record's Scale section ────────────────────
+// Meters, equipment and electric MWh are typed on the company card the
+// same way sites and accounts are, and each is the unit a per-meter /
+// per-equipment / per-MWh service prices against. Before these were on the
+// record, the only source for them was a column on the opp itself.
+{
+  const prospects = [{
+    company: 'Acme',
+    numberOfSites: 58, numberOfAccounts: 210,
+    numberOfMeters: 4200, equipmentCount: 36, annualMwh: 91000,
+  }];
+
+  const fromRecord = oppScenario({
+    opp: { Account: 'Acme', Scope: 'Bill payment' },
+    prospects, siteLists: {}, serviceNames: SERVICES,
+  });
+  check('meters come off the company record', fromRecord.counts.meters, 4200);
+  check('so does an equipment count', fromRecord.counts.equipment, 36);
+  check('so does electric MWh', fromRecord.counts.mwh, 91000);
+  check('the source names the record', fromRecord.countSources.meters, 'Meters on the Acme record');
+
+  // Same precedence as sites: an opp scoped for its own number is not
+  // re-priced against the whole portfolio.
+  const oppWins = oppScenario({
+    opp: { Account: 'Acme', Scope: 'Bill payment', '# of Meters': '340', 'MWh': '1200' },
+    prospects, siteLists: {}, serviceNames: SERVICES,
+  });
+  check('an opp column still beats the record for meters', oppWins.counts.meters, 340);
+  check('...and for MWh', oppWins.counts.mwh, 1200);
+  check('a unit the opp omits still falls back', oppWins.counts.equipment, 36);
+}
+
 // ── Nothing is invented ───────────────────────────────────────────────
 {
   const s = oppScenario({

@@ -10,9 +10,9 @@
 //               so an opp lights up the same services in all three places
 //   counts    — a column on the opp itself first (Opps 2 headers are the
 //               user's own, so an opp that carries "# of Meters" is the most
-//               specific answer there is), then the company record's Number
-//               of Sites / Number of Accounts, then the row count of the
-//               company's saved site list
+//               specific answer there is), then the company record's Scale
+//               section (sites, accounts, meters, equipment, electric MWh),
+//               then the row count of the company's saved site list
 //   dealSize  — the opp's Quoted Amount, which is what a percentage-based
 //               fee takes its cut of
 //
@@ -150,6 +150,9 @@ export function oppScenario({ opp, prospects, siteLists, serviceNames }) {
   }
   take('sites', positive(prospect?.numberOfSites), `Number of Sites on the ${company} record`);
   take('accounts', positive(prospect?.numberOfAccounts), `Number of Accounts on the ${company} record`);
+  take('meters', positive(prospect?.numberOfMeters), `Meters on the ${company} record`);
+  take('equipment', positive(prospect?.equipmentCount), `Equipment on the ${company} record`);
+  take('mwh', positive(prospect?.annualMwh), `Electric MWh on the ${company} record`);
 
   const entry = siteListEntryFor(siteLists, company);
   if (entry) {
