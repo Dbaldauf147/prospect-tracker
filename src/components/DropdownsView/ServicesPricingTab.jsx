@@ -13,10 +13,13 @@ import {
   basisUsage,
   estimateScope,
   formatMoney,
+  formatRate,
   getServicePricing,
   parseMoney,
   pricingFor,
   pricingUnits,
+  projectServiceLines,
+  PROJECT_UNIT,
   resolvePricingBases,
   pricingBasesTopUp,
   PRICING_BASES_VERSION,
@@ -482,6 +485,22 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     [serviceRows, inScope, pricing, counts, dealSize, bases, serviceUnits],
   );
 
+  // The project work in this scope, one row per service. Sites and accounts
+  // are facts about the account, so one box each answers for every service
+  // reading them; how many projects is a fact about the service, so this
+  // asks per service instead of dividing a shared number nobody typed.
+  const projectLines = useMemo(
+    () => projectServiceLines(totals.lines, bases),
+    [totals.lines, bases],
+  );
+  const projectTotal = useMemo(
+    () => projectLines.reduce((sum, l) => sum + (l.priced ? l.fee : 0), 0),
+    [projectLines],
+  );
+  // What a row with no number of its own is priced on. Shown as the input's
+  // placeholder so a blank box reads as "using this" rather than as zero.
+  const sharedProjects = parseMoney(counts?.[PROJECT_UNIT]);
+
   // Where each count came from, by unit, so the box can say so. Only an
   // import knows: a number the user typed came from them.
   const countSources = useMemo(() => Object.fromEntries(
@@ -843,6 +862,86 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           </div>
         </div>
       </div>
+
+      {/* Project work, itemised. Only shown when the scope actually has
+          per-project services in it — on a reporting or bill-pay deal there
+          is nothing to count and the panel stays out of the way. */}
+      {projectLines.length > 0 && (
+        <div className={styles.projectPanel}>
+          <div className={styles.projectPanelHead}>
+            <span className={styles.pricingBarTitle}>
+              Per-project services ({projectLines.length})
+            </span>
+            <span className={styles.projectPanelHint}>
+              How many of each. A row left blank is priced on the shared{' '}
+              {sharedProjects === null
+                ? 'Projects count above, which is empty — so it comes out at $0 until one of them has a number.'
+                : `Projects count above (${sharedProjects.toLocaleString('en-US')}).`}
+              {' '}Numbers here belong to this estimate: no other deal and no rate card moves.
+            </span>
+          </div>
+          <table className={styles.projectTable}>
+            <thead>
+              <tr>
+                <th className={styles.projectTableName}>Service</th>
+                <th>Rate / project</th>
+                <th className={styles.projectTableNum}>Projects</th>
+                <th className={styles.projectTableNum}>Fee</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projectLines.map(line => {
+                const own = serviceUnits[line.name];
+                const typedFee = line.typed;
+                return (
+                  <tr key={line.name}>
+                    <td className={styles.projectTableName}>{line.name}</td>
+                    <td className={styles.projectTableRate}>
+                      {typedFee
+                        ? <span className={styles.serviceMutedCell}>Fee typed on the rate card</span>
+                        : (formatRate(line.entry, bases) || <span className={styles.serviceMutedCell}>No rate set</span>)}
+                    </td>
+                    <td className={styles.projectTableNum}>
+                      {typedFee ? (
+                        <span
+                          className={styles.serviceMutedCell}
+                          title="This service’s fee is typed straight into the rate card, so a project count doesn’t change it. Clear the Est. Year 1 Fee cell in the table below to price it per project instead."
+                        >-</span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="decimal"
+                          className={own === undefined || own === null || own === ''
+                            ? styles.projectTableInput
+                            : `${styles.projectTableInput} ${styles.projectTableInputTyped}`}
+                          placeholder={line.units === null ? '0' : String(line.units)}
+                          value={own === undefined || own === null ? '' : String(own)}
+                          title={own === undefined || own === null
+                            ? 'How many of this project the deal carries. Blank falls back to the shared Projects count.'
+                            : 'Typed in for this estimate. Clear it to fall back to the shared Projects count.'}
+                          onChange={(e) => setServiceUnits(line.name, e.target.value)}
+                        />
+                      )}
+                    </td>
+                    <td className={styles.projectTableNum}>
+                      {line.priced
+                        ? <span className={line.fee ? undefined : styles.serviceMutedCell} title={line.note || undefined}>{formatMoney(line.fee) || '$0'}</span>
+                        : <span className={styles.serviceMutedCell} title={line.note || 'Not priced yet'}>-</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3} className={styles.projectTableName}>Project work in this scope</td>
+                <td className={styles.projectTableNum}>{formatMoney(projectTotal) || '$0'}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
 
       {/* What the import did and didn't manage. Where each number came from
           matters as much as the number: an estimate built on a site count

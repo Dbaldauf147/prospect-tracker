@@ -11,7 +11,7 @@
 // a contract value.
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
-  feeBasisLabel,
+  feeBasisLabel, projectServiceLines,
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -165,6 +165,79 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('a flat fee names its basis',
     feeBasisLabel({ entry: { basis: 'flat', rate: 9000 } }), 'Flat fee');
   check('and junk is tolerated', feeBasisLabel(null), '');
+}
+
+// --- Project work is counted per service, not per deal --------------------
+//
+// Sites and accounts are facts about the account: one shared count answers
+// for every service reading it. How many projects is a fact about the
+// SERVICE — three lighting retrofits and one chiller replacement is four
+// projects, and neither service is priced on four. So the estimator lists
+// the per-project services and takes a count for each; what this pins is
+// which rows end up in that list, and that a count typed against one row
+// prices only that row.
+{
+  const rows = [
+    { name: 'Lighting retrofit', meta: PROJECT },
+    { name: 'Chiller replacement', meta: PROJECT },
+    { name: 'Bill payment', meta: RECURRING },
+    { name: 'Solar feasibility', meta: PROJECT },
+  ];
+  const pricing = {
+    'Lighting retrofit': { basis: 'per_project', rate: 45000 },
+    'Chiller replacement': { basis: 'per_project', rate: 80000 },
+    'Bill payment': { basis: 'per_site', rate: 500 },
+    // Priced per project, but with the fee typed straight in.
+    'Solar feasibility': { basis: 'per_project', rate: 10000, avgFee: 12000 },
+  };
+
+  const shared = estimateScope({
+    rows, services: rows.map(r => r.name), pricing,
+    counts: { sites: 10, projects: 2 }, dealSize: 0,
+  });
+  const listed = projectServiceLines(shared.lines);
+  check('only the per-project services are listed',
+    listed.map(l => l.name), ['Lighting retrofit', 'Chiller replacement', 'Solar feasibility']);
+  check('a shared count prices every row that has no number of its own',
+    listed.map(l => l.fee), [90000, 160000, 12000]);
+  check('a typed fee stays in the list rather than dropping out of the scope',
+    listed.find(l => l.name === 'Solar feasibility').typed, true);
+
+  // A typed fee doesn't depend on a count, so it must not be what keeps the
+  // estimator asking for one — otherwise the panel would report a shared
+  // count as pricing a row whose fee it can't move.
+  check('a typed fee does not ask the estimator for a count',
+    estimateScope({
+      rows, services: ['Solar feasibility'], pricing, counts: {}, dealSize: 0,
+    }).unitsUsed.has('projects'), false);
+
+  // The point of the panel: one row's count moves one row's fee.
+  const perService = estimateScope({
+    rows, services: rows.map(r => r.name), pricing,
+    counts: { sites: 10, projects: 2 }, dealSize: 0,
+    serviceUnits: { 'Lighting retrofit': 3, 'Chiller replacement': 1 },
+  });
+  const own = projectServiceLines(perService.lines);
+  check('each row prices on its own count', own.map(l => l.fee), [135000, 80000, 12000]);
+  check('...and the shared count no longer has a row to answer for',
+    perService.unitsUsed.has('projects'), false);
+  check('the deal adds them up as one-off money', perService.oneTime, 135000 + 80000 + 12000);
+
+  // A row left blank is not a row set to zero: it falls back.
+  const partial = estimateScope({
+    rows, services: rows.map(r => r.name), pricing,
+    counts: { sites: 10, projects: 2 }, dealSize: 0,
+    serviceUnits: { 'Lighting retrofit': 3 },
+  });
+  check('a blank row still falls back to the shared count',
+    projectServiceLines(partial.lines).map(l => l.fee), [135000, 160000, 12000]);
+  check('...so the shared box is still asked for', partial.unitsUsed.has('projects'), true);
+
+  check('nothing per-project in scope means no list',
+    projectServiceLines(estimateScope({
+      rows, services: ['Bill payment'], pricing, counts: { sites: 10 }, dealSize: 0,
+    }).lines).length, 0);
+  check('junk in, empty list out', projectServiceLines(null), []);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
