@@ -326,10 +326,16 @@ const DEFAULT_HEADERS = [
   'Pricing Option',
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date',
-  // Free-text note tracking where the deal sits with credit approval
-  // (e.g. "Pending", "Approved 6/24"). Shown as a line in the Opp details.
-  'Credit approval',
+  // The margin pair: when it went for review, and when it came back
+  // approved. The first still stores under its original key, so every
+  // date already recorded against it is still in it — only its label
+  // reads as "Margin Request Date" now (see HEADER_LABEL_OVERRIDES).
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'Margin Approval Date',
+  // The credit pair, the same way round: the request went in, then the
+  // approval came back. 'Credit approval' held free text ("Pending",
+  // "Approved 6/24") before it was a date, and an entry like that still
+  // shows as it was typed until someone picks a day over it.
+  'Credit approval', 'Credit Approval Date',
   // The date the agreement is expected to be signed. Set on the rollout
   // timeline, where it is month 1 of the whole delivery plan, and shown on
   // the Follow Up Notes popup because it's a date being negotiated
@@ -367,6 +373,12 @@ const HEADER_LABEL_OVERRIDES = {
   // plain 'Notes' field reads as "Memo" so the two headers don't clash.
   'Next Steps': 'Notes',
   'Notes': 'Memo',
+  // The margin and credit fields read as what they actually record: the
+  // date the request went in. Their stored keys don't move — every date
+  // already against them stays where it is, and so does everything that
+  // reads them (the Flags column, the stage prompts, the sheet sync).
+  'Margin Email Date - Sales Leader Review Date': 'Margin Request Date',
+  'Credit approval': 'Credit Review Request Date',
 };
 function headerLabel(h) {
   return HEADER_LABEL_OVERRIDES[h] || h;
@@ -379,6 +391,8 @@ const DATE_COLUMNS = new Set([
   'Start Date', 'Last Client Heard From Us', 'Follow Up',
   // Quote-stage dates, filled from the QuotedFollowUpModal.
   'Quoted On', 'Margin Email Date - Sales Leader Review Date',
+  // The approvals, each beside the request that asked for it.
+  'Margin Approval Date', 'Credit approval', 'Credit Approval Date',
   // When the agreement is expected to be signed — the rollout plan's month 1.
   'Target Signature Date',
 ]);
@@ -554,7 +568,8 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
-  'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN];
+  'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN,
+  'Margin Approval Date', 'Credit Approval Date'];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -5089,7 +5104,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
             {textHint(curChance)}
           </div>
           <div>
-            <label style={labelStyle}>Margin Email Date - Sales Leader Review Date</label>
+            <label style={labelStyle}>{headerLabel('Margin Email Date - Sales Leader Review Date')}</label>
             <input
               type="date"
               value={marginReviewDate}
@@ -5301,7 +5316,7 @@ function AgreementSentFollowUpModal({
             {textHint(curUsd)}
           </div>
           <div>
-            <label style={labelStyle}>Margin Email Date - Sales Leader Review Date</label>
+            <label style={labelStyle}>{headerLabel('Margin Email Date - Sales Leader Review Date')}</label>
             <input
               type="date"
               value={marginReviewDate}
@@ -5895,7 +5910,9 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Margin Email Date': 'scope',
   'Sales Leader Review Date': 'scope',
   'Final Margin': 'scope',
+  'Margin Approval Date': 'scope',
   'Credit approval': 'scope',
+  'Credit Approval Date': 'scope',
   'COA Approval': 'scope',
   'Entity Outside the US Approval': 'scope',
   'Multiple Invoices?': 'scope',
@@ -5940,6 +5957,16 @@ function oppDetailTabFor(header) {
   if (CLOSE_YEAR_RE.test(norm) || CLOSE_MONTH_RE.test(norm)) return 'close';
   return 'other';
 }
+
+// Fields that read as a pair and render on one line: the request, then
+// the approval that answers it. Keyed by the left-hand field, so the
+// right-hand one is pulled up beside it wherever the saved column order
+// happens to have left it — a date and the date it was granted are a
+// single fact, and two rows apart they read as two.
+const OPP_DETAIL_FIELD_PAIRS = new Map([
+  ['Margin Email Date - Sales Leader Review Date', 'Margin Approval Date'],
+  ['Credit approval', 'Credit Approval Date'],
+]);
 
 function loadOppDetailTab() {
   try {
@@ -6011,8 +6038,24 @@ export function OppInfoModal({
   // BFO Opportunity Name (BFO Link) field — saved layouts that predate
   // the column would otherwise bury it at the very end (or omit it
   // until the next hydration appends it).
-  const orderedFields = (headers || [])
-    .filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions' && h !== 'BFO Company Name');
+  //
+  // Deduped on the normalised name, so a header set that ended up with the
+  // same column twice — an import whose casing differed, a layout merged
+  // from two devices — shows it once rather than as two identical rows the
+  // user can only tell apart by clicking them. The copy carrying a value
+  // wins, because the empty one is the one nobody has been filling in.
+  const orderedFields = [];
+  {
+    const seen = new Map();
+    for (const h of headers || []) {
+      if (!h || h === '_select' || h === '_info' || h === '_actions' || h === 'BFO Company Name') continue;
+      const norm = String(h).trim().toLowerCase();
+      const at = seen.get(norm);
+      if (at === undefined) { seen.set(norm, orderedFields.length); orderedFields.push(h); continue; }
+      const kept = opp[orderedFields[at]];
+      if ((kept == null || kept === '') && opp[h] != null && opp[h] !== '') orderedFields[at] = h;
+    }
+  }
   {
     const idx = orderedFields.indexOf('BFO Link');
     if (idx >= 0) orderedFields.splice(idx + 1, 0, 'BFO Company Name');
@@ -6424,53 +6467,96 @@ export function OppInfoModal({
               </label>
             </div>
           )}
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          {/* Six columns, fixed: toggle, label and value, twice over. A
+              paired row fills all six; every other row fills the first
+              three and spans the rest. Fixed rather than auto because the
+              two shapes in one table otherwise fight over the widths, and
+              the labels lose — they'd wrap to three lines to give a value
+              cell room it doesn't need. */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 24 }} />
+              <col style={{ width: 160 }} />
+              <col />
+              <col style={{ width: 24 }} />
+              <col style={{ width: 160 }} />
+              <col />
+            </colgroup>
             <tbody>
-              {tabFields.map(h => {
-                const isHidden = hiddenFields.has(h);
-                if (isHidden && !showHiddenRows) return null;
-                const label = headerLabel(h);
-                return (
-                  <tr key={h} style={{
-                    borderTop: '1px solid var(--color-border-light)',
-                    opacity: isHidden ? 0.5 : undefined,
-                  }}>
-                    <td style={{
-                      padding: '0.45rem 0.4rem 0.45rem 0',
-                      width: 24, verticalAlign: 'top',
-                    }}>
-                      <button
-                        type="button"
-                        onClick={() => toggleDetailField(h)}
-                        title={isHidden
-                          ? `Show "${label}" on every opp's details`
-                          : `Hide "${label}" on every opp's details`}
-                        aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
-                        style={{
-                          width: 18, height: 18, lineHeight: '16px',
-                          padding: 0, borderRadius: 4,
-                          border: '1px solid var(--color-border)',
-                          background: isHidden ? '#E2E8F0' : 'transparent',
-                          color: 'var(--color-text-muted)',
-                          fontSize: '0.72rem', fontFamily: 'inherit',
-                          cursor: 'pointer', display: 'block',
-                        }}
-                      >{isHidden ? '+' : '×'}</button>
-                    </td>
-                    <td style={{
-                      padding: '0.45rem 0.5rem 0.45rem 0',
-                      fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                      color: 'var(--color-text-muted)', fontWeight: 600,
-                      width: 170, verticalAlign: 'top',
-                    }}>{label}</td>
-                    <td style={{
-                      padding: '0.45rem 0',
-                      color: 'var(--color-text)',
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                    }}>{renderEditor(h)}</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                // A paired field renders beside its partner rather than on
+                // a row of its own, so the partner is skipped when the walk
+                // reaches it. Pairs collapse to a single field whenever the
+                // other half isn't on this record or is hidden — a lone
+                // request date still reads as a full row.
+                const shown = tabFields.filter(h => showHiddenRows || !hiddenFields.has(h));
+                const shownSet = new Set(shown);
+                const consumed = new Set();
+                for (const h of shown) {
+                  const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
+                  if (partner && shownSet.has(partner)) consumed.add(partner);
+                }
+                const cellFor = (h) => {
+                  const isHidden = hiddenFields.has(h);
+                  const label = headerLabel(h);
+                  return (
+                    <>
+                      <td style={{
+                        padding: '0.45rem 0.4rem 0.45rem 0',
+                        width: 24, verticalAlign: 'top',
+                        opacity: isHidden ? 0.5 : undefined,
+                      }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetailField(h)}
+                          title={isHidden
+                            ? `Show "${label}" on every opp's details`
+                            : `Hide "${label}" on every opp's details`}
+                          aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
+                          style={{
+                            width: 18, height: 18, lineHeight: '16px',
+                            padding: 0, borderRadius: 4,
+                            border: '1px solid var(--color-border)',
+                            background: isHidden ? '#E2E8F0' : 'transparent',
+                            color: 'var(--color-text-muted)',
+                            fontSize: '0.72rem', fontFamily: 'inherit',
+                            cursor: 'pointer', display: 'block',
+                          }}
+                        >{isHidden ? '+' : '×'}</button>
+                      </td>
+                      <td style={{
+                        padding: '0.45rem 0.5rem 0.45rem 0',
+                        fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                        color: 'var(--color-text-muted)', fontWeight: 600,
+                        verticalAlign: 'top',
+                        opacity: isHidden ? 0.5 : undefined,
+                      }}>{label}</td>
+                      <td style={{
+                        padding: '0.45rem 0',
+                        color: 'var(--color-text)',
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        opacity: isHidden ? 0.5 : undefined,
+                      }}>{renderEditor(h)}</td>
+                    </>
+                  );
+                };
+                return shown.map(h => {
+                  if (consumed.has(h)) return null;
+                  const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
+                  const paired = partner && shownSet.has(partner) ? partner : null;
+                  return (
+                    <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                      {cellFor(h)}
+                      {paired
+                        ? cellFor(paired)
+                        // Keeps the single-field rows the same shape as the
+                        // paired ones, so labels and values line up down the
+                        // column instead of stepping in and out.
+                        : <td colSpan={3} />}
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
 
@@ -11678,13 +11764,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             )}
             {missingMargin && (
               <span
-                title={`Opp in "${String(row['Stage'] || '').trim()}" with no Margin Email Date - Sales Leader Review Date: get margin approval.`}
+                title={`Opp in "${String(row['Stage'] || '').trim()}" with no ${headerLabel('Margin Email Date - Sales Leader Review Date')}: get margin approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Margin Approval</span>
             )}
             {needsCredit && (
               <span
-                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank Credit approval: get credit approval.`}
+                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank ${headerLabel('Credit approval')}: get credit approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Credit Approval Needed</span>
             )}
