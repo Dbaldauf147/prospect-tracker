@@ -5865,7 +5865,6 @@ const OPP_DETAIL_TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'scope', label: 'Scope & Quote' },
   { key: 'activity', label: 'Activity' },
-  { key: 'notes', label: 'Notes' },
   { key: 'close', label: 'Close' },
   { key: 'other', label: 'Other' },
 ];
@@ -5925,9 +5924,12 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Follow Up': 'activity',
   'No Further Action Today': 'activity',
   'Waiting On': 'activity',
-  // Free text
-  'Next Steps': 'notes',
-  'Notes': 'notes',
+  // Free text. On Overview with the rest of the headline record rather
+  // than a tab of its own: what an opp is waiting on is read alongside its
+  // stage and status, not one click away from them. Nothing else buckets
+  // here, so there's no Notes tab left to leave them on.
+  'Next Steps': 'overview',
+  'Notes': 'overview',
   // How and when it ends
   'Close Date': 'close',
   'Target Signature Date': 'close',
