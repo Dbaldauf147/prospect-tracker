@@ -711,7 +711,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                     </span>
                   )}
                 placeholder={row._unitLabel}
-                title={row._unitsOwn
+                title={row._typed
+                  ? (row._unitsOwn
+                    ? `This service's fee is typed on the rate card, and this deal carries ${row.units.toLocaleString('en-US')} of them — the fee is that figure ${row.units.toLocaleString('en-US')} times over. Clear the cell to go back to one.`
+                    : 'This service\u2019s fee is typed on the rate card, which prices one of them. Type how many this deal carries and the fee multiplies; blank is one. The shared count above never reaches a typed fee.')
+                  : row._unitsOwn
                   ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone — no other deal and no account record moves. Clear the cell to go back to that count.`
                   : row._unitsTyped
                     ? `A standing figure on the rate card: ${row.units.toLocaleString('en-US')} ${unit} on every deal. Type here to charge this estimate on its own number instead.`
@@ -755,7 +759,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               placeholder="$"
               step="100"
               title={row._typed
-                ? 'Typed in: this is the fee, whatever the basis works out to. Clear the cell to go back to the basis.'
+                ? (row._unitsOwn
+                  ? `Typed in: ${formatMoney(row.fee / row.units)} each, ${row.units.toLocaleString('en-US')} of them. Clear the Units cell to price one, or this cell to go back to the basis.`
+                  : 'Typed in: this is the fee, whatever the basis works out to. Set Units to price more than one of them; clear this cell to go back to the basis.')
                 : row.fee === null
                   ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type an average fee here, or set a basis and rate.`
                   : row.feeHigh > row.fee
@@ -929,6 +935,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               {sharedProjects === null
                 ? 'Projects count above, which is empty — so it comes out at $0 until one of them has a number.'
                 : `Projects count above (${sharedProjects.toLocaleString('en-US')}).`}
+              {' '}A row with a fee typed on the rate card is priced at that fee each, and blank means one.
               {' '}Numbers here belong to this estimate: no other deal and no rate card moves.
             </span>
           </div>
@@ -950,31 +957,37 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                     <td className={styles.projectTableName}>{line.name}</td>
                     <td className={styles.projectTableRate}>
                       {typedFee
-                        ? <span className={styles.serviceMutedCell}>Fee typed on the rate card</span>
+                        ? (
+                          <span title="Typed into this service’s Estimated Year 1 Fee on the rate card. It's the fee for one of them, so the count beside it multiplies it.">
+                            {formatMoney(line.entry.avgFee)}
+                            <span className={styles.serviceMutedCell}> typed</span>
+                          </span>
+                        )
                         : (formatRate(line.entry, bases) || <span className={styles.serviceMutedCell}>No rate set</span>)}
                     </td>
                     <td className={styles.projectTableNum}>
-                      {typedFee ? (
-                        <span
-                          className={styles.serviceMutedCell}
-                          title="This service’s fee is typed straight into the rate card, so a project count doesn’t change it. Clear the Est. Year 1 Fee cell in the table below to price it per project instead."
-                        >-</span>
-                      ) : (
-                        <input
-                          type="number"
-                          min="0"
-                          inputMode="decimal"
-                          className={own === undefined || own === null || own === ''
-                            ? styles.projectTableInput
-                            : `${styles.projectTableInput} ${styles.projectTableInputTyped}`}
-                          placeholder={line.units === null ? '0' : String(line.units)}
-                          value={own === undefined || own === null ? '' : String(own)}
-                          title={own === undefined || own === null
+                      <input
+                        type="number"
+                        min="0"
+                        inputMode="decimal"
+                        className={own === undefined || own === null || own === ''
+                          ? styles.projectTableInput
+                          : `${styles.projectTableInput} ${styles.projectTableInputTyped}`}
+                        // A typed-fee row falls back to one, not to the
+                        // shared count: the fee was typed for one job, and
+                        // an account-wide figure has nothing to say about
+                        // how many of them this deal carries.
+                        placeholder={typedFee ? '1' : (line.units === null ? '0' : String(line.units))}
+                        value={own === undefined || own === null ? '' : String(own)}
+                        title={typedFee
+                          ? (own === undefined || own === null
+                            ? `How many of this project the deal carries, each at the typed ${formatMoney(line.entry.avgFee)}. Blank is one.`
+                            : `Typed in for this estimate: ${formatMoney(line.entry.avgFee)} each. Clear it to go back to one.`)
+                          : (own === undefined || own === null
                             ? 'How many of this project the deal carries. Blank falls back to the shared Projects count.'
-                            : 'Typed in for this estimate. Clear it to fall back to the shared Projects count.'}
-                          onChange={(e) => setServiceUnits(line.name, e.target.value)}
-                        />
-                      )}
+                            : 'Typed in for this estimate. Clear it to fall back to the shared Projects count.')}
+                        onChange={(e) => setServiceUnits(line.name, e.target.value)}
+                      />
                     </td>
                     <td className={styles.projectTableNum}>
                       {line.priced
