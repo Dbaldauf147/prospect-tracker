@@ -17,6 +17,8 @@ import {
   pricingFor,
   pricingUnits,
   resolvePricingBases,
+  pricingBasesTopUp,
+  PRICING_BASES_VERSION,
   setPricingField,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
@@ -264,9 +266,20 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // defaults still reaches anyone who only ever reset.
   function saveBases(next) {
     const same = JSON.stringify(next) === JSON.stringify(PRICING_BASES);
-    updateSettings?.({ pricingBases: same ? null : next });
+    // Stamped with the version saved against, so a basis added to the
+    // built-in list later can tell "never offered it" from "took it out".
+    updateSettings?.({ pricingBases: same ? null : next, pricingBasesVersion: PRICING_BASES_VERSION });
     setBasesOpen(false);
   }
+
+  // A saved list from before a basis existed doesn't know about it, and the
+  // only way to pick one up by hand is Reset to defaults — which throws
+  // away whatever the user added. So the new ones are appended once, and
+  // the stamped version stops it happening again (or undoing a delete).
+  useEffect(() => {
+    const patch = pricingBasesTopUp(settings);
+    if (patch) updateSettings?.(patch);
+  }, [settings?.pricingBases, settings?.pricingBasesVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inScope = useMemo(
     () => new Set(Array.isArray(scenario?.services) ? scenario.services : []),

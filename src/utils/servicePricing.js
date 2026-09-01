@@ -58,8 +58,25 @@ export const PRICING_BASES = [
   { key: 'per_invoice', label: 'Per invoice',    kind: 'unit',    unit: 'invoices', unitLabel: 'Invoices' },
   { key: 'per_mwh',     label: 'Per MWh',        kind: 'unit',    unit: 'mwh',      unitLabel: 'MWh' },
   { key: 'per_user',    label: 'Per user',       kind: 'unit',    unit: 'users',    unitLabel: 'Users' },
+  // A job done a number of times over — three retrofits at a figure each —
+  // rather than one flat fee for the lot, which is what Flat fee already
+  // says. The count box asks how many.
+  { key: 'per_project',   label: 'Per project',   kind: 'unit',  unit: 'projects',  unitLabel: 'Projects' },
+  // Priced against the kit itself: chillers, boilers, EV chargers. Its own
+  // count rather than a share of the meter count, because a site's meters
+  // and its equipment aren't the same number and never were.
+  { key: 'per_equipment', label: 'Per equipment', kind: 'unit',  unit: 'equipment', unitLabel: 'Equipment' },
   { key: 'pct_deal',    label: '% of deal size', kind: 'percent', unit: null,       unitLabel: null },
 ];
+
+// The built-in list has a version, and each basis knows which version added
+// it. A saved list is the user's own vocabulary, so nothing is ever quietly
+// put back into it — but a basis that didn't exist when they saved is one
+// they never chose to leave out, and without this the only way to see a new
+// default would be Reset to defaults, which throws their own bases away.
+// See pricingBasesTopUp.
+export const PRICING_BASES_VERSION = 2;
+const BASIS_ADDED_IN = { per_project: 2, per_equipment: 2 };
 
 // A key out of a label: lowercase, words joined by underscores, and a
 // numeric suffix when that key is already taken. Keys are what the saved
@@ -107,6 +124,27 @@ export function normalizePricingBases(raw) {
 // built-in list otherwise.
 export function resolvePricingBases(settings) {
   return normalizePricingBases(settings?.pricingBases) || PRICING_BASES;
+}
+
+/**
+ * The settings patch that brings a saved bases list up to the current
+ * built-in version, or null when there's nothing to do — no saved list (the
+ * built-ins are already in force), or one that's already current.
+ *
+ * Only bases introduced since the version the list was saved at are added,
+ * so a basis the user deleted stays deleted. New ones go on the end: their
+ * own ordering is theirs.
+ */
+export function pricingBasesTopUp(settings) {
+  const saved = normalizePricingBases(settings?.pricingBases);
+  if (!saved) return null;
+  const from = Number(settings?.pricingBasesVersion) || 1;
+  if (from >= PRICING_BASES_VERSION) return null;
+  const have = new Set(saved.map(b => b.key));
+  const added = PRICING_BASES.filter(b => (BASIS_ADDED_IN[b.key] || 1) > from && !have.has(b.key));
+  const patch = { pricingBasesVersion: PRICING_BASES_VERSION };
+  if (added.length > 0) patch.pricingBases = [...saved, ...added];
+  return patch;
 }
 
 export function basisFor(key, bases = PRICING_BASES) {
