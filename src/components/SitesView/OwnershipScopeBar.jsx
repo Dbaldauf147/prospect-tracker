@@ -1,6 +1,7 @@
-// Segmented Exclude-leased / All-sites control shared by the two
-// building-compliance subtabs. Lives in its own file so the pure
-// scoping helpers in ./ownershipScope.js stay component-free.
+// The ownership-scope controls: the segmented Exclude-leased / All-sites
+// bar shared by the two building-compliance subtabs, and the savings-scope
+// button on the Utility Lookup toolbar. Both live here so the pure scoping
+// helpers in ./ownershipScope.js stay component-free.
 import { ownershipScopeStats } from './ownershipScope.js';
 
 const barStyle = {
@@ -78,5 +79,44 @@ export function OwnershipScopeBar({ sites = [], excludeLeased, onChange }) {
       </div>
       <span style={{ fontSize: '0.72rem', color: '#64748B', flex: 1, minWidth: 200 }}>{hint}</span>
     </div>
+  );
+}
+
+// Toolbar button that decides whether leased locations carry procurement
+// savings in the Master Analysis and the Overview exports.
+//
+// The default is that they don't: the savings are a motion on the supply
+// contract behind the meter, and on a leased building that contract is
+// usually the landlord's. But "usually" isn't "always" — a triple-net lease
+// often leaves the tenant holding the supply contract, and a portfolio that
+// knows it does shouldn't have to unmap its Ownership column to say so. One
+// click puts those sites back in.
+//
+// Rendered only when the loaded list actually has leased sites: with none,
+// the button decides nothing, and a disabled control in a busy toolbar is
+// noise. `count` is that number of leased sites.
+export function SavingsScopeToggle({ count, included, onChange }) {
+  const label = `Leased ${included ? 'included in' : 'excluded from'} savings (${count.toLocaleString()})`;
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!included)}
+      title={included
+        ? `The ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry indicative savings like any other site, and the exports say so. Click to leave them out — the default, since a leased building's supply contract is usually the landlord's to re-source.`
+        : `Indicative savings are projected on the rest of the portfolio: the ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry $0, because a leased building's supply contract is usually the landlord's to re-source. Click to include them — e.g. a triple-net portfolio that holds its own supply contracts.`}
+      style={{
+        padding: '0.4rem 0.8rem',
+        borderRadius: 6,
+        fontSize: '0.8rem',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontWeight: 600,
+        border: `1px solid ${included ? '#009530' : 'var(--color-border)'}`,
+        background: included ? '#009530' : '#fff',
+        color: included ? '#fff' : '#475569',
+      }}
+    >
+      {included ? '☑' : '☐'} {label}
+    </button>
   );
 }
