@@ -9,7 +9,15 @@
 // An entry is { basis, rate, minFee, units, avgFee, notes }:
 //   basis  — which pricing basis key the fee is worked out from
 //   rate   — dollars per unit, a flat dollar figure, or a percentage,
-//            depending on the basis
+//            depending on the basis. The LOW end of the range when a
+//            rateHigh is set, and the whole of it when one isn't.
+//   rateHigh — the top of the rate range, when a service is quoted as a
+//            spread rather than a figure ("$450 to $600 a site"). Optional:
+//            without it every estimate is a single number, exactly as it
+//            was before ranges existed. With it, every fee, every total
+//            and every saved analysis reads as a range, because a range
+//            that collapses to its bottom end the moment it's added up
+//            would be worse than not having one.
 //   minFee — dollar floor applied to unit- and percentage-based fees
 //   units  — how many units THIS service is charged on. Overrides the
 //            estimator's count for that unit, because a service is often
@@ -237,13 +245,29 @@ export function formatMoney(value, { cents = false } = {}) {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
 
-// A rate as it reads in its own column: "$450" per unit, "3.5%" of the deal.
+// A rate as it reads in its own column: "$450" per unit, "3.5%" of the
+// deal, "$450–$600" when it's quoted as a range.
 export function formatRate(entry, bases = PRICING_BASES) {
   const basis = basisFor(entry?.basis, bases);
   const rate = parseMoney(entry?.rate);
   if (!basis || rate === null) return '';
-  if (basis.kind === 'percent') return `${rate}%`;
-  return formatMoney(rate);
+  const high = parseMoney(entry?.rateHigh);
+  const one = (n) => (basis.kind === 'percent' ? `${n}%` : formatMoney(n));
+  if (high === null || high === rate) return one(rate);
+  return `${one(Math.min(rate, high))}–${one(Math.max(rate, high))}`;
+}
+
+// A money figure, or a range of them: "$45,000" when both ends agree,
+// "$45,000 – $60,000" when they don't. One place, because a range that
+// formats differently in the table, the bar and the saved analysis reads
+// as three different numbers.
+export function formatMoneyRange(low, high) {
+  const lo = parseMoney(low);
+  const hi = parseMoney(high);
+  if (lo === null && hi === null) return '';
+  if (lo === null) return formatMoney(hi);
+  if (hi === null || hi === lo) return formatMoney(lo);
+  return `${formatMoney(Math.min(lo, hi))} – ${formatMoney(Math.max(lo, hi))}`;
 }
 
 export function getServicePricing(settings) {
@@ -259,6 +283,7 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
   return {
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
+    rateHigh: parseMoney(row?.rateHigh),
     minFee: parseMoney(row?.minFee),
     units: parseMoney(row?.units),
     avgFee: parseMoney(row?.avgFee),
@@ -280,7 +305,7 @@ export function setPricingField(pricing, name, field, value) {
   // stranded "$450 per nothing". A typed fee is not one of them — it
   // stands on its own, and a service priced only that way would otherwise
   // lose its price the moment someone cleared a basis it never had.
-  if (field === 'basis' && blank) { delete row.rate; delete row.minFee; delete row.units; }
+  if (field === 'basis' && blank) { delete row.rate; delete row.rateHigh; delete row.minFee; delete row.units; }
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
@@ -318,12 +343,19 @@ export function isRecurring(meta) {
 // figure percentage-based services take their cut of. Returns:
 //   priced   — is there enough on the rate card to work a fee out at all
 //   fee      — the fee itself: annual for a recurring service, the whole job
-//              for a project. null when unpriced.
+//              for a project. null when unpriced. The bottom of the range
+//              when the service carries one, which is what it has always
+//              been for a service that doesn't.
+//   feeHigh  — the top of it. Equal to `fee` unless a high rate is set, so
+//              a caller can add the two ends up without asking whether this
+//              particular service happens to have a range.
 //   value    — fee across the contract (fee × years when recurring)
+//   valueHigh— the same for the top of the range
 //   note     — why a priced service still came out at nothing, when it did
 export function estimateService({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const basis = basisFor(entry?.basis, bases);
   const rate = parseMoney(entry?.rate);
+  const rateHigh = parseMoney(entry?.rateHigh);
   const minFee = parseMoney(entry?.minFee);
   const avgFee = parseMoney(entry?.avgFee);
   // Units typed against this row beat the shared count — see the entry
@@ -332,49 +364,66 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
   const recurring = isRecurring(meta);
   const years = recurring ? contractYears(meta) : 1;
   const base = {
-    priced: false, fee: null, value: null, recurring, years,
+    priced: false, fee: null, feeHigh: null, value: null, valueHigh: null, recurring, years,
     unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
   };
 
   // A fee typed into the Year 1 Fee column is the answer, whatever the basis
-  // would have made of the counts. It still runs across the term, so a
-  // recurring service priced at an average year is still worth that year
-  // times its years.
+  // would have made of the counts — and it's one figure, not a range: the
+  // person typing it is stating the fee, not the spread it might land in.
   if (avgFee !== null) {
-    return { ...base, priced: true, typed: true, fee: avgFee, value: avgFee * years };
+    return {
+      ...base, priced: true, typed: true,
+      fee: avgFee, feeHigh: avgFee, value: avgFee * years, valueHigh: avgFee * years,
+    };
   }
 
   if (!basis) return { ...base, note: 'No pricing basis set' };
   if (rate === null) return { ...base, note: 'No rate set' };
 
-  let fee;
+  // A high rate typed below the low one is a typo, not an inverted range,
+  // so the pair is read low-to-high rather than rendered backwards.
+  const lo = rateHigh === null ? rate : Math.min(rate, rateHigh);
+  const hi = rateHigh === null ? rate : Math.max(rate, rateHigh);
+
+  const nothing = (note, extra) => ({ ...base, priced: true, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note, ...extra });
+
   let units = null;
   let unitsTyped = false;
+  let deal = 0;
   if (basis.kind === 'unit') {
     unitsTyped = ownUnits !== null;
     units = unitsTyped ? ownUnits : (parseMoney(counts?.[basis.unit]) ?? 0);
-    fee = rate * units;
     if (units <= 0) {
-      return {
-        ...base, priced: true, fee: 0, value: 0, units: 0, unitsTyped,
-        note: unitsTyped ? `Set to no ${basis.unitLabel.toLowerCase()}` : `No ${basis.unitLabel.toLowerCase()} entered`,
-      };
+      return nothing(
+        unitsTyped ? `Set to no ${basis.unitLabel.toLowerCase()}` : `No ${basis.unitLabel.toLowerCase()} entered`,
+        { units: 0, unitsTyped },
+      );
     }
-    // The floor is what the service costs to run at all, so it applies
-    // once there is something to run — not to an empty scope.
-    if (minFee !== null && fee < minFee) fee = minFee;
   } else if (basis.kind === 'percent') {
-    const deal = parseMoney(dealSize) ?? 0;
-    fee = deal * (rate / 100);
-    if (deal <= 0) {
-      return { ...base, priced: true, fee: 0, value: 0, note: 'No deal size entered' };
-    }
-    if (minFee !== null && fee < minFee) fee = minFee;
-  } else {
-    fee = rate;
+    deal = parseMoney(dealSize) ?? 0;
+    if (deal <= 0) return nothing('No deal size entered');
   }
 
-  return { ...base, priced: true, fee, value: fee * years, units, unitsTyped };
+  // Both ends run the same arithmetic, floor included — the minimum is what
+  // the service costs to run at all, so it holds up the bottom of a range
+  // the same way it holds up a single fee, and a range whose ends are both
+  // under it is simply the floor.
+  const feeAt = (r) => {
+    let fee;
+    if (basis.kind === 'unit') fee = r * units;
+    else if (basis.kind === 'percent') fee = deal * (r / 100);
+    else fee = r;
+    return minFee !== null && fee < minFee ? minFee : fee;
+  };
+  const fee = feeAt(lo);
+  const feeHigh = feeAt(hi);
+
+  return {
+    ...base, priced: true,
+    fee, feeHigh, value: fee * years, valueHigh: feeHigh * years,
+    units, unitsTyped,
+  };
 }
 
 // How a line's fee was arrived at, in a few words: the phrase that goes
@@ -411,6 +460,12 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
   let recurringAnnual = 0;
   let oneTime = 0;
   let contractValue = 0;
+  // The top of each total, run alongside rather than derived: a scope where
+  // three services carry a range and five don't is not the low total times
+  // anything, it's the low ends of five added to the high ends of three.
+  let recurringAnnualHigh = 0;
+  let oneTimeHigh = 0;
+  let contractValueHigh = 0;
   const unpriced = [];
   const unitsUsed = new Set();
 
@@ -431,8 +486,13 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     // asking for a number that changes nothing.
     if (est.unit && !est.unitsTyped && !est.typed) unitsUsed.add(est.unit);
     if (!est.priced) { unpriced.push(row.name); }
-    else if (est.recurring) { recurringAnnual += est.fee; contractValue += est.value; }
-    else { oneTime += est.fee; contractValue += est.value; }
+    else if (est.recurring) {
+      recurringAnnual += est.fee; contractValue += est.value;
+      recurringAnnualHigh += est.feeHigh; contractValueHigh += est.valueHigh;
+    } else {
+      oneTime += est.fee; contractValue += est.value;
+      oneTimeHigh += est.feeHigh; contractValueHigh += est.valueHigh;
+    }
     lines.push({ name: row.name, entry, ...est });
   }
 
@@ -442,5 +502,13 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
   // agreeing. It is also the sum of the Estimated Year 1 Fee column, which is
   // why that column and the headline figure on the estimator always tie out.
   const year1Total = recurringAnnual + oneTime;
-  return { lines, recurringAnnual, oneTime, year1Total, contractValue, unpriced, unitsUsed };
+  const year1TotalHigh = recurringAnnualHigh + oneTimeHigh;
+  return {
+    lines, recurringAnnual, oneTime, year1Total, contractValue,
+    recurringAnnualHigh, oneTimeHigh, year1TotalHigh, contractValueHigh,
+    // Whether any of this is a range at all, so a caller can say "$45,000"
+    // without checking eight figures against each other.
+    ranged: year1TotalHigh > year1Total || contractValueHigh > contractValue,
+    unpriced, unitsUsed,
+  };
 }

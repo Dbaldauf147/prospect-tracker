@@ -118,7 +118,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, resolvePricingBases, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, formatMoneyRange, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -2055,7 +2055,7 @@ function QuotedAmountCell({
                               title={line.typed
                                 ? 'Est. Fee typed on the Services Pricing tab'
                                 : 'Worked out from this service\u2019s basis and rate'}
-                            >{formatMoney(line.fee) || '$0'}</strong>
+                            >{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</strong>
                           ) : (
                             <span style={{ color: '#94A3B8' }} title="No price on the Services Pricing tab yet">&mdash;</span>
                           )}
@@ -2080,16 +2080,39 @@ function QuotedAmountCell({
                     ) : null}
                   </span>
                   <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <strong style={{ color: '#1E293B' }}>{formatMoney(scopeEstimate.year1Total) || '$0'}</strong>
+                    <strong style={{ color: '#1E293B' }}>
+                      {formatMoneyRange(scopeEstimate.year1Total, scopeEstimate.year1TotalHigh) || '$0'}
+                    </strong>
                     {/* Fills the box above rather than saving: the total is an
                         estimate, and whether it IS the deal size is the
                         user's call to make and then Save. */}
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
-                      title="Put this total in the Amount box above"
-                      style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                    >Use</button>
+                    {/* The Amount box holds one figure. When the estimate
+                        is a range there's no honest way to pick an end on
+                        the user's behalf, so both are offered and they
+                        choose which deal they're quoting. */}
+                    {scopeEstimate.ranged ? (
+                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
+                          title="Put the low end of this range in the Amount box above"
+                          style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                        >Use low</button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1TotalHigh)))); }}
+                          title="Put the high end of this range in the Amount box above"
+                          style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                        >Use high</button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
+                        title="Put this total in the Amount box above"
+                        style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                      >Use</button>
+                    )}
                   </span>
                 </div>
                 {scopeEstimate.unpriced.length > 0 && (

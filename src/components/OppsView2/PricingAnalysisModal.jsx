@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { formatMoney } from '../../utils/servicePricing';
+import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 import { lineBasisText } from '../../utils/pricingAnalysis';
 
 // The saved deal estimate behind an opp's Estimated Fee, as the table it
@@ -125,10 +125,10 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
                     {line.units === null ? <span style={muted}>-</span> : line.units.toLocaleString('en-US')}
                   </td>
                   <td style={numCell}>
-                    {line.fee === null ? <span style={muted}>-</span> : formatMoney(line.fee)}
+                    {line.fee === null ? <span style={muted}>-</span> : formatMoneyRange(line.fee, line.feeHigh)}
                   </td>
                   <td style={numCell}>
-                    {line.value === null ? <span style={muted}>-</span> : formatMoney(line.value)}
+                    {line.value === null ? <span style={muted}>-</span> : formatMoneyRange(line.value, line.valueHigh)}
                   </td>
                 </tr>
               ))}
@@ -137,19 +137,19 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
               <tr>
                 <td style={{ ...footCell, ...muted }} colSpan={3}>Recurring / year</td>
                 <td style={{ ...footCell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
-                  {formatMoney(analysis.recurringAnnual) || '$0'}
+                  {formatMoneyRange(analysis.recurringAnnual, analysis.recurringAnnualHigh) || '$0'}
                 </td>
               </tr>
               <tr>
                 <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>One-off projects</td>
                 <td style={{ ...footCell, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
-                  {formatMoney(analysis.oneTime) || '$0'}
+                  {formatMoneyRange(analysis.oneTime, analysis.oneTimeHigh) || '$0'}
                 </td>
               </tr>
               <tr>
                 <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>Contract value</td>
                 <td style={{ ...footCell, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
-                  {formatMoney(analysis.contractValue) || '$0'}
+                  {formatMoneyRange(analysis.contractValue, analysis.contractValueHigh) || '$0'}
                 </td>
               </tr>
               <tr style={{ fontWeight: 700 }}>
@@ -157,7 +157,7 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
                 <td style={{
                   ...footCell, borderTop: '1px solid var(--color-border)',
                   textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-accent)',
-                }} colSpan={2}>{formatMoney(analysis.year1Total) || '$0'}</td>
+                }} colSpan={2}>{formatMoneyRange(analysis.year1Total, analysis.year1TotalHigh) || '$0'}</td>
               </tr>
             </tfoot>
           </table>

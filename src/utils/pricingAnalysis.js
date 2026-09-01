@@ -51,6 +51,7 @@ export function buildPricingAnalysis({
     basisLabel: str(basis?.label || ''),
     kind: str(basis?.kind || ''),
     rate: num(line.entry?.rate),
+    rateHigh: num(line.entry?.rateHigh),
     minFee: num(line.entry?.minFee),
     unit: str(line.unit || ''),
     unitLabel: str(basis?.unitLabel || ''),
@@ -63,7 +64,12 @@ export function buildPricingAnalysis({
     recurring: !!line.recurring,
     years: num(line.years) ?? 1,
     fee: num(line.fee),
+    // The top of the range, when the service carries one. Equal to `fee`
+    // otherwise, so a reader adding the ends up doesn't have to know which
+    // lines were ranged.
+    feeHigh: num(line.feeHigh) ?? num(line.fee),
     value: num(line.value),
+    valueHigh: num(line.valueHigh) ?? num(line.value),
     note: str(line.note),
     };
   });
@@ -77,6 +83,10 @@ export function buildPricingAnalysis({
     oneTime: num(totals?.oneTime) ?? 0,
     year1Total: num(totals?.year1Total) ?? 0,
     contractValue: num(totals?.contractValue) ?? 0,
+    recurringAnnualHigh: num(totals?.recurringAnnualHigh) ?? num(totals?.recurringAnnual) ?? 0,
+    oneTimeHigh: num(totals?.oneTimeHigh) ?? num(totals?.oneTime) ?? 0,
+    year1TotalHigh: num(totals?.year1TotalHigh) ?? num(totals?.year1Total) ?? 0,
+    contractValueHigh: num(totals?.contractValueHigh) ?? num(totals?.contractValue) ?? 0,
     // Services in scope that nothing priced. Kept because a $60,000
     // estimate with four unpriced services in it is a different number
     // from a $60,000 estimate with none, and the popup has to be able to
@@ -109,6 +119,7 @@ export function normalizePricingAnalysis(raw) {
       basisLabel: str(l.basisLabel),
       kind: str(l.kind),
       rate: num(l.rate),
+      rateHigh: num(l.rateHigh),
       minFee: num(l.minFee),
       unit: str(l.unit),
       unitLabel: str(l.unitLabel),
@@ -118,7 +129,12 @@ export function normalizePricingAnalysis(raw) {
       recurring: !!l.recurring,
       years: num(l.years) ?? 1,
       fee: num(l.fee),
+      // An analysis saved before ranges existed has no high end: it reads
+      // as the single figure it was, rather than as a range from something
+      // to nothing.
+      feeHigh: num(l.feeHigh) ?? num(l.fee),
       value: num(l.value),
+      valueHigh: num(l.valueHigh) ?? num(l.value),
       note: str(l.note),
     }));
   if (lines.length === 0) return null;
@@ -132,6 +148,10 @@ export function normalizePricingAnalysis(raw) {
     oneTime: num(raw.oneTime) ?? 0,
     year1Total: num(raw.year1Total) ?? 0,
     contractValue: num(raw.contractValue) ?? 0,
+    recurringAnnualHigh: num(raw.recurringAnnualHigh) ?? num(raw.recurringAnnual) ?? 0,
+    oneTimeHigh: num(raw.oneTimeHigh) ?? num(raw.oneTime) ?? 0,
+    year1TotalHigh: num(raw.year1TotalHigh) ?? num(raw.year1Total) ?? 0,
+    contractValueHigh: num(raw.contractValueHigh) ?? num(raw.contractValue) ?? 0,
     unpriced: (Array.isArray(raw.unpriced) ? raw.unpriced : []).filter(n => typeof n === 'string' && n.trim()),
   };
 }
@@ -142,8 +162,11 @@ export function lineBasisText(line) {
   if (line.typed) return 'Typed fee';
   if (!line.basisLabel) return '';
   if (line.rate === null) return line.basisLabel;
-  if (line.kind === 'percent') return `${line.basisLabel} · ${line.rate}%`;
-  const rate = `$${line.rate.toLocaleString('en-US')}`;
+  const one = (n) => (line.kind === 'percent' ? `${n}%` : `$${n.toLocaleString('en-US')}`);
+  const rate = (line.rateHigh === null || line.rateHigh === undefined || line.rateHigh === line.rate)
+    ? one(line.rate)
+    : `${one(Math.min(line.rate, line.rateHigh))}–${one(Math.max(line.rate, line.rateHigh))}`;
+  if (line.kind === 'percent') return `${line.basisLabel} · ${rate}`;
   if (line.unit) {
     const units = line.units === null ? '?' : line.units.toLocaleString('en-US');
     return `${line.basisLabel} · ${rate} × ${units}`;
