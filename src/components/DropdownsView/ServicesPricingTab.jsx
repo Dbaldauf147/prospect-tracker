@@ -13,6 +13,7 @@ import {
   basisUsage,
   estimateScope,
   formatMoney,
+  formatMoneyRange,
   formatRate,
   getServicePricing,
   parseMoney,
@@ -39,8 +40,13 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'years',        label: 'Years',              width: 80 },
   { key: 'basisLabel',   label: 'Pricing Basis',      width: 150 },
   // Holds dollars or a percentage depending on the basis, so the header
-  // names both rather than picking one and lying about half the rows.
-  { key: 'rate',         label: 'Rate ($ or %)',      width: 130 },
+  // names both rather than picking one and lying about half the rows. Two
+  // of them: a service quoted as a spread ("$450 to $600 a site") prices
+  // to a range, and one left blank prices to a single figure exactly as it
+  // did before there was a second column. The low one keeps the `rate`
+  // key, so every rate already on the card is already in it.
+  { key: 'rate',         label: 'Low Rate ($ or %)',  width: 130 },
+  { key: 'rateHigh',     label: 'High Rate ($ or %)', width: 130 },
   { key: 'minFee',       label: 'Min Fee ($)',        width: 110 },
   { key: 'units',        label: 'Units',              width: 80 },
   // The two estimate columns are the scenario in the bar above applied to
@@ -48,8 +54,11 @@ const PRICING_TABLE_COLUMNS = [
   // over the term. The fee is annual for a recurring service and the whole
   // job for a project, so year one is what it states either way — the title
   // says so rather than leaving "Est. Fee" to be read as the term.
-  { key: 'fee',          label: 'Estimated Year 1 Fee', width: 200 },
-  { key: 'value',        label: 'Est. Deal Value',      width: 140 },
+  // Wide enough for a range: "$1,105,650 – $1,474,200" is what these hold
+  // once a service is quoted on two rates, and a clipped figure is a wrong
+  // figure. A saved width still wins — this is only the default.
+  { key: 'fee',          label: 'Estimated Year 1 Fee', width: 210 },
+  { key: 'value',        label: 'Est. Deal Value',      width: 210 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
 ];
 
@@ -352,7 +361,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       });
       await setOppFields(user?.uid, oppId, {
         [ANALYSIS_FIELD]: analysis,
-        [ESTIMATED_FEE_COLUMN]: formatMoney(analysis.year1Total) || '$0',
+        [ESTIMATED_FEE_COLUMN]: formatMoneyRange(analysis.year1Total, analysis.year1TotalHigh) || '$0',
       });
       setSaved({ ok: true, at: Date.now() });
     } catch (err) {
@@ -493,8 +502,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     () => projectServiceLines(totals.lines, bases),
     [totals.lines, bases],
   );
+  // Both ends of the project work, so a panel whose rows read as ranges
+  // doesn't foot to a single figure.
   const projectTotal = useMemo(
     () => projectLines.reduce((sum, l) => sum + (l.priced ? l.fee : 0), 0),
+    [projectLines],
+  );
+  const projectTotalHigh = useMemo(
+    () => projectLines.reduce((sum, l) => sum + (l.priced ? l.feeHigh : 0), 0),
     [projectLines],
   );
   // What a row with no number of its own is priced on. Shown as the input's
@@ -541,6 +556,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         basis: entry.basis,
         basisLabel: basis?.label || '',
         rate: entry.rate,
+        rateHigh: entry.rateHigh,
         minFee: entry.minFee,
         notes: entry.notes,
         // Typed against the row when there is one, otherwise whatever the
@@ -554,7 +570,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',
         fee: est?.priced ? est.fee : null,
+        feeHigh: est?.priced ? est.feeHigh : null,
         value: est?.priced ? est.value : null,
+        valueHigh: est?.priced ? est.valueHigh : null,
         _kind: basis?.kind || '',
         _note: est?.note || '',
         _typed: !!est?.typed,
@@ -611,9 +629,36 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               title={row._typed && row.basis
                 ? 'Not in use: the Estimated Year 1 Fee column has a fee typed into it, which wins. Clear that cell to price off this rate again.'
                 : row.basis
-                  ? (row._kind === 'percent' ? 'Percentage of the deal size' : `Dollars — ${row.basisLabel.toLowerCase()}`)
+                  ? (row._kind === 'percent'
+                    ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
+                    : `Dollars — ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
                   : 'Pick a pricing basis first'}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
+            />
+          ),
+        };
+      // The top of the range. Blank is the normal case and means exactly
+      // what it did before this column existed: one rate, one fee.
+      case 'rateHigh':
+        return {
+          ...base,
+          getSortValue: (row) => row.rateHigh,
+          render: (row) => (
+            <NumberCell
+              value={row.rateHigh}
+              display={row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh))}
+              placeholder={row._kind === 'percent' ? '%' : '$'}
+              step="0.01"
+              title={row._typed && row.basis
+                ? 'Not in use: the Estimated Year 1 Fee column has a fee typed into it, which wins. Clear that cell to price off these rates again.'
+                : !row.basis
+                  ? 'Pick a pricing basis first'
+                  : row.rate === null
+                    ? 'Set the Low Rate first — a range needs both ends.'
+                    : row.rateHigh === null
+                      ? 'Optional. Type the top of the rate range and every fee for this service reads as a range; leave it blank for a single figure.'
+                      : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`}
+              onCommit={(v) => savePricingField(row.name, 'rateHigh', v)}
             />
           ),
         };
@@ -694,6 +739,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               // an unchanged value writes nothing (see NumberCell), so
               // opening a computed cell and clicking away can't turn it
               // into an override.
+              // A ranged row opens its editor on the bottom of the range:
+              // typing over it is stating the fee outright, and the bottom
+              // is the half that reads as "the fee" when someone quotes one
+              // number off a spread.
               value={row.fee}
               display={row.fee === null
                 ? ''
@@ -701,7 +750,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                   <span className={row._typed
                     ? styles.pricingEstTyped
                     : (row._scoped ? styles.pricingEstScoped : undefined)}
-                  >{formatMoney(row.fee)}</span>
+                  >{formatMoneyRange(row.fee, row.feeHigh)}</span>
                 )}
               placeholder="$"
               step="100"
@@ -709,7 +758,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                 ? 'Typed in: this is the fee, whatever the basis works out to. Clear the cell to go back to the basis.'
                 : row.fee === null
                   ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type an average fee here, or set a basis and rate.`
-                  : `Worked out from the basis${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type a figure to use that instead.`}
+                  : row.feeHigh > row.fee
+                    ? `The low and high rates across this scope${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type a figure to quote one number instead.`
+                    : `Worked out from the basis${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type a figure to use that instead.`}
               onCommit={(v) => savePricingField(row.name, 'avgFee', v)}
             />
           ),
@@ -728,7 +779,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                 title={row._typed
                   ? 'The typed fee, across the service’s term'
                   : (row._note || undefined)}
-              >{formatMoney(row.value)}</span>
+              >{formatMoneyRange(row.value, row.valueHigh)}</span>
             )),
         };
       default:
@@ -833,11 +884,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           </div>
           <div className={styles.pricingTotal}>
             <span className={styles.pricingTotalLabel}>Recurring / year</span>
-            <span className={styles.pricingTotalValue}>{formatMoney(totals.recurringAnnual) || '$0'}</span>
+            <span className={styles.pricingTotalValue}>{formatMoneyRange(totals.recurringAnnual, totals.recurringAnnualHigh) || '$0'}</span>
           </div>
           <div className={styles.pricingTotal}>
             <span className={styles.pricingTotalLabel}>One-off projects</span>
-            <span className={styles.pricingTotalValue}>{formatMoney(totals.oneTime) || '$0'}</span>
+            <span className={styles.pricingTotalValue}>{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
           </div>
           {/* The term total still has to be somewhere — it's the number a
               multi-year deal is signed at — but it's no longer the headline,
@@ -847,7 +898,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span
               className={styles.pricingTotalValue}
               title="Every service across its full term: a recurring fee times its years, plus the one-off projects."
-            >{formatMoney(totals.contractValue) || '$0'}</span>
+            >{formatMoneyRange(totals.contractValue, totals.contractValueHigh) || '$0'}</span>
           </div>
           {/* Year one, not the term: the recurring services at one year each
               plus the projects in full. Ties out to the Estimated Year 1 Fee
@@ -857,8 +908,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.pricingTotalLabel}>Estimated Year 1 deal size</span>
             <span
               className={styles.pricingTotalValueMain}
-              title="The first twelve months: each recurring service's annual fee plus every one-off project in full. The sum of the Estimated Year 1 Fee column."
-            >{formatMoney(totals.year1Total) || '$0'}</span>
+              title={'The first twelve months: each recurring service’s annual fee plus every one-off project in full. The sum of the Estimated Year 1 Fee column.'
+                + (totals.ranged ? ' A range, because some of these services are quoted on a low and a high rate — each end is the sum of that end.' : '')}
+            >{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}</span>
           </div>
         </div>
       </div>
@@ -926,7 +978,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                     </td>
                     <td className={styles.projectTableNum}>
                       {line.priced
-                        ? <span className={line.fee ? undefined : styles.serviceMutedCell} title={line.note || undefined}>{formatMoney(line.fee) || '$0'}</span>
+                        ? <span className={line.fee ? undefined : styles.serviceMutedCell} title={line.note || undefined}>{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</span>
                         : <span className={styles.serviceMutedCell} title={line.note || 'Not priced yet'}>-</span>}
                     </td>
                   </tr>
@@ -936,7 +988,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <tfoot>
               <tr>
                 <td colSpan={3} className={styles.projectTableName}>Project work in this scope</td>
-                <td className={styles.projectTableNum}>{formatMoney(projectTotal) || '$0'}</td>
+                <td className={styles.projectTableNum}>{formatMoneyRange(projectTotal, projectTotalHigh) || '$0'}</td>
               </tr>
             </tfoot>
           </table>
@@ -968,7 +1020,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           )}
           {saved?.ok && (
             <span className={styles.oppSavedNote}>
-              {' Saved to the '}{oppImport.account}{' opp — '}{formatMoney(totals.year1Total) || '$0'}
+              {' Saved to the '}{oppImport.account}{' opp — '}{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}
               {' in Estimated Fee, with this working behind it.'}
             </span>
           )}

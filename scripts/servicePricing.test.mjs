@@ -11,7 +11,7 @@
 // a contract value.
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
-  feeBasisLabel, projectServiceLines,
+  feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate,
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -238,6 +238,101 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
       rows, services: ['Bill payment'], pricing, counts: { sites: 10 }, dealSize: 0,
     }).lines).length, 0);
   check('junk in, empty list out', projectServiceLines(null), []);
+}
+
+// ── A rate range: low and high, all the way through ───────────────────
+{
+  // $450–$600 a site over 819 sites, on a three-year recurring service.
+  const ranged = estimateService({
+    entry: { basis: 'per_site', rate: 450, rateHigh: 600 }, meta: RECURRING,
+    counts: { sites: 819 }, dealSize: '',
+  });
+  check('both ends of the rate price both ends of the fee',
+    [ranged.fee, ranged.feeHigh], [368550, 491400]);
+  check('and both run across the term', [ranged.value, ranged.valueHigh], [1105650, 1474200]);
+
+  // The normal case is still one figure, not a range from x to nothing.
+  const single = estimateService({
+    entry: { basis: 'per_site', rate: 450 }, meta: RECURRING, counts: { sites: 819 }, dealSize: '',
+  });
+  check('no high rate, no range', [single.fee, single.feeHigh], [368550, 368550]);
+
+  // A high typed under the low is a typo, not an inverted range.
+  const backwards = estimateService({
+    entry: { basis: 'per_site', rate: 600, rateHigh: 450 }, meta: RECURRING,
+    counts: { sites: 10 }, dealSize: '',
+  });
+  check('a backwards pair still reads low to high', [backwards.fee, backwards.feeHigh], [4500, 6000]);
+
+  // The floor holds up the bottom of a range the way it holds up a fee.
+  const floored = estimateService({
+    entry: { basis: 'per_site', rate: 1, rateHigh: 900, minFee: 5000 }, meta: PROJECT,
+    counts: { sites: 10 }, dealSize: '',
+  });
+  check('the min fee floors the low end only when the high clears it',
+    [floored.fee, floored.feeHigh], [5000, 9000]);
+
+  // A typed fee is a figure, not a spread: someone typing it is stating
+  // the fee, and a range either side of it would be invented.
+  const typed = estimateService({
+    entry: { basis: 'per_site', rate: 450, rateHigh: 600, avgFee: 40000 }, meta: PROJECT,
+    counts: { sites: 819 }, dealSize: '',
+  });
+  check('a typed fee has no range', [typed.fee, typed.feeHigh], [40000, 40000]);
+
+  // A percentage range takes its cut at both ends.
+  const pct = estimateService({
+    entry: { basis: 'pct_deal', rate: 3, rateHigh: 5 }, meta: PROJECT, counts: {}, dealSize: 300000,
+  });
+  check('a percentage range cuts both ways', [pct.fee, pct.feeHigh], [9000, 15000]);
+}
+
+// ── Totals add each end to its own end ────────────────────────────────
+{
+  const rows = [
+    { name: 'Bill payment', meta: RECURRING },
+    { name: 'Audits', meta: PROJECT },
+  ];
+  const est = estimateScope({
+    rows, services: ['Bill payment', 'Audits'],
+    // One service ranged, one not: the high total is the high end of the
+    // first plus the ONLY end of the second, not the low total scaled up.
+    pricing: { 'Bill payment': { basis: 'per_site', rate: 100, rateHigh: 150 }, 'Audits': { avgFee: 15000 } },
+    counts: { sites: 10 }, dealSize: '',
+  });
+  check('the year-one range adds each end to its own end',
+    [est.year1Total, est.year1TotalHigh], [16000, 16500]);
+  check('so does the contract value', [est.contractValue, est.contractValueHigh], [18000, 19500]);
+  check('recurring and one-off keep their own ends',
+    [est.recurringAnnual, est.recurringAnnualHigh, est.oneTime, est.oneTimeHigh], [1000, 1500, 15000, 15000]);
+  check('and the scope knows it is a range', est.ranged, true);
+
+  const flat = estimateScope({
+    rows, services: ['Audits'], pricing: { 'Audits': { avgFee: 15000 } }, counts: {}, dealSize: '',
+  });
+  check('a scope with no ranged service is not a range', flat.ranged, false);
+  check('and its ends agree', [flat.year1Total, flat.year1TotalHigh], [15000, 15000]);
+}
+
+// ── How a range reads ─────────────────────────────────────────────────
+{
+  check('one figure when the ends agree', formatMoneyRange(45000, 45000), '$45,000');
+  check('a range when they do not', formatMoneyRange(45000, 60000), '$45,000 – $60,000');
+  check('no high end is one figure', formatMoneyRange(45000, null), '$45,000');
+  check('nothing at all is nothing', formatMoneyRange(null, null), '');
+  check('a backwards pair still reads low to high', formatMoneyRange(60000, 45000), '$45,000 – $60,000');
+  check('a rate range reads as one', formatRate({ basis: 'per_site', rate: 450, rateHigh: 600 }), '$450–$600');
+  check('a percentage range too', formatRate({ basis: 'pct_deal', rate: 3, rateHigh: 5 }), '3%–5%');
+  check('a single rate is unchanged', formatRate({ basis: 'per_site', rate: 450 }), '$450');
+}
+
+// ── Clearing the basis takes the whole range with it ──────────────────
+{
+  const cleared = setPricingField(
+    { 'Bill payment': { basis: 'per_site', rate: 450, rateHigh: 600, minFee: 1000 } },
+    'Bill payment', 'basis', '',
+  );
+  check('no basis, no rates to read against it', cleared['Bill payment'], undefined);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
