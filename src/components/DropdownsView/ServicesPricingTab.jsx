@@ -3,6 +3,7 @@ import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { oppScenario } from '../../utils/oppPricingImport';
+import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
 import { OppImportModal } from './OppImportModal';
 import {
   PRICING_BASES,
@@ -232,6 +233,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // Firestore pull, which is exactly the right behaviour there.
   const { user } = useAuth() || {};
 
+  // What the last visit left in the estimator, read once on mount. The
+  // scenario half of it is restored by the parent, which owns that state;
+  // the two halves are written together below, so they can't come back out
+  // of step with each other.
+  const restoredRef = useRef(undefined);
+  if (restoredRef.current === undefined) restoredRef.current = loadPricingEstimate(user?.uid);
+  const restored = restoredRef.current;
+
   // The Opps 2 dataset, pulled only when the picker is first opened. It's
   // the whole opp store — thousands of rows — and most visits to this tab
   // are to edit a rate, not to import a deal, so loading it on mount would
@@ -258,7 +267,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
 
   // What the last import filled in, so the bar can say where its numbers
   // came from and what it couldn't answer. Cleared when the scope is.
-  const [oppImport, setOppImport] = useState(null);
+  const [oppImport, setOppImport] = useState(() => restored?.oppImport || null);
 
   // The services an import put in scope, held to the top of the table so
   // the five rows the deal is about aren't scattered through a hundred and
@@ -267,7 +276,21 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // its row out from under the click, and unticking one shouldn't drop it
   // back into the alphabet before you can see what you just did. Null when
   // nothing is pinned.
-  const [pinnedNames, setPinnedNames] = useState(null);
+  const [pinnedNames, setPinnedNames] = useState(() => (restored?.pinned ? new Set(restored.pinned) : null));
+
+  // Keep the stored estimate in step with the one on screen. Written from
+  // here rather than split across the two components that hold it: the
+  // scenario is the parent's state but it is only ever edited from this
+  // tab, so one writer covering all of it means a reload can't come back
+  // with an opp's scope and someone else's counts. Emptying the estimator
+  // writes nothing and clears the record (see savePricingEstimate).
+  useEffect(() => {
+    savePricingEstimate(user?.uid, {
+      scenario: { services: [...inScope], counts, dealSize },
+      pinned: pinnedNames ? [...pinnedNames] : null,
+      oppImport,
+    });
+  }, [user?.uid, inScope, counts, dealSize, pinnedNames, oppImport]);
 
   async function openOppPicker() {
     setOppPicker(true);
