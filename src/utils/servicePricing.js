@@ -6,11 +6,16 @@
 // a service with no entry is simply unpriced, and the estimator says so rather
 // than guessing a number for it.
 //
-// An entry is { basis, rate, minFee, avgFee, notes }:
-//   basis  — which PRICING_BASES key the fee is worked out from
+// An entry is { basis, rate, minFee, units, avgFee, notes }:
+//   basis  — which pricing basis key the fee is worked out from
 //   rate   — dollars per unit, a flat dollar figure, or a percentage,
 //            depending on the basis
 //   minFee — dollar floor applied to unit- and percentage-based fees
+//   units  — how many units THIS service is charged on, typed against the
+//            row. Overrides the estimator's count for that unit, because a
+//            service is often sold on a slice of the account rather than
+//            all of it: 819 sites on file, invoice processing at 40 of
+//            them. Blank hands the row back to the shared count.
 //   avgFee — a fee typed straight into the Estimated Year 1 Fee column:
 //            what this service usually sells for. It OVERRIDES the basis
 //            and rate would work out to, because it is the more direct
@@ -25,10 +30,26 @@
 // Stored under settings.servicePricing so it syncs across devices with the
 // rest of the dropdown vocabulary.
 
-// How a service's fee is worked out. `unit` names the count the fee
-// multiplies — the estimator asks for one input per distinct unit that the
-// services in scope actually use, so adding a basis here adds its box to the
-// estimator without any further wiring.
+// The three shapes a fee can take. A basis is one of these plus, for a
+// per-unit one, the count it multiplies.
+export const BASIS_KINDS = [
+  { kind: 'flat',    label: 'Flat fee',       hint: 'One figure, whatever the account looks like' },
+  { kind: 'unit',    label: 'Per unit',       hint: 'Rate × a count — sites, meters, invoices, anything you name' },
+  { kind: 'percent', label: '% of deal size', hint: 'A cut of the deal size typed into the estimator' },
+];
+
+const KIND_KEYS = new Set(BASIS_KINDS.map(k => k.kind));
+
+// How a service's fee is worked out, as it ships. `unit` names the count the
+// fee multiplies — the estimator asks for one input per distinct unit that
+// the services in scope actually use, so a basis carrying a unit brings its
+// box to the estimator without any further wiring.
+//
+// This is the starting vocabulary, not the whole of it: the Pricing bases
+// editor on the Services Pricing tab saves an edited list to
+// settings.pricingBases, and resolvePricingBases prefers that when it's
+// there. Everything downstream takes the resolved list as an argument, so a
+// basis someone added prices exactly like one that shipped.
 export const PRICING_BASES = [
   { key: 'flat',        label: 'Flat fee',       kind: 'flat',    unit: null,       unitLabel: null },
   { key: 'per_site',    label: 'Per site',       kind: 'unit',    unit: 'sites',    unitLabel: 'Sites' },
@@ -40,18 +61,89 @@ export const PRICING_BASES = [
   { key: 'pct_deal',    label: '% of deal size', kind: 'percent', unit: null,       unitLabel: null },
 ];
 
-const BASIS_BY_KEY = new Map(PRICING_BASES.map(b => [b.key, b]));
-
-export function basisFor(key) {
-  return BASIS_BY_KEY.get(String(key || '')) || null;
+// A key out of a label: lowercase, words joined by underscores, and a
+// numeric suffix when that key is already taken. Keys are what the saved
+// rate card points at, so they're generated once and then left alone —
+// renaming a basis keeps every service priced on it.
+//
+// Derived from the label rather than minted fresh, which is what makes a
+// deleted basis recoverable: the services priced on "Per site" still say
+// `per_site`, so adding "Per site" back under that name picks their rates
+// straight back up. Same for a unit and the counts typed against it.
+function keyFrom(label, taken) {
+  const root = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'custom';
+  if (!taken?.has(root)) return root;
+  let n = 2;
+  while (taken.has(`${root}_${n}`)) n += 1;
+  return `${root}_${n}`;
 }
 
-// Every unit a basis can multiply, in the order the bases declare them —
-// the estimator lays its count boxes out in this order so they don't jump
-// around as services come in and out of scope.
-export const PRICING_UNITS = PRICING_BASES
-  .filter(b => b.unit)
-  .map(b => ({ unit: b.unit, label: b.unitLabel }));
+export function makeBasisKey(label, taken) { return keyFrom(label, taken); }
+export function makeUnitKey(label, taken) { return keyFrom(label, taken); }
+
+// A saved bases list, cleaned up: kinds it doesn't recognise, entries with
+// no label, per-unit entries with no unit and duplicate keys all drop out.
+// Returns null when there's nothing usable left, which is the caller's cue
+// to fall back to the built-in list rather than show an empty picklist.
+export function normalizePricingBases(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const key = String(item?.key || '').trim();
+    const label = String(item?.label || '').trim();
+    const kind = String(item?.kind || '').trim();
+    if (!key || !label || !KIND_KEYS.has(kind) || seen.has(key)) continue;
+    const unit = kind === 'unit' ? String(item?.unit || '').trim() : '';
+    const unitLabel = kind === 'unit' ? String(item?.unitLabel || '').trim() : '';
+    if (kind === 'unit' && (!unit || !unitLabel)) continue;
+    seen.add(key);
+    out.push({ key, label, kind, unit: unit || null, unitLabel: unitLabel || null });
+  }
+  return out.length > 0 ? out : null;
+}
+
+// The bases in force: the user's edited list when they have one, the
+// built-in list otherwise.
+export function resolvePricingBases(settings) {
+  return normalizePricingBases(settings?.pricingBases) || PRICING_BASES;
+}
+
+export function basisFor(key, bases = PRICING_BASES) {
+  const k = String(key || '');
+  if (!k) return null;
+  return (bases || PRICING_BASES).find(b => b.key === k) || null;
+}
+
+// Every unit the bases can multiply, in the order they declare them — the
+// estimator lays its count boxes out in this order so they don't jump around
+// as services come in and out of scope. Two bases sharing a unit (per site
+// and per site-visit, say) share the one count box.
+export function pricingUnits(bases = PRICING_BASES) {
+  const seen = new Set();
+  const out = [];
+  for (const b of bases || []) {
+    if (!b.unit || seen.has(b.unit)) continue;
+    seen.add(b.unit);
+    out.push({ unit: b.unit, label: b.unitLabel });
+  }
+  return out;
+}
+
+export const PRICING_UNITS = pricingUnits(PRICING_BASES);
+
+// How many services are priced on each basis, keyed by basis key. What the
+// editor needs before it lets someone delete one: a basis with rows behind
+// it takes their pricing with it.
+export function basisUsage(pricing) {
+  const counts = new Map();
+  for (const row of Object.values(pricing || {})) {
+    const key = String(row?.basis || '');
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
 
 // A number out of whatever the user typed: "$1,200" and "1200" both read as
 // 1200, anything that isn't a finite number reads as null. Used for both the
@@ -76,8 +168,8 @@ export function formatMoney(value, { cents = false } = {}) {
 }
 
 // A rate as it reads in its own column: "$450" per unit, "3.5%" of the deal.
-export function formatRate(entry) {
-  const basis = basisFor(entry?.basis);
+export function formatRate(entry, bases = PRICING_BASES) {
+  const basis = basisFor(entry?.basis, bases);
   const rate = parseMoney(entry?.rate);
   if (!basis || rate === null) return '';
   if (basis.kind === 'percent') return `${rate}%`;
@@ -91,13 +183,14 @@ export function getServicePricing(settings) {
 
 // One service's entry, normalized: numbers as numbers, an unknown basis
 // dropped. Always returns an object, so a caller never has to guard.
-export function pricingFor(pricing, name) {
+export function pricingFor(pricing, name, bases = PRICING_BASES) {
   const row = pricing?.[name];
-  const basis = basisFor(row?.basis);
+  const basis = basisFor(row?.basis, bases);
   return {
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     minFee: parseMoney(row?.minFee),
+    units: parseMoney(row?.units),
     avgFee: parseMoney(row?.avgFee),
     notes: String(row?.notes || ''),
   };
@@ -117,7 +210,7 @@ export function setPricingField(pricing, name, field, value) {
   // stranded "$450 per nothing". A typed fee is not one of them — it
   // stands on its own, and a service priced only that way would otherwise
   // lose its price the moment someone cleared a basis it never had.
-  if (field === 'basis' && blank) { delete row.rate; delete row.minFee; }
+  if (field === 'basis' && blank) { delete row.rate; delete row.minFee; delete row.units; }
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
@@ -158,16 +251,19 @@ export function isRecurring(meta) {
 //              for a project. null when unpriced.
 //   value    — fee across the contract (fee × years when recurring)
 //   note     — why a priced service still came out at nothing, when it did
-export function estimateService({ entry, meta, counts, dealSize }) {
-  const basis = basisFor(entry?.basis);
+export function estimateService({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
+  const basis = basisFor(entry?.basis, bases);
   const rate = parseMoney(entry?.rate);
   const minFee = parseMoney(entry?.minFee);
   const avgFee = parseMoney(entry?.avgFee);
+  // Units typed against this row beat the shared count — see the entry
+  // notes at the top of the file.
+  const ownUnits = parseMoney(entry?.units);
   const recurring = isRecurring(meta);
   const years = recurring ? contractYears(meta) : 1;
   const base = {
     priced: false, fee: null, value: null, recurring, years,
-    unit: basis?.unit || null, units: null, note: '', typed: false,
+    unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
   };
 
   // A fee typed into the Year 1 Fee column is the answer, whatever the basis
@@ -183,11 +279,16 @@ export function estimateService({ entry, meta, counts, dealSize }) {
 
   let fee;
   let units = null;
+  let unitsTyped = false;
   if (basis.kind === 'unit') {
-    units = parseMoney(counts?.[basis.unit]) ?? 0;
+    unitsTyped = ownUnits !== null;
+    units = unitsTyped ? ownUnits : (parseMoney(counts?.[basis.unit]) ?? 0);
     fee = rate * units;
     if (units <= 0) {
-      return { ...base, priced: true, fee: 0, value: 0, units: 0, note: `No ${basis.unitLabel.toLowerCase()} entered` };
+      return {
+        ...base, priced: true, fee: 0, value: 0, units: 0, unitsTyped,
+        note: unitsTyped ? `Set to no ${basis.unitLabel.toLowerCase()}` : `No ${basis.unitLabel.toLowerCase()} entered`,
+      };
     }
     // The floor is what the service costs to run at all, so it applies
     // once there is something to run — not to an empty scope.
@@ -203,7 +304,7 @@ export function estimateService({ entry, meta, counts, dealSize }) {
     fee = rate;
   }
 
-  return { ...base, priced: true, fee, value: fee * years, units };
+  return { ...base, priced: true, fee, value: fee * years, units, unitsTyped };
 }
 
 // How a line's fee was arrived at, in a few words: the phrase that goes
@@ -215,15 +316,15 @@ export function estimateService({ entry, meta, counts, dealSize }) {
 // Takes a line from estimateScope (or anything with `entry`, `typed` and
 // `units`). Returns '' for a service with nothing to say — an unpriced one,
 // whose own `note` says that instead.
-export function feeBasisLabel(line) {
+export function feeBasisLabel(line, bases = PRICING_BASES) {
   if (line?.typed) return 'Est. Fee';
-  const basis = basisFor(line?.entry?.basis);
+  const basis = basisFor(line?.entry?.basis, bases);
   if (!basis) return '';
   if (basis.kind === 'unit') {
     const unit = basis.unitLabel.toLowerCase().replace(/s$/, '');
-    return `${formatRate(line.entry)} per ${unit}${line.units ? ` \u00d7 ${line.units}` : ''}`;
+    return `${formatRate(line.entry, bases)} per ${unit}${line.units ? ` \u00d7 ${line.units}` : ''}`;
   }
-  if (basis.kind === 'percent') return `${formatRate(line.entry)} of deal size`;
+  if (basis.kind === 'percent') return `${formatRate(line.entry, bases)} of deal size`;
   return basis.label;
 }
 
@@ -234,7 +335,7 @@ export function feeBasisLabel(line) {
 // apart on the way through: a $60k/yr service over three years and a $180k
 // project are the same contract value but not the same deal — and they are
 // very different first years, which is why both totals come back.
-export function estimateScope({ rows, services, pricing, counts, dealSize }) {
+export function estimateScope({ rows, services, pricing, counts, dealSize, bases = PRICING_BASES }) {
   const inScope = new Set(services || []);
   const lines = [];
   let recurringAnnual = 0;
@@ -245,9 +346,11 @@ export function estimateScope({ rows, services, pricing, counts, dealSize }) {
 
   for (const row of rows || []) {
     if (!inScope.has(row.name)) continue;
-    const entry = pricingFor(pricing, row.name);
-    const est = estimateService({ entry, meta: row.meta, counts, dealSize });
-    if (est.unit) unitsUsed.add(est.unit);
+    const entry = pricingFor(pricing, row.name, bases);
+    const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
+    // A row carrying its own unit count doesn't need the shared one, so it
+    // doesn't put a box on the estimator asking for it.
+    if (est.unit && !est.unitsTyped) unitsUsed.add(est.unit);
     if (!est.priced) { unpriced.push(row.name); }
     else if (est.recurring) { recurringAnnual += est.fee; contractValue += est.value; }
     else { oneTime += est.fee; contractValue += est.value; }
