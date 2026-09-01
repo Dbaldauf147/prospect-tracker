@@ -482,9 +482,31 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 // The Scale section shows that annualised figure beside the count.
 const DATA_DEAL_PER_ACCOUNT_MONTH = 5;
 
+// The Scale fields are numbers in Firestore but strings in an <input>, and a
+// cleared box hands back ''. Every save path runs a record through here, so a
+// field added to the section can't end up coerced on one path and stored as a
+// string on another — which is how these three copies drifted apart before.
+const NUMERIC_FIELDS = [
+  'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts',
+  'numberOfMeters', 'equipmentCount', 'annualMwh',
+];
+
+function recordToSave(fields) {
+  const data = { ...fields };
+  for (const key of NUMERIC_FIELDS) {
+    data[key] = data[key] === '' || data[key] == null ? null : Number(data[key]);
+  }
+  // Firestore owns these three.
+  delete data.id;
+  delete data.createdAt;
+  delete data.updatedAt;
+  return data;
+}
+
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
-  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null, rank: '', tier: 'Tier 3',
+  assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
+  numberOfMeters: null, equipmentCount: null, annualMwh: null, rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -6540,15 +6562,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       if (!fields.company?.trim()) return;
-      const data = { ...fields };
-      data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
-      data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
-      data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
-      data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
-      delete data.id;
-      delete data.createdAt;
-      delete data.updatedAt;
-      onSave(data, { close: false });
+      onSave(recordToSave(fields), { close: false });
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1500);
     }, 600);
@@ -6557,15 +6571,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   function handleSave() {
     if (!fields.company.trim()) return;
-    const data = { ...fields };
-    data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
-    data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
-    data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
-    data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
-    delete data.id;
-    delete data.createdAt;
-    delete data.updatedAt;
-    onSave(data);
+    onSave(recordToSave(fields));
   }
 
   // Swap this popup for another company's. Edits here autosave on a debounce,
@@ -6578,15 +6584,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
       if (fields.company?.trim()) {
-        const data = { ...fields };
-        data.peAum = data.peAum === '' || data.peAum == null ? null : Number(data.peAum);
-        data.reAum = data.reAum === '' || data.reAum == null ? null : Number(data.reAum);
-        data.numberOfSites = data.numberOfSites === '' || data.numberOfSites == null ? null : Number(data.numberOfSites);
-        data.numberOfAccounts = data.numberOfAccounts === '' || data.numberOfAccounts == null ? null : Number(data.numberOfAccounts);
-        delete data.id;
-        delete data.createdAt;
-        delete data.updatedAt;
-        onSave(data, { close: false });
+        onSave(recordToSave(fields), { close: false });
       }
     }
     onSelectProspect(target);
@@ -6635,7 +6633,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '-'}</div></div>
         <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Accounts</div><div class="info-val">${f.numberOfAccounts ?? '-'}</div></div>
-        <div class="info-item"><div class="info-label">Est. Annual Data Deal</div><div class="info-val">${estAnnualDataDeal != null ? '$' + estAnnualDataDeal.toLocaleString() : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Meters</div><div class="info-val">${f.numberOfMeters ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Equipment</div><div class="info-val">${f.equipmentCount ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Electric MWh</div><div class="info-val">${f.annualMwh != null ? f.annualMwh.toLocaleString() : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Est. Data Deal</div><div class="info-val">${estAnnualDataDeal != null ? '$' + estAnnualDataDeal.toLocaleString() : '-'}</div></div>
         <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '-'}</div></div>
         <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '-'}</div></div>
         <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '-'}</div></div>
@@ -7236,17 +7237,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>Number of Sites</label>
+              <label className={styles.label} title="Number of sites">Sites</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
             </div>
 
             <div>
-              <label className={styles.label}>Number of Accounts</label>
+              <label className={styles.label} title="Number of utility accounts">Accounts</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfAccounts ?? ''} onCommit={v => set('numberOfAccounts', v)} />
             </div>
 
             <div>
-              <label className={styles.label}>Est. Annual Data Deal</label>
+              <label className={styles.label} title="Number of utility meters. Priced against by any per-meter service on the Services Pricing rate card.">Meters</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfMeters ?? ''} onCommit={v => set('numberOfMeters', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label} title="How many pieces of equipment — chillers, boilers, EV chargers — are in scope. Priced against by any per-equipment service.">Equipment</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label} title="Estimated annual electricity consumption, in MWh. Priced against by any per-MWh service.">Electric MWh</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.annualMwh ?? ''} onCommit={v => set('annualMwh', v)} />
+            </div>
+
+            <div>
+              <label className={styles.label} title="Number of Accounts x $5 per account per month, over twelve months.">Est. Data Deal</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
                 <input
                   className={styles.input}
@@ -7263,12 +7279,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>RE AUM (billions)</label>
+              <label className={styles.label} title="Real-estate assets under management, in billions of dollars">RE AUM ($B)</label>
               <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
             </div>
 
             <div>
-              <label className={styles.label}>PE AUM (billions)</label>
+              <label className={styles.label} title="Private-equity assets under management, in billions of dollars">PE AUM ($B)</label>
               <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
             </div>
 
