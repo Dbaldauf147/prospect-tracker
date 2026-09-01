@@ -389,7 +389,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
 
   // ---- 1. Energy procurement savings opportunity -------------------------
   r = section(ws, r, NC, 'Energy Procurement Savings Opportunity by Division',
-    'Deregulated sites, annual deregulated spend and the indicative savings range each division carries. Savings apply to deregulated spend only; a regulated market resolves to $0 rather than being left blank, so the columns still add up.');
+    'Deregulated sites, annual deregulated spend and the indicative savings range each division carries. Savings apply to deregulated spend only, and never to a leased location — a regulated market, or a division whose deregulated spend is all leased, resolves to $0 rather than being left blank, so the columns still add up.');
   r = table(ws, r, {
     columns: [
       { label: 'Division', key: 'name', align: 'left', width: 30 },

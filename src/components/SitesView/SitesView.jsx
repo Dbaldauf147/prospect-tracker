@@ -44,7 +44,7 @@ import { ComplianceRoadmap } from './ComplianceRoadmap';
 import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../../utils/ordinanceOverrides';
 import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
-import { scopeSitesByOwnership } from './ownershipScope.js';
+import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope } from './ownershipScope.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
@@ -4241,10 +4241,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           deregulatedSites: 0,
           deregulatedConsumption: 0,
           deregulatedSpend: 0,
+          // The slice of deregulatedSpend the savings range is applied
+          // to: everything except the leased locations. Tracked apart
+          // from deregulatedSpend so the spend column keeps reporting
+          // the whole deregulated footprint while the savings columns
+          // project on the part of it this portfolio can actually
+          // contract for.
+          savingsEligibleSpend: 0,
+          leasedSites: 0,
         };
         groups.set(key, g);
       }
       g.totalSites++;
+      const isLeased = isLeasedUtilityRow(r);
+      if (isLeased) g.leasedSites++;
       // Same classifier as the page's Market card and the Indicative
       // Savings by State sheets — this tab used to gate electric on the
       // state map but let gas through on the provider alone, so its
@@ -4258,6 +4268,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const cost = r[costKey];
       if (typeof cost === 'number' && Number.isFinite(cost)) {
         g.deregulatedSpend += cost;
+        if (!isLeased) g.savingsEligibleSpend += cost;
       }
     }
 
@@ -4290,12 +4301,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
       }
       // Regulated markets get zero savings by construction — the
-      // lowPct/highPct nulls resolve to blanks below.
-      const low = (lowPct != null && g.deregulatedSpend > 0)
-        ? Math.round(g.deregulatedSpend * lowPct * 100) / 100
+      // lowPct/highPct nulls resolve to blanks below. The range applies
+      // to the savings-eligible spend, not the whole deregulated spend:
+      // a leased location's supply contract isn't this portfolio's to
+      // re-source, so nothing is projected on it. With nothing leased
+      // the two figures are the same number.
+      const low = (lowPct != null && g.savingsEligibleSpend > 0)
+        ? Math.round(g.savingsEligibleSpend * lowPct * 100) / 100
         : (lowPct != null ? 0 : '');
-      const high = (highPct != null && g.deregulatedSpend > 0)
-        ? Math.round(g.deregulatedSpend * highPct * 100) / 100
+      const high = (highPct != null && g.savingsEligibleSpend > 0)
+        ? Math.round(g.savingsEligibleSpend * highPct * 100) / 100
         : (highPct != null ? 0 : '');
       out.push({
         [groupKey]: g.company,
@@ -5802,6 +5817,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
+    // Leased locations never carry a savings projection — see the gate
+    // in buildBucket. When the portfolio has any, the by-state tables
+    // grow two columns that show the exclusion rather than leaving the
+    // gap between spend and savings unexplained; a portfolio with none
+    // (every upload that didn't map an Ownership column included)
+    // exports exactly the sheet it did before.
+    const leasedScope = savingsOwnershipScope(rows);
+    const showLeasedColumns = leasedScope.leased > 0;
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -6114,10 +6137,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             countryRegRateOpportunity,
             totalSites: 0,
             deregulatedSites: 0,
+            // Sites in this bucket the upload marked Leased. They are
+            // listed and counted like any other site; what they never do
+            // is carry a savings number — see the savings gate in the
+            // per-site loop below.
+            leasedSites: 0,
             regulatedRateOpportunitySites: 0,
             regulatedRateOpportunitySpend: 0,
             consumption: 0,
             spend: 0,
+            // The slice of `spend` the savings range is applied to:
+            // deregulated spend less the leased locations'. Equal to
+            // `spend` on a portfolio with nothing leased.
+            savingsEligibleSpend: 0,
             utilities: [],
             suppliers: [],
             starts: [],
@@ -6140,6 +6172,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           states.set(bucketKey, g);
         }
         g.totalSites += 1;
+        // Indicative savings are a procurement motion on the supply
+        // contract behind the meter, and on a leased location that
+        // contract is the landlord's more often than not — so this
+        // export never projects savings onto one. The site still counts
+        // in Total Sites, still contributes its utility and its load to
+        // the market picture, and is called out in its own column; what
+        // it doesn't do is add spend to the basis the savings range is
+        // applied to, here or in the reg-rate motion below.
+        const isLeased = isLeasedUtilityRow(r);
+        if (isLeased) g.leasedSites += 1;
         // Track consumption across every site (including regulated ones)
         // so flags that fire on "any electric load" or "single-site load
         // above N" can see sites the dereg gate would otherwise skip.
@@ -6167,14 +6209,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             if (g.countryRegRateOpportunity && !electricIsDereg) {
               g.regulatedRateOpportunitySites += 1;
               const regCost = r[costKey];
-              if (typeof regCost === 'number' && Number.isFinite(regCost)) {
+              // Spend, not the site count, is what the flat 0.25 % is
+              // taken off — so a leased location is counted here and
+              // still contributes nothing to the reg-rate savings.
+              if (!isLeased && typeof regCost === 'number' && Number.isFinite(regCost)) {
                 g.regulatedRateOpportunitySpend += regCost;
               }
             }
           } else if (isRegulatedRateOpportunity(state, provider)) {
             g.regulatedRateOpportunitySites += 1;
             const regCost = r[costKey];
-            if (typeof regCost === 'number' && Number.isFinite(regCost)) {
+            if (!isLeased && typeof regCost === 'number' && Number.isFinite(regCost)) {
               g.regulatedRateOpportunitySpend += regCost;
             }
           }
@@ -6209,7 +6254,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         }
         const cost = r[costKey];
         const spend = (typeof cost === 'number' && Number.isFinite(cost)) ? cost : 0;
-        if (spend) g.spend += spend;
+        if (spend) {
+          g.spend += spend;
+          if (!isLeased) g.savingsEligibleSpend += spend;
+        }
         // Only count an actual supplier here — never fall back to the
         // utility name. A deregulated site with no supplier on file
         // contributes nothing to the Supplier Name column rather than
@@ -6226,8 +6274,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // the supplier's contract window. The state vector is a
         // running sum of these.
         const { lowPct, highPct } = pctsFor(g);
-        const annualLow = (spend > 0 && lowPct != null) ? spend * lowPct : 0;
-        const annualHigh = (spend > 0 && highPct != null) ? spend * highPct : 0;
+        // A leased location gets a zero savings vector rather than a
+        // skipped one: it stays on the Monthly Savings sheet with its
+        // spend and its contract dates intact, showing $0 every month.
+        const savingsSpend = isLeased ? 0 : spend;
+        const annualLow = (savingsSpend > 0 && lowPct != null) ? savingsSpend * lowPct : 0;
+        const annualHigh = (savingsSpend > 0 && highPct != null) ? savingsSpend * highPct : 0;
         const annualMid = (annualLow + annualHigh) / 2;
         const monthlyLowAmt = annualLow / 12;
         const monthlyMidAmt = annualMid / 12;
@@ -6259,9 +6311,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           commodity,
           utility: provider || '',
           supplier: supplierName,
+          // Owned / Leased / blank, straight off the upload. Shown on
+          // the ledger so a row sitting at $0 every month says why.
+          ownership: r.__ownership__ || '',
           annualSpend: Math.round(spend),
-          lowPct,
-          highPct,
+          // A leased location has no savings band applied, so the band
+          // reads blank here rather than showing a rate that produced
+          // nothing.
+          lowPct: isLeased ? null : lowPct,
+          highPct: isLeased ? null : highPct,
           annualLow: Math.round(annualLow),
           annualMid: Math.round(annualMid),
           annualHigh: Math.round(annualHigh),
@@ -6348,11 +6406,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           status,
           totalSites: g.totalSites,
           deregulatedSites: g.deregulatedSites,
+          leasedSites: g.leasedSites,
           regulatedRateOpportunitySites: g.regulatedRateOpportunitySites,
           regulatedRateOpportunitySpend: Math.round(g.regulatedRateOpportunitySpend),
           regRateSavings,
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
+          // What the savings columns are actually a percentage of.
+          savingsEligibleSpend: Math.round(g.savingsEligibleSpend),
           range,
           // European country buckets resolve to a "TBD" band (no
           // committed lowPct/highPct) — flagged here so the by-state
@@ -8872,9 +8933,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // regulated-rate block with its own Year 1-5 cumulative). Gas
     // uses fewer slots; the title / section bands still merge across
     // SPAN so the headings stay aligned across both sections.
-    const SPAN = 26;
+    // Two extra slots when the portfolio has leased locations: a Leased
+    // Sites count next to Deregulated Sites, and the savings-eligible
+    // spend next to the full deregulated spend.
+    const SPAN = 26 + (showLeasedColumns ? 2 : 0);
     const widths = [
-      22, 14, 11, 13, 16, 18, 13,        // ST/Prov/Country..Low % (7)
+      22, 14, 11, 13,                     // ST/Prov/Country..Deregulated Sites (4)
+      ...(showLeasedColumns ? [13] : []), // Leased Sites (1)
+      16, 18,                             // Deregulated Consumption + Spend (2)
+      ...(showLeasedColumns ? [18] : []), // Savings-Eligible Spend (1)
+      13,                                // Low % (1)
       13,                                // High % (1)
       11,                                // Savings % (1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
@@ -8985,7 +9053,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     ws.mergeCells(3, 1, 3, SPAN);
     const toggleHint = ws.getCell(3, 1);
-    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend: Year N columns zero out below it. The Low % and High % cells per state are editable (yellow): type a new range and Savings %, Indicative Annual Savings, and Year 1–5 Cumulative all recompute live.';
+    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend: Year N columns zero out below it. The Low % and High % cells per state are editable (yellow): type a new range and Savings %, Indicative Annual Savings, and Year 1–5 Cumulative all recompute live.'
+      + (showLeasedColumns
+        ? ' Leased locations are excluded from the projection: their spend is still reported under Deregulated Spend/yr, but the savings are taken off Savings-Eligible Spend/yr, which leaves them out.'
+        : '');
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
@@ -9257,6 +9328,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const aggTotalSites  = sumOf('totalSites');
       const aggConsumption = sumOf('consumption');
       const aggSpend       = sumOf('spend');
+      const aggLeasedSites = sumOf('leasedSites');
+      const aggEligible    = sumOf('savingsEligibleSpend');
       if (hiddenRegulatedRows.length > 0) {
         const REG_ROW_FILL = 'FFE5E7EB';
         const REG_ROW_TEXT = SE_SLATE;
@@ -9272,6 +9345,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             cell.value = aggTotalSites;
           } else if (c.sumKey === 'consumption') {
             cell.value = aggConsumption;
+          } else if (c.sumKey === 'leasedSites') {
+            cell.value = aggLeasedSites;
+          // Checked ahead of the spend branch below: the eligible column
+          // carries the 'spend' tag (it is what the savings formulas
+          // multiply against) but its own sum.
+          } else if (c.sumKey === 'savingsEligibleSpend') {
+            cell.value = aggEligible;
           } else if (c.tag === 'spend' || c.sumKey === 'spend') {
             cell.value = aggSpend;
           } else if (c.numFmt && c.numFmt.includes('"$"')) {
@@ -9424,13 +9504,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // so every deregulated market reads consistently.
     const displayDeregStatus = (s) => (s === 'yes' ? 'Deregulated' : s);
 
+    // The leased-location columns, present only on a portfolio that has
+    // some. `Leased Sites` explains why a market's site count can run
+    // ahead of the spend the savings are taken off; `Savings-Eligible
+    // Spend/yr` is that spend, and it carries the 'spend' tag so every
+    // savings formula on the row (Savings %, Indicative Annual Savings,
+    // Year 1-5, and the Total row's spend-weighted average) multiplies
+    // against it instead of the full deregulated figure. With no leased
+    // sites the tag stays on Deregulated Spend/yr and the sheet is
+    // unchanged.
+    const leasedSitesCol = showLeasedColumns
+      ? [{ label: 'Leased Sites', get: (g) => g.leasedSites, numFmt: '#,##0', sumKey: 'leasedSites' }]
+      : [];
+    const eligibleSpendCol = showLeasedColumns
+      ? [{ label: 'Savings-Eligible Spend/yr', tag: 'spend', get: (g) => g.savingsEligibleSpend, numFmt: '"$"#,##0', sumKey: 'savingsEligibleSpend' }]
+      : [];
+    // Only one of the two spend columns carries the formula tag.
+    const fullSpendTag = showLeasedColumns ? undefined : 'spend';
+
     const electricCols = [
       { label: 'ST / Prov / Country', get: (g) => g.state },
       { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      ...leasedSitesCol,
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Deregulated Spend/yr', tag: 'spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      ...eligibleSpendCol,
       // Editable Low / High range inputs replace the static "Range"
       // text column. Yellow fill signals input; downstream Savings %
       // / Annual Savings / Year 1-5 cells are formulas that read
@@ -9475,8 +9575,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      ...leasedSitesCol,
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Deregulated Spend/yr', tag: 'spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      ...eligibleSpendCol,
       // Editable Low / High range inputs replace the static "Range"
       // text column. Yellow fill signals input; downstream Savings %
       // / Annual Savings / Year 1-5 cells are formulas that read
@@ -9558,12 +9660,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const summaryBandHeaderRow = r;
     const summaryBandValueRow = r + 1;
     const summaryBandCumulativeRow = r + 2;
+    // Scope line, only on a portfolio with leased locations: the two
+    // headline figures above cover fewer sites than the portfolio has,
+    // and this is where the band says so.
+    const summaryBandLeasedRow = showLeasedColumns ? r + 3 : null;
     // Two data-quality lines (estimated usage / estimated cost shares).
     // Written even later than the rest of the band — the per-site
     // estimate flags only exist once the Site Detail rows are built.
-    const summaryBandUsageQualityRow = r + 3;
-    const summaryBandCostQualityRow = r + 4;
-    r += 6; // band header + annual + cumulative + 2 data-quality lines + a breather row
+    const summaryBandUsageQualityRow = r + (showLeasedColumns ? 4 : 3);
+    const summaryBandCostQualityRow = summaryBandUsageQualityRow + 1;
+    // band header + annual + cumulative + (leased scope) + 2 data-quality
+    // lines + a breather row
+    r += showLeasedColumns ? 7 : 6;
 
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
@@ -9647,11 +9755,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           status: '',
           totalSites: sum('totalSites'),
           deregulatedSites: sum('deregulatedSites'),
+          leasedSites: sum('leasedSites'),
           regulatedRateOpportunitySites: sum('regulatedRateOpportunitySites'),
           regulatedRateOpportunitySpend: sum('regulatedRateOpportunitySpend'),
           regRateSavings: sum('regRateSavings'),
           consumption: sum('consumption'),
           spend: sum('spend'),
+          savingsEligibleSpend: sum('savingsEligibleSpend'),
           range: '',
           savingsPct: null,
           lowPct: null,
@@ -9763,6 +9873,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       cNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       cNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
       ws.getRow(summaryBandCumulativeRow).height = 24;
+
+      // Scope line — what the two figures above leave out. Same three-part
+      // layout as the data-quality lines below them.
+      if (summaryBandLeasedRow) {
+        ws.mergeCells(summaryBandLeasedRow, 1, summaryBandLeasedRow, 9);
+        const lLabel = ws.getCell(summaryBandLeasedRow, 1);
+        lLabel.value = 'Leased Sites (excluded from the savings projection)';
+        lLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+        lLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        const lValue = ws.getCell(summaryBandLeasedRow, 10);
+        lValue.value = leasedScope.leased;
+        lValue.numFmt = '#,##0';
+        lValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_EST } };
+        lValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+        ws.mergeCells(summaryBandLeasedRow, 11, summaryBandLeasedRow, SPAN);
+        const lNote = ws.getCell(summaryBandLeasedRow, 11);
+        lNote.value = `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased: their supply contracts aren't the portfolio's to re-source, so the savings above are taken off the remaining ${leasedScope.scoped.toLocaleString()}.`;
+        lNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+        lNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        ws.getRow(summaryBandLeasedRow).height = 24;
+      }
 
       // ---- Populate the Executive Summary tab (tab #1) -------------
       // The two headline savings figures mirror the band just written —
@@ -10695,6 +10828,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         { label: 'Site Name', get: (s) => s.siteName, width: 28 },
         { label: 'ST / Prov / Country', get: (s) => s.state, width: 22 },
         { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 14 },
+        // Why a row can sit at $0 for all 60 months with real spend on
+        // it: no savings are projected onto a leased location.
+        { label: 'Ownership', get: (s) => s.ownership, width: 12 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
         { label: 'Contract Start', get: (s) => s.contractStart, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },

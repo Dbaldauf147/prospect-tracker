@@ -58,3 +58,25 @@ export function scopeSitesByOwnership(sites = [], excludeLeased) {
     ? sites.filter(s => !isLeased(s))
     : sites;
 }
+
+// The same "known to be leased" test, read off a Utility Lookup row rather
+// than a compliance site. Those rows carry the canonical status the upload
+// normalized to on `__ownership__`, so the rule — and everything said above
+// about an unknown status not counting as somebody else's building — is
+// identical; only the field name differs.
+export const isLeasedUtilityRow = (r) => r?.__ownership__ === 'Leased';
+
+// Savings scope for the Master Analysis. Indicative savings are a
+// procurement motion on the supply contract behind the meter, and on a
+// leased location that contract is usually the landlord's — so no savings
+// are projected onto those sites. Unlike the compliance scope this isn't a
+// toggle: a leased building never carries a savings number.
+//
+// The counts are what the export says out loud, so the reader can see the
+// gap between the sites listed and the sites the money was projected on.
+export function savingsOwnershipScope(rows = []) {
+  let leased = 0;
+  for (const r of rows) if (isLeasedUtilityRow(r)) leased += 1;
+  const total = rows.length;
+  return { total, leased, scoped: total - leased, active: leased > 0 };
+}
