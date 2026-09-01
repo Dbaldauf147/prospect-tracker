@@ -287,6 +287,16 @@
   max-height: 360px;
 }
 
+/* The Questions tab's cards. Every other card body caps at 220px and
+   scrolls, which suits a list of picklist options — you skim it. A question
+   is read, and a card that scrolls inside a page that scrolls hides the
+   rows past the fourth behind a scrollbar most people never notice. So
+   these grow to their content and let the page do the scrolling. */
+.questionsCardBody {
+  max-height: none;
+  overflow-y: visible;
+}
+
 .option {
   font-size: 0.78rem;
   color: var(--color-text);
