@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
-import { loadOpps2Newest } from '../../utils/opps2Store';
+import { loadOpps2Newest, setOppFields } from '../../utils/opps2Store';
 import { oppScenario } from '../../utils/oppPricingImport';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
+import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../../utils/pricingAnalysis';
 import { OppImportModal } from './OppImportModal';
 import { PricingBasesModal } from './PricingBasesModal';
 import {
@@ -187,7 +188,7 @@ function BasisCell({ value, bases, onCommit }) {
 // One count box in the estimator bar. Held as text while the user types so a
 // half-typed number doesn't re-run the whole estimate on every keystroke as
 // a different figure; commits on blur / Enter.
-function CountInput({ label, value, onCommit, placeholder, wide }) {
+function CountInput({ label, value, onCommit, placeholder, wide, title }) {
   const [draft, setDraft] = useState(null);
   const shown = draft !== null ? draft : (value === '' || value == null ? '' : String(value));
   function commit() {
@@ -197,7 +198,7 @@ function CountInput({ label, value, onCommit, placeholder, wide }) {
     onCommit(typed === '' ? '' : (parseMoney(typed) ?? ''));
   }
   return (
-    <label className={styles.pricingField}>
+    <label className={styles.pricingField} title={title}>
       <span className={styles.pricingFieldLabel}>{label}</span>
       <input
         type="number"
@@ -288,6 +289,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // Memoized rather than a bare `|| {}`: a fresh empty object each render
   // would re-run every estimate below on any keystroke on the page.
   const counts = useMemo(() => scenario?.counts || {}, [scenario?.counts]);
+  // Units typed against a service for THIS estimate. They live with the
+  // estimate rather than in the rate card because "invoice processing at 40
+  // of the 819 sites" is a fact about one deal: typing it here re-prices
+  // this analysis and nothing else — not the other opps, and not the
+  // account's own site count, which this tab never writes to at all.
+  const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
   const dealSize = scenario?.dealSize ?? '';
 
   function savePricingField(name, field, value) {
@@ -315,11 +322,49 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // writes nothing and clears the record (see savePricingEstimate).
   useEffect(() => {
     savePricingEstimate(user?.uid, {
-      scenario: { services: [...inScope], counts, dealSize },
+      scenario: { services: [...inScope], counts, serviceUnits, dealSize },
       pinned: pinnedNames ? [...pinnedNames] : null,
       oppImport,
     });
-  }, [user?.uid, inScope, counts, dealSize, pinnedNames, oppImport]);
+  }, [user?.uid, inScope, counts, serviceUnits, dealSize, pinnedNames, oppImport]);
+
+  // The last save, so the note under the bar can say it landed — and say
+  // it didn't when it didn't. { ok, at, error }.
+  const [saved, setSaved] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // Freeze the estimate onto the opp it was built for. The whole analysis
+  // goes onto the record, and the year-one figure into the visible
+  // Estimated Fee column, so the opp shows the number and can open the
+  // working behind it. What's written is a copy, not a link: the estimator
+  // keeps whatever is on screen, and a rate edited next week doesn't
+  // rewrite what this deal was quoted at.
+  async function saveToOpp() {
+    const oppId = oppImport?.id;
+    if (!oppId || saving) return;
+    setSaving(true);
+    try {
+      const analysis = buildPricingAnalysis({
+        totals, counts, dealSize, bases, account: oppImport.account,
+      });
+      await setOppFields(user?.uid, oppId, {
+        [ANALYSIS_FIELD]: analysis,
+        [ESTIMATED_FEE_COLUMN]: formatMoney(analysis.year1Total) || '$0',
+      });
+      setSaved({ ok: true, at: Date.now() });
+    } catch (err) {
+      console.error('Services Pricing: could not save the analysis to the opp', err);
+      setSaved({ ok: false, error: err?.message || 'The save did not go through.' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // A "saved" note goes stale the moment the estimate moves under it, so it
+  // clears itself rather than going on claiming figures that are no longer
+  // the ones on the opp. Saving doesn't touch these, so the note survives
+  // its own save.
+  useEffect(() => { setSaved(null); }, [inScope, counts, serviceUnits, dealSize]);
 
   async function openOppPicker() {
     setOppPicker(true);
@@ -364,10 +409,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       if (basis.unit && entry.units === null) needed.add(basis.unit);
     }
 
-    setScenario({ services: scen.services, counts: scen.counts, dealSize: scen.dealSize });
+    setScenario({ services: scen.services, counts: scen.counts, serviceUnits: {}, dealSize: scen.dealSize });
     setPinnedNames(scen.services.length > 0 ? new Set(scen.services) : null);
+    setSaved(null);
     setOppImport({
       account: scen.account,
+      // The opp's own id, so the finished estimate can be saved back onto
+      // the row it was built from without picking it out of the list again.
+      id: scen.id,
       stage: scen.stage,
       company: scen.matchedProspect ? scen.company : '',
       services: scen.services.length,
@@ -386,15 +435,30 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   }
 
   function clearScope() {
-    setScenario(s => ({ ...s, services: [] }));
+    // The per-service units go with the scope: they're this deal's slice of
+    // the account, and leaving them behind would quietly re-price whatever
+    // is estimated next against the last deal's numbers.
+    setScenario(s => ({ ...s, services: [], serviceUnits: {} }));
     setOppImport(null);
     setPinnedNames(null);
+    setSaved(null);
   }
 
   function toggleScope(name) {
     const next = new Set(inScope);
     if (next.has(name)) next.delete(name); else next.add(name);
     setScenario(s => ({ ...s, services: [...next] }));
+  }
+  // Blank clears the row's own figure rather than storing a zero, which
+  // would price the service at nothing instead of handing it back to the
+  // shared count.
+  function setServiceUnits(name, value) {
+    setScenario(s => {
+      const next = { ...(s?.serviceUnits || {}) };
+      if (value === '' || value == null) delete next[name];
+      else next[name] = value;
+      return { ...s, serviceUnits: next };
+    });
   }
   function setCount(unit, value) {
     setScenario(s => ({ ...s, counts: { ...(s?.counts || {}), [unit]: value } }));
@@ -407,16 +471,22 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const { lines } = estimateScope({
       rows: serviceRows,
       services: serviceRows.map(r => r.name),
-      pricing, counts, dealSize, bases,
+      pricing, counts, dealSize, bases, serviceUnits,
     });
     return new Map(lines.map(l => [l.name, l]));
-  }, [serviceRows, pricing, counts, dealSize, bases]);
+  }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
 
   // The deal itself: only what's ticked.
   const totals = useMemo(
-    () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize, bases }),
-    [serviceRows, inScope, pricing, counts, dealSize, bases],
+    () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize, bases, serviceUnits }),
+    [serviceRows, inScope, pricing, counts, dealSize, bases, serviceUnits],
   );
+
+  // Where each count came from, by unit, so the box can say so. Only an
+  // import knows: a number the user typed came from them.
+  const countSources = useMemo(() => Object.fromEntries(
+    (oppImport?.filled || []).map(f => [f.unit, f.source]),
+  ), [oppImport]);
 
   // Count boxes are shown for the units the scope actually needs, so the bar
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
@@ -442,6 +512,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
       const est = allEstimates.get(name);
+      const ownUnits = parseMoney(serviceUnits[name]);
       return {
         id: name,
         name,
@@ -456,9 +527,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         // Typed against the row when there is one, otherwise whatever the
         // estimator's count works out to — the estimate already prefers the
         // typed figure, except on a row whose fee was typed too, where it
-        // never got as far as counting.
-        units: entry.units !== null ? entry.units : (est?.units ?? null),
-        _unitsTyped: entry.units !== null,
+        // never got as far as counting. This estimate's own figure comes
+        // first, then the rate card's standing one.
+        units: ownUnits !== null ? ownUnits : (entry.units !== null ? entry.units : (est?.units ?? null)),
+        _unitsTyped: ownUnits !== null || entry.units !== null,
+        _unitsOwn: ownUnits !== null,
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',
         fee: est?.priced ? est.fee : null,
@@ -471,7 +544,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       };
     })
     .filter(r => !term || [r.name, r.serviceBucket, r.basisLabel, r.notes].some(v => String(v).toLowerCase().includes(term))),
-  [serviceRows, pricing, bases, allEstimates, inScope, pinnedNames, term]);
+  [serviceRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, term]);
 
   // Band 0 is the imported scope, band 1 everything else, so those rows sit
   // at the top of whatever sort or search is active rather than only when
@@ -574,10 +647,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                     </span>
                   )}
                 placeholder={row._unitLabel}
-                title={row._unitsTyped
-                  ? `Typed in: this service is charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. Clear the cell to go back to that count.`
-                  : `From the ${row._unitLabel} box above. Type a figure to charge this service on its own number of ${unit} instead.`}
-                onCommit={(v) => savePricingField(row.name, 'units', v)}
+                title={row._unitsOwn
+                  ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone — no other deal and no account record moves. Clear the cell to go back to that count.`
+                  : row._unitsTyped
+                    ? `A standing figure on the rate card: ${row.units.toLocaleString('en-US')} ${unit} on every deal. Type here to charge this estimate on its own number instead.`
+                    : `From the ${row._unitLabel} box above. Type a figure to charge this service on its own number of ${unit} in this estimate.`}
+                onCommit={(v) => setServiceUnits(row.name, v)}
               />
             );
           },
@@ -687,11 +762,19 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               {oppImport.stage && <span className={styles.oppChipStage}>{oppImport.stage}</span>}
             </span>
           )}
+          {/* Where a figure came from is worth saying on the box itself,
+              because a count seeded off a company record reads exactly like
+              one somebody typed for this deal — and only one of them is
+              worth trusting. Editing either only ever moves this estimate:
+              nothing on this tab writes to the account. */}
           {visibleUnits.map(u => (
             <CountInput
               key={u.unit}
               label={u.label}
               value={counts?.[u.unit] ?? ''}
+              title={`${u.label} this estimate prices against`
+                + (countSources[u.unit] ? ` — filled from ${countSources[u.unit]}.` : '.')
+                + ' Editing it re-prices this estimate only: the account record and every other deal stay as they are.'}
               onCommit={(v) => setCount(u.unit, v)}
             />
           ))}
@@ -705,6 +788,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             value={dealSize}
             onCommit={(v) => setScenario(s => ({ ...s, dealSize: v }))}
           />
+          {oppImport?.id && inScope.size > 0 && (
+            <button
+              type="button"
+              className={styles.saveOppBtn}
+              onClick={saveToOpp}
+              disabled={saving}
+              title={`Freeze this estimate onto the ${oppImport.account} opp: the Estimated Fee column shows the year-one figure, and clicking it opens this working. A copy, so later rate edits don't rewrite it.`}
+            >{saving ? 'Saving…' : 'Save to opp'}</button>
+          )}
           {inScope.size > 0 && (
             <button
               type="button"
@@ -773,6 +865,17 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           {oppImport.unmatchedTokens.length > 0 && (
             <span className={styles.oppImportGap}>
               {' Nothing in the Scope matched: '}{oppImport.unmatchedTokens.join(', ')}.
+            </span>
+          )}
+          {saved?.ok && (
+            <span className={styles.oppSavedNote}>
+              {' Saved to the '}{oppImport.account}{' opp — '}{formatMoney(totals.year1Total) || '$0'}
+              {' in Estimated Fee, with this working behind it.'}
+            </span>
+          )}
+          {saved && !saved.ok && (
+            <span className={styles.oppImportGap}>
+              {' Not saved to the opp: '}{saved.error}
             </span>
           )}
           {pinnedNames && (

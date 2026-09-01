@@ -11,11 +11,16 @@
 //   rate   — dollars per unit, a flat dollar figure, or a percentage,
 //            depending on the basis
 //   minFee — dollar floor applied to unit- and percentage-based fees
-//   units  — how many units THIS service is charged on, typed against the
-//            row. Overrides the estimator's count for that unit, because a
-//            service is often sold on a slice of the account rather than
-//            all of it: 819 sites on file, invoice processing at 40 of
-//            them. Blank hands the row back to the shared count.
+//   units  — how many units THIS service is charged on. Overrides the
+//            estimator's count for that unit, because a service is often
+//            sold on a slice of the account rather than all of it: 819
+//            sites on file, invoice processing at 40 of them. Blank hands
+//            the row back to the shared count.
+//            This one is the STANDING default, the same on every deal. The
+//            figure typed into the Units column belongs to the estimate
+//            being built instead (scenario.serviceUnits, passed to
+//            estimateScope), because 40 of 819 sites is a fact about one
+//            deal and typing it shouldn't re-price every other one.
 //   avgFee — a fee typed straight into the Estimated Year 1 Fee column:
 //            what this service usually sells for. It OVERRIDES the basis
 //            and rate would work out to, because it is the more direct
@@ -373,7 +378,7 @@ export function feeBasisLabel(line, bases = PRICING_BASES) {
 // apart on the way through: a $60k/yr service over three years and a $180k
 // project are the same contract value but not the same deal — and they are
 // very different first years, which is why both totals come back.
-export function estimateScope({ rows, services, pricing, counts, dealSize, bases = PRICING_BASES }) {
+export function estimateScope({ rows, services, pricing, counts, dealSize, bases = PRICING_BASES, serviceUnits = null }) {
   const inScope = new Set(services || []);
   const lines = [];
   let recurringAnnual = 0;
@@ -384,7 +389,13 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
 
   for (const row of rows || []) {
     if (!inScope.has(row.name)) continue;
-    const entry = pricingFor(pricing, row.name, bases);
+    const card = pricingFor(pricing, row.name, bases);
+    // Units typed against this row for THIS estimate beat the rate card's,
+    // which is a standing default across every deal — see the entry notes
+    // at the top of the file. A blank here isn't "use the shared count",
+    // it's "no answer for this deal", so the card still gets its say.
+    const own = parseMoney(serviceUnits?.[row.name]);
+    const entry = own === null ? card : { ...card, units: own };
     const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
     // A row carrying its own unit count doesn't need the shared one, so it
     // doesn't put a box on the estimator asking for it.

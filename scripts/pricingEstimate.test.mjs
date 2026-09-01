@@ -35,13 +35,20 @@ function check(label, actual, expected) {
 
 const UID = 'user-1';
 const IMPORT = {
-  account: 'Ventas', stage: 'Lead', company: 'Ventas Inc',
+  account: 'Ventas', id: '17', stage: 'Lead', company: 'Ventas Inc',
   services: 5, unmatchedTokens: ['widget polishing'],
   filled: [{ unit: 'sites', label: 'Sites', value: 819, source: 'the opp’s “Sites” column' }],
   dealSizeSource: 'the opp’s Quoted Amount', missing: ['Meters'], noPrice: [],
 };
 const ESTIMATE = {
-  scenario: { services: ['Bill Pay', 'Metering'], counts: { sites: 819, accounts: 15000 }, dealSize: 300000 },
+  scenario: {
+    services: ['Bill Pay', 'Metering'],
+    counts: { sites: 819, accounts: 15000 },
+    // Invoice processing at 40 of the 819 sites: a fact about this deal,
+    // which is why it travels with the estimate and not the rate card.
+    serviceUnits: { Metering: 40 },
+    dealSize: 300000,
+  },
   pinned: ['Bill Pay', 'Metering'],
   oppImport: IMPORT,
 };
@@ -62,7 +69,7 @@ const ESTIMATE = {
 
 // ── Clearing the scope clears the record ──────────────────────────────
 {
-  savePricingEstimate(UID, { scenario: { services: [], counts: {}, dealSize: '' }, pinned: null, oppImport: null });
+  savePricingEstimate(UID, { scenario: { services: [], counts: {}, serviceUnits: {}, dealSize: '' }, pinned: null, oppImport: null });
   check('an emptied estimator leaves nothing behind', loadPricingEstimate(UID), null);
   check('and the key is gone, not just blank',
     globalThis.localStorage.getItem(pricingEstimateKey(UID)), null);
@@ -88,6 +95,11 @@ const ESTIMATE = {
   check('junk is not an estimate', normalizeEstimate('nope'), null);
   check('an empty estimate is not stored', normalizeEstimate({ scenario: { services: [] } }), null);
   check('an untouched estimator is empty', isEmptyEstimate({ scenario: { services: [], counts: {}, dealSize: '' } }), true);
+  check('units typed for this deal are worth remembering on their own',
+    normalizeEstimate({ scenario: { serviceUnits: { 'Bill Pay': 40, 'Bad': 'lots' } } }).scenario.serviceUnits,
+    { 'Bill Pay': 40 });
+  check('and the opp the estimate came from is kept, to save back to',
+    normalizeEstimate({ scenario: { services: ['A'] }, oppImport: IMPORT }).oppImport.id, '17');
 }
 
 // ── A record that isn't JSON any more ─────────────────────────────────
