@@ -80,3 +80,44 @@ export function savingsOwnershipScope(rows = []) {
   const total = rows.length;
   return { total, leased, scoped: total - leased, active: leased > 0 };
 }
+
+// Tenure (Owned / Leased) coverage across the loaded Utility Lookup rows —
+// what the page's missing-tenure warning is written from.
+//
+// Both scopes above read one column, and neither can tell an upload that
+// never carried it from a portfolio that owns everything outright: no row
+// is Leased either way, so the compliance subtabs screen every building and
+// the Master Analysis projects savings on the whole footprint. That is a
+// real number moving on a column nobody noticed was absent, which is why
+// its absence gets said out loud rather than inferred from a silent zero.
+//
+// `withValue` counts the rows carrying any tenure answer at all, canonical
+// or not: "Owned/Leased" and "TBD" are answers normalizeOwnership couldn't
+// place, but they are not silence — the page shows them as typed — so they
+// count as uploaded and only `missing` drives the warning.
+export function tenureCoverage(rows = []) {
+  let owned = 0;
+  let leased = 0;
+  let unplaceable = 0;
+  for (const r of rows) {
+    const canonical = r?.__ownership__;
+    if (canonical === 'Owned') owned += 1;
+    else if (canonical === 'Leased') leased += 1;
+    else if (String(r?.__ownershipRaw__ ?? '').trim()) unplaceable += 1;
+  }
+  const total = rows.length;
+  const known = owned + leased;
+  const withValue = known + unplaceable;
+  return {
+    total,
+    owned,
+    leased,
+    // A value the upload couldn't fold onto Owned or Leased. Uploaded, so
+    // not part of the warning — but it doesn't scope anything either.
+    unplaceable,
+    known,
+    withValue,
+    // Rows with no tenure answer at all: the gap being warned about.
+    missing: total - withValue,
+  };
+}
