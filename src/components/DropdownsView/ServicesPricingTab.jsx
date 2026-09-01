@@ -260,6 +260,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // came from and what it couldn't answer. Cleared when the scope is.
   const [oppImport, setOppImport] = useState(null);
 
+  // The services an import put in scope, held to the top of the table so
+  // the five rows the deal is about aren't scattered through a hundred and
+  // forty. It's a snapshot of what the import ticked rather than a live
+  // read of the scope: ticking a sixth service afterwards shouldn't yank
+  // its row out from under the click, and unticking one shouldn't drop it
+  // back into the alphabet before you can see what you just did. Null when
+  // nothing is pinned.
+  const [pinnedNames, setPinnedNames] = useState(null);
+
   async function openOppPicker() {
     setOppPicker(true);
     if (oppRecords || oppLoading) return;
@@ -304,6 +313,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     }
 
     setScenario({ services: scen.services, counts: scen.counts, dealSize: scen.dealSize });
+    setPinnedNames(scen.services.length > 0 ? new Set(scen.services) : null);
     setOppImport({
       account: scen.account,
       stage: scen.stage,
@@ -326,6 +336,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   function clearScope() {
     setScenario(s => ({ ...s, services: [] }));
     setOppImport(null);
+    setPinnedNames(null);
   }
 
   function toggleScope(name) {
@@ -397,10 +408,23 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _note: est?.note || '',
         _typed: !!est?.typed,
         _scoped: inScope.has(name),
+        _pinned: !!pinnedNames?.has(name),
       };
     })
     .filter(r => !term || [r.name, r.serviceBucket, r.basisLabel, r.notes].some(v => String(v).toLowerCase().includes(term))),
-  [serviceRows, pricing, allEstimates, inScope, term]);
+  [serviceRows, pricing, allEstimates, inScope, pinnedNames, term]);
+
+  // Band 0 is the imported scope, band 1 everything else, so those rows sit
+  // at the top of whatever sort or search is active rather than only when
+  // the In Scope column happens to be the sort key. Memoized against the
+  // pinned set because DataTable memoizes the grouped order against this
+  // callback's identity — a fresh arrow every render would regroup the
+  // whole table on each keystroke in the search box — and left undefined
+  // when nothing is pinned so the table skips the pass entirely.
+  const pinnedRowGroup = useMemo(
+    () => (pinnedNames ? (row) => (pinnedNames.has(row.name) ? 0 : 1) : undefined),
+    [pinnedNames],
+  );
 
   const columns = PRICING_TABLE_COLUMNS.map(col => {
     const base = { key: col.key, label: col.label, defaultWidth: col.width };
@@ -639,6 +663,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         <div className={styles.oppImportNote}>
           <strong>{oppImport.account}</strong>
           {' — ticked '}{oppImport.services}{' service'}{oppImport.services === 1 ? '' : 's'}
+          {pinnedNames && ' and pinned them to the top of the table'}
           {oppImport.filled.length > 0 && (
             <>{'; filled '}{oppImport.filled.map(f => `${f.label} ${f.value.toLocaleString('en-US')} from ${f.source}`).join(', ')}</>
           )}
@@ -652,6 +677,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.oppImportGap}>
               {' Nothing in the Scope matched: '}{oppImport.unmatchedTokens.join(', ')}.
             </span>
+          )}
+          {pinnedNames && (
+            <button
+              type="button"
+              className={styles.unpinBtn}
+              onClick={() => setPinnedNames(null)}
+              title="Let the pinned services fall back into the table's own order — the scope and the estimate stay as they are"
+            >Unpin</button>
           )}
         </div>
       )}
@@ -671,7 +704,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           columns={columns}
           rows={rows}
           alwaysVisible={['scope', 'name']}
-          rowClassName={(row) => (row._scoped ? styles.pricingRowScoped : undefined)}
+          rowGroup={pinnedRowGroup}
+          rowClassName={(row) => [
+            row._scoped ? styles.pricingRowScoped : '',
+            row._pinned ? styles.pricingRowPinned : '',
+          ].filter(Boolean).join(' ') || undefined}
           exportFileName="Services Pricing"
           settings={settings}
           updateSettings={updateSettings}

@@ -2135,6 +2135,13 @@
   background: rgba(59, 130, 246, 0.06);
 }
 
+/* A row an import pinned to the top. The accent rail marks where the
+   pinned block ends, which the scope tint alone can't do once a pinned
+   service has been unticked. */
+.pricingRowPinned td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
 .pricingEstScoped {
   font-weight: 700;
   color: var(--color-accent);
@@ -2203,6 +2210,28 @@
 .oppImportGap {
   color: #92400E;
   font-weight: 600;
+}
+
+/* Drops the pinned block back into the table's own order without touching
+   the scope or the estimate — sat in the import note because that's the
+   line that says the rows were pinned in the first place. */
+.unpinBtn {
+  margin-left: 0.4rem;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.unpinBtn:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 /* The opp picker. Shorter than the service detail panel — it's a list to
