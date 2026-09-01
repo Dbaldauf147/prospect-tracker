@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { rolloutWeeks } from '../../data/serviceCatalog';
+import { parseAutoAddList, formatAutoAddList } from '../../utils/serviceAutoAdd';
 import { UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import {
   TIMELINE_STAGE_OWNERS,
@@ -308,6 +309,117 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
                   </select>
                 )}
               </div>
+            );
+          })}
+        </div>
+      )}
+      {picking && (
+        <>
+          <input
+            type="text"
+            autoFocus
+            className={styles.detailInput}
+            value={query}
+            placeholder="Search services…"
+            onChange={e => setQuery(e.target.value)}
+          />
+          <div className={styles.detailPickList}>
+            {shown.length === 0 ? (
+              <div className={styles.detailEmpty}>No services match “{query}”.</div>
+            ) : shown.map(name => {
+              const on = selectedSet.has(name.trim().toLowerCase());
+              return (
+                <label key={name} className={on ? styles.detailPickRowOn : styles.detailPickRow}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(name)} />
+                  <span>{name}</span>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// The services that come into Scope with this one. Same picker shape as the
+// dependency editor above, minus the steps: this list is about what's sold
+// together, not about what waits for what. Ticking this service on the Opps
+// Scope board ticks everything named here at the same time — additively, so
+// any of them can still be taken off afterwards.
+function AutoAddEditor({ value, options, selfName, onCommit }) {
+  const [query, setQuery] = useState('');
+  // Behind a button for the same reason the dependency picker is: 139
+  // services open by default would push the section below off the panel.
+  const [picking, setPicking] = useState(false);
+
+  const selected = useMemo(() => parseAutoAddList(value), [value]);
+  const selectedSet = useMemo(
+    () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
+  const pickable = useMemo(
+    () => options.filter(o => o.trim().toLowerCase() !== String(selfName).trim().toLowerCase()),
+    [options, selfName]);
+  const liveSet = useMemo(
+    () => new Set(pickable.map(o => o.trim().toLowerCase())), [pickable]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? pickable.filter(o => o.toLowerCase().includes(q)) : pickable;
+  }, [pickable, query]);
+
+  function toggle(name) {
+    const key = name.trim().toLowerCase();
+    const next = selectedSet.has(key)
+      ? selected.filter(s => s.trim().toLowerCase() !== key)
+      : [...selected, name];
+    const chosen = new Set(next.map(s => s.trim().toLowerCase()));
+    const ordered = [
+      ...pickable.filter(o => chosen.has(o.trim().toLowerCase())),
+      ...next.filter(s => !liveSet.has(s.trim().toLowerCase())),
+    ];
+    onCommit(formatAutoAddList(ordered));
+  }
+
+  return (
+    <div className={styles.detailSection}>
+      <div className={styles.detailSectionHead}>
+        <span className={styles.detailSectionTitle}>Added to Scope with this one</span>
+        <span className={styles.detailSectionCount}>{selected.length}</span>
+        <button
+          type="button"
+          className={styles.serviceLinkEditBtn}
+          onClick={() => { setPicking(p => !p); setQuery(''); }}
+        >{picking ? 'Done' : '+ Add'}</button>
+        {selected.length > 0 && (
+          <button type="button" className={styles.serviceLinkEditBtn} onClick={() => onCommit('')}>
+            Clear
+          </button>
+        )}
+      </div>
+      {selected.length === 0 ? (
+        <p className={styles.detailEmpty}>
+          Picking {selfName} on the Opps Scope board adds nothing else.
+        </p>
+      ) : (
+        <div className={styles.detailChips}>
+          {selected.map(name => {
+            const stale = !liveSet.has(name.trim().toLowerCase());
+            return (
+              <span
+                key={name}
+                className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
+                title={stale
+                  ? `"${name}" isn't in the Solutions list any more`
+                  : `${name} goes into Scope whenever ${selfName} does`}
+              >
+                {name}
+                <button
+                  type="button"
+                  className={styles.detailChipRemove}
+                  onClick={() => toggle(name)}
+                  title={`Remove ${name}`}
+                  aria-label={`Remove ${name}`}
+                >×</button>
+              </span>
             );
           })}
         </div>
@@ -977,6 +1089,7 @@ function LinkField({ name, url, onSaveUrl }) {
  *   options     - every Solutions name, for the dependency picker
  *   templates   - every timeline template, normalized; the ones attached to
  *                 this service are what the step editor edits
+ *   autoAddedBy - string[], services whose Auto-add list names this one
  *   onSaveField - (name, field, value) => void, the table's own save path
  *   onSaveUrl   - (name, url) => void
  *   onToggleHide- (name) => void
@@ -990,6 +1103,9 @@ export function ServiceDetailModal({
   url,
   hidden,
   dependents,
+  // Which services pull this one into Scope — the reverse of its own
+  // Auto-add list, derived by the parent since no row stores it.
+  autoAddedBy = [],
   options,
   templates = [],
   // Which box the services board files this service in, and the boxes it
@@ -1124,6 +1240,31 @@ export function ServiceDetailModal({
               <div className={styles.detailChips}>
                 {dependents.map(dep => (
                   <span key={dep} className={styles.serviceDepChip} title={`${dep} can't start until ${name} is rolled out`}>{dep}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <AutoAddEditor
+            value={meta?.autoAdd}
+            options={options}
+            selfName={name}
+            onCommit={save('autoAdd')}
+          />
+
+          {/* The other direction again, and the one that explains a tick
+              nobody made: this service arriving in Scope on its own. */}
+          <div className={styles.detailSection}>
+            <div className={styles.detailSectionHead}>
+              <span className={styles.detailSectionTitle}>Comes into Scope with</span>
+              <span className={styles.detailSectionCount}>{autoAddedBy.length}</span>
+            </div>
+            {autoAddedBy.length === 0 ? (
+              <p className={styles.detailEmpty}>Nothing adds {name} to Scope automatically.</p>
+            ) : (
+              <div className={styles.detailChips}>
+                {autoAddedBy.map(src => (
+                  <span key={src} className={styles.serviceDepChip} title={`Picking ${src} on the Opps Scope board adds ${name} too`}>{src}</span>
                 ))}
               </div>
             )}

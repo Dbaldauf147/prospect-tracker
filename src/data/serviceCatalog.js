@@ -204,7 +204,7 @@ export function formatRolloutWeeks(raw) {
 // it was its own column — reads still honour it, writes go to `bfoTag`.
 export const SERVICE_EDITABLE_FIELDS = [
   'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
-  'timelineDriven', 'rolloutTime', 'dependsOn',
+  'timelineDriven', 'rolloutTime', 'dependsOn', 'autoAdd',
 ];
 
 // BFO Tag and Local Project Name held the same "#DATA" / "#SUECO" family
@@ -242,7 +242,8 @@ export function getEffectiveServiceMetadata(name, overrides) {
     return {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
-      timelineDriven: '', rolloutTime: '', dependsOn: '', sme: '', ktm: '',
+      timelineDriven: '', rolloutTime: '', dependsOn: '', autoAdd: '',
+      sme: '', ktm: '',
     };
   }
   const bfoTag = mergedBfoTag(seed, override);
@@ -262,6 +263,11 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // as a comma-separated list of Solutions names. No seed — the
     // dependencies are whatever the user maps on the Services tab.
     dependsOn:        override?.dependsOn        ?? seed?.dependsOn        ?? '',
+    // Services that come into Scope with this one, as a comma-separated
+    // list of Solutions names. No seed — it's whatever the user maps on the
+    // Services tab; see src/utils/serviceAutoAdd.js for how the Scope
+    // picker applies it.
+    autoAdd:          override?.autoAdd          ?? seed?.autoAdd          ?? '',
     // Free text: the Schneider subject-matter expert for this service. No
     // seed value — it's whoever the user names on the Services tab.
     sme:              override?.sme              ?? seed?.sme              ?? '',

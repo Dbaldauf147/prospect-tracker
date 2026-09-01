@@ -26,6 +26,7 @@ import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
+import { formatAutoAddList, autoAddedByMap } from '../../utils/serviceAutoAdd';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -56,6 +57,10 @@ const SERVICE_TABLE_COLUMNS = [
   // fit: "Rollout Time (weeks)" is where the unit is stated.
   { key: 'rolloutTime',      label: 'Rollout Time (weeks)', width: 190, editable: true  },
   { key: 'dependsOn',        label: 'Dependent Rollout Services', width: 260, editable: true },
+  // Services that come into Scope with this one. Picked here; applied by
+  // the Opps Scope board, which ticks them the moment this service is
+  // ticked (src/utils/serviceAutoAdd.js).
+  { key: 'autoAdd',          label: 'Auto-add Services', width: 240,    editable: true  },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
   { key: 'ktm',              label: 'KTM',               width: 150,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
@@ -71,6 +76,7 @@ const SERVICE_TABLE_COLUMNS = [
 const SERVICES_LATE_COLUMNS = [
   { key: 'sme',       flag: 'servicesSmeColumnRevealed' },
   { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
+  { key: 'autoAdd',   flag: 'servicesAutoAddColumnRevealed' },
   { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
   { key: 'serviceBucket', flag: 'servicesBucketColumnRevealed' },
   // Not a new column, but the survivor of the BFO Tag / Local Project Name
@@ -291,6 +297,112 @@ function ServiceWeeksCell({ value, onCommit }) {
   );
 }
 
+// The service picker both multi-service columns drop under their cell.
+// Portalled to the body: the table scrolls both ways inside its own wrapper,
+// which would otherwise clip the popover.
+//
+// It owns the search box and the list; the cell owns what "selected" means
+// (Dependent Rollout Services stores a step alongside each name, Auto-add
+// Services stores plain names), so ticking is handed back rather than done
+// here.
+function ServicePickPopup({
+  rect, options, isOn, onToggle, selectedCount, onClear, onClose,
+}) {
+  const [query, setQuery] = useState('');
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+  }, [options, query]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <>
+      {/* Click-away catcher, so the picker closes on any outside click
+          without each cell wiring up its own document listener.
+
+          Both of these stop propagation as well as the cell does: a portal
+          renders into document.body but still bubbles its events up the
+          React tree, so without it dismissing the picker would land as a
+          click on the row underneath and open its popup. */}
+      <div
+        onClick={(e) => { swallowClick(e); onClose(); }}
+        style={{ position: 'fixed', inset: 0, zIndex: 9000, background: 'transparent' }}
+      />
+      <div
+        onClick={swallowClick}
+        style={{
+          position: 'fixed', zIndex: 9001,
+          left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
+          ...(window.innerHeight - rect.bottom < 280 && rect.top > window.innerHeight - rect.bottom
+            ? { bottom: Math.round(window.innerHeight - rect.top + 4) }
+            : { top: Math.round(rect.bottom + 4) }),
+          width: 320, maxHeight: 300, background: '#fff',
+          border: '1px solid var(--color-border)', borderRadius: 6,
+          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.4rem 0.45rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search services…"
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.75rem', fontFamily: 'inherit',
+            }}
+          />
+        </div>
+        <div style={{ overflowY: 'auto', padding: '0.2rem 0' }}>
+          {shown.length === 0 && (
+            <div style={{ padding: '0.4rem 0.55rem', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              No services match “{query}”.
+            </div>
+          )}
+          {shown.map(name => {
+            const on = isOn(name);
+            return (
+              <label
+                key={name}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer',
+                  background: on ? 'var(--color-bg)' : 'transparent',
+                }}
+              >
+                <input type="checkbox" checked={on} onChange={() => onToggle(name)} />
+                <span style={{ flex: 1, minWidth: 0 }}>{name}</span>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
+          fontSize: '0.7rem', color: 'var(--color-text-muted)',
+        }}>
+          <span>{selectedCount} selected</span>
+          <span style={{ display: 'flex', gap: '0.5rem' }}>
+            {selectedCount > 0 && (
+              <button type="button" onClick={onClear} className={styles.serviceLinkEditBtn}>Clear</button>
+            )}
+            <button type="button" onClick={onClose} className={styles.serviceLinkEditBtn}>Done</button>
+          </span>
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 // The Dependent Rollout Services cell: the services that have to be rolled
 // out before this one can start. Stored as a comma-separated list of
 // Solutions names — the same shape every other multi-value column in the
@@ -306,7 +418,6 @@ function ServiceWeeksCell({ value, onCommit }) {
 // its own wrapper, which would otherwise clip it.
 function ServiceDependsCell({ value, options, selfName, onCommit }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const [rect, setRect] = useState(null);
   const cellRef = useRef(null);
 
@@ -327,18 +438,13 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
     [options, selfName]);
   const liveSet = useMemo(
     () => new Set(pickable.map(o => o.trim().toLowerCase())), [pickable]);
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? pickable.filter(o => o.toLowerCase().includes(q)) : pickable;
-  }, [pickable, query]);
 
   function openPicker() {
     const el = cellRef.current;
     if (el) setRect(el.getBoundingClientRect());
-    setQuery('');
     setOpen(true);
   }
-  function close() { setOpen(false); setQuery(''); }
+  function close() { setOpen(false); }
 
   // Order follows the Solutions list for picked names, so two rows with the
   // same dependencies read identically; anything stale trails at the end.
@@ -366,13 +472,6 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
   const depTitle = (name) => (refined(name)
     ? `${name} — waits on one step of it, not all of it. Open ${selfName} to see or change which.`
     : name);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
 
   const chip = (name, stale) => (
     <span
@@ -409,90 +508,114 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
           </>
         ) : <span className={styles.serviceMutedCell}>-</span>}
       </span>
-      {open && rect && createPortal(
-        <>
-          {/* Click-away catcher, so the picker closes on any outside click
-              without each cell wiring up its own document listener.
+      {open && rect && (
+        <ServicePickPopup
+          rect={rect}
+          options={pickable}
+          isOn={(name) => selectedSet.has(name.trim().toLowerCase())}
+          onToggle={toggle}
+          selectedCount={selected.length}
+          onClear={() => onCommit('')}
+          onClose={close}
+        />
+      )}
+    </>
+  );
+}
 
-              Both of these stop propagation as well as the cell does: a
-              portal renders into document.body but still bubbles its events
-              up the React tree, so without it dismissing the picker would
-              land as a click on the row underneath and open its popup. */}
-          <div
-            onClick={(e) => { swallowClick(e); close(); }}
-            style={{ position: 'fixed', inset: 0, zIndex: 9000, background: 'transparent' }}
-          />
-          <div
-            onClick={swallowClick}
-            style={{
-              position: 'fixed', zIndex: 9001,
-              left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
-              ...(window.innerHeight - rect.bottom < 280 && rect.top > window.innerHeight - rect.bottom
-                ? { bottom: Math.round(window.innerHeight - rect.top + 4) }
-                : { top: Math.round(rect.bottom + 4) }),
-              width: 320, maxHeight: 300, background: '#fff',
-              border: '1px solid var(--color-border)', borderRadius: 6,
-              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
-              display: 'flex', flexDirection: 'column', overflow: 'hidden',
-            }}
-          >
-            <div style={{ padding: '0.4rem 0.45rem', borderBottom: '1px solid var(--color-border-light)' }}>
-              <input
-                type="text"
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search services…"
-                style={{
-                  width: '100%', boxSizing: 'border-box', padding: '3px 6px',
-                  border: '1px solid var(--color-border)', borderRadius: 4,
-                  fontSize: '0.75rem', fontFamily: 'inherit',
-                }}
-              />
-            </div>
-            <div style={{ overflowY: 'auto', padding: '0.2rem 0' }}>
-              {shown.length === 0 && (
-                <div style={{ padding: '0.4rem 0.55rem', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                  No services match “{query}”.
-                </div>
-              )}
-              {shown.map(name => {
-                const on = selectedSet.has(name.trim().toLowerCase());
-                return (
-                  <label
-                    key={name}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.4rem',
-                      padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer',
-                      background: on ? 'var(--color-bg)' : 'transparent',
-                    }}
-                  >
-                    <input type="checkbox" checked={on} onChange={() => toggle(name)} />
-                    <span style={{ flex: 1, minWidth: 0 }}>{name}</span>
-                  </label>
-                );
-              })}
-            </div>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
-              fontSize: '0.7rem', color: 'var(--color-text-muted)',
-            }}>
-              <span>{selected.length} selected</span>
-              <span style={{ display: 'flex', gap: '0.5rem' }}>
-                {selected.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => onCommit('')}
-                    className={styles.serviceLinkEditBtn}
-                  >Clear</button>
-                )}
-                <button type="button" onClick={close} className={styles.serviceLinkEditBtn}>Done</button>
-              </span>
-            </div>
-          </div>
-        </>,
-        document.body,
+// The Auto-add Services cell. Names the services that come into Scope with
+// this one: ticking CSRD readiness on the Opps Scope board ticks whatever is
+// listed here at the same time, so a service that is never sold alone can't
+// be picked alone by accident.
+//
+// Additive only, and only on the Scope board — nothing here removes a
+// service, un-ticks one the user then took off, or rewrites a Scope that
+// arrived by import. It chains: an auto-added service brings its own list
+// with it, so a two-step implication needs mapping once rather than on
+// every row that starts it.
+//
+// Same shape and same picker as Dependent Rollout Services, minus the steps:
+// this column is about what's sold together, not about what waits for what.
+function ServiceAutoAddCell({ value, options, selfName, onCommit }) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState(null);
+  const cellRef = useRef(null);
+
+  const selected = useMemo(() => parseMulti(value), [value]);
+  const selectedSet = useMemo(
+    () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
+  // A service can't pull itself in, so it isn't offered.
+  const pickable = useMemo(
+    () => options.filter(o => o.trim().toLowerCase() !== String(selfName).trim().toLowerCase()),
+    [options, selfName]);
+  const liveSet = useMemo(
+    () => new Set(pickable.map(o => o.trim().toLowerCase())), [pickable]);
+
+  function openPicker() {
+    const el = cellRef.current;
+    if (el) setRect(el.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  // Order follows the Solutions list, so two rows pulling in the same
+  // services read identically; a stale name (renamed or retired since it was
+  // picked) trails at the end rather than being dropped.
+  function toggle(name) {
+    const key = name.trim().toLowerCase();
+    const next = selectedSet.has(key)
+      ? selected.filter(s => s.trim().toLowerCase() !== key)
+      : [...selected, name];
+    const chosen = new Set(next.map(s => s.trim().toLowerCase()));
+    const ordered = [
+      ...pickable.filter(o => chosen.has(o.trim().toLowerCase())),
+      ...next.filter(s => !liveSet.has(s.trim().toLowerCase())),
+    ];
+    onCommit(formatAutoAddList(ordered));
+  }
+
+  const chip = (name, stale) => (
+    <span
+      key={name}
+      title={stale ? `"${name}" isn't in the Solutions list any more` : name}
+      className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
+    >{name}</span>
+  );
+
+  return (
+    <>
+      <span
+        ref={cellRef}
+        onClick={(e) => { swallowClick(e); openPicker(); }}
+        title={selected.length > 0
+          ? `Added to Scope with ${selfName}: ${selected.join(', ')}. Click to change.`
+          : `Click to pick the services that go into Scope automatically with ${selfName}`}
+        style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em', overflow: 'hidden' }}
+      >
+        {/* One line, whatever the count — same reasoning as the dependency
+            cell: the first chip names what this is, the +N says how much
+            more there is, and the full list is a hover away. */}
+        {selected.length > 0 ? (
+          <>
+            {chip(selected[0], !liveSet.has(selected[0].trim().toLowerCase()))}
+            {selected.length > 1 && (
+              <span
+                className={styles.serviceDepChipMore}
+                title={`Also: ${selected.slice(1).join(', ')}`}
+              >+{selected.length - 1}</span>
+            )}
+          </>
+        ) : <span className={styles.serviceMutedCell}>-</span>}
+      </span>
+      {open && rect && (
+        <ServicePickPopup
+          rect={rect}
+          options={pickable}
+          isOn={(name) => selectedSet.has(name.trim().toLowerCase())}
+          onToggle={toggle}
+          selectedCount={selected.length}
+          onClear={() => onCommit('')}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
@@ -1098,6 +1221,14 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     }
     return map;
   }, [serviceRows]);
+  // The reverse of the Auto-add Services column: which services pull THIS
+  // one into Scope. Derived, like the dependency direction above, because
+  // nothing stores it — and it's what makes a surprise tick on the Scope
+  // board explainable from the service's own popup.
+  const autoAddedBy = useMemo(
+    () => autoAddedByMap(serviceRows.map(r => r.name), serviceOverrides),
+    [serviceRows, serviceOverrides],
+  );
   const toggleHideService = useCallback((name) => {
     const current = settings?.hiddenServices || [];
     const next = current.includes(name)
@@ -1173,7 +1304,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
       if (name.toLowerCase().includes(term)) return true;
       if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.sme, meta.ktm]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.sme, meta.ktm]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1270,6 +1401,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     timelineDriven: meta?.timelineDriven || '',
     rolloutTime: meta?.rolloutTime || '',
     dependsOn: meta?.dependsOn || '',
+    autoAdd: meta?.autoAdd || '',
     sme: meta?.sme || '',
     ktm: meta?.ktm || '',
     _url: serviceLinks[name] || '',
@@ -1336,6 +1468,15 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
                 options={solutionNames}
                 selfName={row.name}
                 onCommit={(v) => saveServiceField(row.name, 'dependsOn', v)}
+              />
+            )
+            : col.key === 'autoAdd'
+            ? (row) => (
+              <ServiceAutoAddCell
+                value={row.autoAdd}
+                options={solutionNames}
+                selfName={row.name}
+                onCommit={(v) => saveServiceField(row.name, 'autoAdd', v)}
               />
             )
             : (row) => (
@@ -1692,6 +1833,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
               url={serviceLinks[detailService.name] || ''}
               hidden={hiddenServices.has(detailService.name)}
               dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
+              autoAddedBy={autoAddedBy.get(detailService.name.trim().toLowerCase()) || []}
               options={solutionNames}
               templates={timelineTemplates}
               bucket={detailService.bucket}

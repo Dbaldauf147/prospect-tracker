@@ -27,6 +27,7 @@ import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
+import { autoAddListFor, collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 
 // Same palette the company card's services board uses, so a service reads
@@ -212,12 +213,56 @@ export function ScopeServicesModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Services that come with other services, per the Auto-add Services column
+  // on Dropdowns › Services. Ticking one here ticks whatever it names, so a
+  // service that is never sold alone can't be picked alone by accident.
+  //
+  // Additive only: the extras are ordinary ticks from the moment they land,
+  // so any of them can be taken straight back off, and taking one off does
+  // not un-tick the service that brought it. They come back only if the
+  // trigger is unticked and ticked again.
+  //
+  // A cell can spell a service differently from the board (casing drift, or
+  // a name typed by hand), so an auto-add is resolved to the board's own
+  // spelling where it matches a row — otherwise it would tick nothing and
+  // land in the off-board bucket instead.
+  const canonical = useMemo(() => {
+    const byLower = new Map(allItems.map(i => [i.toLowerCase(), i]));
+    return (name) => byLower.get(String(name || '').trim().toLowerCase()) || name;
+  }, [allItems]);
+
+  // What each service on the board pulls in, so a row can say so before it's
+  // ticked rather than only after. One pass over the board's items — the
+  // lists themselves are a settings lookup per service.
+  const autoAddByItem = useMemo(() => {
+    const map = new Map();
+    for (const item of allItems) {
+      const list = autoAddListFor(item, settings?.serviceOverrides)
+        .map(canonical)
+        .filter(Boolean);
+      if (list.length > 0) map.set(item, list);
+    }
+    return map;
+  }, [allItems, settings?.serviceOverrides, canonical]);
+
+  // What the last tick pulled in, for the line under the header. Cleared on
+  // the next edit: it reports one action, not a running tally.
+  const [autoAdded, setAutoAdded] = useState([]);
+
   function toggle(item) {
     const key = item.toLowerCase();
-    const next = selectedSet.has(key)
-      ? selected.filter(s => s.toLowerCase() !== key)
-      : [...selected, item];
-    onChange(next.join(', '));
+    if (selectedSet.has(key)) {
+      setAutoAdded([]);
+      onChange(selected.filter(s => s.toLowerCase() !== key).join(', '));
+      return;
+    }
+    const next = [...selected, item];
+    const extra = collectAutoAdds([item], settings?.serviceOverrides, {
+      canonical,
+      present: next,
+    });
+    setAutoAdded(extra);
+    onChange([...next, ...extra].join(', '));
   }
 
   function addGroup(label) {
@@ -225,13 +270,22 @@ export function ScopeServicesModal({
     if (!g) return;
     const seen = new Set(selected.map(s => s.toLowerCase()));
     const next = selected.slice();
+    const picked = [];
     for (const opt of g.options) {
       const lower = String(opt || '').toLowerCase();
       if (!lower || seen.has(lower)) continue;
       seen.add(lower);
       next.push(opt);
+      picked.push(opt);
     }
-    onChange(next.join(', '));
+    // The quick-add lists are picked by a person too, so they carry the same
+    // implications a tick does.
+    const extra = collectAutoAdds(picked, settings?.serviceOverrides, {
+      canonical,
+      present: next,
+    });
+    setAutoAdded(extra);
+    onChange([...next, ...extra].join(', '));
     setQuickPick('');
   }
 
@@ -351,7 +405,7 @@ export function ScopeServicesModal({
           )}
           <button
             type="button"
-            onClick={() => onChange('')}
+            onClick={() => { setAutoAdded([]); onChange(''); }}
             style={{
               padding: '0.25rem 0.6rem', background: 'transparent',
               border: '1px solid var(--color-border)', borderRadius: 3,
@@ -379,6 +433,17 @@ export function ScopeServicesModal({
           padding: '0.4rem 0.8rem', borderBottom: '1px solid var(--color-border)',
           background: 'var(--color-surface)',
         }}>
+          {autoAdded.length > 0 && (
+            <div
+              title="These services are listed as Auto-add Services on Dropdowns › Services. They are ordinary ticks now — remove any of them with its × above."
+              style={{
+                marginBottom: '0.3rem', fontSize: '0.65rem', fontWeight: 600,
+                color: '#1E40AF',
+              }}
+            >
+              Added automatically: {autoAdded.join(', ')}
+            </div>
+          )}
           {selected.length === 0 ? (
             <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
               Nothing in Scope yet — tick a service below to add it.
@@ -448,6 +513,7 @@ export function ScopeServicesModal({
                   <div style={{ padding: '0.1rem 0' }}>
                     {cat.items.map(item => {
                       const checked = selectedSet.has(item.toLowerCase());
+                      const pulls = autoAddByItem.get(item) || [];
                       const sme = String(smes[item] || '').trim();
                       const manual = String(manualStatuses[item] ?? '').trim();
                       const auto = autoStatuses.get(item) || '';
@@ -491,6 +557,16 @@ export function ScopeServicesModal({
                               color: checked ? '#166534' : 'var(--color-text)',
                             }}>{displayName(item)}</span>
                           </label>
+                          {pulls.length > 0 && (
+                            <span
+                              title={`Ticking ${displayName(item)} also adds: ${pulls.join(', ')}. Set on Dropdowns › Services (Auto-add Services).`}
+                              style={{
+                                flex: '0 0 auto', fontSize: '0.52rem', fontWeight: 700,
+                                padding: '0.05rem 0.25rem', borderRadius: 3,
+                                background: '#DBEAFE', color: '#1E40AF', whiteSpace: 'nowrap',
+                              }}
+                            >+{pulls.length}</span>
+                          )}
                           {sme && (
                             <span
                               title={`SME: ${sme}`}
@@ -539,7 +615,7 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
           {canEditStatus
-            ? 'Tick a service to put it in Scope. The status dropdown saves to the company card: italic means it is derived from another opp, “- (auto)” reverts to that.'
+            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) — they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived from another opp, “- (auto)” reverts to that.'
             : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
       </div>
