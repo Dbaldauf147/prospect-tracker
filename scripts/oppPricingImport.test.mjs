@@ -90,6 +90,24 @@ const SERVICES = ['Bill payment', 'Comp GHG', 'Budgets', 'Audits', 'CSRD readine
   check('a differently-punctuated slug still resolves', s.counts.sites, 2);
 }
 
+// ── Projects and equipment come off the opp's own columns ─────────────
+{
+  const s = oppScenario({
+    opp: { Account: 'Acme', Scope: '', '# of Projects': 3, 'Equipment': 42 },
+    prospects: [], siteLists: {}, serviceNames: SERVICES,
+  });
+  check('a project count is read off the opp', s.counts.projects, 3);
+  check('so is an equipment count', s.counts.equipment, 42);
+
+  // The loose pattern is plural for a reason: "Project #" is an identifier,
+  // and reading one as a count would price a deal off an opp number.
+  const ident = oppScenario({
+    opp: { Account: 'Acme', Scope: '', 'Project #': 4821 },
+    prospects: [], siteLists: {}, serviceNames: SERVICES,
+  });
+  check('an opp number is not a count of projects', ident.counts.projects, undefined);
+}
+
 // ── The picker puts open opps first ───────────────────────────────────
 {
   const rows = [

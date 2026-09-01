@@ -43,6 +43,11 @@ const OPP_COUNT_HEADERS = {
   invoices: [/^#?\s*(of\s*)?invoices?$/i, /^number\s*of\s*invoices?$/i, /^#?\s*(of\s*)?bills?$/i, /\binvoices?\b/i],
   mwh: [/^mwh$/i, /^annual\s*mwh$/i, /\bmwh\b/i],
   users: [/^#?\s*(of\s*)?users?$/i, /^number\s*of\s*users?$/i, /\busers?\b/i],
+  // Plural only on the loose pattern: a "Project #" column is an identifier,
+  // not a count of anything, and reading one as a count would price a deal
+  // off an opp number.
+  projects: [/^#?\s*(of\s*)?projects?$/i, /^number\s*of\s*projects?$/i, /\bprojects?\s*count\b/i, /\bprojects\b/i],
+  equipment: [/^#?\s*(of\s*)?equipment$/i, /^number\s*of\s*equipment$/i, /\bequipment\s*count\b/i, /\bequipment\b/i],
 };
 
 // A comparison key for site-list lookup — NOT the storage slug. The stored
