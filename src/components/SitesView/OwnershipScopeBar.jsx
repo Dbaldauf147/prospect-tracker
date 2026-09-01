@@ -120,3 +120,111 @@ export function SavingsScopeToggle({ count, included, onChange }) {
     </button>
   );
 }
+
+// The missing-tenure warning on the Utility Lookup page.
+//
+// Tenure — the Ownership (Owned / Leased) column — is an optional mapping
+// that two analyses read as though it were always there: the compliance
+// subtabs leave leased buildings out of an owner's obligations, and the
+// Master Analysis leaves them out of the procurement savings. Both work off
+// "is this row Leased", so a list that never carried the column looks
+// exactly like a portfolio that owns every building: nothing is dropped,
+// nothing says why, and a portfolio that leases half its estate reads as
+// twice the savings opportunity it can act on. The gap is invisible in
+// every figure it moves, so it gets its own line on the page.
+//
+// Two shapes, because they need different answers: no tenure at all is a
+// mapping to fix (or a column the file never had), while a partial column
+// is a data gap in rows that are otherwise fine. Neither blocks anything —
+// an unmapped Ownership column is a legitimate way to run the page — so
+// this is a warning with a dismiss, not a wall.
+export function TenureWarningBanner({ coverage, mapped, onFixMapping, onDismiss }) {
+  const { total, missing, owned, leased, unplaceable } = coverage;
+  if (!total || missing <= 0) return null;
+  const none = missing === total;
+  const pct = Math.round((missing / total) * 100);
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '0.6rem',
+        margin: '0.5rem 1.25rem',
+        padding: '0.55rem 0.75rem',
+        background: '#FFFBEB',
+        border: `1px solid ${none ? '#F59E0B' : '#FDE68A'}`,
+        borderRadius: 6,
+        color: '#92400E',
+        fontSize: '0.78rem',
+        lineHeight: 1.45,
+      }}
+    >
+      <span aria-hidden="true" style={{ fontSize: '0.9rem', lineHeight: 1.2 }}>⚠</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {none ? (
+          <>
+            <strong>No Tenure (Owned / Leased) data on this upload.</strong>{' '}
+            {mapped
+              ? <>An <strong>Ownership</strong> column is mapped, but every one of the {total.toLocaleString()} loaded site{total === 1 ? '' : 's'} is blank in it.</>
+              : <>Nothing is mapped to <strong>Ownership (Owned / Leased)</strong>, so none of the {total.toLocaleString()} loaded site{total === 1 ? '' : 's'} carries a tenure status.</>}
+            {' '}Without it the portfolio is treated as if it owned everything: the compliance
+            subtabs screen every building for obligations that fall on the owner, and the Master
+            Analysis projects procurement savings on the full deregulated spend. On a portfolio
+            that leases, both read high.
+          </>
+        ) : (
+          <>
+            <strong>Tenure (Owned / Leased) is missing on {missing.toLocaleString()} of {total.toLocaleString()} sites ({pct}%).</strong>{' '}
+            {[
+              owned ? `${owned.toLocaleString()} owned` : null,
+              leased ? `${leased.toLocaleString()} leased` : null,
+              unplaceable ? `${unplaceable.toLocaleString()} with a status we couldn't place` : null,
+            ].filter(Boolean).join(', ') || 'No site has a recognized status'}.
+            {' '}A site with no tenure status is screened for compliance and keeps its projected
+            savings — the safer reading of a gap, but a leased building hiding in there inflates
+            both.
+          </>
+        )}
+      </div>
+      {onFixMapping && (
+        <button
+          type="button"
+          onClick={onFixMapping}
+          style={{
+            flexShrink: 0,
+            padding: '0.25rem 0.6rem',
+            border: '1px solid #F59E0B',
+            background: '#FFFFFF',
+            color: '#92400E',
+            borderRadius: 6,
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+          title="Re-open the column mapping against the loaded sites and point Ownership (Owned / Leased) at a column from the file."
+        >Map Tenure column</button>
+      )}
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss the tenure warning"
+          title="Hide this warning until the loaded sites change."
+          style={{
+            flexShrink: 0,
+            border: 'none',
+            background: 'transparent',
+            color: '#B45309',
+            fontSize: '1rem',
+            lineHeight: 1,
+            padding: '0.1rem 0.2rem',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >×</button>
+      )}
+    </div>
+  );
+}

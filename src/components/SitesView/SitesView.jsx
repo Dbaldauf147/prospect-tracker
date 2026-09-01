@@ -44,8 +44,8 @@ import { ComplianceRoadmap } from './ComplianceRoadmap';
 import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../../utils/ordinanceOverrides';
 import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
-import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope } from './ownershipScope.js';
-import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
+import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope, tenureCoverage } from './ownershipScope.js';
+import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
@@ -2816,6 +2816,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // whether it renders at all. With nothing leased the toggle decides
   // nothing.
   const leasedSiteCount = useMemo(() => savingsOwnershipScope(rows).leased, [rows]);
+
+  // Tenure coverage, and whether the page is currently warning about it.
+  // Everything above reads one optional column, and an upload that never
+  // carried it is indistinguishable downstream from a portfolio that owns
+  // every building — so say so here rather than let the silence pass for an
+  // answer. See TenureWarningBanner for what the two shapes of the gap mean.
+  const tenureStats = useMemo(() => tenureCoverage(rows), [rows]);
+  // Dismissal is per-gap, not forever: the key changes whenever the shape of
+  // the gap does (a new upload, a re-mapped column, a mass edit that fills
+  // some in), so hiding the warning on one list never hides it on the next.
+  const tenureWarningKey = `${tenureStats.total}:${tenureStats.missing}:${ownershipOverride || ''}`;
+  const [tenureWarningDismissed, setTenureWarningDismissed] = useState(null);
+  const showTenureWarning = sitesData.length > 0
+    && tenureStats.missing > 0
+    && tenureWarningDismissed !== tenureWarningKey;
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -14918,6 +14933,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         </div>
       )}
 
+      {/* Missing Tenure (Owned / Leased). Above the summary cards because
+          it changes how every figure under it should be read: with no
+          tenure on the upload, the compliance subtabs screen the whole
+          list and the savings run on the full deregulated spend. */}
+      {showTenureWarning && (
+        <TenureWarningBanner
+          coverage={tenureStats}
+          mapped={!!ownershipOverride}
+          onFixMapping={openUpdateColumnMapping}
+          onDismiss={() => setTenureWarningDismissed(tenureWarningKey)}
+        />
+      )}
+
       {analysisSummary && (() => {
         const s = analysisSummary;
         const m = marketSummary || { total: s.total, electric: { deregulated: 0, regulated: 0, unknown: s.total }, gas: { deregulated: 0, regulated: 0, unknown: s.total } };
@@ -15235,6 +15263,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const noConsumptionCols = !active.mapping.electric && !active.mapping.gas;
           const noPropertyType = !active.mapping.propertyType;
           const consumptionUnavailable = noConsumptionCols && noPropertyType;
+          // Tenure (Owned / Leased) is optional too, and silently so: with
+          // no Ownership column nothing is ever Leased, which the compliance
+          // subtabs and the Master Analysis both read as "owned outright".
+          // Flagged here, at the moment the mapping is being made, as well
+          // as on the page after import.
+          const noTenureCol = !active.mapping.ownership;
           const targetLabel = (key) => TARGET_FIELDS.find(t => t.key === key)?.label || key;
           const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
           const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
@@ -15274,6 +15308,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B' }}>
                     <strong>⚠ Consumption will not be available.</strong>{' '}
                     Nothing is mapped to <strong>Annual Electric Consumption</strong> or <strong>Annual Gas Consumption</strong>, and no <strong>Property Type</strong> column is mapped to estimate from. Without one or the other, consumption (and the cost and savings figures derived from it), will be blank for every site. Map a consumption column, or map Property Type to use modeled estimates.
+                  </div>
+                )}
+                {noTenureCol && (
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 6, fontSize: '0.75rem', color: '#92400E' }}>
+                    <strong>⚠ No Tenure (Owned / Leased) column mapped.</strong>{' '}
+                    Nothing is mapped to <strong>Ownership (Owned / Leased)</strong>, so no site will carry a tenure status and the whole list reads as owned outright: the compliance subtabs will screen every building for obligations that fall on the owner, and the Master Analysis will project procurement savings on the full deregulated spend. Map the column if the file has one — this is a warning, not a blocker.
                   </div>
                 )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxHeight: '60vh' }}>
