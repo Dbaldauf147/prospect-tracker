@@ -5,21 +5,21 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { oppScenario } from '../../utils/oppPricingImport';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
 import { OppImportModal } from './OppImportModal';
+import { PricingBasesModal } from './PricingBasesModal';
 import {
   PRICING_BASES,
-  PRICING_UNITS,
   basisFor,
+  basisUsage,
   estimateScope,
   formatMoney,
   getServicePricing,
   parseMoney,
   pricingFor,
+  pricingUnits,
+  resolvePricingBases,
   setPricingField,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
-
-// Every unit label, for naming the ones an import couldn't fill.
-const UNIT_LABEL = Object.fromEntries(PRICING_UNITS.map(u => [u.unit, u.label]));
 
 // Where this table's column widths, order and visibility are remembered,
 // alongside every other table's under settings.tablePrefs.
@@ -161,7 +161,7 @@ function NotesCell({ value, onCommit }) {
 // Which of the pricing bases a service is charged on. Clearing it takes the
 // rate and floor with it (see setPricingField) — a rate with no basis has
 // nothing to multiply.
-function BasisCell({ value, onCommit }) {
+function BasisCell({ value, bases, onCommit }) {
   return (
     <select
       value={value || ''}
@@ -177,7 +177,7 @@ function BasisCell({ value, onCommit }) {
       }}
     >
       <option value="">-</option>
-      {PRICING_BASES.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
+      {bases.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
     </select>
   );
 }
@@ -251,6 +251,22 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   const [oppLoading, setOppLoading] = useState(false);
 
   const pricing = useMemo(() => getServicePricing(settings), [settings?.servicePricing]);
+  // The Pricing Basis vocabulary in force: the edited list when there is
+  // one, the built-in eight otherwise. Everything below prices against
+  // this, so a basis someone added behaves exactly like one that shipped.
+  const bases = useMemo(() => resolvePricingBases(settings), [settings?.pricingBases]);
+  const units = useMemo(() => pricingUnits(bases), [bases]);
+  const unitLabels = useMemo(() => Object.fromEntries(units.map(u => [u.unit, u.label])), [units]);
+  const [basesOpen, setBasesOpen] = useState(false);
+
+  // Saving the list back: an edit that lands on the built-in list clears
+  // the override instead of storing a copy of it, so a later change to the
+  // defaults still reaches anyone who only ever reset.
+  function saveBases(next) {
+    const same = JSON.stringify(next) === JSON.stringify(PRICING_BASES);
+    updateSettings?.({ pricingBases: same ? null : next });
+    setBasesOpen(false);
+  }
 
   const inScope = useMemo(
     () => new Set(Array.isArray(scenario?.services) ? scenario.services : []),
@@ -326,13 +342,13 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const needed = new Set();
     const noPrice = [];
     for (const name of scen.services) {
-      const entry = pricingFor(pricing, name);
+      const entry = pricingFor(pricing, name, bases);
       // A typed fee already answers the question, so it needs no count and
-      // isn't missing a price.
+      // isn't missing a price. Nor does a row carrying its own unit count.
       if (entry.avgFee !== null) continue;
-      const basis = basisFor(entry.basis);
+      const basis = basisFor(entry.basis, bases);
       if (!basis) { noPrice.push(name); continue; }
-      if (basis.unit) needed.add(basis.unit);
+      if (basis.unit && entry.units === null) needed.add(basis.unit);
     }
 
     setScenario({ services: scen.services, counts: scen.counts, dealSize: scen.dealSize });
@@ -345,12 +361,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       unmatchedTokens: scen.unmatchedTokens,
       filled: Object.keys(scen.counts).map(unit => ({
         unit,
-        label: UNIT_LABEL[unit] || unit,
+        label: unitLabels[unit] || unit,
         value: scen.counts[unit],
         source: scen.countSources[unit],
       })),
       dealSizeSource: scen.dealSizeSource,
-      missing: [...needed].filter(u => scen.counts[u] === undefined).map(u => UNIT_LABEL[u] || u),
+      missing: [...needed].filter(u => scen.counts[u] === undefined).map(u => unitLabels[u] || u),
       noPrice,
     });
     setOppPicker(false);
@@ -378,40 +394,40 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const { lines } = estimateScope({
       rows: serviceRows,
       services: serviceRows.map(r => r.name),
-      pricing, counts, dealSize,
+      pricing, counts, dealSize, bases,
     });
     return new Map(lines.map(l => [l.name, l]));
-  }, [serviceRows, pricing, counts, dealSize]);
+  }, [serviceRows, pricing, counts, dealSize, bases]);
 
   // The deal itself: only what's ticked.
   const totals = useMemo(
-    () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize }),
-    [serviceRows, inScope, pricing, counts, dealSize],
+    () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize, bases }),
+    [serviceRows, inScope, pricing, counts, dealSize, bases],
   );
 
   // Count boxes are shown for the units the scope actually needs, so the bar
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
   // that already has a number keeps its box even after the service that
   // wanted it is un-ticked — otherwise a typed figure would vanish.
-  const visibleUnits = useMemo(() => PRICING_UNITS.filter(u =>
+  const visibleUnits = useMemo(() => units.filter(u =>
     totals.unitsUsed.has(u.unit) || (counts?.[u.unit] !== '' && counts?.[u.unit] != null)
-  ), [totals.unitsUsed, counts]);
+  ), [units, totals.unitsUsed, counts]);
 
   // Priced = there's a figure behind it, however it got there: a basis to
   // work one out, or a fee typed straight into the Year 1 Fee column.
   const pricedCount = useMemo(
     () => serviceRows.filter(r => {
-      const entry = pricingFor(pricing, r.name);
+      const entry = pricingFor(pricing, r.name, bases);
       return !!entry.basis || entry.avgFee !== null;
     }).length,
-    [serviceRows, pricing],
+    [serviceRows, pricing, bases],
   );
 
   const term = search.trim().toLowerCase();
   const rows = useMemo(() => serviceRows
     .map(({ name, meta, bucket }) => {
-      const entry = pricingFor(pricing, name);
-      const basis = basisFor(entry.basis);
+      const entry = pricingFor(pricing, name, bases);
+      const basis = basisFor(entry.basis, bases);
       const est = allEstimates.get(name);
       return {
         id: name,
@@ -424,7 +440,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         rate: entry.rate,
         minFee: entry.minFee,
         notes: entry.notes,
-        units: est?.units ?? null,
+        // Typed against the row when there is one, otherwise whatever the
+        // estimator's count works out to — the estimate already prefers the
+        // typed figure, except on a row whose fee was typed too, where it
+        // never got as far as counting.
+        units: entry.units !== null ? entry.units : (est?.units ?? null),
+        _unitsTyped: entry.units !== null,
+        _unit: basis?.unit || null,
+        _unitLabel: basis?.unitLabel || '',
         fee: est?.priced ? est.fee : null,
         value: est?.priced ? est.value : null,
         _kind: basis?.kind || '',
@@ -435,7 +458,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       };
     })
     .filter(r => !term || [r.name, r.serviceBucket, r.basisLabel, r.notes].some(v => String(v).toLowerCase().includes(term))),
-  [serviceRows, pricing, allEstimates, inScope, pinnedNames, term]);
+  [serviceRows, pricing, bases, allEstimates, inScope, pinnedNames, term]);
 
   // Band 0 is the imported scope, band 1 everything else, so those rows sit
   // at the top of whatever sort or search is active rather than only when
@@ -469,7 +492,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           ),
         };
       case 'basisLabel':
-        return { ...base, render: (row) => <BasisCell value={row.basis} onCommit={(v) => savePricingField(row.name, 'basis', v)} /> };
+        return { ...base, render: (row) => <BasisCell value={row.basis} bases={bases} onCommit={(v) => savePricingField(row.name, 'basis', v)} /> };
       case 'rate':
         return {
           ...base,
@@ -506,13 +529,45 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         };
       case 'notes':
         return { ...base, render: (row) => <NotesCell value={row.notes} onCommit={(v) => savePricingField(row.name, 'notes', v)} /> };
+      // How many units this service is charged on. It opens on the shared
+      // count from the estimator, so trimming a deal to "invoice processing
+      // at 40 of the 819 sites" is a click and a retype; clearing the cell
+      // hands the row back to that count. Only a per-unit basis has
+      // anything to count, so the rest of the rows stay read-only.
       case 'units':
         return {
           ...base,
           getSortValue: (row) => row.units,
-          render: (row) => (row.units === null
-            ? <span className={styles.serviceMutedCell}>-</span>
-            : row.units.toLocaleString('en-US')),
+          render: (row) => {
+            if (!row._unit) {
+              return (
+                <span
+                  className={styles.serviceMutedCell}
+                  title={row.basis
+                    ? `${row.basisLabel} isn’t priced per unit, so there’s nothing to count.`
+                    : 'Pick a per-unit pricing basis first.'}
+                >-</span>
+              );
+            }
+            const unit = row._unitLabel.toLowerCase();
+            return (
+              <NumberCell
+                value={row.units}
+                display={row.units === null
+                  ? ''
+                  : (
+                    <span className={row._unitsTyped ? styles.pricingUnitsTyped : undefined}>
+                      {row.units.toLocaleString('en-US')}
+                    </span>
+                  )}
+                placeholder={row._unitLabel}
+                title={row._unitsTyped
+                  ? `Typed in: this service is charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. Clear the cell to go back to that count.`
+                  : `From the ${row._unitLabel} box above. Type a figure to charge this service on its own number of ${unit} instead.`}
+                onCommit={(v) => savePricingField(row.name, 'units', v)}
+              />
+            );
+          },
         };
       // The fee is the one estimate cell you can write into: typing a
       // figure sets it as this service's fee outright, for when the answer
@@ -590,6 +645,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           onClick={openOppPicker}
           title="Pull an opportunity's scope and its account's site / accounts figures into the estimator"
         >Import opp</button>
+        <button
+          type="button"
+          className={styles.showHiddenBtn}
+          onClick={() => setBasesOpen(true)}
+          title="Add, rename, reorder or remove the options in the Pricing Basis column"
+        >Pricing bases ({bases.length})</button>
         <span className={styles.resultCount}>
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
           {` · ${pricedCount} priced`}
@@ -740,6 +801,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             : `No services match "${search}".`}
         />
       </div>
+
+      {basesOpen && (
+        <PricingBasesModal
+          bases={bases}
+          usage={basisUsage(pricing)}
+          onSave={saveBases}
+          onClose={() => setBasesOpen(false)}
+        />
+      )}
 
       {oppPicker && (
         <OppImportModal

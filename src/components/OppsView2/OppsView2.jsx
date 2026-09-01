@@ -116,7 +116,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, formatMoney, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -1796,7 +1796,7 @@ function PricingOptionSnapshotView({ snapshot }) {
 // no manual URL is set. All edits happen inside the popup.
 function QuotedAmountCell({
   value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress,
-  scopeNames = [], pricing = null, serviceOverrides = null, sites = '',
+  scopeNames = [], pricing = null, pricingBases = null, serviceOverrides = null, sites = '',
 }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
@@ -1851,14 +1851,15 @@ function QuotedAmountCell({
       rows,
       services: scopeNames,
       pricing: pricing || {},
+      bases: pricingBases || undefined,
       counts: { sites: parsePricingMoney(sites) ?? 0 },
       dealSize: parsePricingMoney(draftAmount),
     });
     // Each line says where its fee came from, so a number that moves has a
     // reason on the row — the percentage ones move with the amount being
     // typed in the box above, which is the deal size they're a cut of.
-    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line) })) };
-  }, [open, scopeNames, pricing, serviceOverrides, sites, draftAmount]);
+    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
+  }, [open, scopeNames, pricing, pricingBases, serviceOverrides, sites, draftAmount]);
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
@@ -10892,6 +10893,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     [listRegistry],
   );
   const servicePricing = useMemo(() => getServicePricing(settings), [settings]);
+  // The Pricing Basis vocabulary the rate card is written in — edited on
+  // Dropdowns › Services Pricing, so a fee here reads off the same list of
+  // bases that priced it there.
+  const pricingBases = useMemo(() => resolvePricingBases(settings), [settings?.pricingBases]);
   const records = useMemo(() => data?.records || [], [data]);
 
   // Drop any selection ids that no longer match a live record (e.g.
@@ -11130,6 +11135,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 // prices under the service it means.
                 scopeNames={scopeServices(row, solutionOptions)}
                 pricing={servicePricing}
+                pricingBases={pricingBases}
                 serviceOverrides={settings?.serviceOverrides}
                 sites={row['Sites']}
               />
