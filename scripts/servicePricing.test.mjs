@@ -44,6 +44,57 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('a one-off project is worth its fee once', project.value, 40000);
 }
 
+// ── A typed fee prices one of them, and the deal can carry several ────
+{
+  // The panel this is for: an integration quoted at $5,000 a rollout, on a
+  // deal doing three of them.
+  const three = estimateService({
+    entry: { basis: 'per_project', avgFee: 5000, units: 3 }, meta: PROJECT, counts: {}, dealSize: '',
+  });
+  check('a typed fee times the count typed against the row', three.fee, 15000);
+  check('and it is still a typed fee, with the count on the row', [three.typed, three.units], [true, 3]);
+
+  const one = estimateService({
+    entry: { basis: 'per_project', avgFee: 5000 }, meta: PROJECT, counts: {}, dealSize: '',
+  });
+  check('nobody counted, so it is worth what was typed', [one.fee, one.units], [5000, null]);
+
+  // The rule that keeps this safe: an account-wide figure never multiplies
+  // a lump sum. 819 sites × a typed $40,000 would be a $32m service.
+  const shared = estimateService({
+    entry: { basis: 'per_site', avgFee: 40000 }, meta: PROJECT, counts: { sites: 819 }, dealSize: '',
+  });
+  check('the shared count leaves a typed fee alone', shared.fee, 40000);
+
+  const none = estimateService({
+    entry: { basis: 'per_project', avgFee: 5000, units: 0 }, meta: PROJECT, counts: {}, dealSize: '',
+  });
+  check('none of them is worth nothing, and says so', [none.fee, none.note], [0, 'Set to no projects']);
+
+  const ranged = estimateService({
+    entry: { basis: 'per_project', avgFee: 5000, units: 3 }, meta: RECURRING, counts: {}, dealSize: '',
+  });
+  check('a multiplied typed fee is still one figure, not a range',
+    [ranged.fee, ranged.feeHigh], [15000, 15000]);
+  check('and it runs across the term', ranged.value, 45000);
+
+  check('the line says how many it priced', feeBasisLabel({ typed: true, units: 3 }), 'Est. Fee × 3');
+  check('and says nothing extra when it priced one', feeBasisLabel({ typed: true, units: null }), 'Est. Fee');
+
+  // A typed row no longer asks the bar for a count it can't use.
+  const scope = estimateScope({
+    rows: [{ name: 'API/ETL', meta: PROJECT }], services: ['API/ETL'],
+    pricing: { 'API/ETL': { basis: 'per_project', avgFee: 5000 } }, counts: {}, dealSize: '',
+  });
+  check('a typed row puts no count box on the estimator', [...scope.unitsUsed], []);
+  check('while a rate-priced row still does',
+    [...estimateScope({
+      rows: [{ name: 'API/ETL', meta: PROJECT }], services: ['API/ETL'],
+      pricing: { 'API/ETL': { basis: 'per_project', rate: 5000 } }, counts: {}, dealSize: '',
+    }).unitsUsed],
+    ['projects']);
+}
+
 // ── Clearing a basis keeps a typed fee ────────────────────────────────
 {
   const start = { Widgets: { basis: 'per_site', rate: 900, minFee: 5000, avgFee: 30000 } };

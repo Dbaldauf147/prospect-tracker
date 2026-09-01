@@ -371,10 +371,27 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
   // A fee typed into the Year 1 Fee column is the answer, whatever the basis
   // would have made of the counts — and it's one figure, not a range: the
   // person typing it is stating the fee, not the spread it might land in.
+  //
+  // It prices ONE of whatever the service is: one rollout, one retrofit. A
+  // deal carrying three of them says so against the row, and it's three
+  // times that. Only a figure typed for THIS deal multiplies it — never the
+  // shared count, which is an account-wide number (819 sites) that would
+  // turn a lump sum into a fantasy. So a row nobody has counted is worth
+  // exactly what was typed, as it always has been.
   if (avgFee !== null) {
+    const many = ownUnits === null ? 1 : ownUnits;
+    if (many <= 0) {
+      return {
+        ...base, priced: true, typed: true, units: 0, unitsTyped: true,
+        fee: 0, feeHigh: 0, value: 0, valueHigh: 0,
+        note: `Set to no ${basis?.unitLabel ? basis.unitLabel.toLowerCase() : 'work'}`,
+      };
+    }
+    const fee = avgFee * many;
     return {
       ...base, priced: true, typed: true,
-      fee: avgFee, feeHigh: avgFee, value: avgFee * years, valueHigh: avgFee * years,
+      units: ownUnits, unitsTyped: ownUnits !== null,
+      fee, feeHigh: fee, value: fee * years, valueHigh: fee * years,
     };
   }
 
@@ -436,7 +453,7 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
 // `units`). Returns '' for a service with nothing to say — an unpriced one,
 // whose own `note` says that instead.
 export function feeBasisLabel(line, bases = PRICING_BASES) {
-  if (line?.typed) return 'Est. Fee';
+  if (line?.typed) return line.units > 1 ? `Est. Fee × ${line.units}` : 'Est. Fee';
   const basis = basisFor(line?.entry?.basis, bases);
   if (!basis) return '';
   if (basis.kind === 'unit') {
@@ -481,9 +498,10 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
     // A row carrying its own unit count doesn't need the shared one, so it
     // doesn't put a box on the estimator asking for it. Neither does a row
-    // whose fee was typed straight in: its basis still names a unit, but
-    // the fee stopped depending on the count, so asking for one would be
-    // asking for a number that changes nothing.
+    // whose fee was typed straight in: that fee is multiplied by a count
+    // typed against the row, if there is one, but never by the shared one —
+    // so asking for a shared figure would be asking for a number that
+    // changes nothing.
     if (est.unit && !est.unitsTyped && !est.typed) unitsUsed.add(est.unit);
     if (!est.priced) { unpriced.push(row.name); }
     else if (est.recurring) {

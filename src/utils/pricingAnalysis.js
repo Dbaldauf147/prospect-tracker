@@ -159,7 +159,10 @@ export function normalizePricingAnalysis(raw) {
 /** How a line's fee was arrived at, in one phrase: "Per site · $450 × 819". */
 export function lineBasisText(line) {
   if (!line) return '';
-  if (line.typed) return 'Typed fee';
+  // A typed fee prices one of whatever the service is, so a line that
+  // carried several says so — otherwise "Typed fee" against $15,000 on a
+  // $5,000 service reads as an arithmetic error.
+  if (line.typed) return line.units > 1 ? `Typed fee × ${line.units.toLocaleString('en-US')}` : 'Typed fee';
   if (!line.basisLabel) return '';
   if (line.rate === null) return line.basisLabel;
   const one = (n) => (line.kind === 'percent' ? `${n}%` : `$${n.toLocaleString('en-US')}`);
