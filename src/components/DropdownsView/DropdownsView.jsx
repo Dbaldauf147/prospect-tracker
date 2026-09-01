@@ -933,7 +933,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // The subtab is what writes it (see pricingEstimateStore) — this reads
   // back the scenario half of the same record.
   const [pricingScenario, setPricingScenario] = useState(
-    () => loadPricingEstimate(user?.uid)?.scenario || { services: [], counts: {}, dealSize: '' },
+    () => loadPricingEstimate(user?.uid)?.scenario || { services: [], counts: {}, serviceUnits: {}, dealSize: '' },
   );
   const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [

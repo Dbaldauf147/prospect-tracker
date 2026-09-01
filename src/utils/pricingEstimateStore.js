@@ -36,6 +36,18 @@ const asStringList = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'stri
 // nothing.
 const asCount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 
+// Units typed against a service for this estimate, keyed by service name.
+// Same rules as a count: a real, non-negative number or nothing at all.
+function normalizeServiceUnits(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [name, value] of Object.entries(raw)) {
+    const n = asCount(value);
+    if (n !== null && String(name).trim()) out[name] = n;
+  }
+  return out;
+}
+
 function normalizeCounts(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out = {};
@@ -67,6 +79,9 @@ function normalizeImport(raw) {
     }));
   return {
     account,
+    // Which opp this estimate came from, so it can be saved back to it
+    // after a reload without importing it again.
+    id: asString(raw.id),
     stage: asString(raw.stage),
     company: asString(raw.company),
     services: asCount(raw.services) ?? 0,
@@ -84,6 +99,7 @@ export function isEmptyEstimate(estimate) {
   const scenario = estimate.scenario || {};
   return (scenario.services || []).length === 0
     && Object.keys(scenario.counts || {}).length === 0
+    && Object.keys(scenario.serviceUnits || {}).length === 0
     && (scenario.dealSize === '' || scenario.dealSize == null)
     && !estimate.oppImport
     && (estimate.pinned || []).length === 0;
@@ -103,6 +119,7 @@ export function normalizeEstimate(raw) {
     scenario: {
       services: asStringList(scenarioRaw.services),
       counts: normalizeCounts(scenarioRaw.counts),
+      serviceUnits: normalizeServiceUnits(scenarioRaw.serviceUnits),
       dealSize: dealSize === null ? '' : dealSize,
     },
     // Null rather than an empty list: the tab reads it as "nothing is

@@ -57,6 +57,8 @@ import {
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
 import { NotSoldAnalysis } from './NotSoldAnalysis';
+import { PricingAnalysisModal } from './PricingAnalysisModal';
+import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '../../utils/pricingAnalysis';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -333,6 +335,10 @@ const DEFAULT_HEADERS = [
   // the Follow Up Notes popup because it's a date being negotiated
   // rather than a drawing preference.
   'Target Signature Date',
+  // What the Services Pricing estimator worked this deal's scope out to,
+  // saved from there. Read-only here: the figure and the working behind it
+  // are a copy taken when it was saved (see utils/pricingAnalysis).
+  ESTIMATED_FEE_COLUMN,
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -548,7 +554,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
-  'Target Signature Date', PULL_THROUGH_COLUMN];
+  'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -2180,6 +2186,41 @@ function PricingOptionCell({ value, onClear }) {
         >×</button>
       )}
     </span>
+  );
+}
+
+// Estimated Fee cell. The figure is whatever the Services Pricing
+// estimator saved here; clicking it opens the working behind it — which
+// services were in the deal, what each was priced on, and what they came
+// to. Read-only, because it's a snapshot: re-pricing happens on the
+// Services Pricing tab, which saves a new one over it.
+//
+// A row with no saved analysis still shows its Estimated Fee if one is
+// there (an older save, a pasted figure) — it just has nothing to open,
+// and says so rather than looking like a dead click.
+function EstimatedFeeCell({ value, analysis, onOpen }) {
+  const shown = String(value ?? '').trim();
+  if (!analysis) {
+    return (
+      <span
+        style={{ color: shown ? 'inherit' : 'var(--color-text-muted)' }}
+        title={shown
+          ? 'No saved working behind this figure. Import the opp on Dropdowns › Services Pricing and save the estimate to attach one.'
+          : 'Set from Dropdowns › Services Pricing: import this opp, tick the services, then Save to opp.'}
+      >{shown || '-'}</span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onOpen(); }}
+      title={`Open the saved estimate: ${analysis.lines.length} service${analysis.lines.length === 1 ? '' : 's'}, and what each was priced on`}
+      style={{
+        border: 'none', background: 'transparent', padding: '1px 2px',
+        font: 'inherit', color: 'var(--color-accent)', fontWeight: 700,
+        cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
+      }}
+    >{shown || '-'}</button>
   );
 }
 
@@ -9260,6 +9301,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
+  // _id of the opp whose saved pricing analysis is open, resolved against
+  // the live records the same way, so a re-save from the Services Pricing
+  // tab shows through without closing and reopening the popup.
+  const [analysisOppId, setAnalysisOppId] = useState(null);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -11141,6 +11186,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               />
             );
           }
+          if (h === ESTIMATED_FEE_COLUMN) {
+            return (
+              <EstimatedFeeCell
+                value={row[h]}
+                analysis={normalizePricingAnalysis(row[ANALYSIS_FIELD])}
+                onOpen={() => setAnalysisOppId(row._id)}
+              />
+            );
+          }
           if (h === 'Last Spoke') {
             // Business days since the Last Client Heard From Us date —
             // mirrors the Call In logic above, honoring a sheet-imported
@@ -12966,6 +13020,19 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         </div>,
         document.body
       )}
+
+      {analysisOppId != null && (() => {
+        const opp = records.find(r => r._id === analysisOppId);
+        const analysis = normalizePricingAnalysis(opp?.[ANALYSIS_FIELD]);
+        if (!analysis) return null;
+        return (
+          <PricingAnalysisModal
+            analysis={analysis}
+            account={opp?.Account}
+            onClose={() => setAnalysisOppId(null)}
+          />
+        );
+      })()}
 
       {infoOppId != null && (() => {
         const opp = records.find(r => r._id === infoOppId);
