@@ -20,8 +20,10 @@ import { ServicesPricingTab } from './ServicesPricingTab';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
+import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
+import { useAuth } from '../../contexts/AuthContext';
 import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
 import styles from './DropdownsView.module.css';
@@ -918,13 +920,21 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
 export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
+  // `|| {}` for the same reason the pricing subtab does it: the view still
+  // renders outside the AuthProvider, and with no uid the estimate below
+  // simply isn't remembered.
+  const { user } = useAuth() || {};
   // The Services Pricing subtab's working estimate: which services are
   // ticked, how many sites / accounts / meters the account has, and the deal
   // size percentage-based fees take their cut of. Held here rather than in
   // the subtab so stepping over to Services to fix a rate and coming back
-  // doesn't throw a half-built estimate away. Deliberately not saved — it's
-  // a scratch calculation; the rate card it reads is what's in settings.
-  const [pricingScenario, setPricingScenario] = useState({ services: [], counts: {}, dealSize: '' });
+  // doesn't throw a half-built estimate away, and seeded from what the last
+  // visit left behind so leaving the page or reloading it doesn't either.
+  // The subtab is what writes it (see pricingEstimateStore) — this reads
+  // back the scenario half of the same record.
+  const [pricingScenario, setPricingScenario] = useState(
+    () => loadPricingEstimate(user?.uid)?.scenario || { services: [], counts: {}, dealSize: '' },
+  );
   const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
     settings?.dropdownLists,
