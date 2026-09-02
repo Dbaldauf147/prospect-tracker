@@ -313,3 +313,61 @@ export function estimateConsumption(rawType, sizeFt2) {
     totalKwh: Math.round(base.totalKwh * scale),
   };
 }
+
+// 1 dekatherm = 1,000,000 BTU = 293.07107 kWh. The gas kWh-equivalent
+// column in CONSUMPTION_ESTIMATES is built on this factor (125,005 Dth →
+// 36,635,404 kWh), so anything converting a site's own Dth to kWh has to
+// use the same one or the two won't line up.
+export const KWH_PER_DTH = 293.07107;
+
+// Per-square-foot energy intensity of a property type's reference
+// profile — the reference consumption divided by the reference size.
+//
+// Scaling is linear (estimateConsumption multiplies every number by
+// actualSize / referenceSize), so intensity is size-invariant: this is
+// both the reference profile's intensity AND the intensity of the
+// estimate for any site of that type, whatever its square footage. That
+// is what makes it usable as a benchmark — a site's measured intensity
+// can be held against it directly.
+//
+// Returns null for a type with no consumption profile (Land / Debt,
+// unrecognized names) so callers can tell "no benchmark" from a zero.
+export function propertyTypeIntensity(rawType) {
+  const base = propertyTypeConsumption(rawType);
+  if (!base || base.electricKwh == null) return null;
+  const ref = Number(base.sizeFt2);
+  if (!Number.isFinite(ref) || ref <= 0) return null;
+  return {
+    category: base.category,
+    referenceSizeFt2: ref,
+    electricKwhPerFt2: base.electricKwh / ref,
+    gasDthPerFt2: base.gasDth / ref,
+    gasKwhPerFt2: base.gasKwh / ref,
+    totalKwhPerFt2: base.totalKwh / ref,
+  };
+}
+
+// How far a measured figure sits from the estimate it is held against,
+// as a signed fraction: +0.30 is 30% above the estimate, -0.15 is 15%
+// below. Used for both the per-ft² intensities above and the indicative
+// rates the Site Detail tab compares a site's actual $/kWh against.
+// Null when either side is missing or the estimate is zero — "no
+// answer", which the export renders as an empty cell rather than as a
+// 0% that would read as "spot on the estimate".
+export function varianceVsEstimate(actual, estimate) {
+  if (typeof actual !== 'number' || !Number.isFinite(actual)) return null;
+  if (typeof estimate !== 'number' || !Number.isFinite(estimate) || estimate <= 0) return null;
+  // Rounded to 0.01% — a hundred times finer than the whole-percent the
+  // export displays, so nothing real is lost, and it stops noise below
+  // that resolution from rendering as "-0%". The noise is not float
+  // error: the reference table's kWh-equivalent gas column is rounded to
+  // whole kWh, so a site modelled straight off the table lands ~0.004%
+  // away from a total recomputed at 293.07107 kWh/Dth. "-0%" on a row
+  // that is by construction exactly on its estimate reads as a real
+  // shortfall, which is the one thing this column must not do.
+  //
+  // `|| 0` collapses a negative zero (which -0.00002 rounds to) onto a
+  // plain 0 — a sign that survives into the cell would be the same
+  // "-0%" by another route.
+  return (Math.round(((actual / estimate) - 1) * 1e4) / 1e4) || 0;
+}
