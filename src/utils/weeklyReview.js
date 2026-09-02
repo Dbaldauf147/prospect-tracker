@@ -359,9 +359,10 @@ export function headlineKpis(snapshot) {
       // True when the user has pinned a value onto the chart's Projected
       // bar; the tile says so rather than passing it off as computed.
       overridden: !!proj?.overridden,
-      // Kept for the review's prose, which contrasts the two projections.
-      runRateFullYear: ytd ? fin(ytd.runRateFullYear) : null,
-      yearElapsedPct: ytd ? fin(ytd.yearElapsedPct) : null,
+      // No run rate here on purpose. The tile used to carry it as a
+      // contrast line and it read as a second claim about the headline
+      // rather than the separate question it is. The review's prose still
+      // gets both off the snapshot, where the contrast is worth drawing.
       status: (projected == null || target <= 0)
         ? null
         : (projected >= target ? 'ahead' : 'behind'),
