@@ -135,6 +135,30 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 // case this stands for, and any other value is the division's own text.
 const NO_DIVISION = '__no-division__';
 
+// The one place that decides what a Country cell means. Uploads spell the
+// same country several ways — "United States" / "USA" / "US", "Canada" /
+// "CAN" / "CA", "México" / "MEX" — and the checks below used to be written
+// out by hand at each call site with a slightly different regex each time.
+// They drifted: the utility-lookup and state-derivation gates accepted the
+// three-letter codes while the NAM scope, the ST / Prov resolver and the
+// Mexico flags did not, so a list whose Country column carried "CAN" kept
+// its utility match but lost its province, its deregulation status, its
+// indicative rate, and every dollar of indicative savings.
+//
+// Kept as regexes on the raw cell rather than routed through
+// normalizeCountryName because these four answer a narrower question —
+// "is this cell one of the North American countries the US-centric lookups
+// are valid for" — and must keep accepting the alpha-2 forms ("US", "CA")
+// that the country reference tables deliberately leave out.
+const isUnitedStatesCountry = (raw) =>
+  /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(String(raw || '').trim());
+const isCanadaCountry = (raw) =>
+  /^(ca|can|canada)$/i.test(String(raw || '').trim());
+const isMexicoCountry = (raw) =>
+  /^(mx|mex|m[eé]xico)$/i.test(String(raw || '').trim());
+const isPuertoRicoCountry = (raw) =>
+  /^(pr|puerto\s*rico)$/i.test(String(raw || '').trim());
+
 // Which North American country a derived row belongs to, for the NAM sheet
 // and its map.
 //
@@ -153,8 +177,8 @@ function naScopeOf(row) {
   const rawCountry = String(row?.__country__ || '').trim();
   const country = normalizeCountryName(rawCountry) || rawCountry;
   const stateCode = String(row?.__state__ || '').trim().toUpperCase();
-  let isUS = /^(united states|usa|us)$/i.test(country);
-  let isCA = /^(canada|ca)$/i.test(country);
+  let isUS = isUnitedStatesCountry(country);
+  let isCA = isCanadaCountry(country);
   if (!isUS && !isCA && !rawCountry && stateCode) {
     if (US_STATE_CENTERS[stateCode]) isUS = true;
     else if (CANADA_PROVINCE_CENTERS[stateCode]) isCA = true;
@@ -356,10 +380,10 @@ function gacOpportunity(state, kwh) {
 function isUtilityLookupCountry(rawCountry) {
   const c = String(rawCountry || '').trim();
   if (!c) return true;
-  return /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(c)
-    || /^(pr|puerto\s*rico)$/i.test(c)
-    || /^(ca|can|canada)$/i.test(c)
-    || /^(mx|mex|m[eé]xico)$/i.test(c);
+  return isUnitedStatesCountry(c)
+    || isPuertoRicoCountry(c)
+    || isCanadaCountry(c)
+    || isMexicoCountry(c);
 }
 
 // Narrower still: which countries a US/Canadian state code may be
@@ -381,9 +405,9 @@ function isUtilityLookupCountry(rawCountry) {
 function isStateCodeCountry(rawCountry) {
   const c = String(rawCountry || '').trim();
   if (!c) return true;
-  return /^(u\.?\s*s\.?\s*a?\.?|united states( of america)?)$/i.test(c)
-    || /^(pr|puerto\s*rico)$/i.test(c)
-    || /^(ca|can|canada)$/i.test(c);
+  return isUnitedStatesCountry(c)
+    || isPuertoRicoCountry(c)
+    || isCanadaCountry(c);
 }
 
 // Inline autocomplete input used by supplier cells in the Utility
@@ -2465,8 +2489,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // a derived US code from a zip-prefix / name collision (e.g. a
         // German postal code resolving to "NY") must never override it.
         __stateProvinceDisplay__: (() => {
-          const isUS = /^(united states|usa|us)$/i.test(resolvedCountry);
-          const isCA = /^(canada|ca)$/i.test(resolvedCountry);
+          const isUS = isUnitedStatesCountry(resolvedCountry);
+          const isCA = isCanadaCountry(resolvedCountry);
           const countryLabel = normalizeCountryName(resolvedCountry) || resolvedCountry;
           return (isUS || isCA)
             ? (state || stateColInput || countryLabel || '')
@@ -4145,9 +4169,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // instead. Returns the cleaned state code for US/CA sites, '' otherwise.
   function effectiveStateCode(r) {
     const rawCountry = String(r.__country__ || '').trim();
-    const isUS = /^(united states|usa|us)$/i.test(rawCountry);
-    const isCA = /^(canada|ca)$/i.test(rawCountry);
-    if (!isUS && !isCA) return '';
+    if (!isUnitedStatesCountry(rawCountry) && !isCanadaCountry(rawCountry)) return '';
     return String(r.__state__ || '').trim();
   }
 
@@ -5938,7 +5960,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Threshold: 6 GWh/yr (6,000,000 kWh) per site for the
     // procurement opportunity to be worth pursuing.
     const MEXICO_CFE_KWH_THRESHOLD = 6_000_000;
-    const isMexico = (country) => /^mexic/i.test(String(country || ''));
+    // Same test the utility-lookup gate uses, so a Mexican site that got a
+    // CFE match can't then fail the flag's own idea of "Mexico".
+    const isMexico = isMexicoCountry;
     const isBajaState = (state) => /\bbaja\b/i.test(String(state || ''));
     const isCFE = (utility) => {
       const s = String(utility || '').toLowerCase();
