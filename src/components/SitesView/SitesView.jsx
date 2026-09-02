@@ -15277,9 +15277,66 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // Flagged here, at the moment the mapping is being made, as well
           // as on the page after import.
           const noTenureCol = !active.mapping.ownership;
+          // "Assume all owned / all leased" shortcut for a file with no
+          // tenure column at all — a single-tenure portfolio (every site
+          // owned, or every site leased) is common enough that making the
+          // user add a column to the workbook and re-upload is the wrong
+          // ask. The assumption is written onto the rows as a real column
+          // and Ownership is mapped at it, so from the import onwards it
+          // behaves exactly like a tenure column that arrived in the file:
+          // it imports, exports, mass-edits and scopes the compliance
+          // subtabs the same way. Values are the canonical 'Owned' /
+          // 'Leased' the rest of the page matches on.
+          const ASSUMED_TENURE_HEADER = 'Tenure (assumed)';
+          const assumedTenure = active.mapping.ownership === ASSUMED_TENURE_HEADER
+            ? (active.assumedTenure || null)
+            : null;
+          function assumeTenureForAll(value) {
+            setSitesMappingModal(m => {
+              if (!m) return m;
+              const idx = m.selectedIdx;
+              const cur = m.sheets[idx];
+              const rows = cur.rows.map(r => ({ ...r, [ASSUMED_TENURE_HEADER]: value }));
+              const headers = cur.headers.includes(ASSUMED_TENURE_HEADER)
+                ? cur.headers
+                : [...cur.headers, ASSUMED_TENURE_HEADER];
+              // Same one-header-one-field rule the dropdowns follow: free
+              // the column from anything else it was pointed at first.
+              const mapping = { ...cur.mapping };
+              for (const t of TARGET_FIELDS) {
+                if (mapping[t.key] === ASSUMED_TENURE_HEADER) mapping[t.key] = '';
+              }
+              mapping.ownership = ASSUMED_TENURE_HEADER;
+              const sheets = m.sheets.slice();
+              sheets[idx] = { ...cur, rows, headers, mapping, assumedTenure: value };
+              return { ...m, sheets };
+            });
+          }
+          function clearAssumedTenure() {
+            setSitesMappingModal(m => {
+              if (!m) return m;
+              const idx = m.selectedIdx;
+              const cur = m.sheets[idx];
+              const rows = cur.rows.map(r => {
+                if (!(ASSUMED_TENURE_HEADER in r)) return r;
+                const out = { ...r };
+                delete out[ASSUMED_TENURE_HEADER];
+                return out;
+              });
+              const headers = cur.headers.filter(h => h !== ASSUMED_TENURE_HEADER);
+              const mapping = { ...cur.mapping };
+              for (const t of TARGET_FIELDS) {
+                if (mapping[t.key] === ASSUMED_TENURE_HEADER) mapping[t.key] = '';
+              }
+              const sheets = m.sheets.slice();
+              sheets[idx] = { ...cur, rows, headers, mapping, assumedTenure: null };
+              return { ...m, sheets };
+            });
+          }
           const targetLabel = (key) => TARGET_FIELDS.find(t => t.key === key)?.label || key;
           const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
           const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
+          const assumeBtn = { padding: '0.25rem 0.7rem', fontSize: '0.72rem', fontWeight: 700, border: '1px solid #F59E0B', borderRadius: 6, background: '#FFFFFF', color: '#92400E', cursor: 'pointer', whiteSpace: 'nowrap' };
           const tabBase = { padding: '0.35rem 0.7rem', fontSize: '0.75rem', fontWeight: 600, border: '1px solid #E2E8F0', borderBottom: 'none', borderTopLeftRadius: 6, borderTopRightRadius: 6, background: '#F8FAFC', color: '#475569', cursor: 'pointer', whiteSpace: 'nowrap' };
           const tabActive = { ...tabBase, background: '#FFFFFF', color: '#0F172A', borderColor: '#CBD5E1', boxShadow: 'inset 0 -2px 0 #2563EB' };
           return (
@@ -15322,6 +15379,31 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 6, fontSize: '0.75rem', color: '#92400E' }}>
                     <strong>⚠ No Tenure (Owned / Leased) column mapped.</strong>{' '}
                     Nothing is mapped to <strong>Ownership (Owned / Leased)</strong>, so no site will carry a tenure status and the whole list reads as owned outright: the compliance subtabs will screen every building for obligations that fall on the owner, and the Master Analysis will project procurement savings on the full deregulated spend. Map the column if the file has one — this is a warning, not a blocker.
+                    {/* No column to map, because the whole portfolio is one
+                        tenure: say so here instead of editing the file. */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.45rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600 }}>Or assume one tenure for all {active.rows.length.toLocaleString()} rows:</span>
+                      <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll('Owned')} title={`Write "Owned" onto every row as a ${ASSUMED_TENURE_HEADER} column and map Ownership to it`}>
+                        All sites Owned
+                      </button>
+                      <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll('Leased')} title={`Write "Leased" onto every row as a ${ASSUMED_TENURE_HEADER} column and map Ownership to it`}>
+                        All sites Leased
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {assumedTenure && (
+                  <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#ECFDF5', border: '1px solid #6EE7B7', borderRadius: 6, fontSize: '0.75rem', color: '#065F46', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ flex: 1, minWidth: 220 }}>
+                      <strong>All {active.rows.length.toLocaleString()} rows assumed {assumedTenure}.</strong>{' '}
+                      A <code>{ASSUMED_TENURE_HEADER}</code> column carrying "{assumedTenure}" is added to every row and mapped to <strong>Ownership (Owned / Leased)</strong>. Individual sites can still be changed afterwards with <strong>Mass edit</strong>.
+                    </span>
+                    <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll(assumedTenure === 'Owned' ? 'Leased' : 'Owned')}>
+                      Switch to all {assumedTenure === 'Owned' ? 'Leased' : 'Owned'}
+                    </button>
+                    <button type="button" style={{ ...assumeBtn, borderColor: '#CBD5E1', color: '#475569' }} onClick={clearAssumedTenure}>
+                      Undo
+                    </button>
                   </div>
                 )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxHeight: '60vh' }}>
