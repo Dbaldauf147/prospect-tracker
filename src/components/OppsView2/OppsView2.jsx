@@ -1351,6 +1351,25 @@ function oppNeedsCreditApproval(row) {
   return bfoFieldMissing(row?.['Credit approval']);
 }
 
+// "Credit Approval Missing" flag: the other half of the credit pair. The
+// review was submitted (Credit Review Request Date is filled) but the
+// answer never came back (Credit Approval Date still blank). Where
+// "Credit Approval Needed" catches the deal nobody sent to credit, this
+// catches the one that was sent and then sat in the queue unnoticed —
+// the failure that actually holds up a signature, since the request
+// having gone in reads as handled.
+//
+// No deal-size or stage gate beyond "still open": a request that was made
+// is a request that needs an answer, whatever the deal is worth and
+// whichever stage it reached. The two credit flags can't both fire —
+// one needs the request date blank, this one needs it filled.
+function oppMissingCreditApprovalDate(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (CLOSED_STAGES_SET.has(stage)) return false;
+  if (bfoFieldMissing(row?.['Credit approval'])) return false;
+  return bfoFieldMissing(row?.['Credit Approval Date']);
+}
+
 // "Missing Entity Approval" / "Missing Verbal" flags: an opp that has
 // reached Agreement Sent with either of those two cells still blank.
 // Both are asked for by the AgreementSentFollowUpModal when the stage
@@ -6397,6 +6416,28 @@ export function OppInfoModal({
                   color: 'var(--color-accent)', cursor: 'pointer',
                 }}
               >Restore</button>
+            </div>
+          )}
+          {oppMissingCreditApprovalDate(opp) && (
+            // Same rule as the Flags-column chip: the credit review was
+            // submitted but no approval date came back. Shown here too so
+            // it's visible with the credit pair itself, and when the Flags
+            // column is hidden in the table.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCD34D', borderRadius: 6,
+              background: '#FFFBEB', fontSize: '0.8rem',
+              color: '#92400E', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span>
+                <strong>Credit approval missing.</strong> The credit review went in on{' '}
+                <strong>{formatDateDisplay(opp['Credit approval'])}</strong> but{' '}
+                <strong>{headerLabel('Credit Approval Date')}</strong> is still blank — chase
+                the approval, then fill the date in to clear the flag.
+              </span>
             </div>
           )}
           {/* Contract Service Desk + COA Approval tickets. They sit with the
@@ -11654,6 +11695,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
       if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
+      if (oppMissingCreditApprovalDate(row)) parts.push('Credit Approval Missing');
       if (oppMissingEntityApproval(row)) parts.push('Missing Entity Approval');
       if (oppMissingVerbal(row)) parts.push('Missing Verbal');
       const kickoffDays = kickoffDeadlineFlag(row);
@@ -11677,6 +11719,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
         if (oppNeedsCreditApproval(row)) n += 1;
+        if (oppMissingCreditApprovalDate(row)) n += 1;
         if (oppMissingEntityApproval(row)) n += 1;
         if (oppMissingVerbal(row)) n += 1;
         if (kickoffDeadlineFlag(row) != null) n += 1;
@@ -11693,12 +11736,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
         const needsCredit = oppNeedsCreditApproval(row);
+        const awaitingCredit = oppMissingCreditApprovalDate(row);
         const missingEntity = oppMissingEntityApproval(row);
         const missingVerbal = oppMissingVerbal(row);
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -11775,6 +11819,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank ${headerLabel('Credit approval')}: get credit approval.`}
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Credit Approval Needed</span>
+            )}
+            {awaitingCredit && (
+              <span
+                title={`${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn't come back — chase it.`}
+                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >⚠ Credit Approval Missing</span>
             )}
             {missingEntity && (
               <span
