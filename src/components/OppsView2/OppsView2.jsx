@@ -12172,6 +12172,35 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, [prefiltered]);
 
+  // The deals behind the "Stage 6 deals" line on the Keith agenda, so that
+  // line can list them underneath and tick them off one at a time instead
+  // of standing for a set the user has to remember.
+  //
+  // Stage 6 is Negotiate to Win — the "Agreement Sent" stage, the same
+  // mapping the Days in Stage bands use.
+  //
+  // Read off every opp rather than the tab's filtered rows, and not
+  // narrowed to what's waiting on Keith: the line is about walking the
+  // whole Stage 6 list with him, and a checklist that quietly drops a
+  // deal — because a date filter excluded it, or because the history
+  // gate hid a row with no Call In — fails at the one thing it's for.
+  // Biggest deal first, which is the order the conversation takes; ties
+  // fall back to account name so the order is stable.
+  const stage6Deals = useMemo(() => {
+    return records
+      .filter(row => String(row?.Stage || '').trim() === 'Agreement Sent')
+      .map(row => {
+        const amount = parseMoney(row?.['Quoted Amount']);
+        return {
+          id: String(row._id),
+          name: String(row?.['Account'] || '').trim() || '(no account)',
+          amount,
+          amountLabel: amount == null ? '' : fmtMoneyWhole(amount),
+        };
+      })
+      .sort((a, b) => (b.amount ?? -Infinity) - (a.amount ?? -Infinity) || a.name.localeCompare(b.name));
+  }, [records]);
+
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
   // table). Null when closed.
@@ -13626,7 +13655,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       {activeTab === 'waitingKeith' && (
         <>
           {/* What to raise with him, above what the data says is stuck on him. */}
-          <KeithAgenda settings={settings} updateSettings={updateSettings} />
+          <KeithAgenda
+            settings={settings}
+            updateSettings={updateSettings}
+            stage6Deals={stage6Deals}
+            onOpenOpp={setInfoOppId}
+          />
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
               {waitingOnKeith.length} opp{waitingOnKeith.length === 1 ? '' : 's'} waiting on Keith
