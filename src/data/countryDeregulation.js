@@ -13,6 +13,8 @@
 // country whose Electric Power is already deregulated doesn't also
 // earn reg-rate savings on top.
 
+import { countryNameFromIso3 } from './countryIso3.js';
+
 export const COUNTRY_DEREGULATION = {
   'Afghanistan': { region: 'Central Asia', electric: 'Unlikely', gas: 'Unlikely', powerRateOptimization: 'Deregulated' },
   'Albania': { region: 'Europe', electric: 'No opportunity', gas: 'Deregulated', powerRateOptimization: 'No opportunity' },
@@ -285,6 +287,10 @@ export function normalizeCountryName(raw) {
   const key = canonicalKey(trimmed);
   const aliased = NAME_ALIASES[key];
   if (aliased && COUNTRY_DEREGULATION[aliased]) return aliased;
+  // ISO 3166-1 alpha-3 ("CAN", "MEX", "TUN"). Tried after the name
+  // aliases so a spelled-out country always wins the match.
+  const iso3 = countryNameFromIso3(trimmed);
+  if (iso3 && COUNTRY_DEREGULATION[iso3]) return iso3;
   for (const name of Object.keys(COUNTRY_DEREGULATION)) {
     if (canonicalKey(name) === key) return name;
   }

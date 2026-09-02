@@ -10,6 +10,8 @@
 // per therm) before substituting into the existing `gasRate` slot
 // — see `countryGasRatePerTherm` below.
 
+import { countryNameFromIso3 } from './countryIso3.js';
+
 export const COUNTRY_RATES = {
   // Sub-Saharan Africa
   'Angola':                            { region: 'Sub-Saharan Africa', electricUsdPerKwh: 0.013, gasUsdPerKwh: null },
@@ -265,6 +267,11 @@ export function normalizeCountryRateName(raw) {
   if (!key) return null;
   const aliased = NAME_ALIASES[key];
   if (aliased && COUNTRY_RATES[aliased]) return aliased;
+  // ISO 3166-1 alpha-3 ("CAN", "MEX", "TUN"), same as the deregulation
+  // table — the two are keyed by the identical country list, so a code
+  // that resolves a dereg status also resolves an indicative rate.
+  const iso3 = countryNameFromIso3(trimmed);
+  if (iso3 && COUNTRY_RATES[iso3]) return iso3;
   for (const name of Object.keys(COUNTRY_RATES)) {
     if (canonicalKey(name) === key) return name;
   }
