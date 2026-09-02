@@ -22,6 +22,7 @@ import {
   reviewHighlights, weekRangeLabel, headlineKpis,
 } from '../../utils/weeklyReview';
 import { loadProgressWeeks, loadWeeklyReviews, saveWeeklyReview } from '../../utils/weeklyReviewStore';
+import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -202,6 +203,10 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
   const [goals, setGoals] = useState([]);
   const [pipeline, setPipeline] = useState(null);
   const [coachingRules, setCoachingRules] = useState(null);
+  // Values the user has pinned onto the YOY charts. The projection tile
+  // reads the Annual Sales "Projected" bar, so a pin on that bar has to
+  // reach here or the tile and the chart disagree again.
+  const [yoyOverrides, setYoyOverrides] = useState(loadYoyOverrides);
 
   // Weekly review (YOY + Pipeline + Progress) and its saved history.
   const [bfo, setBfo] = useState(null);
@@ -233,10 +238,18 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
       loadGoals().then(g => { if (!cancelled) setGoals(Array.isArray(g) ? g : []); }).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => { if (!cancelled) setPipeline(p || null); }).catch(() => {});
       dbGet(BFO_STORE, BFO_KEY).then(b => { if (!cancelled) setBfo(b || null); }).catch(() => { if (!cancelled) setBfo(null); });
+      setYoyOverrides(loadYoyOverrides());
     };
     refresh();
     window.addEventListener('focus', refresh);
-    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+    // Saving an override fires this in the same window; 'focus' alone would
+    // miss a pin made on the YOY tab without leaving the browser.
+    window.addEventListener(YOY_OVERRIDES_EVENT, refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener(YOY_OVERRIDES_EVENT, refresh);
+    };
   }, []);
 
   // Coaching rules stream (optional context for the narrative).
@@ -301,8 +314,8 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
   // The review always covers the current week off the latest cached chart
   // data; the date picker above only scopes the activity report below it.
   const reviewSnapshot = useMemo(() => buildReviewSnapshot({
-    pipeline, bfo, oppsRecords, progressWeeks, cdmName,
-  }), [pipeline, bfo, oppsRecords, progressWeeks, cdmName]);
+    pipeline, bfo, oppsRecords, progressWeeks, yoyOverrides, cdmName,
+  }), [pipeline, bfo, oppsRecords, progressWeeks, yoyOverrides, cdmName]);
   const currentWeekKey = reviewSnapshot.weekKey;
 
   // ---- Headline KPIs ----------------------------------------------------
@@ -348,12 +361,17 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
 
     const projectedLines = [];
     if (j.amount == null) {
-      projectedLines.push('Open Opps 2 so this year’s closes can be run-rated.');
-    } else {
-      projectedLines.push(`At the current run rate · ${yearGone(j.yearElapsedPct)}`);
-      if (j.gap != null) {
-        projectedLines.push(`${fmtDollars(Math.abs(j.gap))} ${j.gap >= 0 ? 'above' : 'under'} the ${fmtDollars(j.target)} target`);
-      }
+      projectedLines.push('Open Opps 2 so this year’s closes can be projected.');
+    } else if (j.overridden) {
+      projectedLines.push('Pinned on the YOY Annual Sales chart');
+    } else if (j.soldYTD != null && j.committedAmount != null) {
+      projectedLines.push(`${fmtDollars(j.soldYTD)} sold + ${fmtDollars(j.committedAmount)} in agreements out`);
+    }
+    if (j.amount != null && j.gap != null) {
+      projectedLines.push(`${fmtDollars(Math.abs(j.gap))} ${j.gap >= 0 ? 'above' : 'under'} the ${fmtDollars(j.target)} target`);
+    }
+    if (j.amount != null && j.runRateFullYear != null && j.runRateFullYear !== j.amount) {
+      projectedLines.push(`Run rate alone would land ${fmtDollars(j.runRateFullYear)} · ${yearGone(j.yearElapsedPct)}`);
     }
 
     return [
