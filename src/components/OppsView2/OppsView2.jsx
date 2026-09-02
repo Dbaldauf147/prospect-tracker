@@ -113,6 +113,7 @@ import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
+import { CallNextStepsLog } from './CallNextStepsLog';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
@@ -5902,9 +5903,20 @@ const OPP_DETAIL_TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'scope', label: 'Scope & Quote' },
   { key: 'activity', label: 'Activity' },
+  // Not a bucket of columns like the others: it holds the running log of
+  // what each call mapped to this deal said to do next. It carries no
+  // opp fields at all, which is why it is listed in ALWAYS_ON_TABS below
+  // — the "does this tab have any fields" test that hides an empty tab
+  // would hide this one on every record.
+  { key: 'callnotes', label: 'Call Notes' },
   { key: 'close', label: 'Close' },
   { key: 'other', label: 'Other' },
 ];
+
+// Tabs that show whether or not the record has fields for them. Scope &
+// Quote carries the two ticket links, which every opp can have; Call
+// Notes is content in its own right.
+const ALWAYS_ON_TABS = new Set(['scope', 'callnotes']);
 
 // Stage is the deal's headline field, so it belongs in Overview and
 // nowhere else. Matched on the normalised header rather than one exact
@@ -6104,10 +6116,8 @@ export function OppInfoModal({
   // within each one.
   const fieldsByTab = new Map(OPP_DETAIL_TABS.map(t => [t.key, []]));
   for (const h of orderedFields) fieldsByTab.get(oppDetailTabFor(h)).push(h);
-  // Scope & Quote is always available: it carries the two ticket links, which
-  // every opp can have whether or not the record has any quote columns.
   const visibleTabs = OPP_DETAIL_TABS.filter(t => (
-    fieldsByTab.get(t.key).length > 0 || t.key === 'scope'
+    fieldsByTab.get(t.key).length > 0 || ALWAYS_ON_TABS.has(t.key)
   ));
   // Fall back to the first available tab when the sticky choice has no
   // fields on this record (e.g. "Other" with no user-added columns).
@@ -6556,6 +6566,11 @@ export function OppInfoModal({
               two shapes in one table otherwise fight over the widths, and
               the labels lose — they'd wrap to three lines to give a value
               cell room it doesn't need. */}
+          {/* A tab with no columns of its own (Call Notes, or Scope &
+              Quote on a record with no quote fields) draws no table at
+              all — an empty one is a header rule across the popup with
+              nothing under it. */}
+          {tabFields.length > 0 && (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 24 }} />
@@ -6642,10 +6657,17 @@ export function OppInfoModal({
               })()}
             </tbody>
           </table>
+          )}
 
           {/* Call recordings tagged to this opp on the Call Recordings
               page. Renders nothing when there are none. */}
           {currentTab === callsTab && <LinkedCalls oppId={opp._id} />}
+
+          {/* Every call's next steps, down the deal's history. Its own tab
+              rather than more of the Calls section: that one is "what was
+              said", this is "what we said we'd do", and a rep chasing a
+              commitment from three weeks ago is not reading summaries. */}
+          {currentTab === 'callnotes' && <CallNextStepsLog oppId={opp._id} />}
         </div>
 
         <div style={{
