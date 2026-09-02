@@ -43,6 +43,41 @@ export function getServiceCategories(settings) {
   return base.map(c => ({ name: c.name, items: sortServiceNames(c.items, renames) }));
 }
 
+// The board as it should be shown: the user's boxes, plus a trailing
+// "Other services" card for anything on the linked list that no box claims.
+//
+// Every board that offers services to pick from needs that trailing card, or
+// a service the user adds on Dropdowns › Services simply vanishes from it
+// until somebody remembers to file it into a box. The Opps Scope picker had
+// this and the company card's Services Explored board did not, which is
+// exactly how a service added on the Dropdowns tab could be listed there,
+// pickable in Scope, and nowhere to be found on the company popup.
+//
+// The trailing card is a view, not a box: nothing is stored under it, and it
+// is absent entirely when every service is filed. Callers that let the user
+// edit boxes must not write it back into the layout — file a service with
+// moveServiceToBucket instead, which knows UNGROUPED_SERVICES means "out of
+// every box".
+//
+// Hidden services are NOT filtered here; hiding is applied by each board on
+// the way to the screen, because the company card shows hidden services
+// while its Edit Services mode is on.
+export function buildServiceBoard(settings, options) {
+  const cats = getServiceCategories(settings);
+  const filed = new Set(cats.flatMap(c => (c.items || []).map(i => String(i).trim().toLowerCase())));
+  const seen = new Set();
+  const extra = [];
+  for (const o of options || []) {
+    const name = String(o || '').trim();
+    const key = name.toLowerCase();
+    if (!name || filed.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    extra.push(name);
+  }
+  if (!extra.length) return cats;
+  return [...cats, { name: UNGROUPED_SERVICES, items: sortServiceNames(extra, settings?.serviceRenames) }];
+}
+
 // Which box a service sits in, or '' when no box claims it — the Scope
 // picker files those under UNGROUPED_SERVICES. Matched case-insensitively on
 // the whole name, the same test the picker uses to decide what's unfiled, so

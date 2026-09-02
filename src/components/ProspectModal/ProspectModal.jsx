@@ -22,8 +22,9 @@ import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
-import { getServiceCategories } from '../../utils/serviceCategoriesStore';
+import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { getServiceCategories, buildServiceBoard, moveServiceToBucket, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
@@ -2776,11 +2777,6 @@ function MultiSelectDropdown({ options, selected, onToggle, sourceOf = null }) {
   );
 }
 
-// Build a flat set of all known service item names (lowercased) for scope matching
-const ALL_SERVICE_ITEMS_LOWER = new Set(
-  SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
-);
-
 function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFrameworks }) {
   if (!state.loading && !state.data && !state.error) return null;
   const data = state.data;
@@ -5125,13 +5121,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
   }, [oppsCache]);
 
+  // The Solutions list as Dropdowns › Services serves it — the seed catalog
+  // plus anything the user added there, unioned with the board. This is the
+  // company card's service vocabulary: the board below, the explored count,
+  // the scope matcher and the @-tag pickers all read it, so a service added
+  // on the Dropdowns tab shows up here without a second edit.
+  const solutionServiceNames = useMemo(
+    () => getEffectiveDropdownLists(settings).find(l => l.key === 'solutions')?.options || [],
+    [settings],
+  );
+
+  // The board's cards: the user's boxes plus the "Other services" card for
+  // anything on the list above that no box claims. Same builder the Opps
+  // Scope picker uses, so the two boards show the same services.
+  const serviceBoard = useMemo(
+    () => buildServiceBoard(settings, solutionServiceNames),
+    [settings, solutionServiceNames],
+  );
+
   // Map service items to their opp stage (priority: Sold > active stages > Not Sold)
   const scopeMatchedServices = useMemo(() => {
     const stagePriority = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
     const matched = new Map(); // item -> stage
     for (const { scope, stage } of oppsRecords) {
       for (const part of scopeTokens(scope)) {
-        for (const cat of SERVICE_CATEGORIES) {
+        for (const cat of serviceBoard) {
           for (const item of cat.items) {
             // Whole-word matching, shared with the Scope picker and the
             // Pipeline coverage table (src/utils/scopeMatch.js), so the
@@ -5149,14 +5163,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
     return matched;
-  }, [oppsRecords]);
+  }, [oppsRecords, serviceBoard]);
 
   // Every service the board can show, in the user's own category layout —
   // the universe the scheduled-opp match below runs against.
-  const allServiceItems = useMemo(() => {
-    const cats = getServiceCategories(settings);
-    return [...new Set(cats.flatMap(c => c.items || []))];
-  }, [settings]);
+  const allServiceItems = useMemo(
+    () => [...new Set(serviceBoard.flatMap(c => c.items || []))],
+    [serviceBoard],
+  );
 
   // Services this company has an opp QUEUED for — a New Opp scheduled for
   // a future date, which has no row on the Opps table yet and so matches
@@ -7331,7 +7345,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <ScopingNotesEditor
                   value={fields.competitorsNotes || ''}
                   onCommit={v => set('competitorsNotes', v)}
-                  services={SERVICE_CATEGORIES.flatMap(c => c.items)}
+                  services={allServiceItems}
                   placeholder="Who's competing here? Type @ to tag a service: e.g. @strategic sourcing."
                   style={{ minHeight: '34px', padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}
                 />
@@ -7905,7 +7919,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 {(() => {
                   const svc = fields.servicesExplored || {};
                   const hidden = new Set(settings.hiddenServices || []);
-                  const totalItems = SERVICE_CATEGORIES.reduce((sum, cat) => sum + cat.items.filter(i => !hidden.has(i)).length, 0);
+                  // Counted off the board the user actually sees, not the
+                  // seed catalog: a service added or retired on Dropdowns ›
+                  // Services moves this denominator.
+                  const totalItems = new Set(
+                    serviceBoard.flatMap(cat => cat.items.filter(i => !hidden.has(i)))
+                  ).size;
                   const exploredItems = new Set();
                   for (const [item, val] of Object.entries(svc)) {
                     if (val && val !== '-' && !hidden.has(item)) exploredItems.add(item);
@@ -7942,7 +7961,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const svcSMEs = fields.serviceSMEs || {};
                     const hidden = new Set(settings.hiddenServices || []);
                     const renames = settings.serviceRenames || {};
-                    const categories = getServiceCategories(settings);
+                    const categories = serviceBoard;
                     const SE_GREEN = 'FF3DCD58';
                     const SE_GREEN_DARK = 'FF009530';
                     const SE_TEXT_DARK = 'FF1E293B';
@@ -8068,8 +8087,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 const hiddenCount = hiddenServices.size;
                 const getDisplayName = (item) => serviceRenames[item] || item;
 
-                // Use custom categories if saved, otherwise default
-                const categories = getServiceCategories(settings);
+                // The user's boxes plus the "Other services" card for
+                // anything on Dropdowns › Services that no box claims.
+                const categories = serviceBoard;
+                // The stored layout — what the box edits below write back.
+                // The "Other services" card is a view, never a box, so it
+                // must not reach saveCategories.
+                const storedCategories = getServiceCategories(settings);
+                const isUngrouped = (name) => name === UNGROUPED_SERVICES;
 
                 function saveCategories(next) {
                   updateSettings({ customServiceCategories: next });
@@ -8085,15 +8110,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const next = current.includes(item) ? current.filter(s => s !== item) : [...current, item];
                   updateSettings({ hiddenServices: next });
                 }
+                // Box edits work on the STORED layout: the "Other services"
+                // card isn't a box, so renaming or deleting it would invent
+                // one named after a placeholder.
                 function renameCategoryBox(oldName, newName) {
-                  if (!newName.trim() || newName === oldName) return;
-                  const next = categories.map(c => c.name === oldName ? { ...c, name: newName.trim() } : c);
+                  if (!newName.trim() || newName === oldName || isUngrouped(oldName)) return;
+                  const next = storedCategories.map(c => c.name === oldName ? { ...c, name: newName.trim() } : c);
                   saveCategories(next);
                 }
                 function deleteCategoryBox(catName) {
+                  if (isUngrouped(catName)) return;
                   if (!confirm(`Delete "${catName}" box? Its services will be hidden.`)) return;
-                  const cat = categories.find(c => c.name === catName);
-                  const next = categories.filter(c => c.name !== catName);
+                  const cat = storedCategories.find(c => c.name === catName);
+                  const next = storedCategories.filter(c => c.name !== catName);
                   // Hide all items from the deleted category
                   if (cat) {
                     const hidden = [...(settings.hiddenServices || [])];
@@ -8103,14 +8132,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                   saveCategories(next);
                 }
+                // Filing rather than splicing: moveServiceToBucket pulls the
+                // service out of every box before placing it, and reads
+                // UNGROUPED_SERVICES as "out of all of them" — so dragging
+                // onto or off the "Other services" card does the right thing
+                // without that card ever being written to the layout.
                 function moveService(item, fromCat, toCat) {
                   if (fromCat === toCat) return;
-                  const next = categories.map(c => {
-                    if (c.name === fromCat) return { ...c, items: c.items.filter(i => i !== item) };
-                    if (c.name === toCat) return { ...c, items: [...c.items, item] };
-                    return c;
-                  });
-                  saveCategories(next);
+                  const next = moveServiceToBucket(storedCategories, item, toCat, serviceRenames);
+                  if (next) saveCategories(next);
                 }
 
                 return (
@@ -8148,7 +8178,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return (
                       <div key={cat.name} style={{ breakInside: 'avoid', border: '1px solid var(--color-border)', borderRadius: '5px', overflow: 'hidden', fontSize: '0.72rem', marginBottom: '0.4rem' }}>
                         <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                          {servicesEditMode && editingServiceName?.catName === cat.name ? (
+                          {servicesEditMode && !isUngrouped(cat.name) && editingServiceName?.catName === cat.name ? (
                             <input
                               autoFocus
                               defaultValue={cat.name}
@@ -8158,11 +8188,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               onClick={e => e.stopPropagation()}
                             />
                           ) : (
-                            <span style={{ flex: 1, cursor: servicesEditMode ? 'pointer' : 'default' }} onClick={() => servicesEditMode && setEditingServiceName({ catName: cat.name })} title={servicesEditMode ? 'Click to rename' : ''}>
+                            <span
+                              style={{ flex: 1, cursor: (servicesEditMode && !isUngrouped(cat.name)) ? 'pointer' : 'default' }}
+                              onClick={() => servicesEditMode && !isUngrouped(cat.name) && setEditingServiceName({ catName: cat.name })}
+                              title={isUngrouped(cat.name)
+                                ? 'Services on Dropdowns › Services that no box claims yet. Drag one into a box to file it.'
+                                : (servicesEditMode ? 'Click to rename' : '')}
+                            >
                               {cat.name}
                             </span>
                           )}
-                          {servicesEditMode && (
+                          {servicesEditMode && !isUngrouped(cat.name) && (
                             <button
                               onClick={() => deleteCategoryBox(cat.name)}
                               style={{ background: 'none', border: 'none', color: '#FCA5A5', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
@@ -8385,7 +8421,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         else delete next[noteKey];
                                         set('serviceNotes', next);
                                       }}
-                                      services={SERVICE_CATEGORIES.flatMap(c => c.items)}
+                                      services={allServiceItems}
                                       competitors={competitorOptions}
                                       onMentionCompetitor={(name, recentService) => {
                                         // Service notes already have a
