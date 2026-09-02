@@ -19,7 +19,7 @@ import {
 } from '../../utils/weeklyReport';
 import {
   buildReviewSnapshot, serializeReviewSnapshot, serializeReview,
-  reviewHighlights, weekRangeLabel,
+  reviewHighlights, weekRangeLabel, headlineKpis,
 } from '../../utils/weeklyReview';
 import { loadProgressWeeks, loadWeeklyReviews, saveWeeklyReview } from '../../utils/weeklyReviewStore';
 
@@ -90,6 +90,38 @@ function StatTile({ value, label, accent, sub }) {
 }
 
 const fmtMoney = (n) => (Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString('en-US')}` : '');
+
+// Exact dollars for the KPI detail lines; compact for the headline figure,
+// where "$1.9M" reads at a glance and the extra digits don't.
+const fmtDollars = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '-');
+function fmtCompactMoney(n) {
+  if (!Number.isFinite(n)) return '-';
+  const a = Math.abs(n);
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}K`;
+  return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+// One headline KPI: the number, a verdict chip, and the arithmetic behind
+// it. `status` ('ahead' | 'behind' | null) colours the card and the chip;
+// without one the card stays neutral rather than guessing a verdict.
+function KpiTile({ label, value, status, chip, lines = [] }) {
+  return (
+    <div className={styles.kpi} data-status={status || undefined}>
+      <div className={styles.kpiLabel}>{label}</div>
+      {/* Chip beside the number rather than beside the label: the labels are
+          different lengths, and hanging the chip off them dropped one card's
+          value a line below the others. */}
+      <div className={styles.kpiValueRow}>
+        <span className={styles.kpiValue}>{value}</span>
+        {chip && <span className={styles.kpiChip}>{chip}</span>}
+      </div>
+      {lines.filter(Boolean).map((line, i) => (
+        <div key={i} className={styles.kpiLine}>{line}</div>
+      ))}
+    </div>
+  );
+}
 
 // A named change list with the account/scope + a per-row suffix.
 function ChangeList({ title, items, suffix }) {
@@ -272,6 +304,87 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
     pipeline, bfo, oppsRecords, progressWeeks, cdmName,
   }), [pipeline, bfo, oppsRecords, progressWeeks, cdmName]);
   const currentWeekKey = reviewSnapshot.weekKey;
+
+  // ---- Headline KPIs ----------------------------------------------------
+  // Year-scoped, so like the review they ignore the week/day picker above:
+  // "am I going to make the number" doesn't change because you looked at
+  // last Tuesday. Each card carries the arithmetic behind it so a figure
+  // that looks wrong can be traced without opening the Pipeline tab.
+  const kpis = useMemo(() => headlineKpis(reviewSnapshot), [reviewSnapshot]);
+  const kpiCards = useMemo(() => {
+    const { progressToTarget: p, coverageRatio: c, projectedYearEnd: j } = kpis;
+    const yearGone = (v) => (v == null ? '' : `${v.toFixed(0)}% of the year gone`);
+    const dealsBit = p.deals ? ` across ${p.deals} deal${p.deals === 1 ? '' : 's'}` : '';
+
+    const progressLines = [];
+    if (p.target == null) {
+      progressLines.push('Set an annual target on Charts → Pipeline.');
+    } else if (p.soldYTD == null) {
+      progressLines.push(`Target ${fmtDollars(p.target)} · open Opps 2 so this year’s closes are cached.`);
+    } else {
+      progressLines.push(`${fmtDollars(p.soldYTD)} sold of ${fmtDollars(p.target)}${dealsBit}`);
+      if (p.paceDelta != null) {
+        progressLines.push(`${fmtDollars(Math.abs(p.paceDelta))} ${p.paceDelta >= 0 ? 'ahead of' : 'behind'} pace · ${yearGone(p.yearElapsedPct)}`);
+      }
+      if (p.gapToTarget != null && p.gapToTarget > 0) {
+        progressLines.push(`${fmtDollars(p.gapToTarget)} still to sell this year`);
+      }
+    }
+
+    const coverageLines = [];
+    if (c.actual == null) {
+      coverageLines.push(c.target == null
+        ? 'Set an annual target on Charts → Pipeline.'
+        : 'Paste BFO Activity so open pipeline can be measured.');
+      if (c.goal != null) coverageLines.push(`Goal ${c.goal.toFixed(2)}×`);
+    } else {
+      coverageLines.push(`${fmtDollars(c.pipelineActual)} open pipeline ÷ ${fmtDollars(c.target)} target`);
+      if (c.goal != null) {
+        const d = c.actual - c.goal;
+        coverageLines.push(`Goal ${c.goal.toFixed(2)}× · ${Math.abs(d).toFixed(2)}× ${d >= 0 ? 'above' : 'short'}`);
+      }
+      if (!c.live) coverageLines.push('Stage actuals are the last hand-entered values.');
+    }
+
+    const projectedLines = [];
+    if (j.amount == null) {
+      projectedLines.push('Open Opps 2 so this year’s closes can be run-rated.');
+    } else {
+      projectedLines.push(`At the current run rate · ${yearGone(j.yearElapsedPct)}`);
+      if (j.gap != null) {
+        projectedLines.push(`${fmtDollars(Math.abs(j.gap))} ${j.gap >= 0 ? 'above' : 'under'} the ${fmtDollars(j.target)} target`);
+      }
+    }
+
+    return [
+      {
+        key: 'progress',
+        label: 'Progress to target',
+        value: p.pct == null ? '—' : `${p.pct.toFixed(1)}%`,
+        status: p.status,
+        chip: p.status ? (p.status === 'ahead' ? 'Ahead of pace' : 'Behind pace') : null,
+        lines: progressLines,
+      },
+      {
+        key: 'coverage',
+        label: 'Coverage ratio',
+        value: c.actual == null ? '—' : `${c.actual.toFixed(2)}×`,
+        status: c.status,
+        chip: c.status ? (c.status === 'ahead' ? 'At goal' : 'Below goal') : null,
+        lines: coverageLines,
+      },
+      {
+        key: 'projected',
+        label: 'Projected year-end sales',
+        value: j.amount == null ? '—' : fmtCompactMoney(j.amount),
+        status: j.status,
+        chip: j.status ? (j.status === 'ahead' ? 'Clears target' : 'Short of target') : null,
+        lines: projectedLines,
+      },
+    ];
+  }, [kpis]);
+  // Nothing cached at all — three dashes teach nothing, so say what to open.
+  const kpisReady = !!(reviewSnapshot.pipeline || reviewSnapshot.yoy);
   const currentReview = useMemo(
     () => reviews.find(r => r.week === currentWeekKey) || null,
     [reviews, currentWeekKey],
@@ -472,6 +585,24 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
           Set your work email in <strong>Settings → CDM Name</strong> so sent-email counts can match your outbound HubSpot mail. Calls, meetings, opp changes, and goals still work without it.
         </div>
       )}
+
+      <section className={styles.kpiSection}>
+        <div className={styles.kpiHead}>
+          <h2 className={styles.sectionHead}>Where the year stands</h2>
+          <span className={styles.kpiHeadNote}>
+            Year to date — not scoped to the week picker
+          </span>
+        </div>
+        {kpisReady ? (
+          <div className={styles.kpiRow}>
+            {kpiCards.map(({ key, ...card }) => <KpiTile key={key} {...card} />)}
+          </div>
+        ) : (
+          <div className={styles.empty}>
+            No chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) to seed the target, pipeline and run rate.
+          </div>
+        )}
+      </section>
 
       <div className={styles.tiles}>
         <StatTile value={activity.emails.length} label="Emails sent" accent="blue" />

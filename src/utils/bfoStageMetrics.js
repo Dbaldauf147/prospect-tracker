@@ -6,7 +6,7 @@
 // stage labels, the Stage 6 placeholder exclusion, and the per-row detail
 // lists are the ones the Excel formulas hard-code.
 
-import { parseMoney } from './oppsMetrics';
+import { parseMoney } from './oppsMetrics.js';
 
 // Match BFO rows to the same Sales Stage labels the Excel formulas use, so
 // the website's totals line up with the spreadsheet.

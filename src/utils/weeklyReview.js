@@ -12,8 +12,8 @@
 // works from whatever data is cached, without the user having to open each
 // tab first. Anything missing is reported as missing rather than guessed.
 
-import { bfoStageMetrics } from './bfoStageMetrics';
-import { yoyReviewMetrics } from './oppsMetrics';
+import { bfoStageMetrics } from './bfoStageMetrics.js';
+import { yoyReviewMetrics } from './oppsMetrics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -241,6 +241,84 @@ export function buildReviewSnapshot({
       ...(Array.isArray(oppsRecords) && oppsRecords.length ? [] : ['Opps 2 records (open the Opps 2 tab to cache them)']),
       ...((Array.isArray(progressWeeks) && progressWeeks.length) ? [] : ['Progress history (open the Charts → Progress tab to record a week)']),
     ],
+  };
+}
+
+// The three headline numbers the Weekly Report leads with: how far through
+// the annual target the year is, whether the open pipeline covers what's
+// left, and where the year lands at the current run rate.
+//
+// All three are year-scoped, not week-scoped — they answer "am I going to
+// make the number", which is the question the rest of the report is
+// evidence for. Each reads from the snapshot the weekly review already
+// builds, so the tiles and the review can never quote different figures.
+//
+// Sold YTD prefers the Opps-derived total over the Pipeline dashboard's
+// hand-entered Closed YTD: the former moves whenever Opps 2 is refreshed,
+// the latter only when somebody retypes it. Anything the snapshot can't
+// supply comes back null, and the tile shows why rather than a zero.
+export function headlineKpis(snapshot) {
+  // Strict: unlike `num`, a null reads as "not available" rather than 0.
+  // The snapshot uses null for "no actual to report" throughout, and a
+  // coverage ratio of 0.00 is a very different claim from a blank one.
+  const fin = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const s = snapshot || {};
+  const ytd = s.yoy?.ytd || null;
+  const pipe = s.pipeline || null;
+
+  // One target across all three tiles — the Pipeline dashboard's, which is
+  // also what yoyReviewMetrics was handed.
+  const target = fin(pipe?.quota?.target) ?? fin(ytd?.target) ?? 0;
+
+  const soldYTD = ytd ? fin(ytd.amount) : fin(pipe?.quota?.closedYTD);
+  const onPaceAmount = ytd ? fin(ytd.onPaceAmount) : null;
+  // Positive = ahead of where a straight-line year would have you today.
+  const paceDelta = (soldYTD != null && onPaceAmount != null)
+    ? Math.round(soldYTD - onPaceAmount)
+    : null;
+
+  const coverageActual = fin(pipe?.coverage?.actual);
+  const coverageGoal = fin(pipe?.coverage?.goal);
+
+  const projected = ytd ? fin(ytd.runRateFullYear) : null;
+
+  return {
+    target: target || null,
+    progressToTarget: {
+      pct: (target > 0 && soldYTD != null) ? +((soldYTD / target) * 100).toFixed(1) : null,
+      soldYTD,
+      target: target || null,
+      deals: ytd ? fin(ytd.deals) : null,
+      onPaceAmount,
+      paceDelta,
+      yearElapsedPct: ytd ? fin(ytd.yearElapsedPct) : null,
+      gapToTarget: (target > 0 && soldYTD != null) ? Math.round(target - soldYTD) : null,
+      status: paceDelta == null ? null : (paceDelta >= 0 ? 'ahead' : 'behind'),
+    },
+    coverageRatio: {
+      actual: coverageActual,
+      goal: coverageGoal,
+      pipelineActual: fin(pipe?.totals?.pipelineActual),
+      target: target || null,
+      // Only meaningful against a goal; without one the number still shows,
+      // just without a verdict on it.
+      status: (coverageActual == null || coverageGoal == null)
+        ? null
+        : (coverageActual >= coverageGoal ? 'ahead' : 'behind'),
+      // The ratio is computed off live BFO stage totals; say so when the
+      // stage actuals are the last hand-entered ones instead.
+      live: !!pipe?.hasBfo,
+    },
+    projectedYearEnd: {
+      amount: projected,
+      target: target || null,
+      // Positive = the run rate clears the target.
+      gap: (projected != null && target > 0) ? Math.round(projected - target) : null,
+      yearElapsedPct: ytd ? fin(ytd.yearElapsedPct) : null,
+      status: (projected == null || target <= 0)
+        ? null
+        : (projected >= target ? 'ahead' : 'behind'),
+    },
   };
 }
 

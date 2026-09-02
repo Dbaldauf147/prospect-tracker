@@ -142,6 +142,83 @@
   line-height: 1.45;
 }
 
+/* --- Headline KPIs (year-scoped, above the weekly activity tiles) --- */
+.kpiSection { margin-bottom: 1.25rem; }
+
+.kpiHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+}
+
+.kpiHeadNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.kpi {
+  padding: 0.85rem 1rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fff);
+  border-top: 3px solid var(--color-border);
+}
+
+.kpi[data-status="ahead"] { border-top-color: #10b981; }
+.kpi[data-status="behind"] { border-top-color: #f59e0b; }
+
+.kpiValueRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.kpiLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* Neutral by default; the parent's status recolours it so the chip and the
+   card edge can never disagree. */
+.kpiChip {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.kpi[data-status="ahead"] .kpiChip { background: #d1fae5; color: #047857; }
+.kpi[data-status="behind"] .kpiChip { background: #fef3c7; color: #b45309; }
+
+.kpiValue {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--color-text);
+}
+
+.kpiLine {
+  margin-top: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
 /* --- Stat tiles --- */
 .tiles {
   display: grid;
