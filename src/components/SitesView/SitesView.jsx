@@ -3290,10 +3290,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // to the two labels so mixed spellings ("Own", "Tenant", "L") read
     // consistently; a value we couldn't place shows the raw string in
     // muted red the way an unrecognized property type does.
+    //
+    // Headed by the two values it holds rather than by the abstraction
+    // over them: "Ownership" names the mapping the upload asks for, and
+    // stays the name there and in the mass-edit picker, but on the table
+    // the column is the answer, not the question.
     const ownershipCol = {
       key: 'ownership',
-      label: 'Ownership',
-      defaultWidth: 120,
+      label: 'Owned / Leased',
+      // Wider than the old "Ownership" header needed: the label is five
+      // characters longer and the values ("Owned", "Leased", or a raw
+      // string the import couldn't place) sit under it as pills.
+      defaultWidth: 140,
       render: (row) => {
         const canonical = row.__ownership__;
         const raw = row.__ownershipRaw__;
@@ -10527,7 +10535,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // what decides whether a building-performance mandate binds this
       // company or its landlord — the same question the compliance
       // subtabs' Owned / All-sites toggle asks.
-      { label: 'Ownership', get: (s) => s.ownership, width: 13 },
+      { label: 'Owned / Leased', get: (s) => s.ownership, width: 15 },
       { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
@@ -10880,7 +10888,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 14 },
         // Why a row can sit at $0 for all 60 months with real spend on
         // it: no savings are projected onto a leased location.
-        { label: 'Ownership', get: (s) => s.ownership, width: 12 },
+        { label: 'Owned / Leased', get: (s) => s.ownership, width: 14 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
         { label: 'Contract Start', get: (s) => s.contractStart, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },

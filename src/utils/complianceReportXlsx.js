@@ -608,7 +608,7 @@ function buildSiteDetailSheet(wb, results, meta) {
   // than of where it is — and ahead of the mandates, since who owns the
   // building is the first question asked of an obligation that falls on
   // the owner.
-  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Ownership',
+  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Owned / Leased',
     'BBS', 'BBS Deadline', 'BBS Penalty/yr',
     'Energy Audits', 'Audits Deadline', 'Audits Penalty/yr',
     'BPS', 'BPS Deadline', 'BPS Penalty/yr'];
