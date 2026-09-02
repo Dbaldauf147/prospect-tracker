@@ -518,6 +518,68 @@
   color: var(--color-text-muted);
 }
 
+/* The deals hanging under the "Stage 6 deals" line. Discs rather than the
+   parent's numbers, and one step in, so a glance separates "the agenda" from
+   "the deals this line covers". */
+.agendaSubList {
+  margin: 0.1rem 0 0.35rem;
+  padding-left: 1.1rem;
+  list-style: disc;
+}
+
+/* Same trap the parent solves: a flex li drops its marker, so the li stays a
+   list-item and the tick + text get their own flex row inside it. */
+.agendaSubItem {
+  display: list-item;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.agendaSubRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.4rem;
+}
+
+/* Opens the opp, so it gets the pointer the agenda's own edit-text doesn't. */
+.agendaSubText {
+  flex: 0 1 auto;
+  padding: 0.05rem 0.25rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agendaSubText:hover {
+  background: var(--color-bg-hover, #F1F5F9);
+}
+
+.agendaSubMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.agendaSubEmpty {
+  margin: 0.1rem 0 0.35rem;
+  padding-left: 1.1rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* How many of that line's deals are covered, next to the line itself. Muted
+   against .agendaCount in the header — that one is the whole agenda's. */
+.agendaSubCount {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
 .agendaCount {
   font-size: var(--font-size-xs);
   font-weight: 600;

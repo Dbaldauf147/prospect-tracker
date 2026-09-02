@@ -16,6 +16,13 @@
 // reload mid-call — still knows what has been dealt with. It stays ticked until
 // cleared: the agenda carries over between meetings, so deciding when a run is
 // finished is the user's call, not a timer's. "Clear ticks" resets the lot.
+//
+// One line is more than a talking point: "Stage 6 deals" stands for a set of
+// actual opps, so that line grows a sub-bullet per Stage 6 deal, each with its
+// own tick. Those come from the opps themselves (passed in as `stage6Deals`),
+// not from the stored agenda — the deals in Stage 6 change between meetings and
+// a hand-typed copy would go stale. Their ticks are stored by opp id, beside
+// the agenda rather than in it, for the same reason.
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './OppsView2.module.css';
@@ -29,6 +36,25 @@ const KEITH_AGENDA_DEFAULTS = [
 ];
 
 const newId = () => `ka_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+// The agenda line the Stage 6 deals hang under. Matched on the text rather
+// than pinned to the default line's id, so a line the user retyped ("Stage 6",
+// "stage 6 deals to walk", "Negotiate to Win") keeps its list — and a line
+// deleted outright simply doesn't render one.
+function isStage6Line(text) {
+  const t = String(text || '');
+  return /stage\s*6/i.test(t) || /negotiate\s*to\s*win/i.test(t);
+}
+
+// Ticks for the deal sub-bullets: `{ [oppId]: true }`. Anything else in the
+// stored value is ignored rather than trusted, same as the agenda lines.
+function readDealTicks(settings) {
+  const raw = settings?.keithAgendaDeals;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [id, v] of Object.entries(raw)) { if (v === true) out[id] = true; }
+  return out;
+}
 
 // Settings → the rows to render. Anything malformed is dropped rather than
 // thrown on: a half-written array from an older shape shouldn't blank the tab.
@@ -47,8 +73,9 @@ function readAgenda(settings) {
     .map((it, i) => ({ id: it.id || `ka_row_${i}`, text: it.text, done: it.done === true }));
 }
 
-export function KeithAgenda({ settings, updateSettings }) {
+export function KeithAgenda({ settings, updateSettings, stage6Deals = [], onOpenOpp }) {
   const items = readAgenda(settings);
+  const dealTicks = readDealTicks(settings);
   // Which line is open for editing, and the text as it's being typed. Held
   // here rather than written through on every keystroke — a settings write
   // per character would round-trip to Firestore and fight the cursor.
@@ -72,6 +99,15 @@ export function KeithAgenda({ settings, updateSettings }) {
     keithAgenda: next.map(({ id, text, done }) => ({ id, text, done: done === true })),
   });
   const doneCount = items.filter(it => it.done).length;
+  const dealsDone = stage6Deals.filter(d => dealTicks[d.id]).length;
+  // A tick is only worth storing while it's on: an untick drops the key so the
+  // map stays the size of what's actually covered rather than of every deal
+  // ever seen on the tab.
+  function toggleDeal(id) {
+    const next = { ...dealTicks };
+    if (next[id]) delete next[id]; else next[id] = true;
+    updateSettings({ keithAgendaDeals: next });
+  }
 
   function startEdit(item) {
     focusRef.current = item.id;
@@ -113,7 +149,11 @@ export function KeithAgenda({ settings, updateSettings }) {
   }
 
   function clearDone() {
-    commit(items.map(it => ({ ...it, done: false })));
+    // One write, both halves: the lines and the deals ticked under them.
+    updateSettings({
+      keithAgenda: items.map(({ id, text }) => ({ id, text, done: false })),
+      keithAgendaDeals: {},
+    });
   }
 
   // Swap a line with its neighbour. The order in the array is the order on the
@@ -133,9 +173,14 @@ export function KeithAgenda({ settings, updateSettings }) {
       <div className={styles.agendaHead}>
         <span className={styles.agendaTitle}>Agenda</span>
         <span className={styles.agendaHint}>tick a line off as you cover it · click its text to edit</span>
-        {doneCount > 0 && (
+        {(doneCount > 0 || dealsDone > 0) && (
           <>
-            <span className={styles.agendaCount}>{doneCount} of {items.length} covered</span>
+            {/* The agenda's own lines. Deals ticked under a line are counted
+                beside that line, not folded in here — "0 of 5 covered" next
+                to a line reading "2 of 4" would look like a contradiction. */}
+            {doneCount > 0 && (
+              <span className={styles.agendaCount}>{doneCount} of {items.length} covered</span>
+            )}
             <button type="button" className={styles.agendaClearBtn} onClick={clearDone}>
               Clear ticks
             </button>
@@ -177,6 +222,11 @@ export function KeithAgenda({ settings, updateSettings }) {
                     >
                       {item.text}
                     </button>
+                    {isStage6Line(item.text) && stage6Deals.length > 0 && (
+                      <span className={styles.agendaSubCount}>
+                        {dealsDone} of {stage6Deals.length}
+                      </span>
+                    )}
                     <button
                       type="button"
                       className={styles.agendaMove}
@@ -209,6 +259,44 @@ export function KeithAgenda({ settings, updateSettings }) {
                   </>
                 )}
               </div>
+              {/* The deals that line is about. Rendered under the line, not
+                  inside its row, so each keeps its own tick and the parent
+                  line still reads as one agenda item. */}
+              {editingId !== item.id && isStage6Line(item.text) && (
+                stage6Deals.length > 0 ? (
+                  <ul className={styles.agendaSubList}>
+                    {stage6Deals.map(deal => (
+                      <li key={deal.id} className={styles.agendaSubItem}>
+                        <div className={styles.agendaSubRow}>
+                        <input
+                          type="checkbox"
+                          className={styles.agendaCheck}
+                          checked={!!dealTicks[deal.id]}
+                          onChange={() => toggleDeal(deal.id)}
+                          title={dealTicks[deal.id] ? `Mark "${deal.name}" not covered` : `Mark "${deal.name}" covered`}
+                          aria-label={`Covered: ${deal.name}`}
+                        />
+                        <button
+                          type="button"
+                          className={dealTicks[deal.id] ? `${styles.agendaSubText} ${styles.agendaTextDone}` : styles.agendaSubText}
+                          onClick={() => onOpenOpp?.(deal.id)}
+                          title={onOpenOpp ? `Open ${deal.name}` : deal.name}
+                        >
+                          {deal.name}
+                        </button>
+                        {deal.amountLabel && (
+                          <span className={styles.agendaSubMeta}>{deal.amountLabel}</span>
+                        )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  // Said rather than left blank: no sub-bullets under a line
+                  // that should have them otherwise reads as broken.
+                  <div className={styles.agendaSubEmpty}>No deals in Stage 6 (Agreement Sent) right now.</div>
+                )
+              )}
             </li>
           ))}
         </ol>
