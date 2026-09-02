@@ -128,12 +128,14 @@ function snap({ ytd = {}, quota = {}, coverage = {}, totals = {}, projection = {
 // year plus the agreements already out — NOT the run rate. The two are
 // different questions and give different answers, and the tile quoting the
 // run rate while the chart quoted the commitment is the bug this replaced.
+// The run rate is deliberately absent from this section of the KPIs: shown
+// beside the headline it read as a competing claim about the same number.
 {
   const k = headlineKpis(snap());
   check('projected: the chart figure, not the run rate',
     k.projectedYearEnd.amount, 2_100_000);
-  check('projected: run rate is carried, but is not the headline',
-    k.projectedYearEnd.runRateFullYear, 1_800_000);
+  check('projected: the run rate is not carried on the tile',
+    k.projectedYearEnd.runRateFullYear, undefined);
   check('projected: shows the sold half', k.projectedYearEnd.soldYTD, 1_200_000);
   check('projected: shows the committed half', k.projectedYearEnd.committedAmount, 900_000);
   check('projected: 900K under a 3M target', k.projectedYearEnd.gap, -900_000);

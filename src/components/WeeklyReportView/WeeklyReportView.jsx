@@ -370,9 +370,6 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
     if (j.amount != null && j.gap != null) {
       projectedLines.push(`${fmtDollars(Math.abs(j.gap))} ${j.gap >= 0 ? 'above' : 'under'} the ${fmtDollars(j.target)} target`);
     }
-    if (j.amount != null && j.runRateFullYear != null && j.runRateFullYear !== j.amount) {
-      projectedLines.push(`Run rate alone would land ${fmtDollars(j.runRateFullYear)} · ${yearGone(j.yearElapsedPct)}`);
-    }
 
     return [
       {
