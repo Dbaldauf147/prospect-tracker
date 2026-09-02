@@ -79,6 +79,9 @@ import {
   estimateConsumption,
   propertyTypeAccounts,
   propertyTypeAccountTotal,
+  propertyTypeIntensity,
+  varianceVsEstimate,
+  KWH_PER_DTH,
   CONSUMPTION_ESTIMATES,
   ACCOUNT_ESTIMATES,
   PROPERTY_TYPE_OPTIONS,
@@ -5883,6 +5886,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Amber used to flag estimated / indicative values on the Site Detail
     // sheet (modeled consumption, rate-derived cost, indicative rates).
     const SE_EST = 'FFB45309';
+    // Red for a site whose energy intensity sits 25%+ away from the
+    // estimate its property type carries — the same red the mapping
+    // sheets use for a hard "no".
+    const SE_VAR_OFF = 'FFB91C1C';
 
     // Total line for the three tier-overview tables (Portfolio Overview,
     // NAM, Europe). The tiers partition one population, so the total is
@@ -10543,7 +10550,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
       { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18, estimated: (s) => s.kwhEstimated },
-      { label: 'Electric Rate ($/kWh)', get: (s) => s.electricRate, numFmt: '"$"0.0000', width: 16, estimated: () => true },
+      // Indicative market rate, the blended rate the site's own uploaded
+      // spend actually implies, and the gap between them. The indicative
+      // rate is a state / country average; a site paying materially off
+      // it is either on an out-of-market contract or carrying delivery
+      // charges the average doesn't reflect — both worth seeing per site
+      // rather than only in the portfolio roll-up.
+      { label: 'Est. Electric Rate ($/kWh)', get: (s) => s.electricRate, numFmt: '"$"0.0000', width: 17, estimated: () => true },
+      { label: 'Actual Electric Rate ($/kWh)', get: (s) => s.actualElectricRate, numFmt: '"$"0.0000', width: 18 },
+      { label: 'Electric Rate vs Est.', get: (s) => s.electricRateVar, numFmt: '+0%;-0%;0%', width: 16, varianceColor: true },
       { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16, estimated: (s) => s.electricCostEstimated },
       { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
@@ -10551,10 +10566,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
       { label: 'Gas Market', get: (s) => s.gasMarket, width: 18 },
       { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16, estimated: (s) => s.thermsEstimated },
-      { label: 'Gas Rate ($/Dth)', get: (s) => s.gasRate, numFmt: '"$"0.00', width: 14, estimated: () => true },
+      { label: 'Est. Gas Rate ($/Dth)', get: (s) => s.gasRate, numFmt: '"$"0.00', width: 15, estimated: () => true },
+      { label: 'Actual Gas Rate ($/Dth)', get: (s) => s.actualGasRate, numFmt: '"$"0.00', width: 16 },
+      { label: 'Gas Rate vs Est.', get: (s) => s.gasRateVar, numFmt: '+0%;-0%;0%', width: 14, varianceColor: true },
       { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18, estimated: (s) => s.gasCostEstimated },
       { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
+      // ---- Energy intensity: the site against its property type ------
+      // Three pairs (electric / gas / total), each the site's own
+      // consumption per square foot next to the per-square-foot estimate
+      // its property type carries, then how far apart the two are.
+      //
+      // Intensity is what makes a 40,000 ft² lab and a 400,000 ft²
+      // campus comparable, and it is the one column where a bad
+      // consumption figure or a wrong property type shows up as an
+      // obviously wrong number rather than hiding inside a plausible
+      // annual total.
+      //
+      // The variance cells carry a colour ramp — within 10% reads as
+      // normal text, 10–25% amber, 25%+ red — so a scan down the column
+      // lands on the outliers without the reader doing the arithmetic.
+      // On a site whose consumption was itself modelled from the
+      // property type the variance is 0% by construction; the estimate
+      // dagger on the measured columns is what tells the two apart.
+      { label: 'Electric Intensity (kWh/ft²)', get: (s) => s.electricIntensity, numFmt: '#,##0.0', width: 18, estimated: (s) => s.kwhEstimated },
+      { label: 'Est. Electric Intensity (kWh/ft²)', get: (s) => s.estElectricIntensity, numFmt: '#,##0.0', width: 20, estimated: () => true },
+      { label: 'Electric vs Est.', get: (s) => s.electricIntensityVar, numFmt: '+0%;-0%;0%', width: 14, varianceColor: true },
+      { label: 'Gas Intensity (Dth/ft²)', get: (s) => s.gasIntensity, numFmt: '#,##0.000', width: 16, estimated: (s) => s.thermsEstimated },
+      { label: 'Est. Gas Intensity (Dth/ft²)', get: (s) => s.estGasIntensity, numFmt: '#,##0.000', width: 18, estimated: () => true },
+      { label: 'Gas vs Est.', get: (s) => s.gasIntensityVar, numFmt: '+0%;-0%;0%', width: 14, varianceColor: true },
+      { label: 'Total Intensity (kWh/ft²)', get: (s) => s.totalIntensity, numFmt: '#,##0.0', width: 18, estimated: (s) => s.kwhEstimated || s.thermsEstimated },
+      { label: 'Est. Total Intensity (kWh/ft²)', get: (s) => s.estTotalIntensity, numFmt: '#,##0.0', width: 20, estimated: () => true },
+      { label: 'Total vs Est.', get: (s) => s.totalIntensityVar, numFmt: '+0%;-0%;0%', width: 14, varianceColor: true },
       // Per-site Mexico-sourcing flag (any Mexican site with > 1 MWh
       // of electric consumption). Other site-level flags can plug in
       // here later without growing the column.
@@ -10671,6 +10714,58 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? `⚠ Property type "${r.__propertyTypeRaw__}" not recognized: estimates will not run for this site. Add an alias in propertyTypeEstimates.js or correct the source value.`
           : '';
         const allFlags = [mxFlag, propertyTypeFlag].filter(Boolean).join('\n');
+        // ---- Energy intensity vs the property-type estimate ----------
+        // Measured intensity needs a real square footage; without one
+        // there is nothing to divide by, so every intensity cell on the
+        // row stays empty rather than reporting a per-site total dressed
+        // up as a rate. The estimate side still fills in — it is a
+        // property of the type, not of this building — so the reader can
+        // see what the site would have been benchmarked against once a
+        // size is supplied.
+        const sizeForIntensity = (typeof r.__propertySizeFt2__ === 'number'
+          && Number.isFinite(r.__propertySizeFt2__) && r.__propertySizeFt2__ > 0)
+          ? r.__propertySizeFt2__
+          : null;
+        const perFt2 = (v) => (sizeForIntensity != null && typeof v === 'number' && Number.isFinite(v))
+          ? v / sizeForIntensity
+          : null;
+        // Unrounded Dth (the displayed column rounds to whole Dth, which
+        // at three decimals of Dth/ft² would visibly move the number).
+        const dthExact = (typeof therms === 'number' && Number.isFinite(therms)) ? therms / 10 : null;
+        // Site total in kWh-equivalent, the same basis as the reference
+        // table's Total column. A commodity with no figure contributes
+        // nothing — an electric-only site therefore reads below its
+        // type's total estimate, which is the honest answer when the
+        // gas side is unknown; the per-commodity pairs beside it show
+        // which half is missing.
+        const totalKwhSite = (kwh != null || dthExact != null)
+          ? (kwh || 0) + (dthExact || 0) * KWH_PER_DTH
+          : null;
+        const benchmark = propertyTypeIntensity(r.__propertyType__);
+        // ---- Actual vs indicative rate -------------------------------
+        // The blended rate the site's own numbers imply: uploaded annual
+        // spend ÷ uploaded annual consumption. Only a spend the file
+        // supplied counts — where the cost was itself derived as
+        // consumption × the indicative rate, dividing it back out returns
+        // that same rate and the delta would read 0% on a site with no
+        // cost data at all. Those cells stay empty instead.
+        const electricRateEst = (typeof r.__electricRate__ === 'number' && Number.isFinite(r.__electricRate__))
+          ? r.__electricRate__
+          : null;
+        // __gasRate__ is $/therm; ×10 → $/Dth, matching the Dth columns.
+        const gasRateEst = (typeof r.__gasRate__ === 'number' && Number.isFinite(r.__gasRate__))
+          ? r.__gasRate__ * 10
+          : null;
+        const impliedRate = (cost, volume) =>
+          (typeof cost === 'number' && Number.isFinite(cost)
+            && typeof volume === 'number' && Number.isFinite(volume) && volume > 0)
+            ? cost / volume
+            : null;
+        const actualElectricRate = impliedRate(r.__electricCostActual__, kwh);
+        const actualGasRate = impliedRate(r.__gasCostActual__, dthExact);
+        const electricIntensity = perFt2(kwh);
+        const gasIntensity = perFt2(dthExact);
+        const totalIntensity = perFt2(totalKwhSite);
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           // Mapped City column when the upload has one, else the city the
@@ -10701,7 +10796,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           kwh,
           // Indicative $/kWh used to derive the estimated cost. Always an
           // indicative (state / country) rate, never a billed tariff.
-          electricRate: (typeof r.__electricRate__ === 'number' && Number.isFinite(r.__electricRate__)) ? r.__electricRate__ : null,
+          electricRate: electricRateEst,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
@@ -10709,8 +10804,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           gasSupplier,
           gasMarket,
           dth,
-          // __gasRate__ is $/therm; ×10 → $/Dth to match the Dth column.
-          gasRate: (typeof r.__gasRate__ === 'number' && Number.isFinite(r.__gasRate__)) ? r.__gasRate__ * 10 : null,
+          gasRate: gasRateEst,
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
@@ -10722,6 +10816,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           thermsEstimated: !!r.__thermsFromEstimate__,
           electricCostEstimated: r.__electricCostActual__ == null && typeof r.__electricCost__ === 'number',
           gasCostEstimated: r.__gasCostActual__ == null && typeof r.__gasCost__ === 'number',
+          electricIntensity,
+          gasIntensity,
+          totalIntensity,
+          estElectricIntensity: benchmark?.electricKwhPerFt2 ?? null,
+          estGasIntensity: benchmark?.gasDthPerFt2 ?? null,
+          estTotalIntensity: benchmark?.totalKwhPerFt2 ?? null,
+          actualElectricRate,
+          actualGasRate,
+          electricRateVar: varianceVsEstimate(actualElectricRate, electricRateEst),
+          gasRateVar: varianceVsEstimate(actualGasRate, gasRateEst),
+          electricIntensityVar: varianceVsEstimate(electricIntensity, benchmark?.electricKwhPerFt2),
+          gasIntensityVar: varianceVsEstimate(gasIntensity, benchmark?.gasDthPerFt2),
+          totalIntensityVar: varianceVsEstimate(totalIntensity, benchmark?.totalKwhPerFt2),
         };
       })
       .filter(s => s.siteName)
@@ -10806,9 +10913,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // user can see at a glance which numbers are modeled rather than
         // taken from the uploaded file. Skip the styling on blank cells.
         const isEst = !!c.estimated && c.estimated(s) && v !== '' && v != null;
+        // Intensity variance gets a severity ramp instead of the
+        // estimate styling: within 10% of the property-type estimate is
+        // unremarkable, 10–25% is worth a look, and 25%+ means either
+        // the consumption or the property type on that row is wrong —
+        // exactly the rows this column exists to surface.
+        const varianceColor = (c.varianceColor && typeof v === 'number' && Number.isFinite(v))
+          ? (Math.abs(v) >= 0.25 ? SE_VAR_OFF : (Math.abs(v) >= 0.10 ? SE_EST : null))
+          : null;
         cell.font = isEst
           ? { name: 'Nunito Sans', size: 10, italic: true, color: { argb: SE_EST } }
-          : { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          : { name: 'Nunito Sans', size: 10, bold: !!varianceColor, color: { argb: varianceColor || SE_TEXT_DARK } };
         // Flags can carry multiple newline-separated lines; wrap so
         // the user sees both the Mexico flag and the property-type
         // warning when they fire on the same row. Other columns stay
@@ -10842,11 +10957,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const legendRowIdx = 2 + sitesForDetail.length + 1;
       const legendRow = detailSheet.getRow(legendRowIdx);
       const legendCell = legendRow.getCell(1);
-      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated: annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.';
+      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated: annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the Est. rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.\n\nRates: Est. is the indicative market rate for the site’s state / country. Actual is the blended rate the uploaded numbers imply — annual spend ÷ annual consumption — and is shown only where the file supplied a real spend, since a cost this tool derived from the indicative rate would divide back out to that same rate. vs Est. is the signed gap: +20% means the site pays 20% more per unit than the market indication. Note the two are not like for like where the uploaded spend is all-in (supply plus delivery) and the indication is not.\n\nEnergy intensity: consumption ÷ Size (ft²), shown next to the per-ft² estimate the site’s property type carries (the reference profile’s consumption ÷ its reference size — unchanged by the site’s own square footage, since the estimate scales linearly). The vs Est. columns are the signed gap between the two: +30% means the site uses 30% more per ft² than its type suggests. Amber marks a 10–25% gap, red 25%+ — worth checking the consumption figure and the property type on that row. Total intensity is electric plus gas converted at 293.07 kWh per Dth, counting a commodity with no figure as zero, so an electric-only site reads low against a type whose estimate includes gas. Cells stay blank where the site has no square footage, or where its property type carries no consumption profile. Where the consumption itself was modeled (italic amber), the gap is 0% by construction.';
       legendCell.font = { name: 'Nunito Sans', size: 9, italic: true, color: { argb: SE_EST } };
       legendCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       detailSheet.mergeCells(legendRowIdx, 1, legendRowIdx, Math.min(detailCols.length, 8));
-      legendRow.height = 42;
+      legendRow.height = 165;
     }
 
     // ---- Third sheet: Monthly Savings Breakdown ---------------------
@@ -12381,7 +12496,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // → Methodology to see the reference tables when needed.
         state: 'hidden',
       });
-      // 15 columns wide: the three reference sections use columns 1–7,
+      // 15 columns wide: the three reference sections use columns 1–10
+      // (the energy table's per-ft² intensity columns run out to 10),
       // and the per-site Property Type Estimates section (section 4)
       // uses all 15. Title band + section banners merge across COLS so
       // they span the full width of the widest section.
@@ -12451,16 +12567,27 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // ---- Section 1: Energy estimation methodology ----
       sectionBanner('1. Energy Consumption Estimates');
-      paragraph('Annual electric (kWh) and gas (Dth / kWh-equivalent) numbers are derived from a per-property-type reference profile. Each property type carries representative annual usage anchored to a reference square-footage. When a site\'s actual Size_ft² is provided, the reference values are scaled linearly: scaledValue = referenceValue × (actualSize / referenceSize). Sites without a size fall back to the reference values. Land and Debt property types have no consumption profile and are skipped.');
+      paragraph('Annual electric (kWh) and gas (Dth / kWh-equivalent) numbers are derived from a per-property-type reference profile. Each property type carries representative annual usage anchored to a reference square-footage. When a site\'s actual Size_ft² is provided, the reference values are scaled linearly: scaledValue = referenceValue × (actualSize / referenceSize). Sites without a size fall back to the reference values. Land and Debt property types have no consumption profile and are skipped. The last three columns restate the profile per square foot (reference consumption ÷ reference size). Because the scaling is linear these intensities hold for a site of any size, which is what the Site Detail tab benchmarks each building\'s measured kWh/ft² and Dth/ft² against. Total intensity converts gas at 293.07 kWh per Dth.');
       blank();
-      headerRow(['Property Type', 'Category', 'Reference Size (ft²)', 'Electric (kWh / yr)', 'Gas (Dth / yr)', 'Gas: kWh Equivalent', 'Total (kWh / yr)']);
+      headerRow([
+        'Property Type', 'Category', 'Reference Size (ft²)',
+        'Electric (kWh / yr)', 'Gas (Dth / yr)', 'Gas: kWh Equivalent', 'Total (kWh / yr)',
+        'Electric Intensity (kWh / ft²)', 'Gas Intensity (Dth / ft²)', 'Total Intensity (kWh / ft²)',
+      ]);
       const consumptionRows = Object.entries(CONSUMPTION_ESTIMATES)
         .filter(([, v]) => v.electricKwh != null)
         .sort((a, b) => (b[1].totalKwh || 0) - (a[1].totalKwh || 0));
-      consumptionRows.forEach(([name, v]) => {
+      consumptionRows.forEach(([name]) => {
+        const v = CONSUMPTION_ESTIMATES[name];
+        // Per-ft² form of the same three numbers. Because the scaling is
+        // linear these intensities apply to a site of any size, which is
+        // what lets the Site Detail sheet hold a real building's kWh/ft²
+        // against them.
+        const i = propertyTypeIntensity(name);
         dataRow(
-          [name, v.category, v.sizeFt2, v.electricKwh, v.gasDth, v.gasKwh, v.totalKwh],
-          [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '#,##0']
+          [name, v.category, v.sizeFt2, v.electricKwh, v.gasDth, v.gasKwh, v.totalKwh,
+            i?.electricKwhPerFt2 ?? '', i?.gasDthPerFt2 ?? '', i?.totalKwhPerFt2 ?? ''],
+          [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '#,##0', '#,##0.0', '#,##0.000', '#,##0.0']
         );
       });
 
