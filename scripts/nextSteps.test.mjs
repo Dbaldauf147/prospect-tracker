@@ -10,7 +10,7 @@
 // those two.
 import {
   textToBulletItems, encodeNoteLine, NOTE_LINEBREAK,
-  nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches,
+  nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches, callOnOppPatch,
 } from '../src/utils/nextSteps.js';
 
 let passed = 0, failed = 0;
@@ -233,6 +233,69 @@ function ok(value, name) { eq(!!value, true, name); }
   eq(backfillNextStepPatches(null, null).opps, 0, 'missing inputs are not a crash');
   eq(backfillNextStepPatches({ x: { id: 'a', oppId: 'o', followUps: [{ text: 'Step' }] } },
     [{ _id: 'o' }]).steps, 1, 'the id-keyed record map is accepted as well as an array');
+}
+
+// --- the whole patch a mapped call puts on its opp -----------------------
+//
+// Both places a call can be mapped — the Call Recordings page and the
+// "Calls to map" queue on Opps — go through this, so what tagging a call
+// does must not depend on which page it was tagged from.
+{
+  const call = {
+    id: 'c1',
+    name: 'Acme kickoff',
+    recordedAt: '2026-05-05T00:00:00Z',
+    summary: 'Talked pricing.\n\nThen other things.',
+    followUps: [{ text: 'Send pricing' }, { text: 'Book the walk' }],
+  };
+  const { patch, added } = callOnOppPatch({ _id: 'o', 'Next Steps': 'Call the plant', _nextStepsWaiting: ['Client'] }, call);
+  eq(added, 2, 'both follow-ups land as next steps');
+  eq(textToBulletItems(patch['Next Steps']), ['Call the plant', 'Send pricing', 'Book the walk'],
+    'appended under what the opp already had');
+  eq(patch['_nextStepsWaiting'], ['Client', '', ''], 'the Waiting On array stays index-aligned');
+  eq(patch['_lastCallId'], 'c1', 'and the opp learns which call it was');
+  eq(patch['_lastCallName'], 'Acme kickoff', 'by name');
+  ok(patch['_lastCallGist'].startsWith('Talked pricing'), 'with the gist of what was said');
+}
+
+{
+  // A call mapped before it was summarised has nothing to say about what
+  // to do next, but it is still the deal's last conversation.
+  const { patch, added } = callOnOppPatch({ _id: 'o' }, { id: 'c2', name: 'Intro', recordedAt: '2026-05-05T00:00:00Z' });
+  eq(added, 0, 'a call with no follow-ups adds no steps');
+  eq(patch['Next Steps'], undefined, 'and does not touch the checklist');
+  eq(patch['_lastCallId'], 'c2', 'but still stamps the reference');
+}
+
+{
+  // Re-tagging the same call must not re-append what it already gave —
+  // the checklist is a list the user edits, and a duplicate line is the
+  // failure this whole path is built to avoid. The reference is rewritten
+  // (the same call always wins against itself, so a re-summarise can
+  // refresh the gist), but it rewrites the same values.
+  const call = { id: 'c3', name: 'Acme', recordedAt: '2026-05-05T00:00:00Z', followUps: [{ text: 'Send pricing' }] };
+  const first = callOnOppPatch({ _id: 'o' }, call);
+  const opp = { _id: 'o', ...first.patch };
+  const second = callOnOppPatch(opp, call);
+  eq(second.added, 0, 'the second tag adds no steps');
+  eq(second.patch['Next Steps'], undefined, 'and leaves the checklist alone');
+  eq(second.patch['_lastCallId'], 'c3', 'the reference is refreshed onto the same call');
+}
+
+{
+  // The newest CALL wins, not the newest write: tagging an old call today
+  // must not make it the deal's most recent conversation.
+  const opp = { _id: 'o', _lastCallId: 'new', _lastCallAt: '2026-06-01T00:00:00Z' };
+  const { patch, added } = callOnOppPatch(opp, {
+    id: 'old', name: 'January call', recordedAt: '2026-01-01T00:00:00Z',
+    followUps: [{ text: 'Send pricing' }],
+  });
+  eq(added, 1, 'an older call still contributes its steps');
+  eq(patch['_lastCallId'], undefined, 'but does not displace a newer call as the last conversation');
+}
+
+{
+  eq(callOnOppPatch(null, null), { patch: {}, added: 0 }, 'missing inputs are not a crash');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

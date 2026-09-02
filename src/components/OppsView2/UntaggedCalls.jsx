@@ -12,6 +12,12 @@
 // offered, never applied: the cost of a wrong guess is a call summary
 // pushed onto somebody else's deal.
 //
+// Tagging one from here does everything tagging it on the Call Recordings
+// page does — the call's follow-ups go onto that opp's Next Steps
+// checklist, and the opp starts naming it as its last conversation. The
+// write itself belongs to the parent (see `onTagged`), because this page
+// holds the opps dataset in state.
+//
 // Renders nothing when the queue is empty, so a user who doesn't record
 // calls sees one Firestore read and no UI.
 
@@ -158,7 +164,7 @@ function CallRow({ call, opps, closedOpps, onTag, onNa, busy }) {
   );
 }
 
-export function UntaggedCalls({ opps = [] }) {
+export function UntaggedCalls({ opps = [], onTagged }) {
   const { user } = useAuth();
   // Only live deals are offered. A call summary belongs on a deal somebody
   // is still working; pushing one onto a Sold or Not Sold opp isn't a
@@ -172,6 +178,10 @@ export function UntaggedCalls({ opps = [] }) {
   const [collapsed, setCollapsed] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
+  // What the last tag actually did to the opp. The row leaves the queue
+  // the moment it is settled, so without this the steps land on a deal
+  // the user is no longer looking at, silently.
+  const [note, setNote] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -193,25 +203,79 @@ export function UntaggedCalls({ opps = [] }) {
   // a decision made here is the same decision made there — including the
   // undo, which lives on that page's queue filter.
   async function settle(call, patch) {
-    if (!uid) return;
+    if (!uid) return null;
     setBusyId(call.id);
     setError('');
+    setNote('');
     const saved = await saveCallRecord(uid, call.id, patch, call);
     setBusyId('');
     if (!saved) {
       setError(`Couldn’t save that: ${call.name || 'the call'} is still untagged.`);
-      return;
+      return null;
     }
     setCalls(prev => prev.filter(c => c.id !== call.id));
+    return saved;
   }
 
-  const onTag = (call, opp) => settle(call, tagOppPatch(opp, {
-    label: oppLabel(opp),
-    company: call.company || '',
-  }));
+  /**
+   * Tagging a call here does what tagging it on the Call Recordings page
+   * does: it says which deal the call belongs to, AND it puts what the
+   * call produced onto that deal.
+   *
+   * Until now this queue only wrote the tag. The follow-ups stayed on the
+   * call record, so a call mapped from the Opps page — the page whose
+   * whole point is the checklist — was the one way of mapping a call that
+   * left the checklist untouched, and the difference was invisible: same
+   * button, same wording, different outcome.
+   *
+   * The write onto the opp goes through the parent, because this page
+   * holds the opps dataset in state and saves it back on every change; a
+   * write straight to the store would be overwritten by the next cell
+   * edit. When there is no parent handler the tag still saves — the
+   * mapping is the thing the user asked for, and the Call Recordings
+   * page's own push covers the steps on the next summarise.
+   */
+  async function onTag(call, opp) {
+    const saved = await settle(call, tagOppPatch(opp, {
+      label: oppLabel(opp),
+      company: call.company || '',
+    }));
+    if (!saved || !onTagged) return;
+    const account = opp['Account'] || 'the opp';
+    try {
+      const added = await onTagged(opp._id, saved);
+      setNote(added > 0
+        ? `${added} next step${added === 1 ? '' : 's'} from “${saved.name || 'that call'}” added to ${account}.`
+        : `Tagged to ${account}. No next steps yet — summarize the call and they’ll follow.`);
+      // Same stamp the Call Recordings page writes, so its card can say
+      // this call's steps already landed rather than offering to push
+      // them again.
+      if (added > 0) await saveCallRecord(uid, saved.id, { nextStepsPushed: added }, saved);
+    } catch (err) {
+      // The tag itself is saved; only the copy onto the opp failed. Say
+      // which, so the user doesn't re-tag chasing a step that landed.
+      setNote('');
+      setError(`Tagged to ${account}, but its next steps didn’t reach the opp: ${err?.message || err}`);
+    }
+  }
+
   const onNa = (call) => settle(call, markOppNaPatch());
 
-  if (calls.length === 0) return null;
+  const strip = (text, color, background) => (
+    <div style={{ padding: '0.3rem 0.6rem', fontSize: '0.72rem', color, background }}>{text}</div>
+  );
+
+  // An emptied queue keeps only what the tag that emptied it did — a
+  // header counting zero calls is a frame around nothing.
+  if (calls.length === 0) {
+    if (!note && !error) return null;
+    return (
+      <div style={{ margin: '0 1.25rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
+        {error && strip(error, '#B91C1C', '#FEF2F2')}
+        {note && strip(note, '#166534', '#F0FDF4')}
+      </div>
+    );
+  }
 
   return (
     <div style={{ margin: '0 1.25rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-bg)' }}>
@@ -226,12 +290,11 @@ export function UntaggedCalls({ opps = [] }) {
           Calls to map <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>({calls.length})</span>
         </span>
         <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-          Tagging one puts its summary on that opportunity
+          Tagging one puts its next steps on that opportunity
         </span>
       </div>
-      {error && (
-        <div style={{ padding: '0.3rem 0.6rem', fontSize: '0.72rem', color: '#B91C1C', background: '#FEF2F2' }}>{error}</div>
-      )}
+      {error && strip(error, '#B91C1C', '#FEF2F2')}
+      {note && strip(note, '#166534', '#F0FDF4')}
       {!collapsed && calls.map(call => (
         <CallRow
           key={call.id}
