@@ -17,6 +17,19 @@
 // Month 3" rather than a calendar date. Nothing here is dated until an
 // engagement fixes month 1.
 //
+// The Strategic Sourcing Process timeline is the sourcing cycle itself, off
+// the process slide of the same name: the eight numbered steps that run an
+// actual bid event, in the order the slide numbers them. It picks up where
+// Strategic Sourcing Implementation leaves off — that one builds the
+// procurement foundation through month 3, this one spends months 4–8
+// using it — so the two read as one plan against a single month 1.
+//
+// The slide splits its steps between two tracks: Analysis, where we monitor
+// markets and regulations to form insights, and Execution, where we quantify
+// the opportunity and buy. That split rides along as each step's `phase`, so
+// it survives if the timeline is redrawn in the implementation format, which
+// is the one that bands its steps by group.
+//
 // Owners are the app's own addition: the slides don't name a side, so each
 // step is marked by who actually does it, which is what colours its marker.
 
@@ -167,6 +180,87 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         timing: 'Month 5 \u2013 Month 6',
         description: 'Establish a recurring forum to review strategy, positions, market developments, portfolio exposures, action plans, to enable informed decision-making and timely execution.',
         icon: 'leaf',
+      },
+    ],
+  },
+  {
+    id: 'tl-sourcing-process',
+    name: 'Strategic Sourcing Process',
+    subtitle: 'Monitoring markets and tracking changes to inform buying recommendations',
+    format: 'milestone',
+    services: [],
+    stages: [
+      {
+        id: 'tl-process-preferences',
+        name: 'Review & prioritize procurement preferences',
+        owner: 'Both',
+        phase: 'Execution',
+        timing: 'Month 4',
+        description: 'Confirm the contract terms, product structures, green preferences, and approval requirements captured in Resource Advisor, and set the priorities this sourcing event is run against.',
+        icon: 'document',
+      },
+      {
+        id: 'tl-process-suppliers',
+        name: 'Know supplier strengths and weaknesses',
+        owner: 'Schneider Electric',
+        phase: 'Analysis',
+        timing: 'Month 4 \u2013 Month 5',
+        description: 'Map which suppliers are competitive for the market, product, and load shape at hand \u2014 credit terms, pass-throughs, and service levels included \u2014 so the invitation list is built on fit rather than familiarity.',
+        icon: 'people',
+      },
+      {
+        id: 'tl-process-benchmarks',
+        name: 'Define pricing benchmarks and product structures',
+        owner: 'Schneider Electric',
+        phase: 'Analysis',
+        timing: 'Month 5',
+        description: 'Set the benchmark each bid is measured against and the structures suppliers are asked to quote \u2014 fixed, index, block-and-index, layered \u2014 so the offers arrive comparable.',
+        icon: 'dollar',
+      },
+      {
+        id: 'tl-process-bid-tools',
+        name: 'Utilize efficient & flexible bid tools',
+        owner: 'Schneider Electric',
+        phase: 'Execution',
+        timing: 'Month 5 \u2013 Month 6',
+        description: 'Run the event on the online bid platform, with suppliers quoting live against one common load profile and every structure priced inside the same window.',
+        icon: 'laptop',
+      },
+      {
+        id: 'tl-process-analyze-bids',
+        name: 'Analyze bids against sourcing & risk strategy',
+        owner: 'Schneider Electric',
+        phase: 'Analysis',
+        timing: 'Month 6 \u2013 Month 7',
+        description: 'Score the live offers against the benchmark, the agreed risk tolerance, and the budget objective rather than on headline price alone.',
+        icon: 'chart',
+      },
+      {
+        id: 'tl-process-compare',
+        name: 'Compare & determine most strategic solution',
+        owner: 'Both',
+        phase: 'Analysis',
+        timing: 'Month 7',
+        description: 'Put the shortlisted structures side by side and settle on the one that best meets the cost certainty, budget, and risk objectives set at kickoff.',
+        icon: 'check',
+      },
+      {
+        id: 'tl-process-refresh',
+        name: 'Secure refreshed pricing from preferred supplier',
+        owner: 'Schneider Electric',
+        phase: 'Execution',
+        timing: 'Month 7 \u2013 Month 8',
+        description: 'Go back to the preferred supplier for a refreshed quote at the moment of execution \u2014 the market moves, and the offer signed has to be the one priced that day.',
+        icon: 'handshake',
+      },
+      {
+        id: 'tl-process-execute',
+        name: 'Validate pricing, negotiate & execute deal',
+        owner: 'Both',
+        phase: 'Analysis',
+        timing: 'Month 8',
+        description: 'Validate the refreshed price against the benchmark, close the remaining contract terms, and execute the supplier agreement inside its acceptance window.',
+        icon: 'target',
       },
     ],
   },

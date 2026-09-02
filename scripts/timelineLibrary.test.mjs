@@ -33,6 +33,7 @@ function check(label, actual, expected) {
 const seeds = getTimelineTemplates({});
 const sourcing = seeds.find(t => t.id === 'tl-strategic-sourcing');
 const risk = seeds.find(t => t.id === 'tl-risk-management');
+const sourcingProcess = seeds.find(t => t.id === 'tl-sourcing-process');
 
 // --- the two implementation timelines are there and shaped right -----------
 check('Strategic Sourcing seeded', sourcing?.name, 'Strategic Sourcing Implementation');
@@ -43,6 +44,16 @@ check('Risk Management seeded', risk?.name, 'EP and NG Risk Management Implement
 check('…with five steps', risk?.stages.length, 5);
 check('…every one of which states its months', risk?.stages.every(s => /Month \d/.test(s.timing)), true);
 check('…and none of which is dated', risk?.stages.every(s => !s.start && !s.end), true);
+// The sourcing PROCESS slide, which is eight steps rather than five and
+// splits them between the two tracks the slide draws.
+check('Strategic Sourcing Process seeded', sourcingProcess?.name, 'Strategic Sourcing Process');
+check('…with the slide\u2019s eight steps', sourcingProcess?.stages.length, 8);
+check('…in the order the slide numbers them', sourcingProcess?.stages[0].name, 'Review & prioritize procurement preferences');
+check('…ending on the executed deal', sourcingProcess?.stages.at(-1).name, 'Validate pricing, negotiate & execute deal');
+check('…every one of which carries its track', sourcingProcess?.stages.every(s => s.phase === 'Analysis' || s.phase === 'Execution'), true);
+// It runs after the foundation timeline, so its months start where that one
+// stops rather than back at month 1.
+check('…and picks up where the implementation plan ends', sourcingProcess?.stages[0].timing, 'Month 4');
 
 // --- the shelf: what's on it ----------------------------------------------
 check('an untouched library is the built-ins', libraryEntries({}).length, BUILTIN_TIMELINE_TEMPLATES.length);
@@ -124,7 +135,7 @@ function svgFor(tpl) {
     maxY: Math.max(...runs.map(m => Number(m[2]))),
   };
 }
-for (const tpl of [sourcing, risk]) {
+for (const tpl of [sourcing, risk, sourcingProcess]) {
   const { svg, w, h, maxX, maxY } = svgFor(tpl);
   check(`${tpl.name}: no step is cut off with an ellipsis`, svg.includes('…'), false);
   // The widest column of text starts at maxX and runs 246px; the canvas has to
