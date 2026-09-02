@@ -69,7 +69,7 @@ import { runGranolaSync } from '../../utils/runGranolaSync';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppFields, bulkSetOppFields } from '../../utils/opps2Store';
-import { nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches } from '../../utils/nextSteps';
+import { nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches, callOnOppPatch } from '../../utils/nextSteps';
 import { withLastCallStamp, clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
@@ -1995,22 +1995,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
     if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
 
-    const steps = appendNextSteps(
-      opp['Next Steps'], opp['_nextStepsWaiting'], nextStepLinesFromCall(record),
-    );
-    const patch = steps.added > 0
-      ? { 'Next Steps': steps.text, _nextStepsWaiting: steps.waiting }
-      : {};
-    // The reference goes on even when there are no steps to add: a call
-    // mapped before it was summarised has nothing to say about what to
-    // do next, but it is still the last conversation on that deal, and
-    // that is the fact the Notes popup is being asked for.
-    const withStamp = withLastCallStamp(patch, opp, record);
-    if (Object.keys(withStamp).length === 0) return 0;
+    // The steps and the reference together, through the same helper the
+    // Opps page's "Calls to map" queue uses — mapping a call means the
+    // same thing whichever page it was mapped from.
+    const { patch, added } = callOnOppPatch(opp, record);
+    if (Object.keys(patch).length === 0) return 0;
 
-    await setOppFields(uid, oppId, withStamp);
-    if (steps.added > 0) await persist(recordingId, { nextStepsPushed: steps.added });
-    return steps.added;
+    await setOppFields(uid, oppId, patch);
+    if (added > 0) await persist(recordingId, { nextStepsPushed: added });
+    return added;
   }, [uid, persist]);
 
   async function summarize(rec) {

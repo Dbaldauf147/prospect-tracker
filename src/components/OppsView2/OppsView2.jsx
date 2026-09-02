@@ -8,7 +8,7 @@ import { companyPopupTarget } from '../../utils/companyLookup';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
-import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, NOTE_LINEBREAK } from '../../utils/nextSteps';
+import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, callOnOppPatch, NOTE_LINEBREAK } from '../../utils/nextSteps';
 import { loadCallRecord } from '../../utils/callRecordingsStore';
 import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
@@ -10888,6 +10888,48 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, []);
 
+  /**
+   * What an opp learns from a call just mapped to it in the "Calls to
+   * map" queue: the call's follow-ups onto its Next Steps checklist, and
+   * the reference naming it as that deal's last conversation.
+   *
+   * The Call Recordings page has done this since tagging existed, but it
+   * writes through `setOppFields`, which reloads and resaves the whole
+   * dataset. This page HOLDS that dataset in state and saves it back on
+   * every change, so a store-level write from here would be overwritten
+   * by the next edit made on the page. The patch therefore goes through
+   * setData, stamped like any other edit so the cross-device merge still
+   * resolves it field by field.
+   *
+   * Returns how many steps the checklist gained — zero when the call
+   * hasn't been summarised yet (nothing to add) or when the opp already
+   * had every line. The reference still lands in that case, which is
+   * what the Notes popup reads to say which call the steps came from.
+   */
+  const recordCallOnOpp = useCallback((oppId, record) => {
+    const opp = (dataRef.current?.records || []).find(r => String(r?._id) === String(oppId));
+    if (!opp) throw new Error('That opp is no longer on this page: reload and try again.');
+    const { patch, added } = callOnOppPatch(opp, record);
+    if (Object.keys(patch).length === 0) return 0;
+    setData(prev => ({
+      ...prev,
+      records: (prev?.records || []).map(r => {
+        if (String(r?._id) !== String(oppId)) return r;
+        const now = Date.now();
+        // Recomputed against the row as it stands in `prev` rather than
+        // reusing the patch above: the two are the same row in practice,
+        // and recomputing is what keeps an edit made between the read and
+        // this update from being appended over.
+        const fresh = callOnOppPatch(r, record).patch;
+        if (Object.keys(fresh).length === 0) return r;
+        const next = { ...r, ...fresh, _rowUpdatedAt: now };
+        next._fieldUpdatedAt = stampChangedFields(r, next, now);
+        return next;
+      }),
+    }));
+    return added;
+  }, []);
+
   // Drop a field entirely from a row. Used to clear a user-set Call In
   // override so the live compute from Follow Up takes over again — the
   // sentinel-checking path in resolveComputedDays only ignores the
@@ -13407,7 +13449,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           {/* Calls nobody has decided about yet, on the page where the
               opportunity they belong to actually is. Renders nothing when
               the queue is empty. */}
-          <UntaggedCalls opps={data?.records || []} />
+          <UntaggedCalls opps={data?.records || []} onTagged={recordCallOnOpp} />
 
           {massEditOn && selectedIds.size > 0 && (
             <MassEditBar

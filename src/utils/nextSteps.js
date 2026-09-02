@@ -14,6 +14,8 @@
 // to land in the same field. Two copies of a storage format is a drift
 // waiting to happen, so they live here and Opps 2 imports them.
 
+import { withLastCallStamp } from './lastCallOnOpp.js';
+
 // A hard line break typed INSIDE one step is stored as U+2028 (LINE
 // SEPARATOR) rather than "\n": steps are split on "\n", so a newline
 // inside a step would explode it into several and desync the parallel
@@ -240,4 +242,41 @@ export function appendNextSteps(existingText, existingWaiting, lines) {
     added: fresh.length,
     skipped,
   };
+}
+
+// ---- what one opp learns from one call --------------------------------
+
+/**
+ * The whole patch a mapped call puts on its opp: the follow-ups it adds
+ * to the checklist, and the reference saying it is that deal's last
+ * conversation.
+ *
+ * Both halves belong to the same fact — "this call belongs to this deal"
+ * — and both have to land in one write, because the steps and their
+ * Waiting On array are index-aligned. Composed here rather than at each
+ * call site because there is now more than one place a call can be
+ * mapped: the Call Recordings page, where the audio is, and the "Calls
+ * to map" queue on the Opps page, where the deal is. Two copies of this
+ * is exactly the drift that would leave the same action doing different
+ * things depending on which page it was taken from.
+ *
+ *   { patch, added }
+ *
+ * `patch` is empty when there is nothing to write — no new steps, and a
+ * stamp the opp already carries — so a caller can skip the write rather
+ * than stamping an opp for an edit that changed nothing. `added` is how
+ * many next steps the checklist gained, which is what a caller reports
+ * back to the user.
+ */
+export function callOnOppPatch(opp, record) {
+  const steps = appendNextSteps(
+    opp?.['Next Steps'], opp?.['_nextStepsWaiting'], nextStepLinesFromCall(record),
+  );
+  const patch = steps.added > 0
+    ? { 'Next Steps': steps.text, _nextStepsWaiting: steps.waiting }
+    : {};
+  // The reference goes on even when there are no steps to add: a call
+  // mapped before it was summarised has nothing to say about what to do
+  // next, but it is still the last conversation on that deal.
+  return { patch: withLastCallStamp(patch, opp, record), added: steps.added };
 }
