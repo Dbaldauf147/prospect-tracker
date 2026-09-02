@@ -18,11 +18,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SERVICE_STATUSES } from '../../data/enums';
-import {
-  getServiceCategories,
-  sortServiceNames,
-  UNGROUPED_SERVICES,
-} from '../../utils/serviceCategoriesStore';
+import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
@@ -81,24 +77,18 @@ function buildAutoStatuses({ account, oppRows, items, currentOppId }) {
 // The board's cards: the user's own category layout (falling back to the
 // seed catalog), plus a trailing card for anything in the column's linked
 // list that no category claims — so a Solutions entry can never become
-// unpickable just because it hasn't been filed into a box yet.
+// unpickable just because it hasn't been filed into a box yet. Shared with
+// the company card's Services Explored board, which needs the same card for
+// the same reason.
+//
+// Hidden services come out here rather than in buildServiceBoard: this
+// picker never shows one, while the company card shows them under Edit
+// Services. Empty cards go too — there's nothing to pick in them.
 function buildCategories(settings, options) {
   const hidden = new Set(settings?.hiddenServices || []);
-  const cats = getServiceCategories(settings)
+  return buildServiceBoard(settings, options)
     .map(c => ({ name: c.name, items: c.items.filter(i => !hidden.has(i)) }))
     .filter(c => c.items.length > 0);
-
-  const filed = new Set(cats.flatMap(c => c.items.map(i => i.toLowerCase())));
-  const extra = (options || [])
-    .map(o => String(o || '').trim())
-    .filter(o => o && !hidden.has(o) && !filed.has(o.toLowerCase()));
-  if (extra.length) {
-    cats.push({
-      name: UNGROUPED_SERVICES,
-      items: sortServiceNames([...new Set(extra)], settings?.serviceRenames),
-    });
-  }
-  return cats;
 }
 
 // The status control, mirroring the company card's: the select shows the
