@@ -1336,6 +1336,24 @@ function oppMissingMarginApproval(row) {
   return bfoFieldMissing(row?.['Margin Email Date - Sales Leader Review Date']);
 }
 
+// "Awaiting Margin Approval" flag: the other half of the margin pair, the
+// same rule the credit pair gets below. The margin request went to the
+// sales leader (Margin Request Date is filled) but no answer came back
+// (Margin Approval Date still blank). "Missing Margin Approval" above
+// catches the quote that never asked; this catches the one that asked and
+// was forgotten, which looks handled on the row until someone needs the
+// number signed off.
+//
+// No stage gate beyond "still open": a request that was made needs an
+// answer whatever stage the opp reached. The two margin flags can't both
+// fire — one needs the request date blank, this one needs it filled.
+function oppMissingMarginApprovalDate(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (CLOSED_STAGES_SET.has(stage)) return false;
+  if (bfoFieldMissing(row?.['Margin Email Date - Sales Leader Review Date'])) return false;
+  return bfoFieldMissing(row?.['Margin Approval Date']);
+}
+
 // "Credit Approval Needed" flag: a larger deal (Deal Size / Quoted Amount
 // above $50,000) that has reached Contracting or Agreement Sent but still has
 // a blank Credit approval cell. Blank sentinels ("-", "#N/A", …) count as
@@ -1351,7 +1369,7 @@ function oppNeedsCreditApproval(row) {
   return bfoFieldMissing(row?.['Credit approval']);
 }
 
-// "Credit Approval Missing" flag: the other half of the credit pair. The
+// "Awaiting Credit Approval" flag: the other half of the credit pair. The
 // review was submitted (Credit Review Request Date is filled) but the
 // answer never came back (Credit Approval Date still blank). Where
 // "Credit Approval Needed" catches the deal nobody sent to credit, this
@@ -6416,6 +6434,28 @@ export function OppInfoModal({
                   color: 'var(--color-accent)', cursor: 'pointer',
                 }}
               >Restore</button>
+            </div>
+          )}
+          {oppMissingMarginApprovalDate(opp) && (
+            // Same rule as the Flags-column chip: the margin request went
+            // in but no approval date came back. Shown here too so it's
+            // visible with the margin pair itself, and when the Flags
+            // column is hidden in the table.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCD34D', borderRadius: 6,
+              background: '#FFFBEB', fontSize: '0.8rem',
+              color: '#92400E', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span>
+                <strong>Margin approval missing.</strong> The margin request went in on{' '}
+                <strong>{formatDateDisplay(opp['Margin Email Date - Sales Leader Review Date'])}</strong> but{' '}
+                <strong>{headerLabel('Margin Approval Date')}</strong> is still blank — chase
+                the approval, then fill the date in to clear the flag.
+              </span>
             </div>
           )}
           {oppMissingCreditApprovalDate(opp) && (
@@ -11694,8 +11734,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
       if (oppMissingMarginApproval(row)) parts.push('Missing Margin Approval');
+      if (oppMissingMarginApprovalDate(row)) parts.push('Awaiting Margin Approval');
       if (oppNeedsCreditApproval(row)) parts.push('Credit Approval Needed');
-      if (oppMissingCreditApprovalDate(row)) parts.push('Credit Approval Missing');
+      if (oppMissingCreditApprovalDate(row)) parts.push('Awaiting Credit Approval');
       if (oppMissingEntityApproval(row)) parts.push('Missing Entity Approval');
       if (oppMissingVerbal(row)) parts.push('Missing Verbal');
       const kickoffDays = kickoffDeadlineFlag(row);
@@ -11718,6 +11759,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         if (oppMissingBfoAddress(row)) n += 1;
         if (oppMissingQuotedAmount(row)) n += 1;
         if (oppMissingMarginApproval(row)) n += 1;
+        if (oppMissingMarginApprovalDate(row)) n += 1;
         if (oppNeedsCreditApproval(row)) n += 1;
         if (oppMissingCreditApprovalDate(row)) n += 1;
         if (oppMissingEntityApproval(row)) n += 1;
@@ -11735,6 +11777,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const missingAddr = oppMissingBfoAddress(row);
         const missingQuote = oppMissingQuotedAmount(row);
         const missingMargin = oppMissingMarginApproval(row);
+        const awaitingMargin = oppMissingMarginApprovalDate(row);
         const needsCredit = oppNeedsCreditApproval(row);
         const awaitingCredit = oppMissingCreditApprovalDate(row);
         const missingEntity = oppMissingEntityApproval(row);
@@ -11742,7 +11785,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -11814,6 +11857,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Margin Approval</span>
             )}
+            {awaitingMargin && (
+              <span
+                title={`${headerLabel('Margin Email Date - Sales Leader Review Date')} is filled but ${headerLabel('Margin Approval Date')} is still blank: the margin request went in and hasn't come back — chase it.`}
+                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >⚠ Awaiting Margin Approval</span>
+            )}
             {needsCredit && (
               <span
                 title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank ${headerLabel('Credit approval')}: get credit approval.`}
@@ -11824,7 +11873,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               <span
                 title={`${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn't come back — chase it.`}
                 style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
-              >⚠ Credit Approval Missing</span>
+              >⚠ Awaiting Credit Approval</span>
             )}
             {missingEntity && (
               <span
