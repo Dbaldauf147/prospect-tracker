@@ -211,6 +211,38 @@ function progressSection(progressWeeks, weekKey) {
 
 // ---- Snapshot -----------------------------------------------------------
 
+// The YOY charts let the user pin a corrected value onto a data point, and
+// the Annual Sales "Projected" bar is one of them. Apply that pin here too,
+// so the Weekly Report's projection tile shows what the chart shows rather
+// than the computed number the user has already overruled.
+//
+// Precedence mirrors the chart's own recompute(): an overridden Total wins
+// outright; otherwise the total is the sum of the two client segments with
+// any of their overrides applied.
+function applyProjectionOverride(projection, yoyOverrides) {
+  if (!projection) return null;
+  const patch = yoyOverrides?.annualSales?.Projected;
+  const ov = (key) => {
+    const v = patch?.[key];
+    return (v != null && Number.isFinite(Number(v))) ? Number(v) : null;
+  };
+  if (!patch) return { ...projection, overridden: false };
+  const total = ov('_total');
+  if (total !== null) return { ...projection, amount: Math.round(total), overridden: true };
+  const currentClient = ov('currentClient');
+  const newClient = ov('newClient');
+  if (currentClient === null && newClient === null) return { ...projection, overridden: false };
+  const nextCurrent = currentClient ?? projection.currentClient;
+  const nextNew = newClient ?? projection.newClient;
+  return {
+    ...projection,
+    currentClient: Math.round(nextCurrent),
+    newClient: Math.round(nextNew),
+    amount: Math.round(nextCurrent + nextNew),
+    overridden: true,
+  };
+}
+
 // Build the full review input. `now` is injectable so a review can be
 // regenerated for a past week from the same code path.
 export function buildReviewSnapshot({
@@ -218,6 +250,7 @@ export function buildReviewSnapshot({
   bfo = null,
   oppsRecords = [],
   progressWeeks = [],
+  yoyOverrides = null,
   cdmName = '',
   now = new Date(),
 } = {}) {
@@ -225,14 +258,15 @@ export function buildReviewSnapshot({
   const weekKey = weekKeyOf(now);
   const pipe = pipelineSection(pipeline, bfo);
   const target = pipe ? pipe.quota.target : 0;
+  const yoy = Array.isArray(oppsRecords) && oppsRecords.length
+    ? yoyReviewMetrics(oppsRecords, { target, nowMs })
+    : null;
   return {
     weekKey,
     weekLabel: weekRangeLabel(weekKey),
     cdmName: String(cdmName || ''),
     generatedAt: new Date(nowMs).toISOString(),
-    yoy: Array.isArray(oppsRecords) && oppsRecords.length
-      ? yoyReviewMetrics(oppsRecords, { target, nowMs })
-      : null,
+    yoy: yoy && { ...yoy, projection: applyProjectionOverride(yoy.projection, yoyOverrides) },
     pipeline: pipe,
     progress: progressSection(progressWeeks, weekKey),
     missing: [
@@ -280,7 +314,12 @@ export function headlineKpis(snapshot) {
   const coverageActual = fin(pipe?.coverage?.actual);
   const coverageGoal = fin(pipe?.coverage?.goal);
 
-  const projected = ytd ? fin(ytd.runRateFullYear) : null;
+  // The projection is the Annual Sales chart's Projected bar — sold this
+  // year plus the agreements already out — not ytd.runRateFullYear. The
+  // two are different questions with different answers, and the chart's is
+  // the one the user is reading elsewhere.
+  const proj = s.yoy?.projection || null;
+  const projected = fin(proj?.amount);
 
   return {
     target: target || null,
@@ -312,8 +351,16 @@ export function headlineKpis(snapshot) {
     projectedYearEnd: {
       amount: projected,
       target: target || null,
-      // Positive = the run rate clears the target.
+      // Positive = the projection clears the target.
       gap: (projected != null && target > 0) ? Math.round(projected - target) : null,
+      // The two halves of the projection, so the tile can show its working.
+      soldYTD: fin(proj?.soldYTD),
+      committedAmount: fin(proj?.lateStageAmount),
+      // True when the user has pinned a value onto the chart's Projected
+      // bar; the tile says so rather than passing it off as computed.
+      overridden: !!proj?.overridden,
+      // Kept for the review's prose, which contrasts the two projections.
+      runRateFullYear: ytd ? fin(ytd.runRateFullYear) : null,
       yearElapsedPct: ytd ? fin(ytd.yearElapsedPct) : null,
       status: (projected == null || target <= 0)
         ? null
@@ -333,6 +380,7 @@ export function reviewHighlights(snapshot) {
     gapToTarget: s.yoy?.ytd?.gapToTarget ?? null,
     onPaceAmount: s.yoy?.ytd?.onPaceAmount ?? null,
     runRateFullYear: s.yoy?.ytd?.runRateFullYear ?? null,
+    projectedYearEnd: s.yoy?.projection?.amount ?? null,
     coverageActual: s.pipeline?.coverage?.actual ?? null,
     coverageGoal: s.pipeline?.coverage?.goal ?? null,
     openPipelineAmount: s.yoy?.openPipeline?.amount ?? null,
@@ -360,6 +408,12 @@ export function serializeReviewSnapshot(snapshot) {
     L.push(`- Sold YTD (${y.ytd.year}): ${money(y.ytd.amount)} across ${y.ytd.deals} deals: ${pct(y.ytd.pctOfTarget, 1)} of target`);
     L.push(`- Year elapsed: ${pct(y.ytd.yearElapsedPct, 1)}: on pace would be ${money(y.ytd.onPaceAmount)}`);
     L.push(`- Gap to target: ${money(y.ytd.gapToTarget)}; current run rate lands the year at ${money(y.ytd.runRateFullYear)}`);
+    if (y.projection) {
+      // The YOY Annual Sales "Projected" bar. Reported next to the run rate
+      // because they answer different questions: this one counts only what
+      // is already committed, so a big gap between them is itself a signal.
+      L.push(`- Projected year-end (sold ${money(y.projection.soldYTD)} + ${money(y.projection.lateStageAmount)} in agreements out): ${money(y.projection.amount)}${y.projection.overridden ? ' (pinned on the Annual Sales chart)' : ''}`);
+    }
     L.push(`- Same point last year (${y.priorYearSameDate.year}): ${money(y.priorYearSameDate.amount)} across ${y.priorYearSameDate.deals} deals (delta ${money(y.priorYearSameDate.deltaAmount)})`);
     if (y.years.length) {
       L.push('- By year (opened leads / sold / not sold / in progress / sold $ / avg deal / total C-R / quoted C-R):');

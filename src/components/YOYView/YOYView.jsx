@@ -11,6 +11,7 @@ import {
 import { dbGet } from '../../utils/db';
 import {
   parseMoney, parseYear, parseDateYear, isQuotedPlus, yearElapsedFraction,
+  annualSalesProjection,
 } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
@@ -1076,38 +1077,19 @@ export function YOYView() {
       _deals: r._deals.sort(sortDeals),
     }));
     // Projected — this year's Sold deals plus every still-open opp in the
-    // late-stage pipeline: Stage "Agreement Sent" or "Contracting".
-    // Closed/Not-Sold opps and prior-year Sold are excluded; Sold is counted
-    // once here, so the pipeline branch skips closed stages to avoid
-    // double-counting.
-    let projCurrent = 0, projNew = 0;
-    const projDeals = [];
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim();
-      const amt = parseMoney(r['Quoted Amount']) || 0;
-      if (!amt) continue;
-      let include = false;
-      if (stage === 'Sold') {
-        const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
-        include = y === currentYear;
-      } else {
-        include = stage === 'Agreement Sent' || stage === 'Contracting';
-      }
-      if (!include) continue;
-      const src = String(r['Lead Source'] || r['Source'] || '');
-      if (CLIENT_RE.test(src)) projCurrent += amt;
-      else projNew += amt;
-      projDeals.push({ ...dealFor(r, currentYear, src, amt), Stage: stage });
-    }
-    const projTotal = projCurrent + projNew;
+    // late-stage pipeline: Stage "Agreement Sent" or "Contracting". Shared
+    // with the Weekly Report's projection tile, which used to annualize the
+    // run rate instead and so quoted a different year-end number than this
+    // bar did.
+    const proj = annualSalesProjection(records, { nowMs: Date.now(), dealFor });
     rows.push({
       year: 'Projected',
-      currentClient: Math.round(projCurrent),
-      newClient: Math.round(projNew),
-      _total: Math.round(projTotal),
-      pctQuota: annualTarget > 0 ? Math.round((projTotal / annualTarget) * 100) : null,
+      currentClient: proj.currentClient,
+      newClient: proj.newClient,
+      _total: proj.amount,
+      pctQuota: annualTarget > 0 ? Math.round((proj.amount / annualTarget) * 100) : null,
       _isProjected: true,
-      _deals: projDeals.sort(sortDeals),
+      _deals: proj.deals.sort(sortDeals),
     });
     return rows;
   }, [records, currentYear, target]);

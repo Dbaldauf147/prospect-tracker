@@ -102,6 +102,64 @@ function dayOfYear(ms) {
 const LATE_STAGES = new Set(['Agreement Sent', 'Contracting']);
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold']);
 
+// Lead sources that mean the money is already a client's rather than new
+// business — the split the Annual Sales bars are stacked by.
+const CLIENT_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
+
+// The YOY "Annual Sales" chart's Projected bar: what this year finishes at
+// if everything already committed lands. That is this year's Sold deals
+// plus every still-open opp at Agreement Sent or Contracting — the two
+// stages where the paperwork is out and the money is realistically booked.
+//
+// Deliberately NOT a run rate. Annualizing what has closed so far assumes
+// the rest of the year repeats the first part of it; this instead adds up
+// what is actually on the table. The two answer different questions and
+// give different numbers, and the chart has always used this one — so the
+// Weekly Report's projection tile reads it from here rather than
+// recomputing, which is how the two came to disagree in the first place.
+//
+// Closed opps and prior-year Sold are excluded. Sold is counted once in
+// the first branch, so the pipeline branch skips closed stages rather than
+// double-counting them. `deals` is the contributing rows, for the chart's
+// per-bar drilldown and Excel export.
+export function annualSalesProjection(records, { nowMs = Date.now(), dealFor = null } = {}) {
+  const list = Array.isArray(records) ? records : [];
+  const currentYear = new Date(nowMs).getFullYear();
+  let currentClient = 0;
+  let newClient = 0;
+  let soldYTD = 0;
+  let lateStageAmount = 0;
+  const deals = [];
+  for (const r of list) {
+    const stage = String(r.Stage || '').trim();
+    const amt = parseMoney(r['Quoted Amount']) || 0;
+    // A zero (or unpriced) opp adds nothing to any of these totals, and
+    // listing it in the drilldown would just be noise.
+    if (!amt) continue;
+    const isSold = stage === 'Sold';
+    const include = isSold
+      ? soldYear(r) === currentYear
+      : LATE_STAGES.has(stage);
+    if (!include) continue;
+    const src = String(r['Lead Source'] || r['Source'] || '');
+    if (CLIENT_SOURCE_RE.test(src)) currentClient += amt;
+    else newClient += amt;
+    if (isSold) soldYTD += amt;
+    else lateStageAmount += amt;
+    if (dealFor) deals.push({ ...dealFor(r, currentYear, src, amt), Stage: stage });
+  }
+  return {
+    currentYear,
+    currentClient: Math.round(currentClient),
+    newClient: Math.round(newClient),
+    amount: Math.round(currentClient + newClient),
+    // The two halves of that total, so a tile can say where it came from.
+    soldYTD: Math.round(soldYTD),
+    lateStageAmount: Math.round(lateStageAmount),
+    deals,
+  };
+}
+
 export function yoyReviewMetrics(records, { target = 0, nowMs = Date.now() } = {}) {
   const list = Array.isArray(records) ? records : [];
   const now = new Date(nowMs);
@@ -202,6 +260,11 @@ export function yoyReviewMetrics(records, { target = 0, nowMs = Date.now() } = {
       onPaceAmount: Math.round((Number(target) || 0) * frac),
       gapToTarget: Math.round((Number(target) || 0) - ytdSoldAmount),
     },
+    // Where the year lands if everything already committed closes — the
+    // same figure the YOY Annual Sales chart plots as its Projected bar.
+    // Distinct from ytd.runRateFullYear above, which annualizes the pace
+    // instead; both are reported because they disagree on purpose.
+    projection: annualSalesProjection(list, { nowMs }),
     priorYearSameDate: {
       year: currentYear - 1,
       deals: priorSameDateDeals,
