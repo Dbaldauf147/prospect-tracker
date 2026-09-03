@@ -19,11 +19,8 @@ import {
   computeActivity, computeOppChanges, computeGoalsProgress,
   serializeReport, pipelineSnapshotLines,
 } from '../../utils/weeklyReport';
-import {
-  buildReviewSnapshot, serializeReviewSnapshot, serializeReview,
-  reviewHighlights, weekRangeLabel, headlineKpis,
-} from '../../utils/weeklyReview';
-import { loadProgressWeeks, loadWeeklyReviews, saveWeeklyReview } from '../../utils/weeklyReviewStore';
+import { buildReviewSnapshot, headlineKpis } from '../../utils/weeklyReview';
+import { loadProgressWeeks } from '../../utils/weeklyReviewStore';
 import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import {
   loadWeeklyActivityLog, weeklyActivityEntry, liveCacheCovers, WEEKLY_ACTIVITY_EVENT,
@@ -220,53 +217,6 @@ function ChangeList({ title, items, suffix }) {
   );
 }
 
-const fmtMoneySigned = (n) => (Number.isFinite(n)
-  ? `${n < 0 ? '−' : ''}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`
-  : '-');
-
-// One stored week in the review history. Collapsed it's a row of the headline
-// numbers; expanded it shows the full review the way the current week renders.
-function ReviewCard({ review, weekLabel }) {
-  if (!review) return null;
-  return (
-    <div className={styles.reviewBody}>
-      {review.headline && <p className={styles.reviewHeadline}>{review.headline}</p>}
-      {review.targetOutlook && <p className={styles.reviewOutlook}>{review.targetOutlook}</p>}
-      {Array.isArray(review.blockers) && review.blockers.length > 0 && (
-        <>
-          <h4 className={styles.reviewSubhead}>What&rsquo;s holding you back</h4>
-          <ol className={styles.blockerList}>
-            {review.blockers.map((b, i) => (
-              <li key={`${weekLabel}-b${i}`} className={styles.blocker}>
-                <div className={styles.blockerTop}>
-                  <span className={styles.areaChip} data-area={b.area}>{b.area}</span>
-                  {b.severity && <span className={styles.sevChip} data-sev={b.severity}>{b.severity}</span>}
-                  <span className={styles.blockerTitle}>{b.title}</span>
-                </div>
-                {b.evidence && <div className={styles.blockerLine}><span className={styles.blockerLabel}>Evidence</span>{b.evidence}</div>}
-                {b.impact && <div className={styles.blockerLine}><span className={styles.blockerLabel}>Impact</span>{b.impact}</div>}
-                {b.action && <div className={styles.blockerLine}><span className={styles.blockerLabel}>Do this</span>{b.action}</div>}
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-      {Array.isArray(review.working) && review.working.length > 0 && (
-        <>
-          <h4 className={styles.reviewSubhead}>Working</h4>
-          <ul className={styles.narList}>{review.working.map((w, i) => <li key={`w${i}`}>{w}</li>)}</ul>
-        </>
-      )}
-      {Array.isArray(review.focus) && review.focus.length > 0 && (
-        <>
-          <h4 className={styles.reviewSubhead}>Focus next week</h4>
-          <ul className={styles.narList}>{review.focus.map((f, i) => <li key={`f${i}`}>{f}</li>)}</ul>
-        </>
-      )}
-    </div>
-  );
-}
-
 export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const senderEmail = String(settings?.workEmail || '').toLowerCase().trim();
@@ -300,17 +250,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // reach here or the tile and the chart disagree again.
   const [yoyOverrides, setYoyOverrides] = useState(loadYoyOverrides);
 
-  // Weekly review (YOY + Pipeline + Progress) and its saved history.
+  // Cached YOY / Pipeline / Progress data behind the headline KPI cards
+  // and the funnel.
   const [bfo, setBfo] = useState(null);
   const [progressWeeks, setProgressWeeks] = useState([]);
-  const [reviews, setReviews] = useState([]);
-  const [reviewsLoaded, setReviewsLoaded] = useState(false);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewError, setReviewError] = useState('');
-  const [expandedWeek, setExpandedWeek] = useState('');
-  // Guards the once-per-week auto-run so a re-render (or a failed attempt)
-  // can't fire a second request for the same week.
-  const autoRunRef = useRef('');
 
   const [narrative, setNarrative] = useState('');
   const [genLoading, setGenLoading] = useState(false);
@@ -355,9 +298,9 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     return () => { try { unsub && unsub(); } catch { /* noop */ } };
   }, [user?.uid]);
 
-  // Progress-tab weekly snapshots + this user's saved reviews. Both live in
-  // Firestore; a failure here leaves the review generatable but unsaved, so
-  // the error is surfaced rather than swallowed.
+  // Progress-tab weekly snapshots, from Firestore. They feed the headline
+  // KPI cards; without them the cards fall back to what the other caches
+  // carry, so a failure here is logged rather than surfaced.
   useEffect(() => {
     if (!user?.uid) return undefined;
     let cancelled = false;
@@ -366,17 +309,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
         const weeks = await loadProgressWeeks(user.uid);
         if (!cancelled) setProgressWeeks(weeks);
       } catch (err) {
-        console.warn('Weekly review: progress history load failed', err);
-      }
-      try {
-        const saved = await loadWeeklyReviews(user.uid);
-        if (!cancelled) setReviews(saved);
-      } catch (err) {
-        if (!cancelled) {
-          setReviewError(`Couldn’t load saved reviews: ${err?.message || err}`);
-        }
-      } finally {
-        if (!cancelled) setReviewsLoaded(true);
+        console.warn('Weekly Report: progress history load failed', err);
       }
     })();
     return () => { cancelled = true; };
@@ -420,16 +353,15 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     emailsSent: emailsSent.count,
   }), [label, activity, oppChanges, goalsProg, pipelineSummary, emailsSent]);
 
-  // ---- Weekly review ----------------------------------------------------
-  // The review always covers the current week off the latest cached chart
-  // data; the date picker above only scopes the activity report below it.
+  // ---- Chart-data snapshot ----------------------------------------------
+  // The KPI cards and funnel below read the latest cached chart data for the
+  // year as a whole; the date picker above only scopes the activity report.
   const reviewSnapshot = useMemo(() => buildReviewSnapshot({
     pipeline, bfo, oppsRecords, progressWeeks, yoyOverrides, cdmName,
   }), [pipeline, bfo, oppsRecords, progressWeeks, yoyOverrides, cdmName]);
-  const currentWeekKey = reviewSnapshot.weekKey;
 
   // ---- Headline KPIs ----------------------------------------------------
-  // Year-scoped, so like the review they ignore the week/day picker above:
+  // Year-scoped, so they ignore the week/day picker above:
   // "am I going to make the number" doesn't change because you looked at
   // last Tuesday. Each card carries the arithmetic behind it so a figure
   // that looks wrong can be traced without opening the Pipeline tab.
@@ -539,106 +471,6 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   }, [kpis]);
   // Nothing cached at all — three dashes teach nothing, so say what to open.
   const kpisReady = !!(reviewSnapshot.pipeline || reviewSnapshot.yoy);
-  const currentReview = useMemo(
-    () => reviews.find(r => r.week === currentWeekKey) || null,
-    [reviews, currentWeekKey],
-  );
-  // Enough of the picture to be worth reviewing: the pipeline goals plus at
-  // least one of the data sets that carry actuals.
-  const reviewReady = !!(reviewSnapshot.pipeline
-    && (reviewSnapshot.yoy || reviewSnapshot.progress || reviewSnapshot.pipeline.hasBfo));
-
-  const runReview = useCallback(async () => {
-    if (reviewLoading || !user?.uid) return;
-    setReviewLoading(true);
-    setReviewError('');
-    try {
-      const statsText = serializeReviewSnapshot(reviewSnapshot);
-      const resp = await apiFetch('/api/weekly-review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          stats: statsText,
-          weekLabel: reviewSnapshot.weekLabel,
-          userName: cdmName || user?.displayName || user?.email || '',
-          coachingRules,
-          // Recent history so the review can track what has and hasn't moved.
-          priorReviews: reviews
-            .filter(r => r.week !== currentWeekKey)
-            .slice(-6)
-            .reverse()
-            .map(r => ({ week: r.week, headline: r.review?.headline, blockers: r.review?.blockers })),
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      // The endpoint streams, so it commits a 200 before it knows whether the
-      // review succeeded — a failure after that point arrives as `error` in
-      // the body rather than as a status code.
-      if (!resp.ok || data?.error) throw new Error(data?.error || `HTTP ${resp.status}`);
-      if (!data?.review) throw new Error('No review returned.');
-
-      const entry = {
-        week: currentWeekKey,
-        weekLabel: reviewSnapshot.weekLabel,
-        generatedAt: new Date().toISOString(),
-        review: data.review,
-        metrics: reviewHighlights(reviewSnapshot),
-        statsText,
-      };
-      // Show it immediately, then persist — a Firestore failure leaves the
-      // review on screen with the error rather than losing it silently.
-      setReviews(prev => {
-        const next = prev.filter(r => r.week !== entry.week);
-        next.push(entry);
-        next.sort((a, b) => a.week.localeCompare(b.week));
-        return next;
-      });
-      try {
-        const merged = await saveWeeklyReview(user.uid, entry, reviews);
-        setReviews(merged);
-      } catch (err) {
-        setReviewError(`Review written but not saved: ${err?.message || err}`);
-      }
-    } catch (err) {
-      setReviewError(err?.message || String(err));
-    } finally {
-      setReviewLoading(false);
-    }
-  }, [reviewLoading, user, reviewSnapshot, cdmName, coachingRules, reviews, currentWeekKey]);
-
-  // Auto-run once per week: the first time the page is opened in a week that
-  // has no saved review, generate one. Manual re-runs stay available.
-  useEffect(() => {
-    if (!reviewsLoaded || !user?.uid) return;
-    if (currentReview || reviewLoading || reviewError) return;
-    if (!reviewReady) return;
-    if (autoRunRef.current === currentWeekKey) return;
-    autoRunRef.current = currentWeekKey;
-    runReview();
-  }, [reviewsLoaded, user, currentReview, reviewLoading, reviewError, reviewReady, currentWeekKey, runReview]);
-
-  const reviewHistory = useMemo(
-    () => reviews.slice().sort((a, b) => b.week.localeCompare(a.week)),
-    [reviews],
-  );
-
-  async function copyReview() {
-    const entry = currentReview;
-    if (!entry) return;
-    const text = [
-      serializeReview(entry.review, entry.weekLabel || weekRangeLabel(entry.week)),
-      '',
-      entry.statsText || serializeReviewSnapshot(reviewSnapshot),
-    ].join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyFlash('Copied review to clipboard.');
-    } catch {
-      setCopyFlash('Copy failed: select and copy manually.');
-    }
-    window.setTimeout(() => setCopyFlash(''), 2500);
-  }
-
   const periodKey = `${mode}:${refDate}`;
   const narrativeStale = narrative && genForRef.current && genForRef.current !== periodKey;
 
@@ -857,120 +689,6 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             onGoal={mode === 'week' ? (n => setWeeklyTarget('newOpps', n)) : undefined}
           />
         </div>
-
-        <section className={styles.reviewSection}>
-          <div className={styles.reviewHead}>
-            <div>
-              <h2 className={styles.sectionHead}>Weekly review: what&rsquo;s holding you back</h2>
-              <div className={styles.reviewSub}>
-                Reads your YOY, Pipeline and Progress numbers for {reviewSnapshot.weekLabel} and records the verdict each week.
-              </div>
-            </div>
-            <div className={styles.reviewActions}>
-              <button
-                type="button"
-                className={styles.primaryBtn}
-                onClick={runReview}
-                disabled={reviewLoading || !reviewReady || !user?.uid}
-                title={reviewReady ? 'Re-run this week’s review against the latest data' : 'Load the Pipeline dashboard first'}
-              >
-                {reviewLoading ? 'Reviewing…' : (currentReview ? 'Re-run review' : 'Run review')}
-              </button>
-              {currentReview && (
-                <button type="button" className={styles.ghostBtn} onClick={copyReview}>Copy review</button>
-              )}
-            </div>
-          </div>
-
-          {reviewError && <div className={styles.error}>{reviewError}</div>}
-          {reviewLoading && <div className={styles.note}>Reviewing your charts against the target…</div>}
-
-          {!reviewReady && !reviewLoading && (
-            <div className={styles.empty}>
-              Not enough chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the review has goals and actuals to work from.
-            </div>
-          )}
-
-          {reviewSnapshot.missing.length > 0 && reviewReady && (
-            <div className={styles.note}>
-              Reviewed without: {reviewSnapshot.missing.join('; ')}.
-            </div>
-          )}
-
-          {currentReview && !reviewLoading && (
-            <>
-              <ReviewCard review={currentReview.review} weekLabel={currentReview.week} />
-              <div className={styles.reviewStamp}>
-                Recorded {new Date(currentReview.generatedAt).toLocaleString('en-US', {
-                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-                })}
-              </div>
-            </>
-          )}
-
-          {reviewHistory.length > 0 && (
-            <div className={styles.historyWrap}>
-              <h3 className={styles.historyHead}>Review history <span className={styles.changeCount}>{reviewHistory.length}</span></h3>
-              <table className={styles.historyTable}>
-                <thead>
-                  <tr>
-                    <th>Week</th>
-                    <th className={styles.numCol}>Quota</th>
-                    <th className={styles.numCol}>Gap to target</th>
-                    <th className={styles.numCol}>Coverage</th>
-                    <th className={styles.numCol}>Stalled</th>
-                    <th>Top blocker</th>
-                    <th className={styles.numCol}>Blockers</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reviewHistory.map((entry) => {
-                    const m = entry.metrics || {};
-                    const top = entry.review?.blockers?.[0];
-                    const open = expandedWeek === entry.week;
-                    return (
-                      <Fragment key={entry.week}>
-                        <tr
-                          className={open ? styles.historyRowOpen : styles.historyRow}
-                          onClick={() => setExpandedWeek(open ? '' : entry.week)}
-                          title="Click to show the full review"
-                        >
-                          <td>{entry.weekLabel || weekRangeLabel(entry.week)}</td>
-                          <td className={styles.numCol}>{m.pctOfQuota == null ? '-' : `${m.pctOfQuota}%`}</td>
-                          <td className={styles.numCol}>{fmtMoneySigned(m.gapToTarget)}</td>
-                          <td className={styles.numCol}>
-                            {m.coverageActual == null ? '-' : `${m.coverageActual}${m.coverageGoal != null ? ` / ${m.coverageGoal}` : ''}`}
-                          </td>
-                          <td className={styles.numCol}>{m.stalledOpps == null ? '-' : m.stalledOpps}</td>
-                          <td>
-                            {top ? (
-                              <>
-                                <span className={styles.areaChip} data-area={top.area}>{top.area}</span>
-                                {top.title}
-                              </>
-                            ) : '-'}
-                          </td>
-                          <td className={styles.numCol}>{entry.review?.blockers?.length ?? 0}</td>
-                        </tr>
-                        {open && (
-                          <tr>
-                            <td colSpan={7} className={styles.historyDetail}>
-                              <ReviewCard review={entry.review} weekLabel={entry.week} />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {reviewsLoaded && reviewHistory.length === 0 && !reviewLoading && reviewReady && (
-            <div className={styles.mutedRow}>No reviews recorded yet: the first one runs automatically.</div>
-          )}
-        </section>
 
         {(narrative || genError || genLoading) && (
           <div className={styles.narrative}>
