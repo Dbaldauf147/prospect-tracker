@@ -2,9 +2,9 @@
 //
 // The PE Portfolio table already picks one company per firm — the
 // highest-scoring North American portfolio company that hasn't been
-// closed off (Lost - Not Sold), parked (Hold Off), or already won
-// (Client). That's the Top PC column, and this reuses the same picker so
-// the two pages can't name different companies.
+// closed off (Lost - Not Sold), parked (Hold Off), or won now (Client) or
+// before (Old Client). That's the Top PC column, and this reuses the same
+// picker so the two pages can't name different companies.
 //
 // What the Prospecting page adds is the "still to ask about" filter: a
 // Top PC already sitting at Qualifying is a conversation in progress, so

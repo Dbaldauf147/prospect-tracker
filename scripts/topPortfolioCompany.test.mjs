@@ -69,8 +69,8 @@ eq(pickTopPortfolioCompany([pc('City Only', 50, 'Springfield', '')], new Map()),
 
 // ---- the status filter ------------------------------------------------------
 
-eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off', 'Client'],
-  'closed, parked and already-won are all out of the running');
+eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off', 'Client', 'Old Client'],
+  'closed, parked and won — now or before — are all out of the running');
 
 const PROSPECTS = [
   { company: 'Northwind Logistics', status: 'Lost - Not Sold' },
@@ -100,6 +100,27 @@ eq(pickTopPortfolioCompany([
   ...basic,
   pc('Riverbend Plastics', 30, 'Akron', 'United States'),
 ], withClient).skippedStatus, 3, 'all three excluded statuses count as status skips');
+
+// An Old Client is a company we used to serve. Winning it back is its own
+// motion off the account, not the cold "who should I be working next" this
+// column answers, so it's passed over like a current Client.
+const withOldClient = buildStatusIndex([
+  ...PROSPECTS.filter(p => p.company !== 'Contoso Metals'),
+  { company: 'Contoso Metals', status: 'Old Client' },
+]);
+eq(pickTopPortfolioCompany(basic, withOldClient), null, 'an Old Client is passed over too');
+eq(pickTopPortfolioCompany([
+  ...basic,
+  pc('Riverbend Plastics', 30, 'Akron', 'United States'),
+], withOldClient).companyName, 'Riverbend Plastics',
+'…and the next company down takes that row too');
+
+// The same status set on the firm's own portfolio row, which is the way
+// the PE Portfolio screenshot that prompted this showed it (QTS Data
+// Centers, Old Client, still winning Blackstone's Top PC).
+eq(pickTopPortfolioCompany([
+  { ...basic[0], status: 'Old Client' },
+], new Map()), null, 'an Old Client set on the PC row itself is passed over as well');
 
 // A company with no prospect record has no status to fail — the filter
 // drops what we know is closed, not what we know nothing about.
