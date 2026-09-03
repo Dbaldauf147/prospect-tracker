@@ -737,324 +737,332 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
 
 
   return (
-    <div className={styles.wrap}>
-      <div className={styles.header}>
-        <div className={styles.titleBlock}>
-          <h1 className={styles.title}>Weekly Report</h1>
-          <span className={styles.subtitle}>{label}</span>
-        </div>
-        <div className={styles.toolbar}>
-          <div className={styles.modeToggle} role="tablist" aria-label="Report period">
-            <button
-              type="button"
-              className={mode === 'week' ? styles.modeBtnActive : styles.modeBtn}
-              onClick={() => setMode('week')}
-            >Week</button>
-            <button
-              type="button"
-              className={mode === 'day' ? styles.modeBtnActive : styles.modeBtn}
-              onClick={() => setMode('day')}
-            >Day</button>
+    // The Charts tab host clips its content (each sub-view lays itself out
+    // full-height and scrolls its own body), so the page owns its scroll
+    // container. Without it the report is simply cut off at the fold —
+    // everything below whatever fits is unreachable. The scroller is the
+    // full width so the scrollbar sits at the edge of the pane; the
+    // 1100px measure stays on the content column inside it.
+    <div className={styles.scroller}>
+      <div className={styles.wrap}>
+        <div className={styles.header}>
+          <div className={styles.titleBlock}>
+            <h1 className={styles.title}>Weekly Report</h1>
+            <span className={styles.subtitle}>{label}</span>
           </div>
-          <label className={styles.dateField} title="Pick any date; the report covers that day or the Mon–Sun week containing it.">
-            <input
-              type="date"
-              className={styles.dateInput}
-              value={refDate}
-              max={todayIso()}
-              onChange={(e) => setRefDate(e.target.value || todayIso())}
-            />
-          </label>
-          {!isCurrent && (
-            <button type="button" className={styles.ghostBtn} onClick={() => setRefDate(todayIso())} title="Jump to the current period">
-              {mode === 'day' ? 'Today' : 'This week'}
-            </button>
-          )}
-          <button type="button" className={styles.primaryBtn} onClick={generate} disabled={genLoading || !anyData}>
-            {genLoading ? 'Writing…' : (narrative && !narrativeStale ? 'Regenerate summary' : 'Generate AI summary')}
-          </button>
-          <button type="button" className={styles.ghostBtn} onClick={copyReport}>Copy report</button>
-          <button
-            type="button"
-            className={styles.ghostBtn}
-            onClick={() => setEmailModalOpen(true)}
-            title="Send this report on a schedule — e.g. every Monday at 06:00"
-          >Email this report</button>
-          {copyFlash && <span className={styles.flash}>{copyFlash}</span>}
-        </div>
-      </div>
-
-      {!senderEmail && (
-        <div className={styles.note}>
-          Set your work email in <strong>Settings → CDM Name</strong> so sent-email counts can match your outbound HubSpot mail. Calls, meetings, opp changes, and goals still work without it.
-        </div>
-      )}
-
-      <section className={styles.kpiSection}>
-        <div className={styles.kpiHead}>
-          <h2 className={styles.sectionHead}>Where the year stands</h2>
-          <span className={styles.kpiHeadNote}>
-            Year to date — not scoped to the week picker
-          </span>
-        </div>
-        {kpisReady ? (
-          <div className={styles.kpiRow}>
-            {kpiCards.map(({ key, ...card }) => <KpiTile key={key} {...card} />)}
-          </div>
-        ) : (
-          <div className={styles.empty}>
-            No chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) to seed the target, pipeline and run rate.
-          </div>
-        )}
-      </section>
-
-      <section className={styles.funnelSection}>
-        <div className={styles.kpiHead}>
-          <h2 className={styles.sectionHead}>Pipeline funnel</h2>
-          <span className={styles.kpiHeadNote}>
-            The Charts → Pipeline funnel, off the same cached numbers
-          </span>
-        </div>
-        {funnelReady ? (
-          <div className={styles.funnelCard}>
-            <PipelineFunnel stages={funnelStages} outcome={funnelOutcome} />
-          </div>
-        ) : (
-          <div className={styles.empty}>
-            No stage volumes cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the funnel has stage actuals to draw.
-          </div>
-        )}
-      </section>
-
-      {/* Emails sent and New opps are the two the week is steered by, so they
-          are the two that carry a target. Everything else that used to have a
-          tile here — calls, meetings, deals closed, stage changes, amount
-          updates, BFO tags, goals opened and closed — is still counted and
-          still listed in full further down the page; it just no longer takes
-          up a tile. */}
-      <div className={styles.tiles}>
-        <StatTile
-          value={emailsSent.count}
-          label="Emails sent"
-          accent="blue"
-          sub={emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null}
-          subTitle={"Counted on the Activity tab while it still had this week's HubSpot feed, and kept since."}
-          goal={weeklyTargets.emails ?? null}
-          onGoal={mode === 'week' ? (n => setWeeklyTarget('emails', n)) : undefined}
-        />
-        <StatTile
-          value={oppChanges.newOpps.length}
-          label="New opps"
-          accent="green"
-          goal={weeklyTargets.newOpps ?? null}
-          onGoal={mode === 'week' ? (n => setWeeklyTarget('newOpps', n)) : undefined}
-        />
-      </div>
-
-      <section className={styles.reviewSection}>
-        <div className={styles.reviewHead}>
-          <div>
-            <h2 className={styles.sectionHead}>Weekly review: what&rsquo;s holding you back</h2>
-            <div className={styles.reviewSub}>
-              Reads your YOY, Pipeline and Progress numbers for {reviewSnapshot.weekLabel} and records the verdict each week.
+          <div className={styles.toolbar}>
+            <div className={styles.modeToggle} role="tablist" aria-label="Report period">
+              <button
+                type="button"
+                className={mode === 'week' ? styles.modeBtnActive : styles.modeBtn}
+                onClick={() => setMode('week')}
+              >Week</button>
+              <button
+                type="button"
+                className={mode === 'day' ? styles.modeBtnActive : styles.modeBtn}
+                onClick={() => setMode('day')}
+              >Day</button>
             </div>
-          </div>
-          <div className={styles.reviewActions}>
-            <button
-              type="button"
-              className={styles.primaryBtn}
-              onClick={runReview}
-              disabled={reviewLoading || !reviewReady || !user?.uid}
-              title={reviewReady ? 'Re-run this week’s review against the latest data' : 'Load the Pipeline dashboard first'}
-            >
-              {reviewLoading ? 'Reviewing…' : (currentReview ? 'Re-run review' : 'Run review')}
-            </button>
-            {currentReview && (
-              <button type="button" className={styles.ghostBtn} onClick={copyReview}>Copy review</button>
+            <label className={styles.dateField} title="Pick any date; the report covers that day or the Mon–Sun week containing it.">
+              <input
+                type="date"
+                className={styles.dateInput}
+                value={refDate}
+                max={todayIso()}
+                onChange={(e) => setRefDate(e.target.value || todayIso())}
+              />
+            </label>
+            {!isCurrent && (
+              <button type="button" className={styles.ghostBtn} onClick={() => setRefDate(todayIso())} title="Jump to the current period">
+                {mode === 'day' ? 'Today' : 'This week'}
+              </button>
             )}
+            <button type="button" className={styles.primaryBtn} onClick={generate} disabled={genLoading || !anyData}>
+              {genLoading ? 'Writing…' : (narrative && !narrativeStale ? 'Regenerate summary' : 'Generate AI summary')}
+            </button>
+            <button type="button" className={styles.ghostBtn} onClick={copyReport}>Copy report</button>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={() => setEmailModalOpen(true)}
+              title="Send this report on a schedule — e.g. every Monday at 06:00"
+            >Email this report</button>
+            {copyFlash && <span className={styles.flash}>{copyFlash}</span>}
           </div>
         </div>
 
-        {reviewError && <div className={styles.error}>{reviewError}</div>}
-        {reviewLoading && <div className={styles.note}>Reviewing your charts against the target…</div>}
-
-        {!reviewReady && !reviewLoading && (
-          <div className={styles.empty}>
-            Not enough chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the review has goals and actuals to work from.
-          </div>
-        )}
-
-        {reviewSnapshot.missing.length > 0 && reviewReady && (
+        {!senderEmail && (
           <div className={styles.note}>
-            Reviewed without: {reviewSnapshot.missing.join('; ')}.
+            Set your work email in <strong>Settings → CDM Name</strong> so sent-email counts can match your outbound HubSpot mail. Calls, meetings, opp changes, and goals still work without it.
           </div>
         )}
 
-        {currentReview && !reviewLoading && (
-          <>
-            <ReviewCard review={currentReview.review} weekLabel={currentReview.week} />
-            <div className={styles.reviewStamp}>
-              Recorded {new Date(currentReview.generatedAt).toLocaleString('en-US', {
-                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-              })}
+        <section className={styles.kpiSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Where the year stands</h2>
+            <span className={styles.kpiHeadNote}>
+              Year to date — not scoped to the week picker
+            </span>
+          </div>
+          {kpisReady ? (
+            <div className={styles.kpiRow}>
+              {kpiCards.map(({ key, ...card }) => <KpiTile key={key} {...card} />)}
             </div>
-          </>
-        )}
-
-        {reviewHistory.length > 0 && (
-          <div className={styles.historyWrap}>
-            <h3 className={styles.historyHead}>Review history <span className={styles.changeCount}>{reviewHistory.length}</span></h3>
-            <table className={styles.historyTable}>
-              <thead>
-                <tr>
-                  <th>Week</th>
-                  <th className={styles.numCol}>Quota</th>
-                  <th className={styles.numCol}>Gap to target</th>
-                  <th className={styles.numCol}>Coverage</th>
-                  <th className={styles.numCol}>Stalled</th>
-                  <th>Top blocker</th>
-                  <th className={styles.numCol}>Blockers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reviewHistory.map((entry) => {
-                  const m = entry.metrics || {};
-                  const top = entry.review?.blockers?.[0];
-                  const open = expandedWeek === entry.week;
-                  return (
-                    <Fragment key={entry.week}>
-                      <tr
-                        className={open ? styles.historyRowOpen : styles.historyRow}
-                        onClick={() => setExpandedWeek(open ? '' : entry.week)}
-                        title="Click to show the full review"
-                      >
-                        <td>{entry.weekLabel || weekRangeLabel(entry.week)}</td>
-                        <td className={styles.numCol}>{m.pctOfQuota == null ? '-' : `${m.pctOfQuota}%`}</td>
-                        <td className={styles.numCol}>{fmtMoneySigned(m.gapToTarget)}</td>
-                        <td className={styles.numCol}>
-                          {m.coverageActual == null ? '-' : `${m.coverageActual}${m.coverageGoal != null ? ` / ${m.coverageGoal}` : ''}`}
-                        </td>
-                        <td className={styles.numCol}>{m.stalledOpps == null ? '-' : m.stalledOpps}</td>
-                        <td>
-                          {top ? (
-                            <>
-                              <span className={styles.areaChip} data-area={top.area}>{top.area}</span>
-                              {top.title}
-                            </>
-                          ) : '-'}
-                        </td>
-                        <td className={styles.numCol}>{entry.review?.blockers?.length ?? 0}</td>
-                      </tr>
-                      {open && (
-                        <tr>
-                          <td colSpan={7} className={styles.historyDetail}>
-                            <ReviewCard review={entry.review} weekLabel={entry.week} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {reviewsLoaded && reviewHistory.length === 0 && !reviewLoading && reviewReady && (
-          <div className={styles.mutedRow}>No reviews recorded yet: the first one runs automatically.</div>
-        )}
-      </section>
-
-      {(narrative || genError || genLoading) && (
-        <div className={styles.narrative}>
-          {genLoading && <div className={styles.note}>Writing your {mode === 'day' ? 'day' : 'week'} recap…</div>}
-          {genError && <div className={styles.error}>Couldn’t write the recap: {genError}</div>}
-          {narrative && !genLoading && (
-            <>
-              {narrativeStale && (
-                <div className={styles.staleTag}>This recap was written for a different period: regenerate to refresh.</div>
-              )}
-              <div className={styles.narBody}>{renderNarrative(narrative)}</div>
-            </>
-          )}
-        </div>
-      )}
-
-      <WeeklyReportEmailModal
-        open={emailModalOpen}
-        onClose={() => setEmailModalOpen(false)}
-        uid={user?.uid}
-        defaultRecipient={settings?.workEmail || user?.email || ''}
-        snapshot={emailSnapshot}
-      />
-
-      {!anyData && (
-        <div className={styles.empty}>
-          No tracked work found for this {mode === 'day' ? 'day' : 'week'}. Activity comes from the HubSpot cache (refresh it on the Activity tab), opp changes from edits made on the Opps tab, and goals from your Daily Success goals. Older changes made before the tool started stamping timestamps won’t appear.
-        </div>
-      )}
-
-      <div className={styles.sections}>
-        <section className={styles.section}>
-          <h2 className={styles.sectionHead}>Opportunity changes</h2>
-          {(oppChanges.closed.length + oppChanges.newOpps.length + oppChanges.stageChanges.length
-            + oppChanges.closeDateMoves.length + oppChanges.amountUpdates.length + oppChanges.bfoTags.length) === 0 ? (
-            <div className={styles.mutedRow}>No opp changes recorded this {mode === 'day' ? 'day' : 'week'}.</div>
           ) : (
+            <div className={styles.empty}>
+              No chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) to seed the target, pipeline and run rate.
+            </div>
+          )}
+        </section>
+
+        <section className={styles.funnelSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Pipeline funnel</h2>
+            <span className={styles.kpiHeadNote}>
+              The Charts → Pipeline funnel, off the same cached numbers
+            </span>
+          </div>
+          {funnelReady ? (
+            <div className={styles.funnelCard}>
+              <PipelineFunnel stages={funnelStages} outcome={funnelOutcome} />
+            </div>
+          ) : (
+            <div className={styles.empty}>
+              No stage volumes cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the funnel has stage actuals to draw.
+            </div>
+          )}
+        </section>
+
+        {/* Emails sent and New opps are the two the week is steered by, so they
+            are the two that carry a target. Everything else that used to have a
+            tile here — calls, meetings, deals closed, stage changes, amount
+            updates, BFO tags, goals opened and closed — is still counted and
+            still listed in full further down the page; it just no longer takes
+            up a tile. */}
+        <div className={styles.tiles}>
+          <StatTile
+            value={emailsSent.count}
+            label="Emails sent"
+            accent="blue"
+            sub={emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null}
+            subTitle={"Counted on the Activity tab while it still had this week's HubSpot feed, and kept since."}
+            goal={weeklyTargets.emails ?? null}
+            onGoal={mode === 'week' ? (n => setWeeklyTarget('emails', n)) : undefined}
+          />
+          <StatTile
+            value={oppChanges.newOpps.length}
+            label="New opps"
+            accent="green"
+            goal={weeklyTargets.newOpps ?? null}
+            onGoal={mode === 'week' ? (n => setWeeklyTarget('newOpps', n)) : undefined}
+          />
+        </div>
+
+        <section className={styles.reviewSection}>
+          <div className={styles.reviewHead}>
+            <div>
+              <h2 className={styles.sectionHead}>Weekly review: what&rsquo;s holding you back</h2>
+              <div className={styles.reviewSub}>
+                Reads your YOY, Pipeline and Progress numbers for {reviewSnapshot.weekLabel} and records the verdict each week.
+              </div>
+            </div>
+            <div className={styles.reviewActions}>
+              <button
+                type="button"
+                className={styles.primaryBtn}
+                onClick={runReview}
+                disabled={reviewLoading || !reviewReady || !user?.uid}
+                title={reviewReady ? 'Re-run this week’s review against the latest data' : 'Load the Pipeline dashboard first'}
+              >
+                {reviewLoading ? 'Reviewing…' : (currentReview ? 'Re-run review' : 'Run review')}
+              </button>
+              {currentReview && (
+                <button type="button" className={styles.ghostBtn} onClick={copyReview}>Copy review</button>
+              )}
+            </div>
+          </div>
+
+          {reviewError && <div className={styles.error}>{reviewError}</div>}
+          {reviewLoading && <div className={styles.note}>Reviewing your charts against the target…</div>}
+
+          {!reviewReady && !reviewLoading && (
+            <div className={styles.empty}>
+              Not enough chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the review has goals and actuals to work from.
+            </div>
+          )}
+
+          {reviewSnapshot.missing.length > 0 && reviewReady && (
+            <div className={styles.note}>
+              Reviewed without: {reviewSnapshot.missing.join('; ')}.
+            </div>
+          )}
+
+          {currentReview && !reviewLoading && (
             <>
-              <ChangeList title="Deals closed" items={oppChanges.closed} suffix={x => ` → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`} />
-              <ChangeList title="New opps" items={oppChanges.newOpps} suffix={x => (x.stage ? ` (${x.stage})` : '')} />
-              <ChangeList title="Stage changes" items={oppChanges.stageChanges} suffix={x => ` → ${x.stage}`} />
-              <ChangeList title="Close-date moves" items={oppChanges.closeDateMoves} suffix={x => (x.closeDate ? ` → ${x.closeDate}` : '')} />
-              <ChangeList title="Amount updates" items={oppChanges.amountUpdates} suffix={x => (x.amount ? ` → ${x.amount}` : '')} />
-              <ChangeList title="BFO Opportunity Names tagged" items={oppChanges.bfoTags} suffix={x => (x.bfo ? ` → ${x.bfo}` : '')} />
-              <div className={styles.caveat}>
-                “New opps” is a best-effort estimate: opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.
+              <ReviewCard review={currentReview.review} weekLabel={currentReview.week} />
+              <div className={styles.reviewStamp}>
+                Recorded {new Date(currentReview.generatedAt).toLocaleString('en-US', {
+                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                })}
               </div>
             </>
           )}
+
+          {reviewHistory.length > 0 && (
+            <div className={styles.historyWrap}>
+              <h3 className={styles.historyHead}>Review history <span className={styles.changeCount}>{reviewHistory.length}</span></h3>
+              <table className={styles.historyTable}>
+                <thead>
+                  <tr>
+                    <th>Week</th>
+                    <th className={styles.numCol}>Quota</th>
+                    <th className={styles.numCol}>Gap to target</th>
+                    <th className={styles.numCol}>Coverage</th>
+                    <th className={styles.numCol}>Stalled</th>
+                    <th>Top blocker</th>
+                    <th className={styles.numCol}>Blockers</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewHistory.map((entry) => {
+                    const m = entry.metrics || {};
+                    const top = entry.review?.blockers?.[0];
+                    const open = expandedWeek === entry.week;
+                    return (
+                      <Fragment key={entry.week}>
+                        <tr
+                          className={open ? styles.historyRowOpen : styles.historyRow}
+                          onClick={() => setExpandedWeek(open ? '' : entry.week)}
+                          title="Click to show the full review"
+                        >
+                          <td>{entry.weekLabel || weekRangeLabel(entry.week)}</td>
+                          <td className={styles.numCol}>{m.pctOfQuota == null ? '-' : `${m.pctOfQuota}%`}</td>
+                          <td className={styles.numCol}>{fmtMoneySigned(m.gapToTarget)}</td>
+                          <td className={styles.numCol}>
+                            {m.coverageActual == null ? '-' : `${m.coverageActual}${m.coverageGoal != null ? ` / ${m.coverageGoal}` : ''}`}
+                          </td>
+                          <td className={styles.numCol}>{m.stalledOpps == null ? '-' : m.stalledOpps}</td>
+                          <td>
+                            {top ? (
+                              <>
+                                <span className={styles.areaChip} data-area={top.area}>{top.area}</span>
+                                {top.title}
+                              </>
+                            ) : '-'}
+                          </td>
+                          <td className={styles.numCol}>{entry.review?.blockers?.length ?? 0}</td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={7} className={styles.historyDetail}>
+                              <ReviewCard review={entry.review} weekLabel={entry.week} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {reviewsLoaded && reviewHistory.length === 0 && !reviewLoading && reviewReady && (
+            <div className={styles.mutedRow}>No reviews recorded yet: the first one runs automatically.</div>
+          )}
         </section>
 
-        <section className={styles.section}>
-          <h2 className={styles.sectionHead}>Goals</h2>
-          {goalsProg.created.length > 0 && (
-            <div className={styles.changeGroup}>
-              <div className={styles.changeTitle}>Set this {mode === 'day' ? 'day' : 'week'} <span className={styles.changeCount}>{goalsProg.created.length}</span></div>
-              <ul className={styles.changeItems}>
-                {goalsProg.created.map(g => <li key={g.id}><span className={styles.changeWho}>{String(g.text || '').trim()}</span></li>)}
-              </ul>
-            </div>
-          )}
-          {goalsProg.archived.length > 0 && (
-            <div className={styles.changeGroup}>
-              <div className={styles.changeTitle}>Completed / closed <span className={styles.changeCount}>{goalsProg.archived.length}</span></div>
-              <ul className={styles.changeItems}>
-                {goalsProg.archived.map(g => <li key={g.id}><span className={styles.changeWho}>{String(g.text || '').trim()}</span></li>)}
-              </ul>
-            </div>
-          )}
-          {goalsProg.active.length > 0 ? (
-            <div className={styles.changeGroup}>
-              <div className={styles.changeTitle}>Active goals <span className={styles.changeCount}>{goalsProg.active.length}</span></div>
-              <ul className={styles.changeItems}>
-                {goalsProg.active.slice(0, 12).map(g => (
-                  <li key={g.id}>
-                    {g.priority != null && <span className={styles.pill}>#{g.priority}</span>}
-                    <span className={styles.changeWho}>{String(g.text || '').trim()}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className={styles.mutedRow}>No active goals. Add some in the Daily Success Log → Goals.</div>
-          )}
-          {pipelineSummary && (
-            <div className={styles.changeGroup}>
-              <div className={styles.changeTitle}>Pipeline snapshot</div>
-              <pre className={styles.pipelinePre}>{pipelineSummary}</pre>
-            </div>
-          )}
-        </section>
+        {(narrative || genError || genLoading) && (
+          <div className={styles.narrative}>
+            {genLoading && <div className={styles.note}>Writing your {mode === 'day' ? 'day' : 'week'} recap…</div>}
+            {genError && <div className={styles.error}>Couldn’t write the recap: {genError}</div>}
+            {narrative && !genLoading && (
+              <>
+                {narrativeStale && (
+                  <div className={styles.staleTag}>This recap was written for a different period: regenerate to refresh.</div>
+                )}
+                <div className={styles.narBody}>{renderNarrative(narrative)}</div>
+              </>
+            )}
+          </div>
+        )}
+
+        <WeeklyReportEmailModal
+          open={emailModalOpen}
+          onClose={() => setEmailModalOpen(false)}
+          uid={user?.uid}
+          defaultRecipient={settings?.workEmail || user?.email || ''}
+          snapshot={emailSnapshot}
+        />
+
+        {!anyData && (
+          <div className={styles.empty}>
+            No tracked work found for this {mode === 'day' ? 'day' : 'week'}. Activity comes from the HubSpot cache (refresh it on the Activity tab), opp changes from edits made on the Opps tab, and goals from your Daily Success goals. Older changes made before the tool started stamping timestamps won’t appear.
+          </div>
+        )}
+
+        <div className={styles.sections}>
+          <section className={styles.section}>
+            <h2 className={styles.sectionHead}>Opportunity changes</h2>
+            {(oppChanges.closed.length + oppChanges.newOpps.length + oppChanges.stageChanges.length
+              + oppChanges.closeDateMoves.length + oppChanges.amountUpdates.length + oppChanges.bfoTags.length) === 0 ? (
+              <div className={styles.mutedRow}>No opp changes recorded this {mode === 'day' ? 'day' : 'week'}.</div>
+            ) : (
+              <>
+                <ChangeList title="Deals closed" items={oppChanges.closed} suffix={x => ` → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`} />
+                <ChangeList title="New opps" items={oppChanges.newOpps} suffix={x => (x.stage ? ` (${x.stage})` : '')} />
+                <ChangeList title="Stage changes" items={oppChanges.stageChanges} suffix={x => ` → ${x.stage}`} />
+                <ChangeList title="Close-date moves" items={oppChanges.closeDateMoves} suffix={x => (x.closeDate ? ` → ${x.closeDate}` : '')} />
+                <ChangeList title="Amount updates" items={oppChanges.amountUpdates} suffix={x => (x.amount ? ` → ${x.amount}` : '')} />
+                <ChangeList title="BFO Opportunity Names tagged" items={oppChanges.bfoTags} suffix={x => (x.bfo ? ` → ${x.bfo}` : '')} />
+                <div className={styles.caveat}>
+                  “New opps” is a best-effort estimate: opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className={styles.section}>
+            <h2 className={styles.sectionHead}>Goals</h2>
+            {goalsProg.created.length > 0 && (
+              <div className={styles.changeGroup}>
+                <div className={styles.changeTitle}>Set this {mode === 'day' ? 'day' : 'week'} <span className={styles.changeCount}>{goalsProg.created.length}</span></div>
+                <ul className={styles.changeItems}>
+                  {goalsProg.created.map(g => <li key={g.id}><span className={styles.changeWho}>{String(g.text || '').trim()}</span></li>)}
+                </ul>
+              </div>
+            )}
+            {goalsProg.archived.length > 0 && (
+              <div className={styles.changeGroup}>
+                <div className={styles.changeTitle}>Completed / closed <span className={styles.changeCount}>{goalsProg.archived.length}</span></div>
+                <ul className={styles.changeItems}>
+                  {goalsProg.archived.map(g => <li key={g.id}><span className={styles.changeWho}>{String(g.text || '').trim()}</span></li>)}
+                </ul>
+              </div>
+            )}
+            {goalsProg.active.length > 0 ? (
+              <div className={styles.changeGroup}>
+                <div className={styles.changeTitle}>Active goals <span className={styles.changeCount}>{goalsProg.active.length}</span></div>
+                <ul className={styles.changeItems}>
+                  {goalsProg.active.slice(0, 12).map(g => (
+                    <li key={g.id}>
+                      {g.priority != null && <span className={styles.pill}>#{g.priority}</span>}
+                      <span className={styles.changeWho}>{String(g.text || '').trim()}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className={styles.mutedRow}>No active goals. Add some in the Daily Success Log → Goals.</div>
+            )}
+            {pipelineSummary && (
+              <div className={styles.changeGroup}>
+                <div className={styles.changeTitle}>Pipeline snapshot</div>
+                <pre className={styles.pipelinePre}>{pipelineSummary}</pre>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );

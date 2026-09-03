@@ -1,3 +1,14 @@
+/* The page's own scroll container. The Charts tab host renders each
+   sub-view into a fixed-height, overflow:hidden box — every other tab
+   scrolls its own body inside that, and this page did not, so everything
+   past the fold was unreachable. Full width, so the scrollbar sits at the
+   edge of the pane rather than at the content column's right margin. */
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .wrap {
   padding: 1.25rem 1.5rem 3rem;
   max-width: 1100px;
