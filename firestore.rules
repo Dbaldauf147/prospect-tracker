@@ -299,14 +299,21 @@ service cloud.firestore {
     }
 
     // PE Opps email schedules (peOppsEmailSchedules), New Opps email
-    // schedules (newOppsEmailSchedules) and acquisition-news email schedules
-    // (companyNewsEmailSchedules) are read/written ONLY by the server: the
+    // schedules (newOppsEmailSchedules), acquisition-news email schedules
+    // (companyNewsEmailSchedules) and Weekly Report email schedules
+    // (weeklyReportEmailSchedules) are read/written ONLY by the server: the
     // authenticated CRUD routes (api/pe-opps-schedules,
-    // api/new-opps-schedules, api/company-news-schedules) and the hourly
-    // crons (api/pe-opps-scheduler, api/new-opps-scheduler,
-    // api/company-news-scheduler) all use the admin SDK, which bypasses
-    // these rules. Clients never touch the collections directly, so they
-    // stay default-deny here.
+    // api/new-opps-schedules, api/company-news-schedules,
+    // api/weekly-report-schedules) and the hourly crons
+    // (api/pe-opps-scheduler, api/new-opps-scheduler,
+    // api/company-news-scheduler, api/weekly-report-scheduler) all use the
+    // admin SDK, which bypasses these rules. Clients never touch the
+    // collections directly, so they stay default-deny here.
+    //
+    // weeklyReportSnapshots is the same shape: the Weekly Report tab posts
+    // its rendered numbers to api/weekly-report-schedules, which writes the
+    // per-user doc with the admin SDK, and the cron reads it back to build
+    // the email. The tab never writes the document itself.
 
     // Backup run metadata (counts / last-file / anomaly flags) written by
     // the daily-backup cron and the on-demand backup route via the admin
