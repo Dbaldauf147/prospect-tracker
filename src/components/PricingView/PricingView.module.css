@@ -557,6 +557,53 @@
   margin: 0 0 0.5rem;
 }
 
+/* The schedule's title row: the heading plus the one action that fills the
+   whole table in — "Build from Automated Fee Names". It sits by the title
+   rather than under the table because on a fresh Option the table below it
+   is nine blank rows, and the button is the answer to them. */
+.altFeeHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.altFeeHeader .summaryTitle {
+  margin-bottom: 0;
+}
+
+.buildBtn,
+.buildBtnOn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Nothing left to build: still readable, plainly inert. */
+.buildBtn {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.buildBtnOn {
+  border: 1px solid #047857;
+  background: #047857;
+  color: #fff;
+}
+
+.buildBtnOn:hover {
+  background: #065f46;
+  border-color: #065f46;
+}
+
 .summaryMeta {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
