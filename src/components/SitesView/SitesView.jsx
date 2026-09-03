@@ -295,7 +295,12 @@ function detectSitesMapping(headers) {
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
     segment: detectColumn(headers, [/customer\s*class/i, /rate\s*class/i, /\bc\s*&\s*i\b/i, /commercial\s*\/?\s*industrial/i, /industrial\s*\/?\s*commercial/i, /comm.*ind|ind.*comm/i]) || '',
-    ownership: detectColumn(headers, [/^ownership$/i, /^owned\s*\/?\s*leased?$/i, /^leased?\s*\/?\s*owned?$/i, /^own\s*\/?\s*lease$/i, /ownership\s*(status|type)/i, /\bownership\b/i, /^tenure$/i, /occupancy\s*(status|type)/i, /(own|lease)\w*\s*status/i]) || '',
+    // "Tenure Category" / "Tenure Type" is how a lot of real-estate
+    // exports label the owned-vs-leased column, so it gets an exact
+    // pattern alongside bare "Tenure"; a bare \btenure\b sits last so a
+    // header that merely mentions the word only wins when nothing better
+    // is on the sheet.
+    ownership: detectColumn(headers, [/^ownership$/i, /^owned\s*\/?\s*leased?$/i, /^leased?\s*\/?\s*owned?$/i, /^own\s*\/?\s*lease$/i, /ownership\s*(status|type)/i, /\bownership\b/i, /^tenure$/i, /^tenure\s*(category|categorization|type|status|class(ification)?)$/i, /tenure\s*(category|type|status)/i, /occupancy\s*(status|type)/i, /(own|lease)\w*\s*status/i, /\btenure\b/i]) || '',
     siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
