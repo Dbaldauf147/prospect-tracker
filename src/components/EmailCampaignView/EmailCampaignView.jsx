@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
 import { describeExcludedOpens } from '../../utils/emailOpens';
+import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
@@ -680,6 +681,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Replied. A bounce sorts below silence deliberately — it is the worst
   // outcome, because the email never arrived at all — and an out-of-office
   // sorts above it, being a non-answer that is not a no.
+  // Delivery ordering, worst first so the addresses that need fixing surface
+  // at one end of the sort: Failed < Not sent < Delivered < Confirmed.
+  const DELIVERY_RANK = {
+    [DELIVERY.FAILED]: 0,
+    [DELIVERY.NOT_SENT]: 1,
+    [DELIVERY.UNKNOWN]: 2,
+    [DELIVERY.DELIVERED]: 3,
+    [DELIVERY.CONFIRMED]: 4,
+  };
+
   function statusRank(c) {
     if (c.replied) return 4;
     if (c.outOfOffice) return 3;
@@ -696,6 +707,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       case 'email': return String(c.email || '').toLowerCase();
       case 'sentDate': return c.sentDate ? (new Date(c.sentDate).getTime() || 0) : 0;
       case 'status': return statusRank(c);
+      case 'delivery': return DELIVERY_RANK[deliveryFor(c)] ?? 2;
       case 'repliedBy': return String(c.repliedBy || '').toLowerCase();
       case 'replyDate': return c.replied && c.replyDate ? (new Date(c.replyDate).getTime() || 0) : 0;
       case 'eventStatus': return String(c.eventStatus || '');
@@ -735,6 +747,22 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     }
     return best;
   }, [trackingFor]);
+  // Did it arrive? Same question, same answer as the Email Tracking tab —
+  // read off the bounce rather than off the pixel, because a pixel that never
+  // loaded is silence and not a failure.
+  //
+  // Every contact here IS watched: this is the campaign's own roster, so the
+  // tracking tab's UNKNOWN state (nobody watching for a bounce) can't occur.
+  // Activity uses the RAW click count on purpose — a security gateway's link
+  // scan proves nothing about interest and everything about delivery.
+  const deliveryFor = useMemo(() => (c) => {
+    const t = lookupTracking(c.email);
+    return deliveryStatus(c, {
+      hasActivity: !!t && ((t.openCount + t.machine) > 0 || t.rawClickCount > 0),
+      sentAt: c.sentDate || null,
+    });
+  }, [lookupTracking]);
+
   // Campaign-level roll-up, counted over the contacts actually emailed so
   // the rates line up with the existing Response Rate denominator.
   const trackingStats = useMemo(() => {
@@ -1035,12 +1063,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
                     <SortHeader label="Sent To" sortKey="email" />
                     <SortHeader label="Sent Date" sortKey="sentDate" />
+                    <SortHeader label="Delivery" sortKey="delivery" />
                     <SortHeader label="Status" sortKey="status" />
                     {/* Only worth a column when something in this campaign
                         was actually sent with tracking on. */}
                     {trackingStats.tracked > 0 && (
                       <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-                        title="Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes — hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
+                        title="Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes; clicks exclude security-gateway link scans. Hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it) — clicks are the better signal."
                       >Loads / Clicks</th>
                     )}
                     <SortHeader label="Replied By" sortKey="repliedBy" />
@@ -1062,6 +1091,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
                       </td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const d = deliveryFor(c);
+                          const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
+                            : d === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
+                            : d === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
+                            : { background: 'transparent', color: 'var(--color-text-muted)' };
+                          return (
+                            <span title={DELIVERY_TITLE[d]} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, ...tone }}>
+                              {DELIVERY_LABEL[d]}
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td style={{ padding: '0.4rem 0.6rem' }}>
                         {c.replied
                           ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
@@ -1087,13 +1130,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                               excluded,
                               t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
                             ].filter(Boolean).join(' ');
-                            const clickTitle = t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded';
+                            const clickTitle = [
+                              t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded',
+                              t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
+                            ].filter(Boolean).join(' ');
                             return (
                               <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
                                 <span
                                   title={openTitle}
                                   style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.openCount ? '#FEF3C7' : '#F3F4F6', color: t.openCount ? '#92400E' : '#6B7280' }}
-                                >{t.openCount} open{t.openCount === 1 ? '' : 's'}</span>
+                                >{t.openCount} load{t.openCount === 1 ? '' : 's'}</span>
                                 <span
                                   title={clickTitle}
                                   style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
