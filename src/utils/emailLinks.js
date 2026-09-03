@@ -13,6 +13,13 @@
 // recipient click) and a portfolio roll-up (which link is pulling across the
 // campaign). Both count distinct recipients as well as raw clicks, because one
 // person clicking the same link five times is not five people interested.
+//
+// Both read countClicks() rather than the raw event array, so a security
+// gateway sweeping every link in the message can't top the chart. A scanner
+// clicks EVERY link at once, which is exactly the shape that would otherwise
+// make the least interesting link look like the most popular one.
+
+import { countClicks } from './emailClicks.js';
 
 // A URL trimmed to something readable in a narrow cell.
 //
@@ -47,9 +54,9 @@ export function shortLinkLabel(url) {
 // Distinct links one tracking doc's recipient clicked, most-clicked first.
 // Returns [{ url, label, clicks }].
 export function linksForRow(row) {
-  const events = Array.isArray(row?.clicks) ? row.clicks : [];
   const byUrl = new Map();
-  for (const ev of events) {
+  for (const { event: ev, verdict } of countClicks(row).events) {
+    if (verdict !== 'counted') continue;
     const url = String(ev?.url || '').trim();
     if (!url) continue;
     byUrl.set(url, (byUrl.get(url) || 0) + 1);
@@ -67,7 +74,7 @@ export function linksForRow(row) {
  *   links        [{ url, label, clicks, recipients }] most-clicked first,
  *                ties broken by recipient count then URL so the order is
  *                stable between renders
- *   totalClicks  the exact click total off the counters
+ *   totalClicks  clicks a person plausibly made, across the set
  *   unattributed clicks the counters know about but no event survives for —
  *                the per-doc event array is capped (tracking.js MAX_EVENTS),
  *                so a heavily-clicked send can have hits we can't attribute
@@ -79,10 +86,11 @@ export function clicksByLink(rows) {
   let totalClicks = 0;
   let attributed = 0;
   for (const row of rows || []) {
-    totalClicks += Number(row?.clickCount) || 0;
-    const events = Array.isArray(row?.clicks) ? row.clicks : [];
+    const summary = countClicks(row);
+    totalClicks += summary.count;
     const recipient = String(row?.to || row?.id || '').toLowerCase().trim();
-    for (const ev of events) {
+    for (const { event: ev, verdict } of summary.events) {
+      if (verdict !== 'counted') continue;
       const url = String(ev?.url || '').trim();
       if (!url) continue;
       attributed += 1;
