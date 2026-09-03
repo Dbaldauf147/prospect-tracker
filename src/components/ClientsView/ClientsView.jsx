@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -577,7 +577,7 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect, updateProspect }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect, updateProspect, onSelectProspect }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
@@ -955,6 +955,27 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return () => { cancelled = true; };
   }, [clients]);
 
+  // The prospect record behind a row, for opening the company popup. The
+  // rows below are the prospect PLUS this tab's derived fields — a
+  // `Status` that holds the renewal status rather than the prospect's own,
+  // a `notes` from the client notes map, contract counts — so handing a row
+  // to the popup would hand it a record whose fields mean something else.
+  // The popup edits and saves what it's given, so it gets the original.
+  const prospectById = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects) { if (p?.id != null) map.set(String(p.id), p); }
+    return map;
+  }, [prospects]);
+  const openCompany = useCallback((row) => {
+    if (!onSelectProspect) return;
+    const target = (row?.id != null && prospectById.get(String(row.id)))
+      // No id on the row (a record that never round-tripped through
+      // Firestore): fall back to the name, matched the same way the rest
+      // of this tab matches client names.
+      || prospects.find(p => normClientName(p?.company) === normClientName(row?.company));
+    if (target) onSelectProspect(target);
+  }, [onSelectProspect, prospectById, prospects]);
+
   const rows = useMemo(() => filtered.map(c => {
     const ck = normClientName(c.company);
     const clientDeals = dealsByClient.get(ck) || [];
@@ -1028,7 +1049,22 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               }}
             >{isOpen ? '▾' : '▸'}</button>
-            <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '-'}</span>
+            {onSelectProspect && row.company ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); openCompany(row); }}
+                title={`Open ${row.company}'s company page`}
+                style={{
+                  padding: 0, border: 'none', background: 'transparent',
+                  fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 600,
+                  color: '#2563EB', cursor: 'pointer', textAlign: 'left',
+                  textDecoration: 'underline', textDecorationColor: '#93C5FD',
+                  textUnderlineOffset: '2px',
+                }}
+              >{row.company}</button>
+            ) : (
+              <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '-'}</span>
+            )}
           </span>
         );
       },
@@ -1285,7 +1321,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         />
       ),
     },
-  ], [expandedIds, columnLinks, listRegistry]);
+  ], [expandedIds, columnLinks, listRegistry, onSelectProspect, openCompany]);
 
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
