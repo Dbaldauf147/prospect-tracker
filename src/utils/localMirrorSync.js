@@ -369,6 +369,7 @@ async function loadMirroredStores() {
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
     import('./pricingOptionLinks.js'),
+    import('./weeklyActivityLog.js'),
   ]).catch(err => console.warn('localMirror: store registration import failed', err));
 }
 

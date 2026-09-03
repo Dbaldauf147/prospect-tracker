@@ -23,6 +23,9 @@ import {
 } from '../../utils/weeklyReview';
 import { loadProgressWeeks, loadWeeklyReviews, saveWeeklyReview } from '../../utils/weeklyReviewStore';
 import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
+import {
+  loadWeeklyActivityLog, weeklyActivityEntry, liveCacheCovers, WEEKLY_ACTIVITY_EVENT,
+} from '../../utils/weeklyActivityLog';
 import { buildFunnelStages, closeRatesByStage } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
@@ -83,6 +86,14 @@ function renderNarrative(md) {
   return out;
 }
 
+// When a tile's number came from the Activity tab's recording rather
+// than the live feed, the tile says so — and when: a stale recording
+// explains a number that doesn't match what you did this morning.
+function fmtRecordedAt(ms) {
+  if (!Number.isFinite(ms)) return 'from Activity';
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 // A tile can carry a standing weekly target. `goal` is the number to hit
 // (null when none is set) and `onGoal` commits a new one; pass neither and
 // the tile renders exactly as it always did. The target is weekly, so the
@@ -90,7 +101,7 @@ function renderNarrative(md) {
 // against a single day would read as failure every day.
 const EMPTY_TARGETS = {};
 
-function StatTile({ value, label, accent, sub, goal = null, onGoal }) {
+function StatTile({ value, label, accent, sub, subTitle, goal = null, onGoal }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const editable = typeof onGoal === 'function';
@@ -118,7 +129,7 @@ function StatTile({ value, label, accent, sub, goal = null, onGoal }) {
     <div className={styles.tile} data-accent={accent || undefined}>
       <div className={styles.tileValue}>{value}</div>
       <div className={styles.tileLabel}>{label}</div>
-      {sub ? <div className={styles.tileSub}>{sub}</div> : null}
+      {sub ? <div className={styles.tileSub} title={subTitle || undefined}>{sub}</div> : null}
       {editable && (
         editing ? (
           <input
@@ -274,6 +285,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const [refDate, setRefDate] = useState(todayIso);
 
   const [cache, setCache] = useState(() => readActivityCache());
+  // Per-week totals the Activity tab banked off the full HubSpot feed.
+  // The raw feed above is routinely too big for localStorage and gets
+  // dropped, which is why last week's "Emails sent" used to read 0.
+  const [activityLog, setActivityLog] = useState(loadWeeklyActivityLog);
   const [oppsRecords, setOppsRecords] = useState([]);
   const [goals, setGoals] = useState([]);
   const [pipeline, setPipeline] = useState(null);
@@ -309,6 +324,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     let cancelled = false;
     const refresh = () => {
       setCache(readActivityCache());
+      setActivityLog(loadWeeklyActivityLog());
       loadOppsFromCache().then(o => { if (!cancelled) setOppsRecords(o?.records || []); }).catch(() => {});
       loadGoals().then(g => { if (!cancelled) setGoals(Array.isArray(g) ? g : []); }).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => { if (!cancelled) setPipeline(p || null); }).catch(() => {});
@@ -320,10 +336,13 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     // Saving an override fires this in the same window; 'focus' alone would
     // miss a pin made on the YOY tab without leaving the browser.
     window.addEventListener(YOY_OVERRIDES_EVENT, refresh);
+    // Same reasoning for a recording made on the Activity tab.
+    window.addEventListener(WEEKLY_ACTIVITY_EVENT, refresh);
     return () => {
       cancelled = true;
       window.removeEventListener('focus', refresh);
       window.removeEventListener(YOY_OVERRIDES_EVENT, refresh);
+      window.removeEventListener(WEEKLY_ACTIVITY_EVENT, refresh);
     };
   }, []);
 
@@ -381,9 +400,23 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   );
   const pipelineSummary = useMemo(() => pipelineSnapshotLines(pipeline), [pipeline]);
 
+  // Emails sent, from whichever source can actually answer for this
+  // period. The live feed wins when it covers the window; otherwise the
+  // week's recording from the Activity tab stands in, which is the only
+  // thing that survives once the feed has rolled off or been dropped by
+  // the storage quota. A day never falls back — the log is weekly.
+  const emailsSent = useMemo(() => {
+    const live = activity.emails.length;
+    if (liveCacheCovers(cache, bounds.start)) return { count: live, recorded: false };
+    const entry = mode === 'week' ? weeklyActivityEntry(activityLog, bounds.start) : null;
+    if (!entry) return { count: live, recorded: false };
+    return { count: entry.emails, recorded: true, at: entry.at };
+  }, [activity, cache, activityLog, bounds, mode]);
+
   const statsText = useMemo(() => serializeReport({
     label, activity, oppChanges, goals: goalsProg, pipelineSummary,
-  }), [label, activity, oppChanges, goalsProg, pipelineSummary]);
+    emailsSent: emailsSent.count,
+  }), [label, activity, oppChanges, goalsProg, pipelineSummary, emailsSent]);
 
   // ---- Weekly review ----------------------------------------------------
   // The review always covers the current week off the latest cached chart
@@ -607,7 +640,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const periodKey = `${mode}:${refDate}`;
   const narrativeStale = narrative && genForRef.current && genForRef.current !== periodKey;
 
-  const anyData = activity.emails.length || activity.calls.length || activity.meetings.length
+  const anyData = emailsSent.count || activity.calls.length || activity.meetings.length
     || oppChanges.newOpps.length || oppChanges.closed.length || oppChanges.stageChanges.length
     || oppChanges.closeDateMoves.length || oppChanges.amountUpdates.length || oppChanges.bfoTags.length
     || goalsProg.created.length || goalsProg.archived.length;
@@ -749,9 +782,11 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
           up a tile. */}
       <div className={styles.tiles}>
         <StatTile
-          value={activity.emails.length}
+          value={emailsSent.count}
           label="Emails sent"
           accent="blue"
+          sub={emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null}
+          subTitle={"Counted on the Activity tab while it still had this week's HubSpot feed, and kept since."}
           goal={weeklyTargets.emails ?? null}
           onGoal={mode === 'week' ? (n => setWeeklyTarget('emails', n)) : undefined}
         />

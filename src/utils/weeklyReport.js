@@ -80,6 +80,30 @@ function hasExternal(toRaw) {
   return splitAddrs(toRaw).some(a => !a.endsWith('@se.com'));
 }
 
+// The counting rules, exported so anything that tallies the same feed
+// (the Activity tab's weekly recorder) counts exactly what the Weekly
+// Report's tiles count. Change a rule here and both move together.
+
+// A send of the user's own that reached at least one address outside
+// @se.com. With no workEmail set, the sender check is skipped and any
+// outbound-looking record with an external recipient counts.
+export function isSentExternalEmail(e, senderEmail) {
+  const subj = String(e?.hs_email_subject || '').toLowerCase();
+  if (subj.includes('(sample email)')) return false;
+  const me = String(senderEmail || '').toLowerCase().trim();
+  if (me && String(e?.hs_email_from_email || '').toLowerCase().trim() !== me) return false;
+  return hasExternal(e?.hs_email_to_email);
+}
+
+// Outbound + unknown-direction calls; clearly inbound ones drop.
+export function isCountedCall(c) {
+  return String(c?.hs_call_direction || '').toUpperCase() !== 'INBOUND';
+}
+
+export function emailTs(e) { return tsMs(e?.hs_timestamp); }
+export function callTs(c) { return tsMs(c?.hs_timestamp); }
+export function meetingTs(m) { return tsMs(m?.hs_meeting_start_time || m?.hs_timestamp); }
+
 // Sent emails, logged calls, and meetings inside the window. Emails are
 // scoped to the user's own outbound (workEmail) with at least one
 // external recipient — the same rule the Agents tab uses. Calls/meetings
@@ -90,32 +114,25 @@ export function computeActivity(cache, senderEmail, start, end) {
   const meetingsAll = Array.isArray(cache?.meetings) ? cache.meetings : [];
   const me = String(senderEmail || '').toLowerCase().trim();
 
-  const emails = emailsAll.filter(e => {
-    const subj = String(e.hs_email_subject || '').toLowerCase();
-    if (subj.includes('(sample email)')) return false;
-    if (!inWin(tsMs(e.hs_timestamp), start, end)) return false;
-    if (me && String(e.hs_email_from_email || '').toLowerCase().trim() !== me) return false;
-    return hasExternal(e.hs_email_to_email);
-  }).map(e => ({
-    ts: tsMs(e.hs_timestamp),
+  const emails = emailsAll.filter(e =>
+    inWin(emailTs(e), start, end) && isSentExternalEmail(e, me)
+  ).map(e => ({
+    ts: emailTs(e),
     subject: String(e.hs_email_subject || '').trim(),
     to: splitAddrs(e.hs_email_to_email).filter(a => !a.endsWith('@se.com')),
   }));
 
-  const calls = callsAll.filter(c => {
-    if (!inWin(tsMs(c.hs_timestamp), start, end)) return false;
-    // Count outbound + unknown-direction; drop clearly inbound calls.
-    const dir = String(c.hs_call_direction || '').toUpperCase();
-    return dir !== 'INBOUND';
-  }).map(c => ({
-    ts: tsMs(c.hs_timestamp),
+  const calls = callsAll.filter(c =>
+    inWin(callTs(c), start, end) && isCountedCall(c)
+  ).map(c => ({
+    ts: callTs(c),
     title: String(c.hs_call_title || '').trim(),
   }));
 
   const meetings = meetingsAll.filter(m =>
-    inWin(tsMs(m.hs_meeting_start_time || m.hs_timestamp), start, end)
+    inWin(meetingTs(m), start, end)
   ).map(m => ({
-    ts: tsMs(m.hs_meeting_start_time || m.hs_timestamp),
+    ts: meetingTs(m),
     title: String(m.hs_meeting_title || '').trim(),
     outcome: String(m.hs_meeting_outcome || '').trim(),
   }));
@@ -239,12 +256,16 @@ const fmtMoney = (n) => (Number.isFinite(n)
 
 // Compact plain-text block for the clipboard and as the LLM's input. Kept
 // deterministic (no AI) so "copy" always works even without the network.
-export function serializeReport({ label, activity, oppChanges, goals, pipelineSummary }) {
+// `emailsSent` lets the caller pass the number it is actually showing —
+// the Weekly Report falls back to the Activity tab's recording for a week
+// the live feed no longer covers, and the copied text has to say the same
+// thing the tile does. Omit it and the live count is used.
+export function serializeReport({ label, activity, oppChanges, goals, pipelineSummary, emailsSent }) {
   const L = [];
   L.push(`WORK SUMMARY: ${label}`);
   L.push('');
   L.push('ACTIVITY');
-  L.push(`- Emails sent: ${activity.emails.length}`);
+  L.push(`- Emails sent: ${Number.isFinite(emailsSent) ? emailsSent : activity.emails.length}`);
   L.push(`- Calls: ${activity.calls.length}`);
   L.push(`- Meetings: ${activity.meetings.length}`);
   L.push('');
