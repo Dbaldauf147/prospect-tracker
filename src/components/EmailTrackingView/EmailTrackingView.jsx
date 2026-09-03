@@ -32,6 +32,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient, replyByRecipient } from '../../hooks/useEmailTracking';
 import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
+import { clicksByLink, linksForRow, shortLinkLabel } from '../../utils/emailLinks';
 
 function toDate(ts) {
   if (!ts) return null;
@@ -291,6 +292,11 @@ export function EmailTrackingView({ onOpenCampaign }) {
     return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate };
   }, [scoped]);
 
+  // Which links are actually pulling, across whatever the campaign filter has
+  // selected. Scoped rather than filtered by the search box, same as the tiles:
+  // this is a property of the campaign, not of the current search.
+  const linkStats = useMemo(() => clicksByLink(scoped.map(l => l.row)), [scoped]);
+
   const visible = useMemo(() => {
     let list = scoped;
     const s = search.trim().toLowerCase();
@@ -376,6 +382,8 @@ export function EmailTrackingView({ onOpenCampaign }) {
           <div style={tileLabel}>{stats.replyTracked ? `Replied (${stats.replyRate}%)` : 'Replied'}</div>
         </div>
       </div>
+
+      <LinkBreakdown stats={linkStats} />
 
       <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
         <input
@@ -474,6 +482,54 @@ export function EmailTrackingView({ onOpenCampaign }) {
   );
 }
 
+// Which links the campaign's clicks actually landed on.
+//
+// A click count on its own says somebody engaged; it doesn't say with what,
+// and "opened the savings analysis" is a different conversation from "clicked
+// the logo". The redirector has always logged the destination, so this is a
+// roll-up of data already on the page — one bar per link, ordered by clicks,
+// with the distinct-recipient count beside it because one person clicking five
+// times is not five people interested.
+function LinkBreakdown({ stats }) {
+  const { links, totalClicks, unattributed } = stats;
+  if (!links.length) return null;
+  const top = links[0].clicks || 1;
+  return (
+    <details style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.55rem 0.85rem', marginBottom: '0.75rem' }}>
+      <summary style={{ cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, color: '#1D4ED8' }}>
+        Which links were clicked
+        <span style={{ color: '#64748B', fontWeight: 500 }}>
+          {' '}— {links.length} link{links.length === 1 ? '' : 's'} across {totalClicks} click{totalClicks === 1 ? '' : 's'}
+        </span>
+      </summary>
+      <ul style={{ listStyle: 'none', margin: '0.6rem 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {links.map((l) => (
+          <li key={l.url} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <span style={{ flex: '1 1 240px', minWidth: 200, fontSize: '0.78rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.url}>
+              {l.label}
+            </span>
+            <span style={{ flex: '2 1 200px', minWidth: 120, height: 8, background: '#F1F5F9', borderRadius: 999, overflow: 'hidden' }}>
+              <span style={{ display: 'block', width: `${Math.round((l.clicks / top) * 100)}%`, height: '100%', background: '#3B82F6', borderRadius: 999 }} />
+            </span>
+            <span style={{ fontSize: '0.76rem', color: '#1E293B', fontWeight: 600, minWidth: 96, textAlign: 'right' }}>
+              {l.clicks} click{l.clicks === 1 ? '' : 's'}
+            </span>
+            <span style={{ fontSize: '0.74rem', color: '#94A3B8', minWidth: 92 }} title="Distinct recipients who clicked this link. One person clicking it five times is one recipient.">
+              {l.recipients} recipient{l.recipients === 1 ? '' : 's'}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {unattributed > 0 && (
+        <div style={{ fontSize: '0.72rem', color: '#B45309', marginTop: 6 }}>
+          {unattributed} click{unattributed === 1 ? '' : 's'} can&rsquo;t be attributed to a link: a send&rsquo;s stored click
+          history is capped, so the counters ran past the detail. The totals above are unaffected.
+        </div>
+      )}
+    </details>
+  );
+}
+
 // Why an individual pixel hit didn't make the open count, as shown next to
 // it in the expanded detail. 'counted' events get no label.
 const OPEN_VERDICT_LABEL = {
@@ -491,6 +547,12 @@ function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpe
     ? [...openSummary.events].reverse()
     : (Array.isArray(r.opens) ? [...r.opens].reverse().map(event => ({ event, verdict: 'counted' })) : []);
   const clicks = Array.isArray(r.clicks) ? [...r.clicks].reverse() : [];
+  // Distinct destinations this recipient went to, for the Clicks tooltip —
+  // the count alone doesn't say what they were interested in.
+  const rowLinks = linksForRow(r);
+  const clickTitle = rowLinks.length
+    ? rowLinks.map(l => `${l.label}${l.clicks > 1 ? ` ×${l.clicks}` : ''}`).join('\n')
+    : undefined;
   return (
     <>
       <tr onClick={onToggle} style={{ cursor: 'pointer', background: isOpen ? '#F8FAFC' : 'transparent' }}>
@@ -535,7 +597,9 @@ function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpe
             : '-'}
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
-          {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}
+          <span title={clickTitle}>
+            {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}
+          </span>
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
           {!reply ? (
@@ -600,7 +664,12 @@ function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpe
                           <span style={{ fontWeight: 600 }}>{fmtDateTime(ev.at)}</span>
                           <span style={{ color: '#64748B' }}>· {location(ev)}</span>
                         </div>
-                        {ev.url && <div style={{ color: '#2563EB', wordBreak: 'break-all' }}>{ev.url}</div>}
+                        {ev.url && (
+                          <div>
+                            <div style={{ color: '#1E40AF', fontWeight: 600 }}>{shortLinkLabel(ev.url)}</div>
+                            <div style={{ color: '#64748B', wordBreak: 'break-all', fontSize: '0.72rem' }}>{ev.url}</div>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
