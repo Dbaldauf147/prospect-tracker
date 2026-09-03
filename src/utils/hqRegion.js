@@ -8,6 +8,8 @@
 // other so the Corporate Compliance card can fill that popup field when it's
 // blank.
 
+import { countryNameFromIso3 } from '../data/countryIso3.js';
+
 export const NORTH_AMERICA = 'North America';
 export const OUTSIDE_NORTH_AMERICA = 'Outside of North America';
 
@@ -17,7 +19,10 @@ export const OUTSIDE_NORTH_AMERICA = 'Outside of North America';
 // Rico is written as its own line in several sources even though it is a US
 // territory.
 const NA_COUNTRIES = new Set([
-  'united states', 'united states of america', 'usa', 'u.s.a.', 'us', 'u.s.',
+  // `clean` strips a trailing period, so the abbreviations are listed in
+  // both forms — 'u.s.' arrives here as 'u.s'.
+  'united states', 'united states of america', 'usa', 'u.s.a.', 'u.s.a',
+  'us', 'u.s.', 'u.s',
   'america', 'canada', 'mexico', 'méxico', 'puerto rico', 'bermuda',
   'greenland', 'guam', 'us virgin islands', 'u.s. virgin islands',
 ]);
@@ -71,6 +76,29 @@ export function classifyHqRegion(location) {
   // segment (rather than treating every unmatched string as foreign) keeps a
   // bare city name — "Houston" — from being called Outside of North America.
   return parts.length > 1 ? OUTSIDE_NORTH_AMERICA : '';
+}
+
+/**
+ * The same call for a bare HQ Country cell rather than a full location.
+ *
+ * classifyHqRegion needs a second comma-part before it will call anything
+ * foreign, so "Singapore" on its own comes back unknown — deliberately, since
+ * a lone segment there might be a city. A Country column carries no such
+ * ambiguity: the cell IS the country, so anything that isn't one of ours is
+ * outside North America. Only an empty cell is unknown.
+ *
+ * ISO 3166-1 alpha-3 codes resolve first ("CAN" → Canada), matching the site
+ * lists that write the Country column that way.
+ */
+export function classifyHqCountry(country) {
+  const raw = String(country || '').trim();
+  if (!raw) return '';
+  const v = clean(countryNameFromIso3(raw) || raw);
+  if (!v) return '';
+  // A US state or Canadian province written into a Country cell still places
+  // the company — the cell is wrong about what it holds, not about where.
+  if (NA_COUNTRIES.has(v) || NA_SUBDIVISIONS.has(v)) return NORTH_AMERICA;
+  return OUTSIDE_NORTH_AMERICA;
 }
 
 // Accept only the two values the company popup's dropdown offers, so a

@@ -35,6 +35,7 @@ import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../uti
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
+import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import {
   SCHEDULED_OPP_COLORS,
@@ -691,24 +692,47 @@ const PORTFOLIO_FIELD_OPTIONS = [
 // tooltip), so companies already mapped into the tracker show where they
 // stand without anyone re-typing it. Picking a status on the row overrides
 // the inherited one and is what the export writes.
+//
+// A row with neither — no status of its own, no tracker record to inherit
+// from — falls back to "Hold Off" when its HQ Country sits outside North
+// America. We don't work companies headquartered abroad (the Top PC pick
+// already skips them outright), so a blank there reads as "nobody has looked
+// at this yet" when the answer is already known. It's the last fallback, not
+// an override: a status typed on the row, or one the tracker already carries
+// for that company, is real information about that company and wins.
 function portfolioStatusColor(status) {
   return STATUS_COLORS[status] || '#475569';
 }
 
-// { status, from } for one portfolio company row: the row's own status when
-// set, otherwise the matching tracker record's. `byName` is the normalized
-// name → status map built once per render from the prospect list.
+// The status a portfolio company row falls back to on HQ Country alone, or
+// '' when the country is blank or North American.
+const OUTSIDE_NA_STATUS = 'Hold Off';
+function outsideNaStatus(row) {
+  return classifyHqCountry(row?.hqCountry) === OUTSIDE_NORTH_AMERICA ? OUTSIDE_NA_STATUS : '';
+}
+
+// { status, from, outsideNa } for one portfolio company row: the row's own
+// status when set, otherwise the matching tracker record's, otherwise the
+// outside-North-America default. `byName` is the normalized name → status map
+// built once per render from the prospect list. `from` names the tracker
+// record an inherited status came from; `outsideNa` marks the geography
+// default, so the cell can render both as "not typed here" but explain each
+// for what it is.
 function resolvePortfolioStatus(row, byName) {
   const own = String(row?.status || '').trim();
-  if (own) return { status: own, from: '' };
+  if (own) return { status: own, from: '', outsideNa: false };
+  const fallback = () => {
+    const status = outsideNaStatus(row);
+    return { status, from: '', outsideNa: !!status };
+  };
   const name = String(row?.companyName || '').trim();
-  if (!name || !byName || byName.size === 0) return { status: '', from: '' };
+  if (!name || !byName || byName.size === 0) return fallback();
   const exact = byName.get(name.toLowerCase());
-  if (exact) return { status: exact.status, from: exact.company };
+  if (exact) return { status: exact.status, from: exact.company, outsideNa: false };
   for (const entry of byName.values()) {
-    if (entry.status && companiesMatch(entry.company, name)) return { status: entry.status, from: entry.company };
+    if (entry.status && companiesMatch(entry.company, name)) return { status: entry.status, from: entry.company, outsideNa: false };
   }
-  return { status: '', from: '' };
+  return fallback();
 }
 
 // The tracker record a portfolio company row refers to, or null when the
@@ -9333,8 +9357,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   );
                                 })()}
                                 {(() => {
-                                  const { status, from } = resolvePortfolioStatus(r, prospectStatusByName);
-                                  const inherited = !!from;
+                                  const { status, from, outsideNa } = resolvePortfolioStatus(r, prospectStatusByName);
+                                  // Both a tracker status and the outside-NA
+                                  // default are shown italic: neither was
+                                  // typed on this row, and picking one here
+                                  // replaces it.
+                                  const inherited = !!from || outsideNa;
                                   const color = status ? portfolioStatusColor(status) : '#CBD5E1';
                                   // Keep a status that isn't in the house list (e.g. one
                                   // carried in by an uploaded sheet) selectable, so the
@@ -9345,16 +9373,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       <select
                                         value={r.status || ''}
                                         onChange={e => updateRow(i, { status: e.target.value })}
-                                        title={inherited
+                                        title={from
                                           ? `${status} — inherited from the tracker record for "${from}". Pick a status here to give this row its own.`
-                                          : (status
-                                            ? `Status for "${r.companyName || 'this company'}"`
-                                            : 'No status yet. Pick one here, or add this company to the tracker and its status shows up automatically.')}
+                                          : (outsideNa
+                                            ? `${status} by default — the HQ Country (${String(r.hqCountry || '').trim()}) is outside North America. Pick a status here to give this row its own.`
+                                            : (status
+                                              ? `Status for "${r.companyName || 'this company'}"`
+                                              : 'No status yet. Pick one here, or add this company to the tracker and its status shows up automatically.'))}
                                         style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: status ? `${color}1A` : 'transparent', color: status ? color : '#CBD5E1', fontWeight: status ? 700 : 400, fontStyle: inherited ? 'italic' : 'normal', cursor: 'pointer' }}
                                         onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; }}
                                         onBlur={e => { e.target.style.border = '1px solid transparent'; }}
                                       >
-                                        <option value="">{inherited ? `${status} (inherited)` : '-'}</option>
+                                        <option value="">{from ? `${status} (inherited)` : (outsideNa ? `${status} (outside NA)` : '-')}</option>
                                         {options.map(s => <option key={s} value={s}>{s}</option>)}
                                       </select>
                                     </td>
