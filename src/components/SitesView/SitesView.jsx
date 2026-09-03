@@ -47,6 +47,8 @@ import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope, tenureCoverage } from './ownershipScope.js';
 import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatus.js';
 import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx';
+import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
+import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
 import {
@@ -4257,20 +4259,46 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // deregulated bucket matches the exports' Deregulated Sites totals.
   const marketSummary = useMemo(() => {
     if (!rows.length) return null;
-    const bucket = () => ({ deregulated: 0, regulated: 0, unknown: 0 });
+    const bucket = () => ({
+      deregulated: 0, regulated: 0, unknown: 0,
+      // The Unknown bucket split by which clause of the classifier
+      // produced it, because the two have different fixes — a competitive
+      // state with nothing on file is a missing utility file or an
+      // unmapped column; no state and no country is a geography problem.
+      // See MarketCoverageBanner, which reads exactly this split.
+      unknownNoUtility: 0, unknownNoPlace: 0,
+    });
     const electric = bucket(), gas = bucket();
-    const tally = (acc, cls) => {
+    const tally = (acc, cls, row) => {
       if (cls === 'Deregulated') acc.deregulated++;
       else if (cls === 'Regulated') acc.regulated++;
-      else acc.unknown++;
+      else {
+        acc.unknown++;
+        // classifyMarket returns null from two places, and the state code
+        // tells them apart: a row that resolved one got as far as the
+        // competitive-state check, a row that didn't never had a market
+        // reference to read.
+        if (effectiveStateCode(row)) acc.unknownNoUtility++;
+        else acc.unknownNoPlace++;
+      }
     };
     for (const r of rows) {
-      tally(electric, classifyMarket(r, 'electric'));
-      tally(gas, classifyMarket(r, 'gas'));
+      tally(electric, classifyMarket(r, 'electric'), r);
+      tally(gas, classifyMarket(r, 'gas'), r);
     }
     return { total: rows.length, electric, gas };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, utility]);
+
+  // Whether the page is currently warning that most of the portfolio can't
+  // be placed in a market at all. Same treatment as the tenure warning
+  // above: dismissal is per-gap, so hiding it on one upload never hides it
+  // on the next. See marketCoverage.js for what counts as a gap worth
+  // showing at all.
+  const marketWarning = useMemo(() => marketCoverageWarning(marketSummary), [marketSummary]);
+  const marketWarningId = marketWarningKey(marketWarning);
+  const [marketWarningDismissed, setMarketWarningDismissed] = useState(null);
+  const showMarketWarning = !!marketWarning && marketWarningDismissed !== marketWarningId;
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -15122,6 +15150,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           mapped={!!ownershipOverride}
           onFixMapping={openUpdateColumnMapping}
           onDismiss={() => setTenureWarningDismissed(tenureWarningKey)}
+        />
+      )}
+
+      {showMarketWarning && (
+        <MarketCoverageBanner
+          warning={marketWarning}
+          onLoadUtilityFile={() => setShowDataSources(true)}
+          onDismiss={() => setMarketWarningDismissed(marketWarningId)}
         />
       )}
 
