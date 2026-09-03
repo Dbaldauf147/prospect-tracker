@@ -40,14 +40,19 @@ check('label: nothing in, nothing out', shortLinkLabel(null), '');
 
 // ---- linksForRow ---------------------------------------------------------
 
+// Every fixture carries a browser user-agent: countClicks treats a click with
+// no user-agent as a machine, the way the pixel always has, so a UA-less
+// fixture would silently test the exclusion path instead of the counting one.
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
+const SCANNER = 'Mimecast link scanner';
 const row = {
   to: 'dana@example.com',
   clickCount: 4,
   clicks: [
-    { url: 'https://example.com/savings' },
-    { url: 'https://example.com/book' },
-    { url: 'https://example.com/savings' },
-    { url: 'https://example.com/savings' },
+    { url: 'https://example.com/savings', ua: UA },
+    { url: 'https://example.com/book', ua: UA },
+    { url: 'https://example.com/savings', ua: UA },
+    { url: 'https://example.com/savings', ua: UA },
   ],
 };
 check('row: distinct destinations, most-clicked first',
@@ -60,8 +65,8 @@ check('row: a missing clicks array does not throw', linksForRow({}), []);
 
 const rows = [
   row,
-  { to: 'priya@example.com', clickCount: 1, clicks: [{ url: 'https://example.com/book' }] },
-  { to: 'marcus@example.com', clickCount: 1, clicks: [{ url: 'https://example.com/book' }] },
+  { to: 'priya@example.com', clickCount: 1, clicks: [{ url: 'https://example.com/book', ua: UA }] },
+  { to: 'marcus@example.com', clickCount: 1, clicks: [{ url: 'https://example.com/book', ua: UA }] },
 ];
 const agg = clicksByLink(rows);
 
@@ -70,12 +75,12 @@ const agg = clicksByLink(rows);
 check('roll-up: ties break on distinct recipients, not raw clicks',
   agg.links.map(l => [l.label, l.clicks, l.recipients]),
   [['example.com/book', 3, 3], ['example.com/savings', 3, 1]]);
-check('roll-up: total clicks come off the exact counters', agg.totalClicks, 6);
+check('roll-up: the total is the human click count across the set', agg.totalClicks, 6);
 check('roll-up: everything attributed when no doc hit the event cap', agg.unattributed, 0);
 
 // A doc whose counter ran past its stored events — the cap in tracking.js.
 const capped = clicksByLink([
-  { to: 'a@example.com', clickCount: 120, clicks: [{ url: 'https://example.com/savings' }] },
+  { to: 'a@example.com', clickCount: 120, clicks: [{ url: 'https://example.com/savings', ua: UA }] },
 ]);
 check('roll-up: clicks past the stored event cap are reported, not dropped',
   [capped.totalClicks, capped.links[0].clicks, capped.unattributed], [120, 1, 119]);
@@ -87,7 +92,25 @@ check('roll-up: no argument behaves the same',
 // A click event with no url (shouldn't happen — the redirector only logs a
 // resolved destination — but a malformed doc must not invent a blank link).
 check('roll-up: an event with no url is skipped',
-  clicksByLink([{ to: 'a@example.com', clickCount: 1, clicks: [{ url: '' }] }]).links, []);
+  clicksByLink([{ to: 'a@example.com', clickCount: 1, clicks: [{ url: '', ua: UA }] }]).links, []);
+
+// A gateway sweeps every link in the message at once, which is exactly the
+// shape that would otherwise crown the least interesting link.
+const swept = clicksByLink([
+  { to: 'a@example.com', clickCount: 3, clicks: [
+    { url: 'https://example.com/savings', ua: UA },
+    { url: 'https://example.com/legal', ua: SCANNER },
+    { url: 'https://example.com/logo', ua: SCANNER },
+  ] },
+]);
+check('roll-up: a scanner sweeping every link cannot top the chart',
+  [swept.links.map(l => [l.label, l.clicks]), swept.totalClicks],
+  [[['example.com/savings', 1]], 1]);
+check('row: a scanner click is left out of the per-row links',
+  linksForRow({ clickCount: 2, clicks: [
+    { url: 'https://example.com/savings', ua: UA },
+    { url: 'https://example.com/legal', ua: SCANNER },
+  ] }).map(l => l.label), ['example.com/savings']);
 
 console.log(failures === 0 ? '\nAll email-link tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

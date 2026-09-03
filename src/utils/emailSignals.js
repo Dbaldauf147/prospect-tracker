@@ -25,6 +25,7 @@
 // contribute a day, a city or a device.
 
 import { trackingMillis } from './emailOpens.js';
+import { screeningEvidence } from './emailClicks.js';
 
 // A first load this soon after the send is worth calling out — the message was
 // most likely opened off the top of the inbox rather than dug out later.
@@ -130,7 +131,7 @@ export function shortDuration(ms) {
  *          ordinary single-open send has nothing to say and gets an empty
  *          list rather than a chip saying so.
  */
-export function engagementSignals(openSummary, { sentAt } = {}) {
+export function engagementSignals(openSummary, { sentAt, clickSummary } = {}) {
   const shape = openShape(openSummary, { sentAt });
   const out = [];
 
@@ -163,6 +164,20 @@ export function engagementSignals(openSummary, { sentAt } = {}) {
       key: 'fast',
       label: `Loaded in ${shortDuration(shape.msToFirstOpen)}`,
       title: 'The pixel first loaded within an hour of the send. Worth noting on its own, though an Apple Mail privacy pre-fetch also lands quickly — a fast load plus a click is the combination that means something.',
+    });
+  }
+
+  // Context rather than engagement, so it comes last and is styled apart: this
+  // recipient's mail system screens links. Worth saying out loud because it
+  // changes how the rest of the row reads — a gateway that pre-fetches links
+  // usually blocks images too, so low numbers here mean less than they would
+  // elsewhere, and it explains any clicks that were dropped from the count.
+  const screening = screeningEvidence(clickSummary, openSummary);
+  if (screening.screened) {
+    out.push({
+      key: 'screened',
+      label: screening.scanner ? `Screened (${screening.scanner})` : 'Screened',
+      title: `A security gateway${screening.scanner ? ` — ${screening.scanner} —` : ''} fetched the links or the pixel before the recipient saw them, and those hits are excluded from the counts. Two things follow: the mail definitely arrived (a scanner can only scan what it received), and a gateway like this usually rewrites links and blocks images, so low numbers on this row say less than they would on another.`,
     });
   }
 

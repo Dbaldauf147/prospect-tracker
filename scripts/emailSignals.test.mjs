@@ -98,12 +98,31 @@ check('one device that moves city is NOT a forward',
   ])), []);
 
 // Rule 1: only counted events contribute. A scanner fetch from Ashburn on a
-// different machine is exactly what would fake a forward.
+// different machine is exactly what would fake a forward — it must report the
+// screening it IS evidence of, and nothing it isn't.
 check('an excluded machine fetch cannot manufacture a forward',
-  engagementSignals(summary([
+  keys(engagementSignals(summary([
     ev(t0, UA.mac, 'Boston'),
     { verdict: 'machine', event: { at: t0 + 60000, ua: UA.scanner, city: 'Ashburn', country: 'US' } },
+  ]))), ['screened']);
+check('and it names the gateway when the user-agent gives it away',
+  labels(engagementSignals(summary([
+    ev(t0, UA.mac, 'Boston'),
+    { verdict: 'machine', event: { at: t0 + 60000, ua: UA.scanner, city: 'Ashburn', country: 'US' } },
+  ]))), ['Screened (Mimecast)']);
+
+// A generic crawler tripping the machine filter is not evidence of a corporate
+// gateway, so an unnamed machine OPEN alone says nothing. A machine CLICK is
+// different: nothing else follows a tracking redirect.
+check('an unnamed machine open alone does not claim screening',
+  engagementSignals(summary([
+    ev(t0, UA.mac, 'Boston'),
+    { verdict: 'machine', event: { at: t0 + 60000, ua: 'some-crawler/1.0', city: 'Ashburn' } },
   ])), []);
+check('an unnamed machine CLICK does claim screening',
+  keys(engagementSignals(summary([ev(t0, UA.mac, 'Boston')]), {
+    clickSummary: { events: [{ verdict: 'machine', event: { ua: 'python-requests/2.31.0' } }] },
+  })), ['screened']);
 check('an excluded pre-send preview cannot manufacture one either',
   engagementSignals(summary([
     ev(t0, UA.mac, 'Boston'),
