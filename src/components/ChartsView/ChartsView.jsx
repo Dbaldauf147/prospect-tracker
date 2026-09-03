@@ -18,7 +18,7 @@ const TABS = [
 // Host for the "Charts" top-level tab: YOY / Progress / Pipeline as
 // sub-tabs. Each sub-view still renders its own full-height layout, so
 // this just stacks a thin sub-tab bar above the active one.
-export function ChartsView({ prospects, settings, cdmName, onSelectProspect }) {
+export function ChartsView({ prospects, settings, updateSettings, cdmName, onSelectProspect }) {
   const [tab, setTab] = useState('yoy');
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
@@ -61,7 +61,7 @@ export function ChartsView({ prospects, settings, cdmName, onSelectProspect }) {
         {tab === 'pipeline' && <PipelineView prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />}
         {tab === 'weekly' && (
           <Suspense fallback={<div className="loading">Loading view…</div>}>
-            <WeeklyReportView settings={settings} cdmName={cdmName} />
+            <WeeklyReportView settings={settings} updateSettings={updateSettings} cdmName={cdmName} />
           </Suspense>
         )}
       </div>

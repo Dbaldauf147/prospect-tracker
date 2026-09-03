@@ -259,6 +259,71 @@
   font-weight: 600;
 }
 
+/* --- Weekly target on a tile --- */
+.goalRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.goalBar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-border, #e2e8f0);
+  overflow: hidden;
+}
+
+.goalFill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: #3b82f6;
+  transition: width 0.2s;
+}
+
+.goalBar[data-hit="yes"] .goalFill { background: #10b981; }
+
+.goalNum {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.goalSet {
+  margin-top: 0.4rem;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+.goalSet:hover { opacity: 1; color: #3b82f6; }
+
+.goalInput {
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
 /* --- Narrative --- */
 .narrative {
   margin-bottom: 1.5rem;
