@@ -6250,6 +6250,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             countryRegRateOpportunity,
             totalSites: 0,
             deregulatedSites: 0,
+            // Sites the classifier couldn't place: in this bucket's
+            // competitive market, but with no utility and no supplier on
+            // file to say which side of it they sit on. They count in
+            // Total Sites and never in Deregulated Sites, so without a
+            // column of their own the two don't reconcile and the gap
+            // reads as "no opportunity here" rather than "we can't see it
+            // yet". See the Market card's Unknown rows for the same split.
+            unknownSites: 0,
             // Sites in this bucket the upload marked Leased. They are
             // listed and counted like any other site; what they never do
             // is carry a savings number — see the savings gate in the
@@ -6362,7 +6370,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // inside a competitive state; country reference for international
         // sites). This sheet's Deregulated Sites column is the number the
         // page's Market card and the Overview tabs are held to.
-        if (classifyMarket(r, commodity) !== 'Deregulated') continue;
+        const marketClass = classifyMarket(r, commodity);
+        if (marketClass !== 'Deregulated') {
+          // Null is Unknown — a competitive market with nothing on file
+          // for this site. (A regulated state resolves to 'Regulated',
+          // and a site with no state and no recognized country never
+          // reaches a bucket at all, so this is the only shape of
+          // unknown the sheet can carry.)
+          if (!marketClass) g.unknownSites += 1;
+          continue;
+        }
         g.deregulatedSites += 1;
         const consumption = r[consumptionKey];
         if (typeof consumption === 'number' && Number.isFinite(consumption)) {
@@ -6523,6 +6540,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           status,
           totalSites: g.totalSites,
           deregulatedSites: g.deregulatedSites,
+          unknownSites: g.unknownSites,
           leasedSites: g.leasedSites,
           regulatedRateOpportunitySites: g.regulatedRateOpportunitySites,
           regulatedRateOpportunitySpend: Math.round(g.regulatedRateOpportunitySpend),
@@ -6629,6 +6647,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     const { stateRows: electricRows, siteRows: electricSiteRows } = buildBucket('electric');
     const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
+
+    // Whether the Unclassified Sites column earns its slot. One flag for
+    // both commodity tables (they share the sheet's column widths), and
+    // only when there is something to put in it — a portfolio the
+    // classifier placed entirely doesn't need a column of zeros
+    // explaining a gap it doesn't have.
+    const showUnknownColumn = electricRows.some(g => g.unknownSites > 0)
+      || gasRows.some(g => g.unknownSites > 0);
 
     // Combined-export mode builds these sheets into a shared workbook so
     // the Indicative Savings tabs sit alongside the compliance exports.
@@ -9051,9 +9077,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Sites count next to Deregulated Sites, and the savings-eligible
     // spend next to the full deregulated spend. The Savings Status column
     // is always present, hence the +1 over the old width.
-    const SPAN = 27 + (showLeasedColumns ? 2 : 0);
+    const SPAN = 27 + (showUnknownColumn ? 1 : 0) + (showLeasedColumns ? 2 : 0);
     const widths = [
       22, 14, 11, 13,                     // ST/Prov/Country..Deregulated Sites (4)
+      ...(showUnknownColumn ? [15] : []), // Unclassified Sites (1)
       ...(showLeasedColumns ? [13] : []), // Leased Sites (1)
       16, 18,                             // Deregulated Consumption + Spend (2)
       ...(showLeasedColumns ? [18] : []), // Savings-Eligible Spend (1)
@@ -9633,6 +9660,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // against it instead of the full deregulated figure. With no leased
     // sites the tag stays on Deregulated Spend/yr and the sheet is
     // unchanged.
+    // Sites in a competitive market that carry no utility and no supplier,
+    // so nothing says which side of it they sit on. Present only when the
+    // portfolio has some: without it Total Sites and Deregulated Sites
+    // differ by a number the sheet never names, which reads as "no
+    // opportunity in this state" when the truth is "we can't see it yet".
+    // (Loading the utility rates file, or mapping the upload's utility /
+    // supplier column, is what moves these into one of the other columns —
+    // the page warns about the same gap before the export is taken.)
+    const unknownSitesCol = showUnknownColumn
+      ? [{ label: 'Unclassified Sites', get: (g) => g.unknownSites, numFmt: '#,##0', sumKey: 'unknownSites' }]
+      : [];
     const leasedSitesCol = showLeasedColumns
       ? [{ label: 'Leased Sites', get: (g) => g.leasedSites, numFmt: '#,##0', sumKey: 'leasedSites' }]
       : [];
@@ -9658,6 +9696,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      ...unknownSitesCol,
       ...leasedSitesCol,
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
@@ -9707,6 +9746,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Deregulated Status', get: (g) => displayDeregStatus(g.status) },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      ...unknownSitesCol,
       ...leasedSitesCol,
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
@@ -9890,6 +9930,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           status: '',
           totalSites: sum('totalSites'),
           deregulatedSites: sum('deregulatedSites'),
+          unknownSites: sum('unknownSites'),
           leasedSites: sum('leasedSites'),
           regulatedRateOpportunitySites: sum('regulatedRateOpportunitySites'),
           regulatedRateOpportunitySpend: sum('regulatedRateOpportunitySpend'),
