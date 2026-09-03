@@ -13,6 +13,12 @@
 // a directional signal (Apple Mail Privacy Protection pre-fetches the
 // pixel, Gmail proxies it, Outlook blocks images by default), while
 // clicks are a hard signal. Same limitations HubSpot has.
+//
+// Above that note, MetricsExplainer says in plain English what the two
+// words mean — an open is a passive image load, a click is a deliberate
+// action — because that difference is what every question about these
+// numbers turns on: why clicks trail opens, why a send can click without
+// ever opening, why an open is worth less than it looks.
 
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -102,6 +108,68 @@ function Pill({ children, tone }) {
     <span style={{ display: 'inline-block', background: t.bg, color: t.fg, borderRadius: 999, padding: '0.1rem 0.5rem', fontSize: '0.72rem', fontWeight: 700 }}>
       {children}
     </span>
+  );
+}
+
+// Plain-English definitions of the two metrics, plus how each summary
+// tile is derived from them.
+//
+// The definitions stay visible because they are the whole answer to
+// "what's the difference": one is the recipient's mail client fetching an
+// image, the other is a person choosing to click. The arithmetic behind
+// the tiles — and the reasons the two columns rarely agree — sits in a
+// collapsed <details> so the top of the page doesn't turn into an essay.
+function MetricsExplainer() {
+  return (
+    <section
+      aria-label="What opens and clicks mean"
+      style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.7rem 0.85rem', margin: '0.6rem 0 0.75rem' }}
+    >
+      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+        Opens vs. clicks
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #86EFAC', paddingLeft: '0.7rem' }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534', marginBottom: 2 }}>Open — the email was displayed</div>
+          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
+            An invisible 1×1 image is tucked into the email body. An open is that image being fetched, which happens when
+            the recipient&rsquo;s mail client renders the message. It is <strong>passive</strong>: nobody has to do anything but
+            look at the message — and a client that blocks images never fetches it, so a real read can go unrecorded.
+          </div>
+        </div>
+        <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #93C5FD', paddingLeft: '0.7rem' }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E40AF', marginBottom: 2 }}>Click — a link was followed</div>
+          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
+            Every web link in the body is rewritten to point at our redirector, which logs the click and forwards straight to
+            the real page. A click is <strong>deliberate</strong>: a person read far enough to act. That makes it the number to
+            trust when the two disagree.
+          </div>
+        </div>
+      </div>
+
+      <details style={{ marginTop: '0.7rem', borderTop: '1px dashed #E2E8F0', paddingTop: '0.55rem' }}>
+        <summary style={{ cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, color: '#1D4ED8' }}>
+          How each number is counted, and why opens and clicks don&rsquo;t line up
+        </summary>
+        <div style={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.55, marginTop: '0.5rem' }}>
+          <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>The tiles</div>
+          <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <li><strong>Tracked emails</strong> — drafts created with tracking on, inside the campaign filter above.</li>
+            <li><strong>Opened (%)</strong> — how many of those emails registered at least one open. One recipient counts once here however many times they come back.</li>
+            <li><strong>Total opens</strong> — every open. The same person reading twice an hour apart adds two.</li>
+            <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
+            <li><strong>Total clicks</strong> — every click: the same link twice, or two different links in one email, each add one.</li>
+          </ul>
+          <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>When they disagree</div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <li><strong>Clicks well below opens is normal.</strong> Reading costs nothing; clicking is a decision. The gap between the two is roughly the gap between attention and interest.</li>
+            <li><strong>A click with no open is normal too</strong> — the reader&rsquo;s client blocked the image, so the pixel never fired, but the link still worked. Read that row as engaged, not as a glitch.</li>
+            <li><strong>An open with no click isn&rsquo;t nothing</strong>, but it is the weaker signal of the two: it can also be a privacy pre-fetch or a scanner (see the note below).</li>
+          </ul>
+        </div>
+      </details>
+    </section>
   );
 }
 
@@ -224,6 +292,10 @@ export function EmailTrackingView({ onOpenCampaign }) {
         )}
       </div>
 
+      {/* What the two words mean, before the caveats about how well we
+          measure them. */}
+      <MetricsExplainer />
+
       {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
         <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
@@ -240,11 +312,21 @@ export function EmailTrackingView({ onOpenCampaign }) {
 
       {/* Summary tiles */}
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-        <div style={tile}><div style={tileNum}>{stats.trackedEmails}</div><div style={tileLabel}>Tracked emails</div></div>
-        <div style={tile}><div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Opened ({stats.openRate}%)</div></div>
-        <div style={tile}><div style={tileNum}>{stats.totalOpens}</div><div style={tileLabel}>Total opens</div></div>
-        <div style={tile}><div style={tileNum}>{stats.clickedEmails}</div><div style={tileLabel}>Clicked ({stats.clickRate}%)</div></div>
-        <div style={tile}><div style={tileNum}>{stats.totalClicks}</div><div style={tileLabel}>Total clicks</div></div>
+        <div style={tile} title="Drafts created with tracking on, within the campaign filter.">
+          <div style={tileNum}>{stats.trackedEmails}</div><div style={tileLabel}>Tracked emails</div>
+        </div>
+        <div style={tile} title="Emails whose tracking pixel was loaded at least once — the message was displayed. Each email counts once here however many times it is re-opened.">
+          <div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Opened ({stats.openRate}%)</div>
+        </div>
+        <div style={tile} title="Every open, not just the first: the same recipient reading twice adds two.">
+          <div style={tileNum}>{stats.totalOpens}</div><div style={tileLabel}>Total opens</div>
+        </div>
+        <div style={tile} title="Emails where at least one link was followed. A deliberate action, so this is the harder signal of the two.">
+          <div style={tileNum}>{stats.clickedEmails}</div><div style={tileLabel}>Clicked ({stats.clickRate}%)</div>
+        </div>
+        <div style={tile} title="Every click: the same link twice, or two different links in one email, each add one.">
+          <div style={tileNum}>{stats.totalClicks}</div><div style={tileLabel}>Total clicks</div>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
@@ -311,9 +393,9 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th}>Subject</th>
                 <th style={th}>Campaign</th>
                 <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
-                <th style={{ ...th, textAlign: 'center' }}>Opens</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel loaded — i.e. the message was displayed. Passive: a client that blocks images never registers one.">Opens</th>
                 <th style={th}>Last open</th>
-                <th style={{ ...th, textAlign: 'center' }}>Clicks</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than an open — and can happen on a send that never registered one.">Clicks</th>
               </tr>
             </thead>
             <tbody>
