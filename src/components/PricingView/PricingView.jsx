@@ -2782,6 +2782,60 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // The Alternative Fee schedule's Type dropdown offers three values; the
+  // pricing table's Type column carries more (the Rolled variants). Map a
+  // cost row's type onto the schedule type that would price it — Rolled
+  // bills monthly across the term, so it belongs with Recurring, which is
+  // the bucket autoFeePerUnitFor already pulls it into. Anything else is
+  // left blank rather than guessed: a schedule row with no type derives no
+  // fee, which reads as "pick one" instead of quietly pricing wrongly.
+  function altFeeTypeForCtsType(t) {
+    const s = String(t || '').trim();
+    if (!s) return '';
+    if (/recurring/i.test(s) || /\brolled\b/i.test(s)) return 'Recurring (monthly)';
+    if (/^one\s*time$/i.test(s)) return 'One Time';
+    if (/^setup$/i.test(s)) return 'Setup';
+    return '';
+  }
+
+  // Unit Count to pair with a unit on this option — the same fill the
+  // schedule's own Unit dropdown does when you pick Per Site / Per Account.
+  function unitCountForUnit(unit, opt) {
+    if (unit === 'Per Site' && typeof opt?.siteCount === 'number' && opt.siteCount > 0) return opt.siteCount;
+    if (unit === 'Per Account' && typeof opt?.accountCount === 'number' && opt.accountCount > 0) return opt.accountCount;
+    return 1;
+  }
+
+  // Add a row to this option's Alternative Fee schedule for a cost row's
+  // Automated Fee Name, so a name the cost already carries has something to
+  // price against. Fee and Fee Start Month are deliberately left blank:
+  // the schedule derives both from the CTS rows carrying the tag, and a
+  // written-in value would freeze what should keep following the costs.
+  // Unit comes from the saved Linked To default when there is one.
+  //
+  // Adding a name the schedule already has would split one fee across two
+  // rows, so that case does nothing (the button offering it is disabled).
+  function createAltFeeFromLinkedTo(item) {
+    const opt = workbook?.options.find(o => o.optionNumber === activeOption);
+    if (!opt) return;
+    const name = resolvedLinkedTo(item).trim();
+    if (!name) return;
+    const lower = name.toLowerCase();
+    const exists = (altFees[opt.optionNumber] || [])
+      .some(r => String(r.altItem || '').trim().toLowerCase() === lower);
+    if (exists) return;
+    const effType = effectiveType(item);
+    const unit = linkedToUnitDefaults?.[linkedToDefaultKey(item.description, effType)] || '';
+    appendAltFeeRows(opt.optionNumber, [{
+      altItem: name,
+      type: altFeeTypeForCtsType(effType),
+      fee: null,
+      unit,
+      unitCount: unitCountForUnit(unit, opt),
+      startMonth: null,
+    }]);
+  }
+
   function effectiveType(item) {
     const ov = overrides[item.id]?.typeOverride;
     return (ov === undefined || ov === null || ov === '') ? (item.type || '') : ov;
@@ -4529,6 +4583,24 @@ export function PricingView({ settings } = {}) {
                                             }
                                           >
                                             {matchesDefault ? '★' : '☆'}
+                                          </button>
+                                          {/* A name with no row under it prices nothing — this puts
+                                              the row there, typed to match the cost, with its fee
+                                              left to derive from the costs carrying the name. */}
+                                          <button
+                                            type="button"
+                                            className={styles.addFeeBtn}
+                                            onClick={() => createAltFeeFromLinkedTo(item)}
+                                            disabled={!currentVal.trim() || tagMapped}
+                                            title={
+                                              !currentVal.trim()
+                                                ? 'Give this cost an Automated Fee Name first, then add it to the fee schedule below.'
+                                                : tagMapped
+                                                ? `"${tagName}" is already a row in the Alternative Fee schedule below.`
+                                                : `Add "${currentVal.trim()}" to the Alternative Fee schedule below as ${altFeeTypeForCtsType(effType) || 'an untyped row'}. Its fee and start month derive from every cost carrying this name.`
+                                            }
+                                          >
+                                            + Fee
                                           </button>
                                         </div>
                                       );

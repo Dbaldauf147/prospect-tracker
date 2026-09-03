@@ -433,6 +433,34 @@
   color: #f59e0b;
 }
 
+/* "+ Fee" beside the star: adds this row's Automated Fee Name to the
+   Alternative Fee schedule below. Quiet until hovered — it's an action
+   for the rows that need one, not a call to press it on every row. */
+.addFeeBtn {
+  background: transparent;
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 0.2rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  flex: 0 0 auto;
+}
+
+.addFeeBtn:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.addFeeBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
 .cellInput {
   width: 100%;
   padding: 0.2rem 0.35rem;
