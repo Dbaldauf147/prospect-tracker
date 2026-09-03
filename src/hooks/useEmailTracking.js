@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../utils/apiFetch';
 import { countOpens, trackingMillis } from '../utils/emailOpens';
+import { countClicks, screeningEvidence } from '../utils/emailClicks';
 
 // Loads this user's email-tracking rows (the docs api/track-prepare writes
 // when a draft is generated with "Track opens & clicks" on).
@@ -174,6 +175,11 @@ export function replyByRecipient(contacts) {
 // Opens are counted through countOpens() rather than read off the doc's
 // openCount: the raw counter includes the sender's own pre-send previews of
 // the draft, automated fetches and re-renders (see src/utils/emailOpens.js).
+// Clicks go through countClicks() for the same reason — a security gateway
+// following every link in the message is not a person deciding to click.
+// `rawClickCount` keeps the unfiltered figure alongside, because a scanner hit
+// is worthless as engagement and conclusive as DELIVERY: a gateway can only
+// scan mail it received.
 // Pass `sentAtByEmail` — a Map of normalized recipient address to that
 // contact's send time, or null for a contact the campaign never sent to — to
 // enable the pre-send rule. Addresses missing from the map keep their raw
@@ -181,7 +187,8 @@ export function replyByRecipient(contacts) {
 //
 // Returns a Map keyed by normalized recipient email:
 //   { openCount, raw, preSend, machine, repeat,
-//     clickCount, firstOpenAt, lastClickAt, sends }
+//     clickCount, clickMachine, rawClickCount, screened, scanner,
+//     firstOpenAt, lastClickAt, sends }
 export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
   const want = String(subject || '').trim().toLowerCase();
   const byEmail = new Map();
@@ -198,9 +205,13 @@ export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
     const opens = sentAtByEmail?.has(key)
       ? countOpens(r, { sentAt: sentAtByEmail.get(key) ?? null })
       : countOpens(r);
+    const clicks = countClicks(r);
+    const screening = screeningEvidence(clicks, opens);
     const prev = byEmail.get(key) || {
       openCount: 0, raw: 0, preSend: 0, machine: 0, repeat: 0,
-      clickCount: 0, firstOpenAt: 0, lastClickAt: 0, sends: 0,
+      clickCount: 0, clickMachine: 0, rawClickCount: 0,
+      screened: false, scanner: '',
+      firstOpenAt: 0, lastClickAt: 0, sends: 0,
     };
     const firstOpen = opens.firstOpenAt;
     const lastClick = trackingMillis(r.lastClickAt);
@@ -210,7 +221,11 @@ export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
       preSend: prev.preSend + opens.preSend,
       machine: prev.machine + opens.machine,
       repeat: prev.repeat + opens.repeat,
-      clickCount: prev.clickCount + (r.clickCount || 0),
+      clickCount: prev.clickCount + clicks.count,
+      clickMachine: prev.clickMachine + clicks.machine,
+      rawClickCount: prev.rawClickCount + clicks.raw,
+      screened: prev.screened || screening.screened,
+      scanner: prev.scanner || screening.scanner,
       firstOpenAt: firstOpen && (!prev.firstOpenAt || firstOpen < prev.firstOpenAt) ? firstOpen : prev.firstOpenAt,
       lastClickAt: lastClick > prev.lastClickAt ? lastClick : prev.lastClickAt,
       sends: prev.sends + 1,

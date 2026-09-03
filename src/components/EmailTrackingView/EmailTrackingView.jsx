@@ -276,7 +276,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
       // fetch is worthless as engagement and conclusive as delivery, since a
       // gateway can only scan mail it received. Pre-send previews are the one
       // kind that proves nothing — those are ours, before it ever went out.
-      const delivery = deliveryStatus(r, reply, {
+      const delivery = deliveryStatus(reply, {
         hasActivity: (opens.count + opens.machine) > 0 || clicks.raw > 0,
         sentAt: sent?.get(key) ?? null,
       });

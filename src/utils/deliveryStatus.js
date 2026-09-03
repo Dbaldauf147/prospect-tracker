@@ -51,9 +51,13 @@ export const DELIVERY_TITLE = {
 /**
  * Delivery state for one tracked send.
  *
- * @param row     the tracking doc ({ openCount, clickCount, opens, clicks })
+ * Reads only the campaign's record of the recipient and whatever activity the
+ * caller found, so both the tracking dashboard (which joins a tracking doc to
+ * a campaign) and the campaign roster itself (where every contact is watched
+ * by definition) can ask the same question and get the same answer.
+ *
  * @param reply   the campaign's per-recipient record, or null when no campaign
- *                claims this send — { bounced, sentAt } shape
+ *                claims this send — { bounced } shape
  * @param options.hasActivity whether anything was recorded against the send
  *                (an image load or a click). Passed in rather than read off the
  *                row so the caller can use its own counted-loads figure, which
@@ -61,7 +65,7 @@ export const DELIVERY_TITLE = {
  *                is not evidence the recipient's server accepted anything.
  * @returns one of DELIVERY
  */
-export function deliveryStatus(row, reply, { hasActivity = false, sentAt = null } = {}) {
+export function deliveryStatus(reply, { hasActivity = false, sentAt = null } = {}) {
   // A bounce is the only hard negative, and it outranks everything: a message
   // that bounced never arrived, whatever else was recorded against it.
   if (reply?.bounced) return DELIVERY.FAILED;
