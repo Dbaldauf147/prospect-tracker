@@ -105,6 +105,48 @@ export function sentAtByRecipient(contacts) {
   return map;
 }
 
+// Build the reply map, from the same campaign contact rows sentAtByRecipient
+// reads.
+//
+// A reply is the one signal on this page a machine can't manufacture: the open
+// pixel fires for privacy pre-fetches and preview panes, and even a click can
+// come from a link scanner, but somebody typed the reply. It is already
+// computed — api/email-campaign.js pulls incoming HubSpot mail matched to the
+// campaign's subject and drops out-of-office / auto-reply / bounce
+// notifications before marking a contact replied — and the Email Campaigns tab
+// has shown it all along. The tracking dashboard just never read it.
+//
+// Same multi-address handling as sentAtByRecipient: a contact row listing
+// "a@x; b@y" marks both addresses. Where an address appears twice, a reply
+// wins over no reply and the EARLIEST reply wins between two — first response
+// is the one that matters.
+//
+// Returns a Map of normalized address to { replied, replyDate, repliedBy }.
+// Absent from the map = no campaign claims the address, which is different
+// from present-but-not-replied.
+export function replyByRecipient(contacts) {
+  const map = new Map();
+  for (const c of contacts || []) {
+    const entry = {
+      replied: !!c?.replied,
+      replyDate: c?.replyDate || null,
+      repliedBy: c?.repliedBy || '',
+    };
+    for (const part of String(c?.email || '').split(';')) {
+      const key = normalizeTrackedEmail(part);
+      if (!key) continue;
+      const prev = map.get(key);
+      if (prev === undefined) { map.set(key, entry); continue; }
+      if (!prev.replied && entry.replied) { map.set(key, entry); continue; }
+      if (prev.replied && entry.replied && entry.replyDate && prev.replyDate
+        && entry.replyDate < prev.replyDate) {
+        map.set(key, entry);
+      }
+    }
+  }
+  return map;
+}
+
 // Roll the tracking rows for one campaign subject up per recipient.
 //
 // A campaign matches HubSpot emails whose subject *contains* the campaign

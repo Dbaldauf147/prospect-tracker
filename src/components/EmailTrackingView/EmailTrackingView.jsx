@@ -14,15 +14,22 @@
 // pixel, Gmail proxies it, Outlook blocks images by default), while
 // clicks are a hard signal. Same limitations HubSpot has.
 //
-// Above that note, MetricsExplainer says in plain English what the two
+// Above that note, MetricsExplainer says in plain English what the three
 // words mean — an open is a passive image load, a click is a deliberate
-// action — because that difference is what every question about these
-// numbers turns on: why clicks trail opens, why a send can click without
-// ever opening, why an open is worth less than it looks.
+// action, a reply is a person writing back — because that difference is what
+// every question about these numbers turns on: why clicks trail opens, why a
+// send can click without ever opening, why an open is worth less than it looks.
+//
+// Replies come from the saved campaign rosters, not from the tracking docs:
+// api/email-campaign.js already matches HubSpot's incoming mail to a campaign
+// subject and filters out-of-office / auto-reply / bounce notifications, and
+// the Email Campaigns tab has shown the result all along. Only sends a
+// campaign claims carry a reply status, so the column distinguishes "no reply"
+// from "nobody is watching for one".
 
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
+import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient, replyByRecipient } from '../../hooks/useEmailTracking';
 import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
 
@@ -122,11 +129,11 @@ function Pill({ children, tone }) {
 function MetricsExplainer() {
   return (
     <section
-      aria-label="What opens and clicks mean"
+      aria-label="What opens, clicks and replies mean"
       style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.7rem 0.85rem', margin: '0.6rem 0 0.75rem' }}
     >
       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-        Opens vs. clicks
+        Opens vs. clicks vs. replies
       </div>
 
       <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
@@ -142,8 +149,16 @@ function MetricsExplainer() {
           <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E40AF', marginBottom: 2 }}>Click — a link was followed</div>
           <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
             Every web link in the body is rewritten to point at our redirector, which logs the click and forwards straight to
-            the real page. A click is <strong>deliberate</strong>: a person read far enough to act. That makes it the number to
-            trust when the two disagree.
+            the real page. A click is <strong>deliberate</strong>: a person read far enough to act. That makes it the better of
+            the two when they disagree.
+          </div>
+        </div>
+        <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #6EE7B7', paddingLeft: '0.7rem' }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#047857', marginBottom: 2 }}>Reply — they wrote back</div>
+          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
+            Matched from the campaign&rsquo;s HubSpot activity, with out-of-office and auto-replies filtered out. Nothing
+            automated produces one, so it outranks both of the others — and it only shows on sends a saved campaign claims by
+            subject line.
           </div>
         </div>
       </div>
@@ -160,12 +175,14 @@ function MetricsExplainer() {
             <li><strong>Total opens</strong> — every open. The same person reading twice an hour apart adds two.</li>
             <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
             <li><strong>Total clicks</strong> — every click: the same link twice, or two different links in one email, each add one.</li>
+            <li><strong>Replied (%)</strong> — of the sends a saved campaign is tracking, how many wrote back. Sends no campaign claims are left out of both halves of that fraction rather than counted as silence.</li>
           </ul>
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>When they disagree</div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <li><strong>Clicks well below opens is normal.</strong> Reading costs nothing; clicking is a decision. The gap between the two is roughly the gap between attention and interest.</li>
             <li><strong>A click with no open is normal too</strong> — the reader&rsquo;s client blocked the image, so the pixel never fired, but the link still worked. Read that row as engaged, not as a glitch.</li>
-            <li><strong>An open with no click isn&rsquo;t nothing</strong>, but it is the weaker signal of the two: it can also be a privacy pre-fetch or a scanner (see the note below).</li>
+            <li><strong>An open with no click isn&rsquo;t nothing</strong>, but it is the weakest of the three: it can also be a privacy pre-fetch or a scanner (see the note below).</li>
+            <li><strong>A reply with no open or click happens</strong>, and it is the best outcome on the page — someone read the message in a client that blocked the image and answered it without following a link.</li>
           </ul>
         </div>
       </details>
@@ -181,7 +198,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
   const { rows, loading, error, fallback } = useEmailTracking();
   const { campaigns } = useSavedCampaigns();
   const [expanded, setExpanded] = useState(null);
-  const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'opens' | 'clicks'
+  const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'opens' | 'clicks' | 'replies'
   const [search, setSearch] = useState('');
   // '' = every send, 'none' = sends no campaign claims, otherwise the saved
   // campaign's index (subjects aren't unique, so the index is the identity).
@@ -202,6 +219,17 @@ export function EmailTrackingView({ onOpenCampaign }) {
     (campaigns || []).forEach((c, index) => map.set(index, sentAtByRecipient(c?.contacts)));
     return map;
   }, [campaigns]);
+  // Replies come off the same campaign rosters as the send times — the Email
+  // Campaigns tab has had them all along, matched from HubSpot's incoming mail
+  // with out-of-office / auto-reply / bounce notifications already filtered
+  // out. A send with no campaign claiming it has no reply status at all, which
+  // is not the same as "no reply": the column says so rather than showing a
+  // dash that reads as silence.
+  const replyByCampaign = useMemo(() => {
+    const map = new Map();
+    (campaigns || []).forEach((c, index) => map.set(index, replyByRecipient(c?.contacts)));
+    return map;
+  }, [campaigns]);
   const linked = useMemo(
     () => rows.map(r => {
       const link = campaignForSubject(campaigns, r.subject);
@@ -210,9 +238,12 @@ export function EmailTrackingView({ onOpenCampaign }) {
       const opens = sent?.has(key)
         ? countOpens(r, { sentAt: sent.get(key) ?? null })
         : countOpens(r);
-      return { row: r, link, opens };
+      const replies = link ? replyByCampaign.get(link.index) : null;
+      // null = nobody is tracking replies for this send (no campaign owns it).
+      const reply = replies?.get(key) ?? null;
+      return { row: r, link, opens, reply };
     }),
-    [rows, campaigns, sentAtByCampaign],
+    [rows, campaigns, sentAtByCampaign, replyByCampaign],
   );
 
   // How many tracked sends each campaign claims — shown in the picker so an
@@ -250,7 +281,14 @@ export function EmailTrackingView({ onOpenCampaign }) {
     const clickedEmails = list.filter(r => (r.clickCount || 0) > 0).length;
     const openRate = trackedEmails ? Math.round((openedEmails / trackedEmails) * 100) : 0;
     const clickRate = trackedEmails ? Math.round((clickedEmails / trackedEmails) * 100) : 0;
-    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate };
+    // Reply rate is measured against the sends a campaign actually tracks
+    // replies for, not against every tracked email — dividing by sends nobody
+    // is watching for a reply would report a rate that only ever falls as
+    // untracked drafts pile up.
+    const replyTracked = scoped.filter(l => l.reply).length;
+    const repliedEmails = scoped.filter(l => l.reply?.replied).length;
+    const replyRate = replyTracked ? Math.round((repliedEmails / replyTracked) * 100) : 0;
+    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate };
   }, [scoped]);
 
   const visible = useMemo(() => {
@@ -268,6 +306,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
     const sorted = [...list];
     if (sortBy === 'opens') sorted.sort((a, b) => b.opens.count - a.opens.count || ms(b) - ms(a));
     else if (sortBy === 'clicks') sorted.sort((a, b) => (b.row.clickCount || 0) - (a.row.clickCount || 0) || ms(b) - ms(a));
+    else if (sortBy === 'replies') sorted.sort((a, b) => (b.reply?.replied ? 1 : 0) - (a.reply?.replied ? 1 : 0) || ms(b) - ms(a));
     else sorted.sort((a, b) => ms(b) - ms(a)); // most recent
     return sorted;
   }, [scoped, search, sortBy]);
@@ -280,8 +319,8 @@ export function EmailTrackingView({ onOpenCampaign }) {
         <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>Email Tracking</h2>
         <span style={{ fontSize: '0.8rem', color: '#64748B' }}>
           {selectedCampaign
-            ? <>Opens &amp; clicks for <strong>{campaignLabel(selectedCampaign)}</strong>.</>
-            : 'Opens & clicks for emails sent with tracking on.'}
+            ? <>Opens, clicks &amp; replies for <strong>{campaignLabel(selectedCampaign)}</strong>.</>
+            : 'Opens, clicks & replies for emails sent with tracking on.'}
         </span>
         {selectedCampaign && onOpenCampaign && (
           <button
@@ -298,7 +337,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
 
       {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
-        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are the hard signal.</strong>
+        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are a hard signal; a reply is the hardest.</strong>
       </div>
 
       {/* Shown only when the realtime read was blocked and we fell back to
@@ -326,6 +365,15 @@ export function EmailTrackingView({ onOpenCampaign }) {
         </div>
         <div style={tile} title="Every click: the same link twice, or two different links in one email, each add one.">
           <div style={tileNum}>{stats.totalClicks}</div><div style={tileLabel}>Total clicks</div>
+        </div>
+        <div
+          style={tile}
+          title={stats.replyTracked
+            ? `Recipients who wrote back, out of the ${stats.replyTracked} send${stats.replyTracked === 1 ? '' : 's'} a saved campaign is tracking replies for. Out-of-office and auto-replies don't count.`
+            : 'No send here belongs to a saved campaign, so no replies are being tracked. Match a campaign by subject line on the Email Campaigns tab.'}
+        >
+          <div style={tileNum}>{stats.replyTracked ? stats.repliedEmails : '—'}</div>
+          <div style={tileLabel}>{stats.replyTracked ? `Replied (${stats.replyRate}%)` : 'Replied'}</div>
         </div>
       </div>
 
@@ -358,6 +406,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
             <option value="sent">Most recent</option>
             <option value="opens">Most opens</option>
             <option value="clicks">Most clicks</option>
+            <option value="replies">Replied first</option>
           </select>
         </label>
       </div>
@@ -396,10 +445,11 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel loaded — i.e. the message was displayed. Passive: a client that blocks images never registers one.">Opens</th>
                 <th style={th}>Last open</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than an open — and can happen on a send that never registered one.">Clicks</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Whether the recipient wrote back, from the campaign's HubSpot activity. Out-of-office and auto-replies don't count. The one signal here a machine can't produce — so it outranks both of the columns to its left.">Replied</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map(({ row: r, link, opens }) => {
+              {visible.map(({ row: r, link, opens, reply }) => {
                 const isOpen = expanded === r.id;
                 const clicked = (r.clickCount || 0) > 0;
                 return (
@@ -408,6 +458,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
                     r={r}
                     link={link}
                     opens={opens}
+                    reply={reply}
                     onOpenCampaign={onOpenCampaign}
                     isOpen={isOpen}
                     clicked={clicked}
@@ -431,7 +482,7 @@ const OPEN_VERDICT_LABEL = {
   repeat: ['· repeat', 'The same client re-loaded the pixel within 5 minutes of its last hit — one read, re-rendered.'],
 };
 
-function FragmentRow({ r, link, opens: openSummary, onOpenCampaign, isOpen, clicked, onToggle }) {
+function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpen, clicked, onToggle }) {
   const opened = openSummary.count > 0;
   const excluded = describeExcludedOpens(openSummary);
   // Newest first, carrying each event's verdict. Falls back to the raw
@@ -486,10 +537,21 @@ function FragmentRow({ r, link, opens: openSummary, onOpenCampaign, isOpen, clic
         <td style={{ ...td, textAlign: 'center' }}>
           {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}
         </td>
+        <td style={{ ...td, textAlign: 'center' }}>
+          {!reply ? (
+            <span style={{ color: '#CBD5E1' }} title="No saved campaign claims this send, so nothing is watching for a reply to it. Replies are matched to a campaign by subject line.">—</span>
+          ) : reply.replied ? (
+            <span title={[reply.repliedBy && `Replied by ${reply.repliedBy}`, reply.replyDate && fmtDateTime(reply.replyDate)].filter(Boolean).join(' · ') || undefined}>
+              <Pill tone="green">Replied</Pill>
+            </span>
+          ) : (
+            <span style={{ color: '#94A3B8', fontSize: '0.72rem' }} title="This send is in a campaign that tracks replies, and no reply has come in.">No reply</span>
+          )}
+        </td>
       </tr>
       {isOpen && (
         <tr>
-          <td colSpan={8} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+          <td colSpan={9} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
@@ -516,6 +578,17 @@ function FragmentRow({ r, link, opens: openSummary, onOpenCampaign, isOpen, clic
                 )}
               </div>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>Reply</div>
+                <div style={{ fontSize: '0.78rem', color: reply?.replied ? '#334155' : '#94A3B8', marginBottom: '0.9rem' }}>
+                  {!reply
+                    ? 'Not tracked — no saved campaign claims this send.'
+                    : reply.replied
+                      ? <>
+                          <span style={{ fontWeight: 600 }}>{reply.repliedBy || 'Replied'}</span>
+                          {reply.replyDate && <span style={{ color: '#64748B' }}> · {fmtDateTime(reply.replyDate)}</span>}
+                        </>
+                      : 'No reply yet.'}
+                </div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>Clicks ({r.clickCount || 0})</div>
                 {clicks.length === 0 ? (
                   <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No link clicks recorded yet.</div>
