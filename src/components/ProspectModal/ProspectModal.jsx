@@ -8777,6 +8777,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 function deleteRow(idx) {
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
+                // Pinning is the row's own state, not the session's: it sticks
+                // with the company until it is unpinned. Unpinning drops the
+                // key rather than storing `pinned: false`, so a row that was
+                // never pinned and one that was pinned and released look the
+                // same on the way out.
+                function togglePin(idx) {
+                  set('portfolioCompanies', rows.map((r, i) => {
+                    if (i !== idx) return r;
+                    const { pinned, ...rest } = r;
+                    return pinned ? rest : { ...rest, pinned: true };
+                  }));
+                }
                 function addRow() {
                   // `addedManuallyAt` is both a record of the hand-entry and
                   // the row's identity for pinning — nudged forward on the
@@ -8912,17 +8924,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 const scoreForSort = s => s == null ? -Infinity : s;
                 const newStampSet = new Set(portfolioNewStamps);
                 const isNewRow = (i) => !!rows[i]?.addedManuallyAt && newStampSet.has(rows[i].addedManuallyAt);
+                const isPinnedRow = (i) => !!rows[i]?.pinned;
+                const pinnedCount = rows.filter(r => r.pinned).length;
+                // Three tiers, top to bottom: rows the user pinned, rows added
+                // by hand in this sitting (see portfolioNewStamps), then the
+                // rest. Whatever sort is active still orders each tier
+                // internally, so pinning a handful of companies lifts them out
+                // without scrambling their order relative to each other.
                 const displayOrder = (() => {
                   const ranked = portfolioSortByRank
                     ? rows.map((_, i) => i).sort((a, b) => scoreForSort(rowScores[b]) - scoreForSort(rowScores[a]))
                     : rows.map((_, i) => i);
-                  if (newStampSet.size === 0) return ranked;
-                  // Rows just added by hand sit on top in the order they were
-                  // added, ahead of whatever sort is active; everything else
-                  // keeps its place.
-                  const pinned = rows.map((_, i) => i).filter(isNewRow);
-                  const pinnedSet = new Set(pinned);
-                  return [...pinned, ...ranked.filter(i => !pinnedSet.has(i))];
+                  const pinnedTier = ranked.filter(isPinnedRow);
+                  // A row can be both pinned and freshly added — the pin wins,
+                  // so it appears once, in the higher tier.
+                  const addedTier = rows.map((_, i) => i).filter(i => isNewRow(i) && !isPinnedRow(i));
+                  if (pinnedTier.length === 0 && addedTier.length === 0) return ranked;
+                  const lifted = new Set([...pinnedTier, ...addedTier]);
+                  return [...pinnedTier, ...addedTier, ...ranked.filter(i => !lifted.has(i))];
                 })();
 
                 // Target Accounts — full list of names from the uploaded sheet (same source as MyAccountsView)
@@ -9269,6 +9288,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
                           <colgroup>
+                            <col style={{ width: '24px' }} />
                             <col style={{ width: portfolioColWidths.rank + 'px',             visibility: colVis('rank') }} />
                             <col style={{ width: portfolioColWidths.company + 'px',          visibility: colVis('company') }} />
                             <col style={{ width: portfolioColWidths.status + 'px',           visibility: colVis('status') }} />
@@ -9295,6 +9315,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </colgroup>
                           <thead>
                             <tr style={{ background: '#F8FAFC' }}>
+                              <th
+                                style={{ ...thBase, padding: '0.3rem 0.1rem', textAlign: 'center' }}
+                                title={pinnedCount > 0
+                                  ? `${pinnedCount} pinned ${pinnedCount === 1 ? 'company' : 'companies'} held at the top of the table, whatever the sort. Click a row's pin to release it.`
+                                  : "Pin a company to hold it at the top of the table, whatever the sort. Pins stay put after you close this popup."}
+                                aria-label="Pinned"
+                              >📌</th>
                               <th
                                 style={{ ...thBase, cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
@@ -9341,13 +9368,42 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               const savedForRow = savedMappings[mappingKey(r.companyName)];
                               const raFromSaved = !!(isMatched && savedForRow && savedForRow.raClientMatch === r.raClientMatch);
                               const targetFromSaved = !!(r.targetAccount && savedForRow && savedForRow.targetAccount === r.targetAccount);
-                              const justAdded = isNewRow(i);
+                              const isPinned = isPinnedRow(i);
+                              const justAdded = !isPinned && isNewRow(i);
+                              // The pinned block runs from the top of the
+                              // table, so its last row is the one that closes
+                              // it off — a heavier rule there says where the
+                              // pins stop and the ranking resumes.
+                              const lastPinned = isPinned && displayI === pinnedCount - 1;
                               return (
                               <tr
                                 key={i}
                                 title={justAdded ? 'Added by hand just now — it stays at the top of the table until you reopen this company, then it takes its own rank.' : undefined}
-                                style={{ borderBottom: '1px solid #F1F5F9', background: justAdded ? '#F0F9FF' : 'transparent' }}
+                                style={{
+                                  borderBottom: lastPinned ? '2px solid #FCD34D' : '1px solid #F1F5F9',
+                                  background: isPinned ? '#FFFBEB' : (justAdded ? '#F0F9FF' : 'transparent'),
+                                }}
                               >
+                                <td style={{ padding: '0.15rem 0', textAlign: 'center' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePin(i)}
+                                    title={isPinned
+                                      ? `Unpin "${r.companyName || 'this company'}" — it goes back to its own place in the sort.`
+                                      : `Pin "${r.companyName || 'this company'}" to the top of the table.`}
+                                    aria-label={isPinned ? `Unpin ${r.companyName || 'row'}` : `Pin ${r.companyName || 'row'}`}
+                                    aria-pressed={isPinned}
+                                    style={{
+                                      border: 'none', background: 'transparent', cursor: 'pointer', padding: '0 1px',
+                                      fontSize: '0.7rem', lineHeight: 1.2, fontFamily: 'inherit',
+                                      opacity: isPinned ? 1 : 0.22,
+                                      filter: isPinned ? 'none' : 'grayscale(1)',
+                                      transition: 'opacity 0.12s',
+                                    }}
+                                    onMouseEnter={e => { if (!isPinned) e.currentTarget.style.opacity = '0.75'; }}
+                                    onMouseLeave={e => { if (!isPinned) e.currentTarget.style.opacity = '0.22'; }}
+                                  >📌</button>
+                                </td>
                                 {(() => {
                                   const score = rowScores[i];
                                   const tier = industryTier(r.sector || r.industry);
@@ -9927,10 +9983,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                {/* Cell spans track the 23 columns above: Totals covers
-                                    Opportunity Score → HQ Country, then each total sits
-                                    under the column it sums. */}
-                                <td colSpan={5} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                {/* Cell spans track the 24 columns above: Totals covers
+                                    the pin column and Opportunity Score → HQ Country, then
+                                    each total sits under the column it sums. */}
+                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
