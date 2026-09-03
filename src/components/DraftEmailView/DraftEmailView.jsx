@@ -2484,7 +2484,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
           <label
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.6rem', fontSize: '0.76rem', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-            title="Adds an invisible open pixel and rewrites links so you can see opens & clicks in the Email Tracking tab. Note: opens are approximate: Apple Mail & Gmail can pre-load or block the pixel."
+            title="Adds an invisible tracking pixel and rewrites links so you can see image loads & clicks in the Email Tracking tab. An image load is not a read: Apple Mail & Gmail can pre-load the pixel, and Outlook blocks it. Clicks are the reliable half."
           >
             <input
               type="checkbox"
@@ -2492,7 +2492,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               onChange={e => { setTrackEmails(e.target.checked); updateSettings({ trackEmails: e.target.checked }); }}
               style={{ width: 16, height: 16, cursor: 'pointer' }}
             />
-            <span>Track opens &amp; clicks <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
+            <span>Track image loads &amp; clicks <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
           </label>
 
           <div className={styles.actions}>

@@ -72,7 +72,7 @@ check('opens on separate days are called out',
     ev(t0, UA.mac, 'Boston'),
     ev(t0 + DAY, UA.mac, 'Boston'),
     ev(t0 + 2 * DAY, UA.mac, 'Boston'),
-  ]))), ['Opened on 3 days']);
+  ]))), ['Loaded on 3 days']);
 check('several opens inside ONE day are not repeat reads',
   engagementSignals(summary([
     ev(t0, UA.mac, 'Boston'),
@@ -121,7 +121,7 @@ check('a proxied open adds neither a place nor a device',
 
 check('a first open within the hour is called out',
   labels(engagementSignals(summary([ev(t0 + 12 * 60000, UA.mac, 'Boston')]), { sentAt: t0 })),
-  ['Opened in 12m']);
+  ['Loaded in 12m']);
 check('a first open the next day is not',
   engagementSignals(summary([ev(t0 + DAY, UA.mac, 'Boston')]), { sentAt: t0 }), []);
 check('no send time means no timing signal — not a fabricated one',

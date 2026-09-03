@@ -709,7 +709,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Open/click tracking for this campaign. The campaign report never sends
   // mail — HubSpot is the source of the sends — so tracking is joined in
   // from the `emailTracking` docs written when the drafts were generated
-  // with "Track opens & clicks" on (Draft Emails). Matched on the campaign
+  // with "Track image loads & clicks" on (Draft Emails). Matched on the campaign
   // subject + recipient address. A contact row can list several addresses
   // ("a@x; b@y"), so every address is checked and the best signal wins.
   const { rows: trackingRows, error: trackingError } = useEmailTracking();
@@ -839,14 +839,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</div>
             </div>
-            {/* Opens / clicks, joined from the tracked drafts. Only shown
+            {/* Image loads / clicks, joined from the tracked drafts. Only shown
                 once at least one send in this campaign carried tracking —
                 otherwise the tiles would read a misleading 0%. */}
             {trackingStats.tracked > 0 && (
               <>
                 <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Opened</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} opened. Pixel hits before the send (proof-reading the draft), automated fetches and repeat loads within 5 minutes don't count. What's left is still directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Images loaded</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} had the tracking pixel fetched — which is not the same as being read. Hits before the send (proof-reading the draft), automated fetches and repeat loads within 5 minutes don't count. What's left is still directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
                     {trackingStats.opened} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.openRate}%)</span>
                   </div>
                 </div>
@@ -862,8 +862,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           {/* Nudge when nothing in this campaign was sent with tracking on. */}
           {trackingStats.tracked === 0 && !trackingError && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
-              No open/click tracking for this subject. Tracking is added when you generate the drafts from{' '}
-              <strong>Draft Emails</strong> with “Track opens &amp; clicks” checked.
+              No tracking for this subject. Tracking is added when you generate the drafts from{' '}
+              <strong>Draft Emails</strong> with “Track image loads &amp; clicks” checked.
             </div>
           )}
 
@@ -1040,8 +1040,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         was actually sent with tracking on. */}
                     {trackingStats.tracked > 0 && (
                       <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-                        title="Opens exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes — hover a count to see what was dropped. What remains is still directional (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
-                      >Opens / Clicks</th>
+                        title="Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes — hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it); clicks are the hard signal."
+                      >Loads / Clicks</th>
                     )}
                     <SortHeader label="Replied By" sortKey="repliedBy" />
                     <SortHeader label="Reply Date" sortKey="replyDate" />
