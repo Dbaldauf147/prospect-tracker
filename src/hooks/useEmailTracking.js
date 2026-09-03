@@ -131,13 +131,29 @@ export function replyByRecipient(contacts) {
       replied: !!c?.replied,
       replyDate: c?.replyDate || null,
       repliedBy: c?.repliedBy || '',
+      // Non-answers that aren't a no: the address failed, or their
+      // auto-responder says they're away. api/email-campaign.js classifies
+      // both out of the incoming mail it was already suppressing.
+      bounced: !!c?.bounced,
+      outOfOffice: !!c?.outOfOffice,
+      oooSubject: c?.oooSubject || '',
     };
     for (const part of String(c?.email || '').split(';')) {
       const key = normalizeTrackedEmail(part);
       if (!key) continue;
       const prev = map.get(key);
       if (prev === undefined) { map.set(key, entry); continue; }
+      // Merge the delivery facts rather than letting a later duplicate row
+      // with neither flag erase one the earlier row recorded.
+      entry.bounced = entry.bounced || prev.bounced;
+      entry.outOfOffice = entry.outOfOffice || prev.outOfOffice;
+      entry.oooSubject = entry.oooSubject || prev.oooSubject;
       if (!prev.replied && entry.replied) { map.set(key, entry); continue; }
+      if (!prev.bounced && entry.bounced) { map.set(key, { ...prev, bounced: true }); continue; }
+      if (!prev.outOfOffice && entry.outOfOffice) {
+        map.set(key, { ...prev, outOfOffice: true, oooSubject: entry.oooSubject });
+        continue;
+      }
       if (prev.replied && entry.replied && entry.replyDate && prev.replyDate
         && entry.replyDate < prev.replyDate) {
         map.set(key, entry);

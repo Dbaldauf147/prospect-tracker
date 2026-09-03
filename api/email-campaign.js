@@ -7,6 +7,7 @@
 
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { classifyAutoReply, attributeBounce } from './_lib/autoReply.js';
 
 const BASE = 'https://api.hubapi.com';
 
@@ -157,42 +158,11 @@ async function handler(req, res, auth) {
     const sentEmails = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
     const replyEmails = matching.filter(e => e.hs_email_direction === 'INCOMING_EMAIL');
 
-    // Auto-reply detection. HubSpot doesn't surface RFC 'Auto-Submitted'
-    // headers, so we lean on the two signals available on the email
-    // object: the subject line (where every major mail server stamps an
-    // OOO / vacation / auto-reply prefix) and the from address (where
-    // bounce / delivery notifications come from system mailboxes).
-    const AUTO_REPLY_SUBJECT_PATTERNS = [
-      /^\s*(?:re:\s*)?automatic reply\b/i,
-      /^\s*(?:re:\s*)?auto[\s-]?reply\b/i,
-      /^\s*(?:re:\s*)?auto[\s-]?response\b/i,
-      /^\s*(?:re:\s*)?out of (?:the )?office\b/i,
-      /^\s*(?:re:\s*)?ooo\b/i,
-      /^\s*(?:re:\s*)?(?:i am |i'm )?away from (?:the )?office\b/i,
-      /^\s*(?:re:\s*)?(?:i am |i'm )?on (?:vacation|leave|holiday|pto|parental leave|maternity leave|paternity leave|sabbatical)\b/i,
-      /^\s*(?:re:\s*)?vacation (?:reply|notification|message)\b/i,
-      /^\s*undeliverable:?\b/i,
-      /^\s*delivery (?:status notification|failure|notification|has failed)/i,
-      /^\s*returned mail\b/i,
-      /^\s*mail delivery (?:failed|subsystem|failure)/i,
-      /^\s*postmaster\b/i,
-      /\b(automatic|auto)[\s-]?reply\b/i,
-      /\bbounce notification\b/i,
-    ];
-    const AUTO_REPLY_FROM_PATTERNS = [
-      /^postmaster@/i,
-      /^mailer-daemon@/i,
-      /^no-?reply@/i,
-      /^do-?not-?reply@/i,
-      /^bounce[s]?@/i,
-    ];
-    function isAutoReply(e) {
-      const subject = e.hs_email_subject || '';
-      for (const re of AUTO_REPLY_SUBJECT_PATTERNS) if (re.test(subject)) return true;
-      const from = e.hs_email_from_email || '';
-      for (const re of AUTO_REPLY_FROM_PATTERNS) if (re.test(from)) return true;
-      return false;
-    }
+    // Machine-generated incoming mail is classified rather than merely
+    // detected — see api/_lib/autoReply.js. A bounce is an address to fix and
+    // an out-of-office is a date to try again on; both used to vanish into one
+    // suppressed counter. The set of mail suppressed from the reply count is
+    // unchanged, so no campaign's response rate moves.
 
     // Group sent emails — deduplicate by recipient(s)
     // If the same person is emailed multiple times, keep only the most recent.
@@ -229,6 +199,11 @@ async function handler(req, res, auth) {
           replied: false,
           replyDate: null,
           repliedBy: null,
+          bounced: false,
+          bounceDate: null,
+          outOfOffice: false,
+          oooDate: null,
+          oooSubject: '',
         };
       }
     }
@@ -242,9 +217,41 @@ async function handler(req, res, auth) {
     for (const s of sends) s.recipients.forEach(r => allRecipientEmails.add(r));
 
     let autoReplyCount = 0;
+    const suppressed = { bounce: 0, ooo: 0, other: 0, unattributed: 0 };
     for (const reply of replyEmails) {
-      if (isAutoReply(reply)) { autoReplyCount++; continue; }
       const from = (reply.hs_email_from_email || '').toLowerCase().trim();
+      const kind = classifyAutoReply(reply);
+      if (kind) {
+        autoReplyCount++;
+        suppressed[kind === 'auto' ? 'other' : kind] += 1;
+        // An out-of-office comes from the recipient's own auto-responder, so
+        // it matches a send by address exactly. A bounce comes from a system
+        // mailbox and can only be matched by domain, and only when that domain
+        // names one send — see attributeBounce.
+        if (kind === 'ooo' && from) {
+          const hit = sends.find(s => s.recipients.includes(from));
+          if (hit) {
+            // Keep the LATEST auto-response: an OOO refreshed on the way back
+            // carries the more useful return date.
+            if (!hit.oooDate || (reply.hs_timestamp && reply.hs_timestamp > hit.oooDate)) {
+              hit.outOfOffice = true;
+              hit.oooDate = reply.hs_timestamp;
+              hit.oooSubject = reply.hs_email_subject || '';
+            }
+          } else {
+            suppressed.unattributed += 1;
+          }
+        } else if (kind === 'bounce') {
+          const i = attributeBounce(from, sends);
+          if (i >= 0) {
+            sends[i].bounced = true;
+            sends[i].bounceDate = sends[i].bounceDate || reply.hs_timestamp;
+          } else {
+            suppressed.unattributed += 1;
+          }
+        }
+        continue;
+      }
       if (!from) continue;
       // Find the send this reply belongs to
       for (const s of sends) {
@@ -269,6 +276,14 @@ async function handler(req, res, auth) {
       replied: s.replied,
       replyDate: s.replyDate,
       repliedBy: s.repliedBy,
+      // A delivery failure for this address, and the recipient's own
+      // auto-responder. Both are non-answers, and neither is a "no": a bounce
+      // means nobody ever saw it, an OOO means not yet.
+      bounced: !!s.bounced,
+      bounceDate: s.bounceDate || null,
+      outOfOffice: !!s.outOfOffice,
+      oooDate: s.oooDate || null,
+      oooSubject: s.oooSubject || '',
       recipientCount: s.recipients.length,
     })).sort((a, b) => {
       if (a.replied !== b.replied) return a.replied ? -1 : 1;
@@ -280,7 +295,12 @@ async function handler(req, res, auth) {
       totalEmails: matching.length,
       sent: totalSends,
       replies: totalReplied,
+      // Kept as the total across all three kinds — saved campaigns store it
+      // and the badge that reads it predates the breakdown.
       autoRepliesSuppressed: autoReplyCount,
+      suppressed,
+      bounced: sends.filter(s => s.bounced).length,
+      outOfOffice: sends.filter(s => s.outOfOffice).length,
       uniqueRecipients: totalSends,
       uniqueRepliers: totalReplied,
       responseRate: parseFloat(responseRate),

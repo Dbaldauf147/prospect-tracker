@@ -167,7 +167,22 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       const act = activityByEmail.get(key);
       if (act) {
         // Keep the roster entry's identity + event status; refresh send/reply.
-        merged.push({ ...rc, sentDate: act.sentDate, replied: !!act.replied, replyDate: act.replyDate, repliedBy: act.repliedBy, recipientCount: act.recipientCount || 1 });
+        merged.push({
+          ...rc,
+          sentDate: act.sentDate,
+          replied: !!act.replied,
+          replyDate: act.replyDate,
+          repliedBy: act.repliedBy,
+          // Delivery outcome, classified out of the incoming mail the campaign
+          // was already suppressing (api/_lib/autoReply.js). A bounce is an
+          // address to fix; an out-of-office is a date to try again on.
+          bounced: !!act.bounced,
+          bounceDate: act.bounceDate || null,
+          outOfOffice: !!act.outOfOffice,
+          oooDate: act.oooDate || null,
+          oooSubject: act.oooSubject || '',
+          recipientCount: act.recipientCount || 1,
+        });
       } else {
         // No matching send for this subject → the contact stays in the fixed
         // list as "Not Sent". Nothing new is appended from the search.
@@ -187,6 +202,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       ...deriveCounts(contacts),
       totalEmails: json.totalEmails,
       autoRepliesSuppressed: json.autoRepliesSuppressed || 0,
+      suppressed: json.suppressed || null,
       contacts,
       refreshedAt: new Date().toISOString(),
     };
@@ -260,6 +276,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       ...deriveCounts(results.contacts),
       totalEmails: results.totalEmails,
       autoRepliesSuppressed: results.autoRepliesSuppressed || 0,
+      suppressed: results.suppressed || null,
       removedEmails: results.removedEmails || [],
       contacts: results.contacts,
     };
@@ -659,10 +676,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   }
 
   // Where a contact falls in the send/reply lifecycle, used to sort the Status
-  // column meaningfully: Not Sent < No Reply < Replied.
+  // column meaningfully: Not Sent < Bounced < No Reply < Out of Office <
+  // Replied. A bounce sorts below silence deliberately — it is the worst
+  // outcome, because the email never arrived at all — and an out-of-office
+  // sorts above it, being a non-answer that is not a no.
   function statusRank(c) {
-    if (c.replied) return 2;
-    if (c.sentDate) return 1;
+    if (c.replied) return 4;
+    if (c.outOfOffice) return 3;
+    if (c.bounced) return 1;
+    if (c.sentDate) return 2;
     return 0;
   }
 
@@ -906,7 +928,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               {refreshing && <span style={{ marginLeft: '0.5rem', fontSize: '0.6rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>↻ Refreshing…</span>}
               {displayResults.autoRepliesSuppressed > 0 && (
                 <span
-                  title="Out-of-office, vacation, and delivery-failure replies are excluded from the response count."
+                  title={(() => {
+                    const sup = displayResults.suppressed;
+                    const parts = sup
+                      ? [
+                        sup.bounce && `${sup.bounce} delivery failure${sup.bounce === 1 ? '' : 's'}`,
+                        sup.ooo && `${sup.ooo} out-of-office`,
+                        sup.other && `${sup.other} other automated`,
+                      ].filter(Boolean)
+                      : [];
+                    const breakdown = parts.length ? ` (${parts.join(', ')})` : '';
+                    return `Machine-generated mail is excluded from the response count${breakdown}. Bounces and out-of-office replies are shown against the contact in the Status column.`;
+                  })()}
                   style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#F1F5F9', color: '#475569' }}
                 >{displayResults.autoRepliesSuppressed} auto-reply{displayResults.autoRepliesSuppressed === 1 ? '' : 's'} suppressed</span>
               )}
@@ -1032,9 +1065,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                       <td style={{ padding: '0.4rem 0.6rem' }}>
                         {c.replied
                           ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
-                          : c.sentDate
-                            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
-                            : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
+                          : c.bounced
+                            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEE2E2', color: '#991B1B' }} title="The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.">Bounced</span>
+                            : c.outOfOffice
+                              ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title={c.oooSubject ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.` : "Their auto-responder answered. Not a no — worth a second send when they're back."}>Out of Office</span>
+                              : c.sentDate
+                                ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
+                                : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
                         }
                       </td>
                       {trackingStats.tracked > 0 && (
