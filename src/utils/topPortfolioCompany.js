@@ -7,10 +7,10 @@
 //
 //   - HQ in North America, and
 //   - not a company that's already settled one way or the other: closed
-//     off (Lost - Not Sold), parked (Hold Off), or already won (Client).
-//     The column answers "who should I be working", and none of those
-//     three is the answer — an existing Client least of all, since it's
-//     already counted a column over under PC Clients.
+//     off (Lost - Not Sold), parked (Hold Off), or a client now (Client)
+//     or before (Old Client). The column answers "who should I be
+//     working", and none of those four is the answer — a client least of
+//     all, since it's already counted a column over under PC Clients.
 //
 // Two things are worth being careful about, because both would quietly
 // mislead rather than visibly break:
@@ -38,7 +38,11 @@ import { computePortfolioFitScore, siteCountNumber } from './portfolioCompaniesW
 
 // The statuses that take a company out of the running. "Not Sold" is
 // written 'Lost - Not Sold' on the prospect record (see data/enums.js).
-export const TOP_PC_EXCLUDED_STATUSES = ['Lost - Not Sold', 'Hold Off', 'Client'];
+// 'Old Client' is in here for the same reason 'Client' is: a company we
+// used to serve isn't the answer to "who should I be working next" off a
+// cold Top PC column — winning one back is its own motion, started from
+// the account itself rather than from a firm's portfolio ranking.
+export const TOP_PC_EXCLUDED_STATUSES = ['Lost - Not Sold', 'Hold Off', 'Client', 'Old Client'];
 
 const EXCLUDED = new Set(TOP_PC_EXCLUDED_STATUSES.map(s => s.toLowerCase()));
 
