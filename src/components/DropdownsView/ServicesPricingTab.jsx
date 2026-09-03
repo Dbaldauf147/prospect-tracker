@@ -7,6 +7,7 @@ import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEst
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../../utils/pricingAnalysis';
 import { OppImportModal } from './OppImportModal';
 import { PricingBasesModal } from './PricingBasesModal';
+import { SetupFeeModal } from './SetupFeeModal';
 import {
   PRICING_BASES,
   basisFor,
@@ -15,6 +16,7 @@ import {
   formatMoney,
   formatMoneyRange,
   formatRate,
+  formatSetupSummary,
   getServicePricing,
   parseMoney,
   pricingFor,
@@ -25,6 +27,7 @@ import {
   pricingBasesTopUp,
   PRICING_BASES_VERSION,
   setPricingField,
+  setPricingSetup,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
 
@@ -39,14 +42,19 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'serviceType',  label: 'Type',               width: 100 },
   { key: 'years',        label: 'Years',              width: 80 },
   { key: 'basisLabel',   label: 'Pricing Basis',      width: 150 },
-  // Holds dollars or a percentage depending on the basis, so the header
-  // names both rather than picking one and lying about half the rows. Two
-  // of them: a service quoted as a spread ("$450 to $600 a site") prices
-  // to a range, and one left blank prices to a single figure exactly as it
-  // did before there was a second column. The low one keeps the `rate`
-  // key, so every rate already on the card is already in it.
-  { key: 'rate',         label: 'Low Rate ($ or %)',  width: 130 },
-  { key: 'rateHigh',     label: 'High Rate ($ or %)', width: 130 },
+  // Holds dollars or a percentage depending on the basis, and what it earns
+  // is the service's ongoing fee — annual on a recurring service, the job on
+  // a project. Two of them: a service quoted as a spread ("$450 to $600 a
+  // site") prices to a range, and one left blank prices to a single figure
+  // exactly as it did before there was a second column. The low one keeps
+  // the `rate` key, so every rate already on the card is already in it.
+  { key: 'rate',         label: 'Low Annual Recurring Fee',  width: 175 },
+  { key: 'rateHigh',     label: 'High Annual Recurring Fee', width: 175 },
+  // What it costs to stand the service up, billed once. Built out of fixed
+  // and per-unit components in its own panel rather than typed as a lump,
+  // so the figure can be taken apart later and the per-unit half follows
+  // the deal's counts. See SetupFeeModal.
+  { key: 'setup',        label: 'Setup Fee',          width: 160 },
   { key: 'minFee',       label: 'Min Fee ($)',        width: 110 },
   { key: 'units',        label: 'Units',              width: 80 },
   // The two estimate columns are the scenario in the bar above applied to
@@ -313,6 +321,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value) });
   }
 
+  // The service whose setup fee is open in the panel, by name. Null when
+  // the panel is closed, which is nearly always.
+  const [setupFor, setSetupFor] = useState(null);
+  function saveSetup(name, components) {
+    updateSettings?.({ servicePricing: setPricingSetup(pricing, name, components, bases) });
+    setSetupFor(null);
+  }
+
   // What the last import filled in, so the bar can say where its numbers
   // came from and what it couldn't answer. Cleared when the scope is.
   const [oppImport, setOppImport] = useState(() => restored?.oppImport || null);
@@ -558,6 +574,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         rate: entry.rate,
         rateHigh: entry.rateHigh,
         minFee: entry.minFee,
+        // The components as stored, and what they come to under the
+        // scenario the bar above is set to — the same figure the estimate
+        // columns already carry, so the cell can't disagree with them.
+        setup: entry.setup,
+        _setupFee: est?.setup ?? 0,
         notes: entry.notes,
         // Typed against the row when there is one, otherwise whatever the
         // estimator's count works out to — the estimate already prefers the
@@ -661,6 +682,39 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               onCommit={(v) => savePricingField(row.name, 'rateHigh', v)}
             />
           ),
+        };
+      // The setup fee is built in its own panel rather than typed here: it
+      // is a list of components, and the cell is the total they come to on
+      // this deal. Clicking anywhere in it opens the panel.
+      case 'setup':
+        return {
+          ...base,
+          getSortValue: (row) => row._setupFee,
+          render: (row) => {
+            const summary = formatSetupSummary(row.setup, bases);
+            const has = row.setup.length > 0;
+            return (
+              <button
+                type="button"
+                className={styles.setupCellBtn}
+                onClick={(e) => { e.stopPropagation(); setSetupFor(row.name); }}
+                title={has
+                  ? `${summary} — ${formatMoney(row._setupFee) || '$0'} on this deal, billed once. Click to edit the components.`
+                  : 'No setup fee. Click to add the fixed and per-unit components it is made of.'}
+              >
+                {has
+                  ? (
+                    <>
+                      <span>{formatMoney(row._setupFee) || '$0'}</span>
+                      {row.setup.some(c => c.kind === 'unit') && (
+                        <span className={styles.setupCellRate}>{summary}</span>
+                      )}
+                    </>
+                  )
+                  : <span className={styles.setupCellEmpty}>+ Add</span>}
+              </button>
+            );
+          },
         };
       case 'minFee':
         return {
@@ -892,9 +946,21 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.pricingTotalLabel}>Recurring / year</span>
             <span className={styles.pricingTotalValue}>{formatMoneyRange(totals.recurringAnnual, totals.recurringAnnualHigh) || '$0'}</span>
           </div>
+          {/* One-time money: the projects, plus every setup fee in the
+              scope. The label names the setup half only when there is one,
+              so a scope without any reads exactly as it did before setup
+              fees existed — and one with them can't pass a $8,000
+              implementation charge off as project work. */}
           <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>One-off projects</span>
-            <span className={styles.pricingTotalValue}>{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
+            <span className={styles.pricingTotalLabel}>
+              {totals.setup > 0 ? 'One-off + setup' : 'One-off projects'}
+            </span>
+            <span
+              className={styles.pricingTotalValue}
+              title={totals.setup > 0
+                ? `Billed once: ${formatMoney(totals.setup)} of setup fees${totals.oneTime > totals.setup ? ` and ${formatMoney(totals.oneTime - totals.setup)} of one-off project work` : ''}.`
+                : undefined}
+            >{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
           </div>
           {/* The term total still has to be somewhere — it's the number a
               multi-year deal is signed at — but it's no longer the headline,
@@ -903,7 +969,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.pricingTotalLabel}>Contract value</span>
             <span
               className={styles.pricingTotalValue}
-              title="Every service across its full term: a recurring fee times its years, plus the one-off projects."
+              title="Every service across its full term: a recurring fee times its years, plus the one-off projects and every setup fee once."
             >{formatMoneyRange(totals.contractValue, totals.contractValueHigh) || '$0'}</span>
           </div>
           {/* Year one, not the term: the recurring services at one year each
@@ -914,7 +980,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <span className={styles.pricingTotalLabel}>Estimated Year 1 deal size</span>
             <span
               className={styles.pricingTotalValueMain}
-              title={'The first twelve months: each recurring service’s annual fee plus every one-off project in full. The sum of the Estimated Year 1 Fee column.'
+              title={'The first twelve months: each recurring service’s annual fee, every one-off project in full, and every setup fee. The sum of the Estimated Year 1 Fee column plus the setup fees beside it.'
                 + (totals.ranged ? ' A range, because some of these services are quoted on a low and a high rate — each end is the sum of that end.' : '')}
             >{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}</span>
           </div>
@@ -1090,6 +1156,25 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           onClose={() => setBasesOpen(false)}
         />
       )}
+
+      {setupFor && (() => {
+        const row = rows.find(r => r.name === setupFor);
+        const basis = basisFor(row?.basis, bases);
+        return (
+          <SetupFeeModal
+            serviceName={setupFor}
+            setup={row?.setup || []}
+            bases={bases}
+            counts={counts}
+            // A component charged on the same unit the service is follows
+            // the count typed against the row, exactly as the estimate does.
+            ownUnit={basis?.unit || null}
+            ownUnits={row?.units ?? null}
+            onSave={(components) => saveSetup(setupFor, components)}
+            onClose={() => setSetupFor(null)}
+          />
+        );
+      })()}
 
       {oppPicker && (
         <OppImportModal

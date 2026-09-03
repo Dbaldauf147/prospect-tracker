@@ -12,6 +12,7 @@
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
   feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate,
+  normalizeSetup, setupTotal, formatSetupSummary, setPricingSetup,
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -384,6 +385,106 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     'Bill payment', 'basis', '',
   );
   check('no basis, no rates to read against it', cleared['Bill payment'], undefined);
+}
+
+// ── Setup fees ────────────────────────────────────────────────────────
+//
+// One-time money on a service whose fee usually isn't, so what these pin is
+// where it lands: in the first year and in the contract value once, never in
+// the annual and never multiplied by the term.
+{
+  const SETUP = [
+    { label: 'Implementation', kind: 'fixed', amount: 5000 },
+    { label: 'Site onboarding', kind: 'unit', amount: 150, basis: 'per_site' },
+  ];
+
+  check('a fixed component is dollars flat, a per-unit one multiplies its count',
+    setupTotal(SETUP, { counts: { sites: 20 } }), 5000 + 150 * 20);
+  check('no count for the unit is no per-unit money, not a skipped component',
+    setupTotal(SETUP, { counts: {} }), 5000);
+  check('an empty list is zero, so the figure is always addable',
+    setupTotal([], { counts: { sites: 20 } }), 0);
+
+  // A service sold on a slice of the account is stood up on that slice too.
+  check('the service\u2019s own unit count wins over the shared one',
+    setupTotal(SETUP, { counts: { sites: 819 }, ownUnit: 'sites', ownUnits: 40 }),
+    5000 + 150 * 40);
+  check('\u2026but only for a component charged on that same unit',
+    setupTotal([{ kind: 'unit', amount: 10, basis: 'per_meter' }],
+      { counts: { meters: 500 }, ownUnit: 'sites', ownUnits: 40 }), 10 * 500);
+
+  // What the card shows: the rate, not the total, because the rate is what
+  // was agreed and the total moves with the deal.
+  check('the summary reads as rates', formatSetupSummary(SETUP), '$5,000 + $150/site');
+  check('and nothing reads as nothing', formatSetupSummary([]), '');
+}
+
+{
+  // Normalization: a component with no amount, or a per-unit one whose
+  // basis is gone or isn't per-unit, can't price anything.
+  check('a component with no amount drops out',
+    normalizeSetup([{ kind: 'fixed' }, { kind: 'fixed', amount: 100 }]).length, 1);
+  check('a per-unit component with no unit behind it drops out rather than going flat',
+    normalizeSetup([{ kind: 'unit', amount: 100, basis: 'pct_deal' }]).length, 0);
+  check('an unknown basis drops out too',
+    normalizeSetup([{ kind: 'unit', amount: 100, basis: 'per_truck' }]).length, 0);
+  check('anything that is not a list is an empty one', normalizeSetup('nope'), []);
+  check('a negative amount is not a discount', normalizeSetup([{ kind: 'fixed', amount: -50 }]), []);
+
+  // Stored like every other field: an empty list clears it, and an entry
+  // with nothing left is deleted outright.
+  const saved = setPricingSetup({}, 'Bill payment', [{ kind: 'fixed', amount: 5000 }]);
+  check('a setup fee is stored on the entry', saved['Bill payment'].setup.length, 1);
+  check('clearing it removes the entry that held nothing else',
+    setPricingSetup(saved, 'Bill payment', [])['Bill payment'], undefined);
+  check('and the rest of the entry survives one that does',
+    setPricingSetup({ 'Bill payment': { basis: 'per_site', rate: 450, setup: [{ kind: 'fixed', amount: 1 }] } },
+      'Bill payment', [])['Bill payment'].rate, 450);
+}
+
+{
+  const entry = { basis: 'per_site', rate: 450, setup: [{ kind: 'fixed', amount: 5000 }] };
+  const est = estimateService({ entry, meta: RECURRING, counts: { sites: 20 }, dealSize: '' });
+  check('the setup fee rides alongside the recurring fee', est.setup, 5000);
+  check('and stays out of the annual', est.fee, 9000);
+  check('and out of the fee across the term', est.value, 27000);
+
+  // A service with nothing but a setup fee is still money on the deal.
+  const only = estimateService({
+    entry: { setup: [{ kind: 'fixed', amount: 7500 }] }, meta: RECURRING, counts: {}, dealSize: '',
+  });
+  check('a setup-only service is priced', only.priced, true);
+  check('at nothing recurring', only.fee, 0);
+  check('and its setup fee', only.setup, 7500);
+  check('flagged as setup-only, so a reader knows why the annual is zero', only.setupOnly, true);
+
+  // A service with neither is unpriced exactly as before.
+  const none = estimateService({ entry: {}, meta: RECURRING, counts: {}, dealSize: '' });
+  check('nothing on the card is still unpriced', none.priced, false);
+  check('with no setup fee to report', none.setup, 0);
+}
+
+{
+  // Where it lands in a scope: the first year and the contract value once,
+  // the one-time total rather than the annual.
+  const rows = [{ name: 'Bill payment', meta: RECURRING }];
+  const pricing = { 'Bill payment': { basis: 'per_site', rate: 450, setup: [{ kind: 'fixed', amount: 5000 }] } };
+  const scope = estimateScope({ rows, services: ['Bill payment'], pricing, counts: { sites: 20 }, dealSize: '' });
+  check('the annual is the recurring fee alone', scope.recurringAnnual, 9000);
+  check('the setup fee is one-time money', scope.oneTime, 5000);
+  check('it is named on its own as well', scope.setup, 5000);
+  check('the first year carries both', scope.year1Total, 14000);
+  check('the contract carries it once, not once a year', scope.contractValue, 9000 * 3 + 5000);
+  check('and both ends of a range carry it', scope.oneTimeHigh, 5000);
+
+  // Without one, every total reads exactly as it did before setup fees.
+  const plain = estimateScope({
+    rows, services: ['Bill payment'],
+    pricing: { 'Bill payment': { basis: 'per_site', rate: 450 } },
+    counts: { sites: 20 }, dealSize: '',
+  });
+  check('a service with no setup fee is untouched', plain.year1Total, 9000);
+  check('and reports no setup money', plain.setup, 0);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
