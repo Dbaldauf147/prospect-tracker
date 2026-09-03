@@ -12,6 +12,11 @@
 // Monday 06:00 local send is a Monday *11:00* UTC one, and a naive
 // "dayOfWeek = 1, hourUtc = 6" would mail at 01:00 their time.
 //
+// The third is that the email carries what the tab shows. It is built from
+// a snapshot rather than recomputed, so anything the snapshot drops is
+// silently missing from the reader's copy — which is how a week of sent
+// mail once arrived as "Emails sent 0" beside a screen reading 27.
+//
 // The second is that the renderer escapes. The report body carries a
 // narrative written by an LLM and opp names typed by whoever entered them;
 // both reach an HTML email. Anything that renders those without escaping
@@ -23,6 +28,7 @@ import {
 import { computeNextRun } from '../api/_lib/peOppsSchedule.js';
 import { computeNextRunZoned } from '../api/_lib/weeklyReportSchedule.js';
 import { freshnessNote, narrativeHtml, renderWeeklyReportHtml } from '../api/_lib/weeklyReportEmail.js';
+import { buildSnapshotDoc } from '../api/_lib/weeklyReportSnapshot.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -199,40 +205,112 @@ const injected = renderWeeklyReportHtml({
   capturedAt: Date.now(),
   periodLabel: '<b>label</b>',
   kpiCards: [{ label: '<b>k</b>', value: '<i>v</i>', lines: ['<u>line</u>'] }],
-  tiles: [{ label: '<b>t</b>', value: 1, goal: 2 }],
+  tiles: [{ label: '<b>t</b>', value: 1, goal: 2, sub: '<u>sub</u>' }],
+  funnel: {
+    caption: '<b>cap</b>',
+    stages: [{ label: '<img src=x>', count: 1, amount: '<i>$1</i>', life: '<u>1</u>', closeRate: '<b>1%</b>' }],
+    outcome: { soldLabel: '<b>sold</b>', sold: '<i>$1</i>', weighted: '<u>$2</u>', total: '<b>$3</b>', note: '<script>n</script>' },
+  },
+  goals: { active: ['<script>g</script>'] },
   oppChanges: { newOpps: ['<script>x</script>'] },
 }, { message: '<b>intro</b>' });
 check('opp names are escaped', injected.includes('&lt;script&gt;x&lt;/script&gt;'), true);
 check('period label is escaped', injected.includes('&lt;b&gt;label&lt;/b&gt;'), true);
 check('intro message is escaped', injected.includes('&lt;b&gt;intro&lt;/b&gt;'), true);
+check('goal text is escaped', injected.includes('&lt;script&gt;g&lt;/script&gt;'), true);
+check('funnel stage names are escaped', injected.includes('&lt;img src=x&gt;'), true);
 check('no attacker tag survives anywhere', /<(script|img|u)\b/i.test(injected), false);
+
+// ---- snapshot builder ----------------------------------------------------
+//
+// Both the publish route and a test send run their payload through this, so
+// a field one path carries and the other drops can't happen. The capture
+// stamp is the point: a live test send posts what the tab is showing right
+// now, and without a stamp the email told the reader it was "captured at an
+// unknown time" about numbers seconds old.
+
+const built = buildSnapshotDoc({
+  scope: 'week',
+  periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
+  kpiNote: 'Year to date — not scoped to the week picker',
+  tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' }],
+  funnel: {
+    caption: 'Band height = pipeline value.',
+    stages: [{ label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
+    outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K', note: '63% of $1.3M target' },
+  },
+  goals: { created: ['Book two site walks'], completed: [], active: ['#1 Close Berkshire'] },
+}, { uid: 'u1', email: 'me@example.com' });
+
+check('a posted snapshot is stamped with a capture time',
+  Number.isFinite(built.capturedAt) && Math.abs(Date.now() - built.capturedAt) < 5000, true);
+check('an unstamped snapshot no longer reads as unknown',
+  freshnessNote(built).text.startsWith('Captured at an unknown time'), false);
+check('ownership comes from the token, not the payload', built.ownerUid, 'u1');
+check('the tile provenance note survives', built.tiles[0].sub, 'recorded Sep 3');
+check('the funnel survives', built.funnel.stages[0].count, 3);
+check('the goals survive', [built.goals.created.length, built.goals.active.length], [1, 1]);
+check('a snapshot with no funnel stores none', buildSnapshotDoc({ funnel: { stages: [] } }, {}).funnel, null);
+check('funnel text is bounded',
+  buildSnapshotDoc({ funnel: { caption: 'x'.repeat(500), stages: [{ label: 'y'.repeat(200) }] } }, {})
+    .funnel.stages[0].label.length, 80);
 
 // ---- rendering -----------------------------------------------------------
 
 const html = renderWeeklyReportHtml({
   capturedAt: Date.parse('2026-09-07T05:02:00Z'),
   periodEnd,
+  scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
+  kpiNote: 'Year to date — not scoped to the week picker',
   kpiCards: [
     { label: 'Progress to target', value: '36.6%', status: 'behind', chip: 'Behind pace', lines: ['$484,616 sold of $1,325,000'] },
   ],
+  funnel: {
+    caption: 'Band height = pipeline value, segment length = avg opp life: 495 days end to end.',
+    stages: [
+      { label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' },
+      { label: 'Stage 4: Influence and Develop', count: 4, amount: '$918,000', life: null, closeRate: null },
+    ],
+    outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K', note: '63% of $1.3M target' },
+  },
   tiles: [
-    { label: 'Emails sent', value: 0, goal: 50, accent: 'blue' },
+    { label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' },
     { label: 'New opps', value: 2, goal: 1, accent: 'green' },
   ],
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'], closed: [] },
+  goals: { created: ['Book two site walks'], completed: [], active: ['#1 Close Berkshire'] },
   narrative: '## Summary\nTwo new opps landed.',
 });
 
 check('renders the KPI value', html.includes('36.6%'), true);
 check('renders the chip', html.includes('Behind pace'), true);
-check('a missed goal draws a blue bar at 0%',
-  html.includes('width:0%') && html.includes('#3B82F6'), true);
+check('a missed goal draws a blue bar under 100%',
+  html.includes('width:54%') && html.includes('#3B82F6'), true);
+check('the tile carries the number the tab shows', html.includes('>27<'), true);
+check('the tile says where an off-feed number came from', html.includes('recorded Sep 3'), true);
+check('the KPI section carries the tab’s year-to-date note',
+  html.includes('not scoped to the week picker'), true);
 check('a met goal draws a green bar capped at 100%',
   html.includes('width:100%') && html.includes('#10B981'), true);
 check('lists the opp changes', html.includes('Acme: HQ retrofit'), true);
 check('omits sections with nothing in them', html.includes('Deals closed'), false);
 check('includes the narrative', html.includes('Two new opps landed.'), true);
+
+// The funnel is a drawn chart on the tab and a table here; the figures have
+// to be the same ones, including the exit block hanging off the arrow.
+check('draws the funnel stages', html.includes('Stage 4: Influence and Develop'), true);
+check('carries the funnel caption', html.includes('495 days end to end'), true);
+check('carries the projected total', html.includes('$833K'), true);
+check('carries the share of target', html.includes('63% of $1.3M target'), true);
+check('a stage with no life or close rate reads as a dash', html.includes('>-<'), true);
+check('lists the goals', html.includes('#1 Close Berkshire'), true);
+check('names the period in the goal heading', html.includes('Goals set this week'), true);
+check('omits goal groups with nothing in them', html.includes('completed / closed'), false);
+
+// A snapshot with no funnel must not leave an empty heading behind.
+const noFunnel = renderWeeklyReportHtml({ capturedAt: Date.now(), kpiCards: [] });
+check('no funnel means no funnel heading', noFunnel.includes('Pipeline funnel'), false);
 
 // A snapshot with nothing cached must still produce a sendable email rather
 // than throwing — the cron has no user to fall back to.

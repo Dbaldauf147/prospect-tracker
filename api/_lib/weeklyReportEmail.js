@@ -47,7 +47,10 @@ function kpiCardHtml(card) {
 }
 
 // A tile with a weekly target draws the same bar the app does; one without
-// just states the count.
+// just states the count. `sub` is the tab's provenance note ("recorded
+// Sep 3") — a number the live feed can no longer answer for says where it
+// came from here too, or the reader is left to wonder why it disagrees
+// with what they did this morning.
 function tileHtml(tile) {
   const value = Number(tile.value) || 0;
   const goal = Number(tile.goal) || 0;
@@ -72,6 +75,7 @@ function tileHtml(tile) {
       <div style="border:1px solid #E2E8F0;border-left:3px solid ${tile.accent === 'green' ? '#10B981' : '#3B82F6'};border-radius:8px;padding:12px 14px">
         <div style="font-size:24px;font-weight:800;color:#0F172A;line-height:1.1">${esc(value)}</div>
         <div style="margin-top:2px;color:#64748B;font-size:11px;font-weight:700">${esc(tile.label)}</div>
+        ${tile.sub ? `<div style="margin-top:2px;color:#94A3B8;font-size:11px">${esc(tile.sub)}</div>` : ''}
         ${bar}
       </div>
     </td>`;
@@ -91,6 +95,64 @@ function changeListHtml(title, items) {
         ${esc(title)} <span style="color:#94A3B8;font-weight:600">${items.length}</span>
       </div>
       <ul style="margin:4px 0 0;padding-left:18px">${lis}${more}</ul>
+    </div>`;
+}
+
+// A section heading, with the tab's note beside it where there is one.
+function headingHtml(title, note, margin = '22px 0 8px') {
+  const hint = note
+    ? `<span style="color:#94A3B8;font-size:11px;font-weight:600;padding-left:8px">${esc(note)}</span>`
+    : '';
+  return `<div style="margin:${margin};color:#0F172A;font-size:14px;font-weight:700">${esc(title)}${hint}</div>`;
+}
+
+// The funnel, as a table.
+//
+// On the tab this is a drawn chart — band height for pipeline value,
+// segment length for how long deals sit in a stage. An email can't carry
+// that: inline SVG doesn't render in Outlook at all, and a rasterised
+// chart would be blocked as a remote image. So the same stage-by-stage
+// figures are laid out as rows, followed by the outcome block that hangs
+// off the funnel's exit arrow — closed, plus what the open pipeline
+// weights to, and the projected total those add up to.
+function funnelHtml(funnel) {
+  const stages = Array.isArray(funnel?.stages) ? funnel.stages : [];
+  if (!stages.length) return '';
+  const th = (label, align = 'left') =>
+    `<th style="padding:4px 8px;text-align:${align};color:#64748B;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid #E2E8F0">${esc(label)}</th>`;
+  const td = (v, align = 'left', strong = false) =>
+    `<td style="padding:6px 8px;text-align:${align};color:${strong ? '#0F172A' : '#334155'};font-size:12px;font-weight:${strong ? 700 : 400};border-bottom:1px solid #F1F5F9">${esc(v ?? '-')}</td>`;
+
+  const rows = stages.map(st => `<tr>
+        ${td(st.label, 'left', true)}
+        ${td(Number(st.count) || 0, 'right')}
+        ${td(st.amount, 'right')}
+        ${td(st.life, 'right')}
+        ${td(st.closeRate, 'right')}
+      </tr>`).join('');
+
+  const o = funnel.outcome;
+  const outRow = (label, value, strong) => `<tr>
+        <td style="padding:3px 0;color:${strong ? '#0F172A' : '#64748B'};font-size:12px;font-weight:${strong ? 700 : 400}">${esc(label)}</td>
+        <td style="padding:3px 0;text-align:right;color:#0F172A;font-size:${strong ? 14 : 12.5}px;font-weight:${strong ? 700 : 600}">${esc(value ?? '-')}</td>
+      </tr>`;
+  const outcome = o ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:320px;margin:12px 0 0">
+      ${outRow(o.soldLabel || 'Closed YTD', o.sold, true)}
+      ${outRow('+ weighted pipeline', o.weighted, false)}
+      <tr><td colspan="2" style="padding:0"><div style="border-top:1px solid #E2E8F0;height:1px;font-size:0">&nbsp;</div></td></tr>
+      ${outRow('= projected total', o.total, true)}
+      ${o.note ? `<tr><td colspan="2" style="padding:2px 0 0;text-align:right;color:#94A3B8;font-size:11px">${esc(o.note)}</td></tr>` : ''}
+    </table>` : '';
+
+  return `
+    <div style="border:1px solid #E2E8F0;border-radius:8px;padding:12px 14px">
+      ${funnel.caption ? `<div style="color:#64748B;font-size:11px;line-height:1.5;margin-bottom:8px">${esc(funnel.caption)}</div>` : ''}
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">
+        <tr>${th('Stage')}${th('Opps', 'right')}${th('Pipeline', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
+        ${rows}
+      </table>
+      ${outcome}
     </div>`;
 }
 
@@ -152,6 +214,10 @@ export function renderWeeklyReportHtml(snapshot, { message = '' } = {}) {
   const cards = Array.isArray(s.kpiCards) ? s.kpiCards : [];
   const tiles = Array.isArray(s.tiles) ? s.tiles : [];
   const oc = s.oppChanges || {};
+  const gl = s.goals || {};
+  // "this week" / "this day", so the goal headings read the way they do on
+  // the tab for whichever period the snapshot covers.
+  const periodWord = s.scope === 'day' ? 'day' : 'week';
 
   const intro = String(message || '').trim()
     ? `<p style="margin:0 0 14px;color:#334155;font-size:13px;line-height:1.55;white-space:pre-wrap">${esc(message)}</p>`
@@ -164,6 +230,14 @@ export function renderWeeklyReportHtml(snapshot, { message = '' } = {}) {
   const tileRow = tiles.length
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 -6px"><tr>${tiles.map(tileHtml).join('')}</tr></table>`
     : '';
+
+  const funnel = funnelHtml(s.funnel);
+
+  const goals = [
+    changeListHtml(`Goals set this ${periodWord}`, gl.created),
+    changeListHtml('Goals completed / closed', gl.completed),
+    changeListHtml('Active goals', gl.active),
+  ].join('');
 
   const changes = [
     changeListHtml('Deals closed', oc.closed),
@@ -186,12 +260,16 @@ export function renderWeeklyReportHtml(snapshot, { message = '' } = {}) {
 
     <div style="margin-top:18px">${intro}</div>
 
-    <div style="color:#0F172A;font-size:14px;font-weight:700;margin-bottom:8px">Where the year stands</div>
+    ${headingHtml('Where the year stands', s.kpiNote, '0 0 8px')}
     ${kpiRow}
+
+    ${funnel ? `${headingHtml('Pipeline funnel', 'The Charts → Pipeline funnel, off the same cached numbers')}${funnel}` : ''}
 
     ${tileRow ? `<div style="color:#0F172A;font-size:14px;font-weight:700;margin:20px 0 8px">This period</div>${tileRow}` : ''}
 
     ${changes ? `<div style="color:#0F172A;font-size:14px;font-weight:700;margin:22px 0 0">Opportunity changes</div>${changes}` : ''}
+
+    ${goals ? `<div style="color:#0F172A;font-size:14px;font-weight:700;margin:22px 0 0">Goals</div>${goals}` : ''}
 
     ${narrative ? `<div style="margin:22px 0 0;padding-top:14px;border-top:1px solid #E2E8F0">${narrative}</div>` : ''}
 

@@ -469,6 +469,57 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       },
     ];
   }, [kpis]);
+  // The funnel, reduced to the figures an email can carry. The tab draws it
+  // as a chart — band height for pipeline value, segment length for how
+  // long deals sit in a stage — which no email client will render, so the
+  // stage rows and the outcome block travel as text instead. The numbers
+  // are formatted here rather than server-side for the same reason the KPI
+  // cards are: a second copy of the arithmetic is free to disagree with
+  // what's on screen.
+  const funnelSummary = useMemo(() => {
+    if (!funnelReady) return null;
+    const ordered = funnelStages
+      .filter(st => Number.isFinite(st.stageNum))
+      .sort((a, b) => a.stageNum - b.stageNum);
+    if (!ordered.length) return null;
+
+    // Same arithmetic as the funnel's exit block: each stage's pipeline
+    // times the close rate that stage actually runs at, summed.
+    const rated = ordered.filter(st => Number(st.closeRate) > 0);
+    const weighted = rated.length
+      ? rated.reduce((a, st) => a + (Number(st.amtActual) || 0) * Number(st.closeRate), 0)
+      : null;
+    const sold = funnelOutcome.soldAmount;
+    const total = sold != null && weighted != null ? sold + weighted : null;
+    const target = Number(funnelOutcome.target) || 0;
+
+    const lives = ordered.map(st => (Number(st.lifeActual) > 0 ? Number(st.lifeActual) : 0));
+    const byLife = lives.every(d => d > 0);
+    const totalLife = lives.reduce((a, b) => a + b, 0);
+
+    return {
+      caption: `Band height = pipeline value, segment length = ${byLife
+        ? `avg opp life: ${Math.round(totalLife)} days end to end`
+        : 'even (no avg opp life yet)'}.`,
+      stages: ordered.map((st, i) => ({
+        label: st.label,
+        count: Number(st.countActual) || 0,
+        amount: fmtDollars(Number(st.amtActual) || 0),
+        life: lives[i] > 0 ? `${Math.round(lives[i])} days` : null,
+        closeRate: Number(st.closeRate) > 0 ? `${Math.round(Number(st.closeRate) * 100)}%` : null,
+      })),
+      outcome: {
+        soldLabel: funnelOutcome.soldLabel,
+        sold: sold == null ? null : fmtCompactMoney(sold),
+        weighted: weighted == null ? null : fmtCompactMoney(weighted),
+        total: total == null ? null : fmtCompactMoney(total),
+        note: total != null && target > 0
+          ? `${Math.round((total / target) * 100)}% of ${fmtCompactMoney(target)} target`
+          : null,
+      },
+    };
+  }, [funnelReady, funnelStages, funnelOutcome]);
+
   // Nothing cached at all — three dashes teach nothing, so say what to open.
   const kpisReady = !!(reviewSnapshot.pipeline || reviewSnapshot.yoy);
   const periodKey = `${mode}:${refDate}`;
@@ -539,8 +590,20 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       periodStart: bounds.start,
       periodEnd: bounds.end,
       kpiCards: kpisReady ? kpiCards.map(c => ({ label: c.label, value: c.value, status: c.status, chip: c.chip, lines: c.lines })) : [],
+      kpiNote: 'Year to date — not scoped to the week picker',
+      funnel: funnelSummary,
+      // `emailsSent.count`, not the raw live count: for a week the HubSpot
+      // feed no longer covers, the Activity tab's recording is the only
+      // thing that can answer, and the tile on screen reads off it. Mailing
+      // the live count instead is what made a week of sent mail arrive as 0.
       tiles: [
-        { label: 'Emails sent', value: activity.emails.length, goal: weeklyTargets.emails ?? null, accent: 'blue' },
+        {
+          label: 'Emails sent',
+          value: emailsSent.count,
+          goal: weeklyTargets.emails ?? null,
+          accent: 'blue',
+          sub: emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null,
+        },
         { label: 'New opps', value: oppChanges.newOpps.length, goal: weeklyTargets.newOpps ?? null, accent: 'green' },
       ],
       oppChanges: {
@@ -551,11 +614,21 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
         amountUpdates: list(oppChanges.amountUpdates, x => `${who(x)}${x.amount ? ` → ${x.amount}` : ''}`),
         bfoTags: list(oppChanges.bfoTags, x => `${who(x)}${x.bfo ? ` → ${x.bfo}` : ''}`),
       },
+      goals: {
+        created: list(goalsProg.created, g => String(g.text || '').trim()).filter(Boolean),
+        completed: list(goalsProg.archived, g => String(g.text || '').trim()).filter(Boolean),
+        // The tab caps the active list at 12; the email shows the same ones
+        // rather than a longer list the reader can't reconcile with it.
+        active: list(goalsProg.active.slice(0, 12), g => (
+          `${g.priority != null ? `#${g.priority} ` : ''}${String(g.text || '').trim()}`
+        )).filter(Boolean),
+      },
       // Only ship a recap that was written for this period; a stale one
       // would describe a different week under this week's heading.
       narrative: narrativeStale ? '' : narrative,
     };
-  }, [mode, label, bounds, kpisReady, kpiCards, activity, oppChanges, weeklyTargets, narrative, narrativeStale]);
+  }, [mode, label, bounds, kpisReady, kpiCards, funnelSummary, emailsSent, oppChanges,
+    goalsProg, weeklyTargets, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:
