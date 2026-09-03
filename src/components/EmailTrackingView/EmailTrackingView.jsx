@@ -111,6 +111,8 @@ function Pill({ children, tone }) {
     green: { bg: '#DCFCE7', fg: '#166534' },
     blue: { bg: '#DBEAFE', fg: '#1E40AF' },
     grey: { bg: '#F1F5F9', fg: '#64748B' },
+    amber: { bg: '#FEF3C7', fg: '#92400E' },
+    red: { bg: '#FEE2E2', fg: '#991B1B' },
   };
   const t = tones[tone] || tones.grey;
   return (
@@ -177,7 +179,7 @@ function MetricsExplainer() {
             <li><strong>Total opens</strong> — every open. The same person reading twice an hour apart adds two.</li>
             <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
             <li><strong>Total clicks</strong> — every click: the same link twice, or two different links in one email, each add one.</li>
-            <li><strong>Replied (%)</strong> — of the sends a saved campaign is tracking, how many wrote back. Sends no campaign claims are left out of both halves of that fraction rather than counted as silence.</li>
+            <li><strong>Replied (%)</strong> — of the sends a saved campaign is tracking, how many wrote back. Sends no campaign claims are left out of both halves of that fraction rather than counted as silence, and so are bounced addresses: nobody received those, so they aren&rsquo;t recipients who chose not to answer.</li>
           </ul>
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>When they disagree</div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -291,10 +293,15 @@ export function EmailTrackingView({ onOpenCampaign }) {
     // replies for, not against every tracked email — dividing by sends nobody
     // is watching for a reply would report a rate that only ever falls as
     // untracked drafts pile up.
-    const replyTracked = scoped.filter(l => l.reply).length;
+    // A bounced address never received the email, so it is not a recipient who
+    // chose not to answer — counting it as one understates the rate and hides
+    // a data problem as a performance problem.
+    const bouncedEmails = scoped.filter(l => l.reply?.bounced).length;
+    const oooEmails = scoped.filter(l => l.reply?.outOfOffice && !l.reply?.replied).length;
+    const replyTracked = scoped.filter(l => l.reply && !l.reply.bounced).length;
     const repliedEmails = scoped.filter(l => l.reply?.replied).length;
     const replyRate = replyTracked ? Math.round((repliedEmails / replyTracked) * 100) : 0;
-    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate };
+    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate, bouncedEmails, oooEmails };
   }, [scoped]);
 
   // Which links are actually pulling, across whatever the campaign filter has
@@ -387,6 +394,23 @@ export function EmailTrackingView({ onOpenCampaign }) {
           <div style={tileLabel}>{stats.replyTracked ? `Replied (${stats.replyRate}%)` : 'Replied'}</div>
         </div>
       </div>
+
+      {(stats.bouncedEmails > 0 || stats.oooEmails > 0) && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem', fontSize: '0.74rem' }}>
+          {stats.bouncedEmails > 0 && (
+            <span
+              title="The mail server rejected these addresses, so nobody saw the email. They are left out of the reply rate — a bad address is a data problem, not a recipient who chose not to answer."
+              style={{ background: '#FEE2E2', border: '1px solid #FECACA', color: '#991B1B', borderRadius: 999, padding: '0.15rem 0.6rem', fontWeight: 600 }}
+            >{stats.bouncedEmails} bounced — fix the address{stats.bouncedEmails === 1 ? '' : 'es'}</span>
+          )}
+          {stats.oooEmails > 0 && (
+            <span
+              title="Their auto-responder answered. Not a no — hover the row to see what it said, and try again when they are back."
+              style={{ background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 999, padding: '0.15rem 0.6rem', fontWeight: 600 }}
+            >{stats.oooEmails} out of office — worth a second send</span>
+          )}
+        </div>
+      )}
 
       <LinkBreakdown stats={linkStats} />
 
@@ -635,6 +659,18 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
           ) : reply.replied ? (
             <span title={[reply.repliedBy && `Replied by ${reply.repliedBy}`, reply.replyDate && fmtDateTime(reply.replyDate)].filter(Boolean).join(' · ') || undefined}>
               <Pill tone="green">Replied</Pill>
+            </span>
+          ) : reply.bounced ? (
+            // A bounce outranks an out-of-office: nobody is away from an
+            // address that doesn't exist, and the address is the thing to fix.
+            <span title="The mail server rejected this address. Nobody saw the email, and every future send to it is wasted — fix or remove the address.">
+              <Pill tone="red">Bounced</Pill>
+            </span>
+          ) : reply.outOfOffice ? (
+            <span title={reply.oooSubject
+              ? `Their auto-responder replied: "${reply.oooSubject}". Not a no — usually worth a second send when they're back.`
+              : 'Their auto-responder replied. Not a no — usually worth a second send when they are back.'}>
+              <Pill tone="amber">Out of office</Pill>
             </span>
           ) : (
             <span style={{ color: '#94A3B8', fontSize: '0.72rem' }} title="This send is in a campaign that tracks replies, and no reply has come in.">No reply</span>
