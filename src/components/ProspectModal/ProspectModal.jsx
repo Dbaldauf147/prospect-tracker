@@ -4708,6 +4708,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [portfolioColsMenuOpen]);
   const colVis = (key) => (portfolioColsVisible[key] === false ? 'collapse' : 'visible');
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
+  // Rows added by hand in this sitting, keyed by their `addedManuallyAt`
+  // stamp. They pin to the top of the table so "+ Add Row" lands somewhere
+  // the user can see: a blank row scores 0, and under the default
+  // Opportunity Score sort it would otherwise drop to the bottom of a
+  // fifty-row list, well below the fold, looking like the click did nothing.
+  // The pin lasts only as long as the popup stays on this company — reopen
+  // it and the row takes its real rank.
+  const [portfolioNewStamps, setPortfolioNewStamps] = useState([]);
+  const [portfolioFocusStamp, setPortfolioFocusStamp] = useState(null);
+  useEffect(() => {
+    setPortfolioNewStamps([]);
+    setPortfolioFocusStamp(null);
+  }, [prospect?.id]);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   const [peOwnerPickerOpen, setPeOwnerPickerOpen] = useState(false);
@@ -8765,7 +8778,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  // `addedManuallyAt` is both a record of the hand-entry and
+                  // the row's identity for pinning — nudged forward on the
+                  // rare same-millisecond collision so two quick adds stay
+                  // tellable apart.
+                  const used = new Set(rows.map(r => r.addedManuallyAt).filter(Boolean));
+                  let stamp = Date.now();
+                  while (used.has(stamp)) stamp += 1;
+                  set('portfolioCompanies', [...rows, { addedManuallyAt: stamp, companyName: '', status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  setPortfolioNewStamps(prev => [...prev, stamp]);
+                  setPortfolioFocusStamp(stamp);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -8782,7 +8804,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     if (companyName) parsed.push({ companyName, industry, hqCity, hqCountry, energyGwh, siteCount });
                   }
                   if (parsed.length > 0) {
-                    set('portfolioCompanies', [...rows, ...parsed]);
+                    // Same reasoning as addRow: a pasted row carrying only a
+                    // name scores 0 too, so stamp these and pin them on top
+                    // rather than letting them vanish under the sort.
+                    const used = new Set(rows.map(r => r.addedManuallyAt).filter(Boolean));
+                    let stamp = Date.now();
+                    const stamped = parsed.map(r => {
+                      while (used.has(stamp)) stamp += 1;
+                      used.add(stamp);
+                      return { ...r, addedManuallyAt: stamp++ };
+                    });
+                    set('portfolioCompanies', [...rows, ...stamped]);
+                    setPortfolioNewStamps(prev => [...prev, ...stamped.map(r => r.addedManuallyAt)]);
                     setPastePortfolio('');
                   }
                 }
@@ -8877,9 +8910,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 const rowScores = rows.map(r => computePortfolioFitScore(r, maxEnergyForRank, maxSitesForRank, yearRangeForRank));
                 // Null scores (explicit N/A) sort to the bottom regardless of direction.
                 const scoreForSort = s => s == null ? -Infinity : s;
-                const displayOrder = portfolioSortByRank
-                  ? rows.map((_, i) => i).sort((a, b) => scoreForSort(rowScores[b]) - scoreForSort(rowScores[a]))
-                  : rows.map((_, i) => i);
+                const newStampSet = new Set(portfolioNewStamps);
+                const isNewRow = (i) => !!rows[i]?.addedManuallyAt && newStampSet.has(rows[i].addedManuallyAt);
+                const displayOrder = (() => {
+                  const ranked = portfolioSortByRank
+                    ? rows.map((_, i) => i).sort((a, b) => scoreForSort(rowScores[b]) - scoreForSort(rowScores[a]))
+                    : rows.map((_, i) => i);
+                  if (newStampSet.size === 0) return ranked;
+                  // Rows just added by hand sit on top in the order they were
+                  // added, ahead of whatever sort is active; everything else
+                  // keeps its place.
+                  const pinned = rows.map((_, i) => i).filter(isNewRow);
+                  const pinnedSet = new Set(pinned);
+                  return [...pinned, ...ranked.filter(i => !pinnedSet.has(i))];
+                })();
 
                 // Target Accounts — full list of names from the uploaded sheet (same source as MyAccountsView)
                 const targetAccountNames = (() => {
@@ -9297,8 +9341,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               const savedForRow = savedMappings[mappingKey(r.companyName)];
                               const raFromSaved = !!(isMatched && savedForRow && savedForRow.raClientMatch === r.raClientMatch);
                               const targetFromSaved = !!(r.targetAccount && savedForRow && savedForRow.targetAccount === r.targetAccount);
+                              const justAdded = isNewRow(i);
                               return (
-                              <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                              <tr
+                                key={i}
+                                title={justAdded ? 'Added by hand just now — it stays at the top of the table until you reopen this company, then it takes its own rank.' : undefined}
+                                style={{ borderBottom: '1px solid #F1F5F9', background: justAdded ? '#F0F9FF' : 'transparent' }}
+                              >
                                 {(() => {
                                   const score = rowScores[i];
                                   const tier = industryTier(r.sector || r.industry);
@@ -9335,6 +9384,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         <input
                                           value={r.companyName || ''}
                                           onChange={e => updateRow(i, { companyName: e.target.value })}
+                                          placeholder={justAdded && !r.companyName ? 'Company name' : undefined}
+                                          // The row this button created is the
+                                          // one the cursor belongs in, so the
+                                          // user can type the name straight
+                                          // away instead of hunting for it.
+                                          ref={el => {
+                                            if (!el || portfolioFocusStamp == null) return;
+                                            if (r.addedManuallyAt !== portfolioFocusStamp) return;
+                                            el.focus();
+                                            el.scrollIntoView({ block: 'nearest' });
+                                            setPortfolioFocusStamp(null);
+                                          }}
                                           style={{ flex: 1, minWidth: 0, padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                           onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                           onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
