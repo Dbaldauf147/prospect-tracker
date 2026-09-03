@@ -45,6 +45,7 @@ import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../..
 import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope, tenureCoverage } from './ownershipScope.js';
+import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatus.js';
 import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
@@ -9020,13 +9021,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // SPAN so the headings stay aligned across both sections.
     // Two extra slots when the portfolio has leased locations: a Leased
     // Sites count next to Deregulated Sites, and the savings-eligible
-    // spend next to the full deregulated spend.
-    const SPAN = 26 + (showLeasedColumns ? 2 : 0);
+    // spend next to the full deregulated spend. The Savings Status column
+    // is always present, hence the +1 over the old width.
+    const SPAN = 27 + (showLeasedColumns ? 2 : 0);
     const widths = [
       22, 14, 11, 13,                     // ST/Prov/Country..Deregulated Sites (4)
       ...(showLeasedColumns ? [13] : []), // Leased Sites (1)
       16, 18,                             // Deregulated Consumption + Spend (2)
       ...(showLeasedColumns ? [18] : []), // Savings-Eligible Spend (1)
+      21,                                // Savings Status (1)
       13,                                // Low % (1)
       13,                                // High % (1)
       11,                                // Savings % (1)
@@ -9155,7 +9158,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // at the top of the sheet can sum electric + gas with a live,
     // scenario-aware formula. Keyed by the section label.
     const annualTotals = {};
-    function writeSection(label, sectionRows, columnDefs) {
+    function writeSection(label, sectionRows, columnDefs, commodity) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
       const head = ws.getCell(r, 1);
@@ -9217,17 +9220,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // across the whole entry without overwriting the yellow Low /
       // High % input fills.
       const TOO_LOW_FILL = 'FFFEEAD2';
-      const isTooLow = (row) => {
-        const flags = String(row?.flags || '');
-        if (flags.includes('small electric market') || flags.includes('too low for sourcing')) return true;
-        // Deregulated markets that surface no deregulated spend have
-        // nothing to pursue — tint them amber like the small markets so
-        // the user can scan past them. Catches rows like OH whose status
-        // is Deregulated but every site there is regulated / carries no
-        // spend on file, which the "small market" flag (spend > 0) skips.
-        if (!row?.isParent && !(Number(row?.spend) > 0)) return true;
-        return false;
-      };
+      // Which rows get the tint is now the same question as which rows
+      // carry a reason in the Savings Status column — one predicate in
+      // savingsStatus.js answers both, so a tinted row always says why and
+      // a row that says why is always tinted. That folds in three cases the
+      // old flag-string test missed: a market whose deregulated spend is
+      // entirely at leased locations, one with no committed savings band,
+      // and one under contract for the whole horizon. Each showed $0 with
+      // no visual cue.
+      const isTooLow = (row) => isNoSavingsRow(row, commodity);
       // Hide regulated leaf rows outright. Statuses 'no' (US/CA per-
       // state regulated), 'Regulated', 'Unlikely', and 'No opportunity'
       // all mean the market has no deregulated savings motion — they
@@ -9426,6 +9427,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           if (c.spacer) return;
           if (i === 0) {
             cell.value = `Remaining sites in regulated markets (${hiddenRegulatedRows.length} state${hiddenRegulatedRows.length === 1 ? '' : 's'} / province${hiddenRegulatedRows.length === 1 ? '' : 's'})`;
+          } else if (c.savingsStatus) {
+            // These states were filtered off the tab for being regulated;
+            // this line is the reason, in the same column as every other row's.
+            cell.value = SAVINGS_STATUS.REGULATED;
           } else if (c.label === 'Deregulated Status') {
             cell.value = 'Regulated';
           } else if (c.sumKey === 'totalSites') {
@@ -9606,6 +9611,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const eligibleSpendCol = showLeasedColumns
       ? [{ label: 'Savings-Eligible Spend/yr', tag: 'spend', get: (g) => g.savingsEligibleSpend, numFmt: '"$"#,##0', sumKey: 'savingsEligibleSpend' }]
       : [];
+    // One short, standardized phrase per market saying why it reads the way
+    // it does — sitting immediately right of the spend the savings are taken
+    // off, which is the column that usually raises the question. Every amber
+    // row has one; the rest read "Eligible". `savingsStatus: true` marks the
+    // column for the roll-up and total rows below, which fill it themselves
+    // rather than through `get`. See savingsStatus.js for the vocabulary.
+    const savingsStatusCol = (commodity) => ({
+      label: 'Savings Status',
+      savingsStatus: true,
+      get: (g) => savingsStatusFor(g, commodity),
+    });
     // Only one of the two spend columns carries the formula tag.
     const fullSpendTag = showLeasedColumns ? undefined : 'spend';
 
@@ -9618,6 +9634,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       ...eligibleSpendCol,
+      savingsStatusCol('electric'),
       // Editable Low / High range inputs replace the static "Range"
       // text column. Yellow fill signals input; downstream Savings %
       // / Annual Savings / Year 1-5 cells are formulas that read
@@ -9666,6 +9683,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Deregulated Spend/yr', tag: fullSpendTag, get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       ...eligibleSpendCol,
+      savingsStatusCol('gas'),
       // Editable Low / High range inputs replace the static "Range"
       // text column. Yellow fill signals input; downstream Savings %
       // / Annual Savings / Year 1-5 cells are formulas that read
@@ -9886,8 +9904,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return out;
     }
 
-    writeSection('Electric Power', restructureForGlobal(electricRows), electricCols);
-    writeSection('Natural Gas',   restructureForGlobal(gasRows),       gasCols);
+    writeSection('Electric Power', restructureForGlobal(electricRows), electricCols, 'electric');
+    writeSection('Natural Gas',   restructureForGlobal(gasRows),       gasCols,      'gas');
 
     // ---- Savings Summary band (top of the Indicative Savings sheet) --
     // Combined indicative annual savings across electric + gas, written
