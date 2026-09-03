@@ -5,6 +5,8 @@
 // write a short narrative recap over them.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './WeeklyReportView.module.css';
+import { WeeklyReportEmailModal } from './WeeklyReportEmailModal';
+import { publishSnapshot } from '../../utils/weeklyReportSchedulesStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
@@ -657,6 +659,50 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
 
   const isCurrent = refDate === todayIso();
 
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+
+  // What the scheduled email will send. The report's numbers come from
+  // caches that only exist in this browser, so rather than have the server
+  // recompute them (a second copy of the same arithmetic, free to drift)
+  // the tab publishes what it rendered and the cron mails that back.
+  const emailSnapshot = useMemo(() => {
+    const who = (x) => [x.account, x.scope].filter(Boolean).join(': ') || `Opp ${x.id}`;
+    const list = (arr, fmt) => (Array.isArray(arr) ? arr : []).map(fmt);
+    return {
+      scope: mode,
+      periodLabel: label,
+      periodStart: bounds.start,
+      periodEnd: bounds.end,
+      kpiCards: kpisReady ? kpiCards.map(c => ({ label: c.label, value: c.value, status: c.status, chip: c.chip, lines: c.lines })) : [],
+      tiles: [
+        { label: 'Emails sent', value: activity.emails.length, goal: weeklyTargets.emails ?? null, accent: 'blue' },
+        { label: 'New opps', value: oppChanges.newOpps.length, goal: weeklyTargets.newOpps ?? null, accent: 'green' },
+      ],
+      oppChanges: {
+        closed: list(oppChanges.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),
+        newOpps: list(oppChanges.newOpps, x => `${who(x)}${x.stage ? ` (${x.stage})` : ''}`),
+        stageChanges: list(oppChanges.stageChanges, x => `${who(x)} → ${x.stage}`),
+        closeDateMoves: list(oppChanges.closeDateMoves, x => `${who(x)}${x.closeDate ? ` → ${x.closeDate}` : ''}`),
+        amountUpdates: list(oppChanges.amountUpdates, x => `${who(x)}${x.amount ? ` → ${x.amount}` : ''}`),
+        bfoTags: list(oppChanges.bfoTags, x => `${who(x)}${x.bfo ? ` → ${x.bfo}` : ''}`),
+      },
+      // Only ship a recap that was written for this period; a stale one
+      // would describe a different week under this week's heading.
+      narrative: narrativeStale ? '' : narrative,
+    };
+  }, [mode, label, bounds, kpisReady, kpiCards, activity, oppChanges, weeklyTargets, narrative, narrativeStale]);
+
+  // Publish on a debounce whenever the snapshot changes and there is
+  // something in it worth sending. Only the current period is published:
+  // paging back to an old week is a look, not a new thing to email. A
+  // failed upload is swallowed — it must never break the page being read.
+  useEffect(() => {
+    if (!user?.uid || !isCurrent || !anyData) return undefined;
+    const t = setTimeout(() => { publishSnapshot(emailSnapshot).catch(() => {}); }, 2000);
+    return () => clearTimeout(t);
+  }, [user?.uid, isCurrent, anyData, emailSnapshot]);
+
+
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
@@ -695,6 +741,12 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             {genLoading ? 'Writing…' : (narrative && !narrativeStale ? 'Regenerate summary' : 'Generate AI summary')}
           </button>
           <button type="button" className={styles.ghostBtn} onClick={copyReport}>Copy report</button>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={() => setEmailModalOpen(true)}
+            title="Send this report on a schedule — e.g. every Monday at 06:00"
+          >Email this report</button>
           {copyFlash && <span className={styles.flash}>{copyFlash}</span>}
         </div>
       </div>
@@ -892,6 +944,14 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
           )}
         </div>
       )}
+
+      <WeeklyReportEmailModal
+        open={emailModalOpen}
+        onClose={() => setEmailModalOpen(false)}
+        uid={user?.uid}
+        defaultRecipient={settings?.workEmail || user?.email || ''}
+        snapshot={emailSnapshot}
+      />
 
       {!anyData && (
         <div className={styles.empty}>
