@@ -23,6 +23,9 @@ import {
 } from '../../utils/weeklyReview';
 import { loadProgressWeeks, loadWeeklyReviews, saveWeeklyReview } from '../../utils/weeklyReviewStore';
 import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
+import { buildFunnelStages, closeRatesByStage } from '../../utils/pipelineFunnelData';
+import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
+import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -324,6 +327,35 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
   // last Tuesday. Each card carries the arithmetic behind it so a figure
   // that looks wrong can be traced without opening the Pipeline tab.
   const kpis = useMemo(() => headlineKpis(reviewSnapshot), [reviewSnapshot]);
+
+  // ---- Pipeline funnel --------------------------------------------------
+  // The same chart the Pipeline tab draws under its metrics table, from the
+  // same three cached sources (dashboard goals + manual actuals, pasted BFO
+  // rows for live stage actuals, Opps 2 for the rolling close rates) via the
+  // shared builder — so the two pages can't show different funnels.
+  //
+  // Its outcome block reads the KPI row's own sold-YTD and target rather
+  // than the dashboard's hand-entered Closed YTD, so the "Closed YTD" it
+  // draws is the figure printed in the card directly above it.
+  const funnelStages = useMemo(() => buildFunnelStages({
+    stages: Array.isArray(pipeline?.stages) ? pipeline.stages : [],
+    bfoMetrics: bfoStageMetrics(bfo),
+    hasBfo: !!(bfo && Array.isArray(bfo.rows) && bfo.rows.length),
+    closeRates: closeRatesByStage(oppsRecords),
+  }), [pipeline, bfo, oppsRecords]);
+  const funnelOutcome = useMemo(() => ({
+    soldLabel: 'Closed YTD',
+    // Null, not 0, when nothing is cached: the funnel then draws what the
+    // pipeline alone is worth and says the closed figure is missing, rather
+    // than adding to a hollow zero.
+    soldAmount: kpis.progressToTarget.soldYTD,
+    soldCount: kpis.progressToTarget.deals,
+    target: kpis.target || 0,
+  }), [kpis]);
+  // Nothing to draw without stage rows — or with rows that are all zero,
+  // which is what a dashboard record seeded but never filled in looks like.
+  const funnelReady = funnelStages.length > 0
+    && funnelStages.some(st => st.amtActual > 0 || st.countActual > 0);
   const kpiCards = useMemo(() => {
     const { progressToTarget: p, coverageRatio: c, projectedYearEnd: j } = kpis;
     const yearGone = (v) => (v == null ? '' : `${v.toFixed(0)}% of the year gone`);
@@ -615,6 +647,24 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
         ) : (
           <div className={styles.empty}>
             No chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) to seed the target, pipeline and run rate.
+          </div>
+        )}
+      </section>
+
+      <section className={styles.funnelSection}>
+        <div className={styles.kpiHead}>
+          <h2 className={styles.sectionHead}>Pipeline funnel</h2>
+          <span className={styles.kpiHeadNote}>
+            The Charts → Pipeline funnel, off the same cached numbers
+          </span>
+        </div>
+        {funnelReady ? (
+          <div className={styles.funnelCard}>
+            <PipelineFunnel stages={funnelStages} outcome={funnelOutcome} />
+          </div>
+        ) : (
+          <div className={styles.empty}>
+            No stage volumes cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the funnel has stage actuals to draw.
           </div>
         )}
       </section>

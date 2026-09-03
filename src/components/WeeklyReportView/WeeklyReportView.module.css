@@ -594,3 +594,15 @@
   padding: 0.6rem 0.75rem 0.9rem !important;
   background: var(--color-surface-alt, #f8fafc);
 }
+
+/* --- Pipeline funnel (the Charts → Pipeline chart, under the KPIs) --- */
+.funnelSection { margin-bottom: 1.25rem; }
+
+/* The funnel paints its own white surface and scales to its container, so
+   the card is just the border and the rounded corners the KPI cards use. */
+.funnelCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fff);
+  overflow: hidden;
+}

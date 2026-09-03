@@ -10,6 +10,10 @@ import { PipelineFunnel } from './PipelineFunnel';
 import { dbGet, dbDelete } from '../../utils/db';
 import { bfoStageMetrics, matchStage } from '../../utils/bfoStageMetrics';
 import { parseMoney } from '../../utils/oppsMetrics';
+import {
+  CLOSE_RATE_STAGES, bfoOppNameOf, buildFunnelStages, closeRateTally,
+  closeRatesByStage, closedOppEntry,
+} from '../../utils/pipelineFunnelData';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { isPullThroughOpp } from '../../utils/pullThrough';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
@@ -46,16 +50,6 @@ const STORE = 'pipeline-dashboard';
 const KEY = 'current';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
-
-// The Opps tab's BFO Opportunity Name lives in the column whose data key is
-// still "BFO Link" (the visible label was renamed). New opps are seeded with a
-// dash placeholder and sheet imports leave #N/A — neither is a real name, so
-// treat them as empty. Mirrors bfoOppName in BFOActivityView.
-const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
-function bfoOppNameOf(r) {
-  const v = String(r?.['BFO Link'] || '').trim();
-  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
-}
 
 // Best-effort "opened" timestamp for an Opps row (ms, or NaN when it can't be
 // placed on the calendar). Age fields go stale between paste-imports, so we
@@ -97,90 +91,10 @@ function renderDaysToGoal(soldRaw) {
   return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }} title={title}>{followUpGoalLabel(left)}</span>;
 }
 
-// ---- Close-rate stage signals ---------------------------------------------
-// "Did this opp actually reach stage N?" read off the Opps tab. Defined
-// once here and shared by the rolling-365-day Close Rate Actual column in
-// Pipeline Metrics and the month-by-month close-rate table under it, so
-// the two views of the same number can never drift apart.
-//
-// Pull-through opps are excluded from every close rate — they ride along
-// with another deal rather than being won on their own merits. The test
-// lives in utils/pullThrough so this and the Days-in-Stage board answer
-// the same question the same way: the opp's explicit "Pull Through"
-// column when it's set, its Scope text otherwise.
-
-// A value that's present and isn't one of the spreadsheet's null markers.
-const filledCell = (v) => {
-  const s = String(v ?? '').trim();
-  return !!s && s !== '-' && s !== '\u2014' && s !== 'N/A' && s !== '#N/A';
-};
-const hasBfoOpportunity = (r) => filledCell(r['BFO Link']);
-const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));
-const isNeverConnected = (r) => String(r.Status || '').trim().toLowerCase() === 'never connected';
-const hasQuotedOn = (r) => {
-  const v = r['Quoted On'] || r['Quoted Date'] || '';
-  return !!v && !Number.isNaN(Date.parse(v));
-};
-
-// Listed high stage → low, matching the Pipeline Metrics table's row order.
-const CLOSE_RATE_STAGES = [
-  {
-    num: 6,
-    label: 'Stage 6: Negotiate to Win',
-    signal: 'a non-empty Entity Outside the US Approval value',
-    test: (r) => filledCell(r['Entity Outside the US Approval']),
-  },
-  {
-    num: 5,
-    label: 'Stage 5: Prepare & Bid',
-    signal: 'a Quoted On date',
-    test: hasQuotedOn,
-  },
-  {
-    num: 4,
-    label: 'Stage 4: Influence and Develop',
-    signal: 'a BFO opportunity value (non-empty BFO Link), excluding AEM scope and "Never connected" status',
-    test: (r) => hasBfoOpportunity(r) && !isAemScope(r) && !isNeverConnected(r),
-  },
-  {
-    num: 3,
-    label: 'Stage 3: Qualify Opportunity',
-    signal: 'a BFO opportunity value (non-empty BFO Link)',
-    test: hasBfoOpportunity,
-  },
-];
-
-// A closed opp (Sold / Not Sold) that counts toward close rates, or null.
-// `ts` is the parsed Close Date — the month bucket and the rolling window
-// both key off it.
-function closedOppEntry(r) {
-  const stage = String(r.Stage || '').trim();
-  if (stage !== 'Sold' && stage !== 'Not Sold') return null;
-  const closeDate = r['Close Date'];
-  if (!closeDate) return null;
-  const ts = Date.parse(closeDate);
-  if (Number.isNaN(ts)) return null;
-  if (isPullThroughOpp(r)) return null;
-  return {
-    account: String(r.Account || '').trim(),
-    bfoName: bfoOppNameOf(r),
-    scope: String(r.Scope || '').trim(),
-    stage,
-    closeDate,
-    ts,
-    amount: parseMoney(r['Quoted Amount']) || 0,
-  };
-}
-
-// Roll an array of closed-opp entries into { sold, notSold, rate, included }.
-// Returns null for an empty bucket so a cell reads "—" rather than "0%".
-function closeRateTally(entries) {
-  if (!entries.length) return null;
-  let sold = 0;
-  for (const e of entries) if (e.stage === 'Sold') sold += 1;
-  const included = entries.slice().sort((a, b) => b.ts - a.ts);
-  return { sold, notSold: entries.length - sold, rate: sold / entries.length, included };
-}
+// The close-rate stage signals, the closed-opp reader and the tally they
+// roll into now live in utils/pipelineFunnelData, next to the funnel stage
+// rows they also feed — the Weekly Report draws the same funnel and needs
+// the same numbers. Imported above; unchanged in behaviour.
 
 // Stages that mean a deal was genuinely quoted. A closed deal that never
 // logged time in either of these counts as "not quoted" for the
@@ -1426,21 +1340,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // shared CLOSE_RATE_STAGES signals for "did it actually reach this
   // stage?". An opp counts toward every stage whose signal it carries,
   // so Stage 3's denominator is the widest and Stage 6's the narrowest.
-  const oppsCloseRateByStage = useMemo(() => {
-    const out = { 3: null, 4: null, 5: null, 6: null };
-    if (oppsRecords.length === 0) return out;
-    const cutoff = Date.now() - 365 * 86400000;
-    const buckets = { 3: [], 4: [], 5: [], 6: [] };
-    for (const r of oppsRecords) {
-      const entry = closedOppEntry(r);
-      if (!entry || entry.ts < cutoff) continue;
-      for (const st of CLOSE_RATE_STAGES) {
-        if (st.test(r)) buckets[st.num].push(entry);
-      }
-    }
-    for (const st of CLOSE_RATE_STAGES) out[st.num] = closeRateTally(buckets[st.num]);
-    return out;
-  }, [oppsRecords]);
+  const oppsCloseRateByStage = useMemo(() => closeRatesByStage(oppsRecords), [oppsRecords]);
 
   // % of closed deals that were never quoted, per NOT_QUOTED_WINDOWS. A
   // deal counts as "quoted" when it logged at least one day in the Quoted
@@ -1721,34 +1621,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   // the metrics table uses, flattened to the four numbers the funnel
   // draws (count + pipeline $, each with its goal), so the picture and
   // the table can never disagree.
-  const funnelStages = useMemo(() => renderStages.map((st) => {
-    const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
-    const m = bfoMetrics[stageNum];
-    const live = (v) => (hasBfo && v !== null && v !== undefined ? v : null);
-    return {
-      key: st.key,
-      stageNum,
-      label: st.label,
-      countActual: live(m?.count) ?? (Number(st.activeActual) || 0),
-      countGoal: Number(st.activeGoal) || 0,
-      amtActual: live(m?.total) ?? (Number(st.pipelineActual) || 0),
-      amtGoal: Number(st.pipelineGoal) || 0,
-      // Avg Opp Life — the funnel draws each stage as long as deals sit in it.
-      lifeActual: live(m?.avgAge) ?? (Number(st.lifeActual) || 0),
-      lifeGoal: Number(st.lifeGoal) || 0,
-      // Close Rate Actual — live rolling-365 rate when the Opps tab is
-      // loaded, the manual cell otherwise. Feeds the funnel's weighted
-      // "projected" figure, one stage at a time.
-      closeRate: oppsCloseRateByStage[stageNum]?.rate ?? (Number(st.closeActual) || 0),
-      // Goal-side inputs — the deal size and close rate the stage is
-      // MEANT to run at. The funnel's "To target" view plans off these,
-      // falling back to the actuals where a goal cell is blank.
-      dealSizeGoal: Number(st.dealSizeGoal) || 0,
-      dealSizeActual: live(m?.avg) ?? (Number(st.dealSizeActual) || 0),
-      closeGoal: Number(st.closeGoal) || 0,
-      isLive: hasBfo && m?.count !== null && m?.count !== undefined,
-    };
-  }), [renderStages, bfoMetrics, hasBfo, oppsCloseRateByStage]);
+  const funnelStages = useMemo(
+    () => buildFunnelStages({ stages: renderStages, bfoMetrics, hasBfo, closeRates: oppsCloseRateByStage }),
+    [renderStages, bfoMetrics, hasBfo, oppsCloseRateByStage],
+  );
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
