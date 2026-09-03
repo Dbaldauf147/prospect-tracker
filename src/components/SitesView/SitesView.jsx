@@ -7839,13 +7839,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         views: [{ showGridLines: false }],
       });
       const COLS = 12;
+      // Shared by the Overview table and the Site Explorer list below, so
+      // each width is the wider of the two headers that land in that column.
       ws.columns = [
-        { width: 22 }, // Region
-        { width: 12 }, // Sites
-        { width: 10 }, // Sites %
-        { width: 16 }, // Load (kWh)
-        { width: 16 }, // Load (Dth)
-        { width: 18 }, // Annual Cost
+        { width: 22 }, // Region        / Site Name
+        { width: 12 }, // Sites         / City
+        { width: 16 }, // Sites %       / State / Province
+        { width: 16 }, // Load (kWh)    / ZIP
+        { width: 22 }, // Load (Dth)    / Property Type
+        { width: 18 }, // Annual Cost   / Electric Utility
         { width: 6 }, { width: 6 }, { width: 6 },
         { width: 6 }, { width: 6 }, { width: 6 },
       ];
@@ -8393,11 +8395,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const listStart = listHdrRow + 1;   // first site row
         const pickRef = `$B$${pickRow}`;
 
+        // Column order for the list, used for both the hidden source table
+        // and the visible headers so the two can't drift apart.
+        const LIST_FIELDS = ['siteName', 'city', 'state', 'zip', 'propertyType', 'electric', 'kwh', 'cost'];
+        const LIST_COLS = LIST_FIELDS.length;
         // Hidden source table (cols O–X): 8 display columns, the ISO label as
         // the match key (W), and a running match-rank helper (X) that numbers
         // 1,2,3… down the rows of whichever market is picked. Kept in hidden
         // columns clear of the visible layout so only the assembled list shows.
-        const LIST_COLS = 8;
         const SRC_DISP0 = 15;              // first display column (O)
         const SRC_ISO = SRC_DISP0 + LIST_COLS;   // ISO match-key column (W)
         const SRC_RANK = SRC_ISO + 1;            // running match-rank column (X)
@@ -8422,14 +8427,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         siteRecords.forEach((s, i) => {
           const rowNum = SRC_FIRST + i;
           const sr = ws.getRow(rowNum);
-          sr.getCell(SRC_DISP0 + 0).value = s.siteName;
-          sr.getCell(SRC_DISP0 + 1).value = s.propertyType;
-          sr.getCell(SRC_DISP0 + 2).value = s.city;
-          sr.getCell(SRC_DISP0 + 3).value = s.state;
-          sr.getCell(SRC_DISP0 + 4).value = s.zip;
-          sr.getCell(SRC_DISP0 + 5).value = s.electric;
-          sr.getCell(SRC_DISP0 + 6).value = s.kwh;
-          sr.getCell(SRC_DISP0 + 7).value = s.cost;
+          LIST_FIELDS.forEach((field, ci) => { sr.getCell(SRC_DISP0 + ci).value = s[field]; });
           sr.getCell(SRC_ISO).value = s.iso;
           const isDefault = s.iso === defaultIso;
           if (isDefault) defRank += 1;
@@ -8489,7 +8487,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ws.getRow(pickRow).height = 20;
 
         // Site-list header row.
-        const listHeaders = ['Site Name', 'Property Type', 'City', 'State / Province', 'ZIP', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
+        const listHeaders = ['Site Name', 'City', 'State / Province', 'ZIP', 'Property Type', 'Electric Utility', 'Load (kWh)', 'Annual Cost ($)'];
         const FIRST_NUM_COL = LIST_COLS - 1;  // Load and Annual Cost, right-aligned
         const lh = ws.getRow(listHdrRow);
         listHeaders.forEach((label, i) => {
@@ -8514,7 +8512,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // they re-evaluate whenever the dropdown changes. Cached results show
         // the default market on open.
         const maxListRows = Math.max(1, ...regionRows.map(x => x.agg.sites));
-        const fieldByCol = ['siteName', 'propertyType', 'city', 'state', 'zip', 'electric', 'kwh', 'cost'];
         for (let k = 0; k < maxListRows; k++) {
           const rowNum = listStart + k;
           const rank = k + 1;
@@ -8523,7 +8520,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           for (let c = 1; c <= LIST_COLS; c++) {
             const srcCol = L(SRC_DISP0 + (c - 1));
             const cell = rr.getCell(c);
-            const cached = rec ? rec[fieldByCol[c - 1]] : '';
+            const cached = rec ? rec[LIST_FIELDS[c - 1]] : '';
             cell.value = {
               formula: `IFERROR(INDEX($${srcCol}$${SRC_FIRST}:$${srcCol}$${SRC_LAST},MATCH(${rank},$${wCol}$${SRC_FIRST}:$${wCol}$${SRC_LAST},0)),"")`,
               result: (cached === undefined || cached === null) ? '' : cached,
