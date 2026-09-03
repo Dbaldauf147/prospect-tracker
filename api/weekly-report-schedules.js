@@ -19,15 +19,10 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
+import { buildSnapshotDoc, clampInt } from './_lib/weeklyReportSnapshot.js';
 
 const COLLECTION = 'weeklyReportEmailSchedules';
 const SNAPSHOTS = 'weeklyReportSnapshots';
-
-function clampInt(n, lo, hi, dflt) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return dflt;
-  return Math.min(hi, Math.max(lo, Math.round(v)));
-}
 
 function buildScheduleDoc(input, auth) {
   const s = input || {};
@@ -58,49 +53,6 @@ function buildScheduleDoc(input, auth) {
     dayOfWeek: clampInt(s.dayOfWeek, 0, 6, 1),
     dayOfMonth: clampInt(s.dayOfMonth, 1, 28, 1),
     nextRunAt: Number.isFinite(Number(s.nextRunAt)) ? Number(s.nextRunAt) : Date.now(),
-  };
-}
-
-// Keep the stored snapshot small and predictable: it is written on every
-// visit to the tab, and Firestore caps a document at ~1 MB.
-function trimList(items, max = 60) {
-  if (!Array.isArray(items)) return [];
-  return items.slice(0, max).map(v => String(v ?? '').slice(0, 300));
-}
-
-function buildSnapshotDoc(input, auth) {
-  const s = input || {};
-  const oc = s.oppChanges || {};
-  return {
-    ownerUid: auth.uid,
-    ownerEmail: auth.email || '',
-    capturedAt: Date.now(),
-    scope: s.scope === 'day' ? 'day' : 'week',
-    periodLabel: String(s.periodLabel || '').slice(0, 200),
-    periodStart: Number.isFinite(Number(s.periodStart)) ? Number(s.periodStart) : null,
-    periodEnd: Number.isFinite(Number(s.periodEnd)) ? Number(s.periodEnd) : null,
-    kpiCards: (Array.isArray(s.kpiCards) ? s.kpiCards : []).slice(0, 6).map(c => ({
-      label: String(c?.label || '').slice(0, 80),
-      value: String(c?.value ?? '').slice(0, 40),
-      status: ['ahead', 'behind'].includes(c?.status) ? c.status : null,
-      chip: c?.chip ? String(c.chip).slice(0, 40) : null,
-      lines: trimList(c?.lines, 6),
-    })),
-    tiles: (Array.isArray(s.tiles) ? s.tiles : []).slice(0, 8).map(t => ({
-      label: String(t?.label || '').slice(0, 60),
-      value: clampInt(t?.value, 0, 1e9, 0),
-      goal: Number.isFinite(Number(t?.goal)) && Number(t.goal) > 0 ? clampInt(t.goal, 1, 1e9, 0) : null,
-      accent: t?.accent === 'green' ? 'green' : 'blue',
-    })),
-    oppChanges: {
-      closed: trimList(oc.closed),
-      newOpps: trimList(oc.newOpps),
-      stageChanges: trimList(oc.stageChanges),
-      closeDateMoves: trimList(oc.closeDateMoves),
-      amountUpdates: trimList(oc.amountUpdates),
-      bfoTags: trimList(oc.bfoTags),
-    },
-    narrative: String(s.narrative || '').slice(0, 8000),
   };
 }
 

@@ -9,13 +9,19 @@
 //
 // When the tab posts its live `snapshot`, that is what gets mailed, so a
 // test send matches the screen exactly rather than whatever was last
-// published. Callers that omit it fall back to the stored snapshot — the
-// same one the cron would use, which is what a test is usually checking.
+// published. It goes through the same builder the publish route uses, so
+// it is bounded the same way and carries a `capturedAt` of now — without
+// one the email tells the reader it was "captured at an unknown time"
+// about numbers that are seconds old. Callers that omit it fall back to
+// the stored snapshot — the same one the cron would use, which is what a
+// test is usually checking, and which already carries its own capture
+// stamp from whenever the tab published it.
 
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
 import { sendWeeklyReportEmail } from './_lib/weeklyReportEmail.js';
+import { buildSnapshotDoc } from './_lib/weeklyReportSnapshot.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -40,7 +46,9 @@ async function handler(req, res, auth) {
   if (to.length === 0) return res.status(400).json({ error: 'At least one recipient is required' });
 
   try {
-    let snapshot = postedSnapshot && typeof postedSnapshot === 'object' ? postedSnapshot : null;
+    let snapshot = postedSnapshot && typeof postedSnapshot === 'object'
+      ? buildSnapshotDoc(postedSnapshot, auth)
+      : null;
     if (!snapshot) {
       const shot = await db.collection('weeklyReportSnapshots').doc(auth.uid).get();
       if (!shot.exists) {
