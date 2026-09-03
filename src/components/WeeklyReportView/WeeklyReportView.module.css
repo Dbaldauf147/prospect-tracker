@@ -252,11 +252,12 @@
   font-weight: 600;
 }
 
+/* Provenance under a tile's number ("recorded Sep 1"), not a verdict on
+   it — so it stays quiet rather than reading as good news. */
 .tileSub {
   margin-top: 0.1rem;
   font-size: var(--font-size-xs);
-  color: #059669;
-  font-weight: 600;
+  color: var(--color-text-muted);
 }
 
 /* --- Weekly target on a tile --- */

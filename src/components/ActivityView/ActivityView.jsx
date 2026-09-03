@@ -20,6 +20,9 @@ import {
   outlookMeetingsFromEvents, granolaCalendarMeetings, describeOutlookCalendar,
 } from '../../utils/outlookCalendar';
 import { secureGet, secureSet, secureClear } from '../../utils/secureStorage';
+import {
+  recordWeeklyActivity, loadWeeklyActivityLog, weeklyActivityEntry,
+} from '../../utils/weeklyActivityLog';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
@@ -188,6 +191,24 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // grid; 'todayOutbound' is the new today-only outbound-to-external
   // view that also resolves an active opp per row.
   const [subtab, setSubtab] = useState('all');
+
+  // Per-week totals of the user's sends to contacts outside @se.com,
+  // written every time this tab has a feed in hand. The feed itself is
+  // too big to keep (saveCache drops it on quota), so counting it here
+  // is what leaves the Weekly Report a number to show for this week once
+  // next week comes around.
+  const [weeklyLog, setWeeklyLog] = useState(loadWeeklyActivityLog);
+  useEffect(() => {
+    if (!data) return;
+    setWeeklyLog(recordWeeklyActivity(data, settings?.workEmail));
+  }, [data, settings?.workEmail]);
+  const recorded = useMemo(() => {
+    const now = Date.now();
+    return {
+      thisWeek: weeklyActivityEntry(weeklyLog, now),
+      lastWeek: weeklyActivityEntry(weeklyLog, now - 7 * 24 * 60 * 60 * 1000),
+    };
+  }, [weeklyLog]);
 
   async function fetchAllPages(type) {
     const all = [];
@@ -1909,6 +1930,21 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
             </button>
           );
         })}
+      </div>
+
+      {/* What this tab has banked for the Weekly Report. The tile there
+          reads these totals when the raw feed is gone, so showing them
+          here is how you can tell the week was actually recorded. */}
+      <div className={styles.weekRecord}>
+        <strong>This week:</strong>{' '}
+        {recorded.thisWeek
+          ? `${recorded.thisWeek.emails} email${recorded.thisWeek.emails === 1 ? '' : 's'} to contacts outside @se.com`
+          : 'not recorded yet — waiting on the HubSpot feed'}
+        {recorded.lastWeek ? ` · last week: ${recorded.lastWeek.emails}` : ''}
+        <span className={styles.weekRecordNote}>
+          {' '}Recorded for the Weekly Report&rsquo;s &ldquo;Emails sent&rdquo; tile.
+          {!String(settings?.workEmail || '').trim() && ' Set your work email in Settings \u2192 CDM Name so this counts only your own sends.'}
+        </span>
       </div>
 
       {subtab === 'all' && (
