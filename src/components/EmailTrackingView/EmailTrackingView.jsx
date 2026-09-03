@@ -33,6 +33,7 @@ import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient, replyByReci
 import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
 import { clicksByLink, linksForRow, shortLinkLabel } from '../../utils/emailLinks';
+import { engagementSignals } from '../../utils/emailSignals';
 
 function toDate(ts) {
   if (!ts) return null;
@@ -242,7 +243,11 @@ export function EmailTrackingView({ onOpenCampaign }) {
       const replies = link ? replyByCampaign.get(link.index) : null;
       // null = nobody is tracking replies for this send (no campaign owns it).
       const reply = replies?.get(key) ?? null;
-      return { row: r, link, opens, reply };
+      // What the SHAPE of the opens says, over and above the count — repeat
+      // reads across days, several places on several devices, a fast first
+      // open. See emailSignals.js for why each is worth more than a raw open.
+      const signals = engagementSignals(opens, { sentAt: sent?.get(key) ?? null });
+      return { row: r, link, opens, reply, signals };
     }),
     [rows, campaigns, sentAtByCampaign, replyByCampaign],
   );
@@ -442,7 +447,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 10 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1040 }}>
             <thead>
               <tr>
                 <th style={th}></th>
@@ -452,12 +457,13 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel loaded — i.e. the message was displayed. Passive: a client that blocks images never registers one.">Opens</th>
                 <th style={th}>Last open</th>
+                <th style={th} title="What the pattern of opens says beyond the count: repeat reads on separate days, opens from several places on several devices (often a forward), a first open within the hour. Inferences, not facts — hover one for its reasoning.">Signals</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than an open — and can happen on a send that never registered one.">Clicks</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Whether the recipient wrote back, from the campaign's HubSpot activity. Out-of-office and auto-replies don't count. The one signal here a machine can't produce — so it outranks both of the columns to its left.">Replied</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map(({ row: r, link, opens, reply }) => {
+              {visible.map(({ row: r, link, opens, reply, signals }) => {
                 const isOpen = expanded === r.id;
                 const clicked = (r.clickCount || 0) > 0;
                 return (
@@ -467,6 +473,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
                     link={link}
                     opens={opens}
                     reply={reply}
+                    signals={signals}
                     onOpenCampaign={onOpenCampaign}
                     isOpen={isOpen}
                     clicked={clicked}
@@ -538,7 +545,7 @@ const OPEN_VERDICT_LABEL = {
   repeat: ['· repeat', 'The same client re-loaded the pixel within 5 minutes of its last hit — one read, re-rendered.'],
 };
 
-function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpen, clicked, onToggle }) {
+function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenCampaign, isOpen, clicked, onToggle }) {
   const opened = openSummary.count > 0;
   const excluded = describeExcludedOpens(openSummary);
   // Newest first, carrying each event's verdict. Falls back to the raw
@@ -596,6 +603,27 @@ function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpe
             ? <span title={fmtDateTime(openSummary.lastOpenAt)}>{fmtRelative(openSummary.lastOpenAt)}</span>
             : '-'}
         </td>
+        <td style={{ ...td, maxWidth: 230 }}>
+          {signals.length === 0 ? (
+            <span style={{ color: '#CBD5E1' }}>—</span>
+          ) : (
+            <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {signals.map(sig => (
+                <span
+                  key={sig.key}
+                  title={sig.title}
+                  style={{
+                    display: 'inline-block', borderRadius: 999, padding: '0.05rem 0.45rem',
+                    fontSize: '0.68rem', fontWeight: 600, whiteSpace: 'nowrap',
+                    background: sig.key === 'shared' ? '#FEF3C7' : '#F1F5F9',
+                    color: sig.key === 'shared' ? '#92400E' : '#475569',
+                    border: `1px solid ${sig.key === 'shared' ? '#FDE68A' : '#E2E8F0'}`,
+                  }}
+                >{sig.label}</span>
+              ))}
+            </span>
+          )}
+        </td>
         <td style={{ ...td, textAlign: 'center' }}>
           <span title={clickTitle}>
             {clicked ? <Pill tone="blue">{r.clickCount}</Pill> : <Pill tone="grey">0</Pill>}
@@ -615,7 +643,7 @@ function FragmentRow({ r, link, opens: openSummary, reply, onOpenCampaign, isOpe
       </tr>
       {isOpen && (
         <tr>
-          <td colSpan={9} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+          <td colSpan={10} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
