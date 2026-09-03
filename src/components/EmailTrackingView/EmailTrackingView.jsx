@@ -42,6 +42,7 @@ import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
 import { clicksByLink, linksForRow, shortLinkLabel } from '../../utils/emailLinks';
 import { engagementSignals } from '../../utils/emailSignals';
+import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE, isDelivered, isDeliveryKnown } from '../../utils/deliveryStatus';
 
 function toDate(ts) {
   if (!ts) return null;
@@ -185,6 +186,7 @@ function MetricsExplainer() {
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>The tiles</div>
           <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <li><strong>Tracked emails</strong> — drafts created with tracking on, inside the campaign filter above.</li>
+            <li><strong>Delivered (%)</strong> — of the sends a campaign is watching, how many arrived without bouncing. This is the question an &ldquo;open&rdquo; looks like it answers and doesn&rsquo;t: a pixel proves arrival when it fires, but proves nothing when it doesn&rsquo;t, so delivery is read off bounces instead. Sends nobody is watching are left out rather than assumed delivered.</li>
             <li><strong>Images loaded (%)</strong> — how many of those emails had the pixel fetched at least once. One recipient counts once here however many times it fires.</li>
             <li><strong>Total image loads</strong> — every fetch. The same person coming back an hour later adds two.</li>
             <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
@@ -259,7 +261,14 @@ export function EmailTrackingView({ onOpenCampaign }) {
       // reads across days, several places on several devices, a fast first
       // open. See emailSignals.js for why each is worth more than a raw open.
       const signals = engagementSignals(opens, { sentAt: sent?.get(key) ?? null });
-      return { row: r, link, opens, reply, signals };
+      // Did it arrive? Answered from the bounce, not from the pixel — a pixel
+      // that never loaded is silence, not a failure. Counted loads only, so
+      // the sender's own draft previews don't stand in as proof of delivery.
+      const delivery = deliveryStatus(r, reply, {
+        hasActivity: opens.count > 0 || (r.clickCount || 0) > 0,
+        sentAt: sent?.get(key) ?? null,
+      });
+      return { row: r, link, opens, reply, signals, delivery };
     }),
     [rows, campaigns, sentAtByCampaign, replyByCampaign],
   );
@@ -307,11 +316,17 @@ export function EmailTrackingView({ onOpenCampaign }) {
     // chose not to answer — counting it as one understates the rate and hides
     // a data problem as a performance problem.
     const bouncedEmails = scoped.filter(l => l.reply?.bounced).length;
+    // Measured only over sends a campaign is watching AND that went out —
+    // a send nobody is watching has no bounce evidence either way, and
+    // counting it as delivered would turn silence into a fact.
+    const deliveryKnown = scoped.filter(l => isDeliveryKnown(l.delivery)).length;
+    const deliveredEmails = scoped.filter(l => isDelivered(l.delivery)).length;
+    const deliveryRate = deliveryKnown ? Math.round((deliveredEmails / deliveryKnown) * 100) : 0;
     const oooEmails = scoped.filter(l => l.reply?.outOfOffice && !l.reply?.replied).length;
     const replyTracked = scoped.filter(l => l.reply && !l.reply.bounced).length;
     const repliedEmails = scoped.filter(l => l.reply?.replied).length;
     const replyRate = replyTracked ? Math.round((repliedEmails / replyTracked) * 100) : 0;
-    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate, bouncedEmails, oooEmails };
+    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate, bouncedEmails, oooEmails, deliveryKnown, deliveredEmails, deliveryRate };
   }, [scoped]);
 
   // Which links are actually pulling, across whatever the campaign filter has
@@ -381,6 +396,15 @@ export function EmailTrackingView({ onOpenCampaign }) {
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div style={tile} title="Drafts created with tracking on, within the campaign filter.">
           <div style={tileNum}>{stats.trackedEmails}</div><div style={tileLabel}>Tracked emails</div>
+        </div>
+        <div
+          style={tile}
+          title={stats.deliveryKnown
+            ? `${stats.deliveredEmails} of the ${stats.deliveryKnown} send${stats.deliveryKnown === 1 ? '' : 's'} a campaign is watching arrived without bouncing. Sends nobody is watching are left out — no campaign means no bounce would have reached us, which is not the same as delivered.`
+            : 'No send here belongs to a saved campaign, so nothing was watching for a bounce and delivery can\'t be established either way.'}
+        >
+          <div style={tileNum}>{stats.deliveryKnown ? stats.deliveredEmails : '—'}</div>
+          <div style={tileLabel}>{stats.deliveryKnown ? `Delivered (${stats.deliveryRate}%)` : 'Delivered'}</div>
         </div>
         <div style={tile} title="Emails whose tracking pixel was fetched at least once. Not the same as being read: a preview pane or a privacy pre-fetch counts, and a client that blocks images never fires it.">
           <div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Images loaded ({stats.openRate}%)</div>
@@ -481,7 +505,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 10 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1040 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1140 }}>
             <thead>
               <tr>
                 <th style={th}></th>
@@ -489,6 +513,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th}>Subject</th>
                 <th style={th}>Campaign</th>
                 <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
+                <th style={th} title="Whether the mail arrived, answered from bounces rather than from the pixel — a pixel that never loaded is silence, not a failure. Confirmed means something was fetched or clicked, which can only happen after delivery.">Delivery</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel was fetched. Passive — a preview pane or a privacy pre-fetch fires it, and a client that blocks images never does — so treat it as a weak signal, and a zero as no signal at all.">Loads</th>
                 <th style={th} title="When the pixel was last fetched. The most useful thing this metric gives you: a load in the last hour means the message is in front of someone now.">Last load</th>
                 <th style={th} title="What the pattern of opens says beyond the count: repeat reads on separate days, opens from several places on several devices (often a forward), a first open within the hour. Inferences, not facts — hover one for its reasoning.">Signals</th>
@@ -497,7 +522,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map(({ row: r, link, opens, reply, signals }) => {
+              {visible.map(({ row: r, link, opens, reply, signals, delivery }) => {
                 const isOpen = expanded === r.id;
                 const clicked = (r.clickCount || 0) > 0;
                 return (
@@ -508,6 +533,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
                     opens={opens}
                     reply={reply}
                     signals={signals}
+                    delivery={delivery}
                     onOpenCampaign={onOpenCampaign}
                     isOpen={isOpen}
                     clicked={clicked}
@@ -579,7 +605,7 @@ const OPEN_VERDICT_LABEL = {
   repeat: ['· repeat', 'The same client re-loaded the pixel within 5 minutes of its last hit — one read, re-rendered.'],
 };
 
-function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenCampaign, isOpen, clicked, onToggle }) {
+function FragmentRow({ r, link, opens: openSummary, reply, signals = [], delivery, onOpenCampaign, isOpen, clicked, onToggle }) {
   const opened = openSummary.count > 0;
   const excluded = describeExcludedOpens(openSummary);
   // Newest first, carrying each event's verdict. Falls back to the raw
@@ -627,6 +653,16 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
           )}
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>{fmtDateTime(r.createdAt)}</td>
+        <td style={{ ...td, whiteSpace: 'nowrap' }}>
+          <span title={DELIVERY_TITLE[delivery]} style={{
+            display: 'inline-block', borderRadius: 999, padding: '0.05rem 0.45rem',
+            fontSize: '0.7rem', fontWeight: 600,
+            ...(delivery === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
+              : delivery === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
+              : delivery === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
+              : { background: 'transparent', color: '#94A3B8' }),
+          }}>{DELIVERY_LABEL[delivery]}</span>
+        </td>
         <td style={{ ...td, textAlign: 'center' }}>
           <span title={excluded || undefined}>
             {opened ? <Pill tone="green">{openSummary.count}</Pill> : <Pill tone="grey">0</Pill>}
@@ -671,11 +707,10 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
               <Pill tone="green">Replied</Pill>
             </span>
           ) : reply.bounced ? (
-            // A bounce outranks an out-of-office: nobody is away from an
-            // address that doesn't exist, and the address is the thing to fix.
-            <span title="The mail server rejected this address. Nobody saw the email, and every future send to it is wasted — fix or remove the address.">
-              <Pill tone="red">Bounced</Pill>
-            </span>
+            // The Delivery column carries the bounce itself; here it only
+            // explains the silence, so a reader doesn't read a dead address as
+            // a recipient who ignored them.
+            <span style={{ color: '#94A3B8', fontSize: '0.72rem' }} title="Never delivered — see the Delivery column. This is not a recipient who chose not to answer.">n/a</span>
           ) : reply.outOfOffice ? (
             <span title={reply.oooSubject
               ? `Their auto-responder replied: "${reply.oooSubject}". Not a no — usually worth a second send when they're back.`
@@ -689,7 +724,7 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
       </tr>
       {isOpen && (
         <tr>
-          <td colSpan={10} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+          <td colSpan={11} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
