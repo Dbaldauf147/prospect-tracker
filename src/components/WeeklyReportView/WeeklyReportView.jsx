@@ -83,17 +83,77 @@ function renderNarrative(md) {
   return out;
 }
 
-function StatTile({ value, label, accent, sub }) {
+// A tile can carry a standing weekly target. `goal` is the number to hit
+// (null when none is set) and `onGoal` commits a new one; pass neither and
+// the tile renders exactly as it always did. The target is weekly, so the
+// caller only wires it up in week mode — a week's worth of work measured
+// against a single day would read as failure every day.
+const EMPTY_TARGETS = {};
+
+function StatTile({ value, label, accent, sub, goal = null, onGoal }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const editable = typeof onGoal === 'function';
+
+  function open() {
+    setDraft(goal == null ? '' : String(goal));
+    setEditing(true);
+  }
+  function commit() {
+    const t = draft.trim();
+    // An emptied box clears the target rather than storing 0, which would
+    // otherwise read as "hit it" on a week with no activity at all.
+    if (t === '') onGoal(null);
+    else {
+      const n = Math.round(Number(t));
+      if (Number.isFinite(n) && n > 0) onGoal(n);
+    }
+    setEditing(false);
+  }
+
+  const pct = goal > 0 ? Math.min(100, Math.round((Number(value) || 0) / goal * 100)) : 0;
+  const hit = goal > 0 && (Number(value) || 0) >= goal;
+
   return (
     <div className={styles.tile} data-accent={accent || undefined}>
       <div className={styles.tileValue}>{value}</div>
       <div className={styles.tileLabel}>{label}</div>
       {sub ? <div className={styles.tileSub}>{sub}</div> : null}
+      {editable && (
+        editing ? (
+          <input
+            className={styles.goalInput}
+            type="number"
+            min="1"
+            step="1"
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commit();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            placeholder="per week"
+            aria-label={`Weekly target for ${label}`}
+          />
+        ) : goal > 0 ? (
+          <button type="button" className={styles.goalRow} onClick={open} title={`Weekly target: ${goal}. Click to change, clear the box to drop it.`}>
+            <span className={styles.goalBar} data-hit={hit ? 'yes' : undefined}>
+              <span className={styles.goalFill} style={{ width: `${pct}%` }} />
+            </span>
+            <span className={styles.goalNum}>/{goal}</span>
+          </button>
+        ) : (
+          <button type="button" className={styles.goalSet} onClick={open} title={`Set a weekly target for ${label}`}>
+            + Set goal
+          </button>
+        )
+      )}
     </div>
   );
 }
 
-const fmtMoney = (n) => (Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString('en-US')}` : '');
 
 // Exact dollars for the KPI detail lines; compact for the headline figure,
 // where "$1.9M" reads at a glance and the extra digits don't.
@@ -194,9 +254,21 @@ function ReviewCard({ review, weekLabel }) {
   );
 }
 
-export function WeeklyReportView({ settings, cdmName = '' }) {
+export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const senderEmail = String(settings?.workEmail || '').toLowerCase().trim();
+
+  // Standing weekly targets for the tiles, in settings so they hold from one
+  // week to the next: { emails: 25, newOpps: 5 }. A metric with no entry has
+  // no target, and setting one to null drops it again.
+  const weeklyTargets = settings?.weeklyTargets || EMPTY_TARGETS;
+  const setWeeklyTarget = useCallback((key, n) => {
+    if (typeof updateSettings !== 'function') return;
+    const next = { ...(settings?.weeklyTargets || {}) };
+    if (n == null) delete next[key];
+    else next[key] = n;
+    updateSettings({ weeklyTargets: next });
+  }, [settings, updateSettings]);
 
   const [mode, setMode] = useState('week'); // 'week' | 'day'
   const [refDate, setRefDate] = useState(todayIso);
@@ -669,17 +741,27 @@ export function WeeklyReportView({ settings, cdmName = '' }) {
         )}
       </section>
 
+      {/* Emails sent and New opps are the two the week is steered by, so they
+          are the two that carry a target. Everything else that used to have a
+          tile here — calls, meetings, deals closed, stage changes, amount
+          updates, BFO tags, goals opened and closed — is still counted and
+          still listed in full further down the page; it just no longer takes
+          up a tile. */}
       <div className={styles.tiles}>
-        <StatTile value={activity.emails.length} label="Emails sent" accent="blue" />
-        <StatTile value={activity.calls.length} label="Calls" accent="blue" />
-        <StatTile value={activity.meetings.length} label="Meetings" accent="blue" />
-        <StatTile value={oppChanges.closed.length} label="Deals closed" accent="green" sub={fmtMoney(oppChanges.closedAmount) ? `${fmtMoney(oppChanges.closedAmount)} quoted` : undefined} />
-        <StatTile value={oppChanges.newOpps.length} label="New opps" accent="green" />
-        <StatTile value={oppChanges.stageChanges.length} label="Stage changes" />
-        <StatTile value={oppChanges.amountUpdates.length} label="Amount updates" />
-        <StatTile value={oppChanges.bfoTags.length} label="BFO tags" />
-        <StatTile value={goalsProg.archived.length} label="Goals closed" accent="green" />
-        <StatTile value={goalsProg.active.length} label="Active goals" />
+        <StatTile
+          value={activity.emails.length}
+          label="Emails sent"
+          accent="blue"
+          goal={weeklyTargets.emails ?? null}
+          onGoal={mode === 'week' ? (n => setWeeklyTarget('emails', n)) : undefined}
+        />
+        <StatTile
+          value={oppChanges.newOpps.length}
+          label="New opps"
+          accent="green"
+          goal={weeklyTargets.newOpps ?? null}
+          onGoal={mode === 'week' ? (n => setWeeklyTarget('newOpps', n)) : undefined}
+        />
       </div>
 
       <section className={styles.reviewSection}>

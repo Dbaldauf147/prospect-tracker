@@ -488,7 +488,7 @@ function App() {
             // keys stay routable so existing links land on the right tab.
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} cdmName={cdmName} onSelectProspect={handleSelect} initialTab={view === 'drafts' ? 'drafts' : view} />
           ) : view === 'charts' ? (
-            <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} onSelectProspect={handleSelect} />
+            <ChartsView prospects={prospects} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
