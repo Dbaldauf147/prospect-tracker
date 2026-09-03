@@ -38,6 +38,18 @@
 //            it hands the row back to the basis. A service can carry only
 //            an avgFee and no basis at all, which is the quick way to
 //            price one: a number, no model behind it.
+//   setup  — the one-time cost of standing the service up, as a list of
+//            components rather than a single figure: a setup fee is
+//            usually an implementation charge plus a per-something
+//            onboarding cost, and a lone number can't be argued with a
+//            year later. Each component is
+//            { label, kind: 'fixed' | 'unit', amount, basis }:
+//            a fixed one is dollars flat, a per-unit one is dollars times
+//            the count its basis names (the same counts the recurring
+//            side multiplies, so an onboarding charge per site follows
+//            the site count without anyone retyping it). Optional and
+//            empty by default, so a service without one prices exactly as
+//            it did before setup fees existed.
 //   notes  — free text, for the assumptions a number can't carry
 //
 // Stored under settings.servicePricing so it syncs across devices with the
@@ -270,6 +282,118 @@ export function formatMoneyRange(low, high) {
   return `${formatMoney(Math.min(lo, hi))} – ${formatMoney(Math.max(lo, hi))}`;
 }
 
+// ---- Setup fees ----------------------------------------------------------
+//
+// The one-time cost of standing a service up, kept apart from the recurring
+// fee it sits beside: the two are billed differently, land in different
+// years and get negotiated separately, and a single "fee" column that
+// quietly mixed them would misstate both. A setup fee is a list of
+// components so it can be taken apart — an implementation charge plus a
+// per-site onboarding cost is the normal shape of one, and "$18,850" on its
+// own is a number nobody can check.
+
+// The two shapes a component takes. Per-unit ones borrow the pricing bases,
+// so a setup charged per site multiplies the same count the recurring side
+// does and the estimator asks for it exactly once.
+export const SETUP_KINDS = [
+  { kind: 'fixed', label: 'Fixed', hint: 'A flat figure, whatever the account looks like' },
+  { kind: 'unit',  label: 'Per unit', hint: 'A rate times a count — sites, meters, users' },
+];
+
+// A stored setup list, cleaned up: components with no amount, per-unit ones
+// naming a basis that isn't per-unit (or is gone from an edited bases list),
+// and anything that isn't an object all drop out. Always an array, so a
+// caller never has to guard, and an entry whose list cleans up to nothing
+// reads as having no setup fee at all.
+export function normalizeSetup(raw, bases = PRICING_BASES) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const amount = parseMoney(item.amount);
+    if (amount === null || amount < 0) continue;
+    const kind = item.kind === 'unit' ? 'unit' : 'fixed';
+    const label = String(item.label || '').trim();
+    if (kind === 'fixed') { out.push({ label, kind, amount, basis: '' }); continue; }
+    const basis = basisFor(item.basis, bases);
+    // A per-unit component with no unit behind it can't be multiplied by
+    // anything. Dropping it rather than treating it as flat keeps a
+    // renamed-away basis from silently becoming a fixed charge.
+    if (!basis || basis.kind !== 'unit') continue;
+    out.push({ label, kind, amount, basis: basis.key });
+  }
+  return out;
+}
+
+// The count one per-unit component multiplies. The service's own unit count
+// wins when the component is charged on the same unit the service is — a
+// service sold on 40 of 819 sites is onboarded at 40 of them too — and the
+// shared count from the estimator answers for everything else.
+function setupUnitsFor(component, { counts, ownUnit, ownUnits, bases }) {
+  const basis = basisFor(component?.basis, bases);
+  if (!basis?.unit) return 0;
+  if (ownUnit && basis.unit === ownUnit && ownUnits !== null && ownUnits !== undefined) {
+    return parseMoney(ownUnits) ?? 0;
+  }
+  return parseMoney(counts?.[basis.unit]) ?? 0;
+}
+
+/**
+ * What a setup list comes to under one scenario.
+ *
+ * `counts` is the estimator's unit counts; `ownUnit` / `ownUnits` are the
+ * service's own basis unit and the count typed against it, which a
+ * component charged on that same unit follows. Returns 0 for an empty list,
+ * so the figure is always addable.
+ */
+export function setupTotal(setup, { counts = null, ownUnit = null, ownUnits = null, bases = PRICING_BASES } = {}) {
+  let total = 0;
+  for (const c of normalizeSetup(setup, bases)) {
+    if (c.kind === 'fixed') { total += c.amount; continue; }
+    total += c.amount * setupUnitsFor(c, { counts, ownUnit, ownUnits, bases });
+  }
+  return total;
+}
+
+// The noun a unit reads as in running text: "Sites" → "site", singular and
+// lowercased. An acronym or a label that isn't plain title case keeps the
+// case it was typed in — "MWh" is not "mwh", and a user who named a unit
+// "EV Chargers" meant those capitals.
+export function unitNoun(unitLabel) {
+  const label = String(unitLabel || '').trim();
+  if (!label) return 'unit';
+  const singular = label.replace(/s$/, '');
+  return /^[A-Z][a-z]+$/.test(singular) ? singular.toLowerCase() : singular;
+}
+
+// The setup fee as it reads on the rate card, before any count is applied:
+// "$5,000 + $150/site". The per-unit half stays a rate rather than a total
+// because that is what was agreed — the total moves with the deal, the rate
+// doesn't. Returns '' when there is no setup fee.
+export function formatSetupSummary(setup, bases = PRICING_BASES) {
+  const parts = [];
+  for (const c of normalizeSetup(setup, bases)) {
+    if (c.kind === 'fixed') { parts.push(formatMoney(c.amount)); continue; }
+    const basis = basisFor(c.basis, bases);
+    parts.push(`${formatMoney(c.amount)}/${unitNoun(basis?.unitLabel || basis?.unit)}`);
+  }
+  return parts.join(' + ');
+}
+
+// Write a service's setup list. An empty list clears the field outright
+// rather than storing [], and an entry with nothing left in it is deleted,
+// matching setPricingField.
+export function setPricingSetup(pricing, name, setup, bases = PRICING_BASES) {
+  const next = { ...pricing };
+  const row = { ...(next[name] || {}) };
+  const clean = normalizeSetup(setup, bases);
+  if (clean.length === 0) delete row.setup;
+  else row.setup = clean;
+  if (Object.keys(row).length === 0) delete next[name];
+  else next[name] = row;
+  return next;
+}
+
 export function getServicePricing(settings) {
   const raw = settings?.servicePricing;
   return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
@@ -287,6 +411,7 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     minFee: parseMoney(row?.minFee),
     units: parseMoney(row?.units),
     avgFee: parseMoney(row?.avgFee),
+    setup: normalizeSetup(row?.setup, bases),
     notes: String(row?.notes || ''),
   };
 }
@@ -353,6 +478,26 @@ export function isRecurring(meta) {
 //   valueHigh— the same for the top of the range
 //   note     — why a priced service still came out at nothing, when it did
 export function estimateService({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
+  const est = estimateRecurring({ entry, meta, counts, dealSize, bases });
+  const basis = basisFor(entry?.basis, bases);
+  // The setup fee is one-time money on a service whose fee may not be, so
+  // it rides alongside the recurring figure rather than inside it: the
+  // caller adds it to the first year and to the contract value, and never
+  // to the annual. A per-unit component follows the same count the service
+  // itself is charged on when they share a unit — see setupTotal.
+  const setup = setupTotal(entry?.setup, {
+    counts, bases, ownUnit: basis?.unit || null, ownUnits: parseMoney(entry?.units),
+  });
+  // A service with nothing but a setup fee is priced: there is a figure to
+  // put on the deal, and reporting it as unpriced would hide real money
+  // behind "no rate set".
+  if (!est.priced && setup > 0) {
+    return { ...est, priced: true, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, setup, setupOnly: true };
+  }
+  return { ...est, setup, setupOnly: false };
+}
+
+function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const basis = basisFor(entry?.basis, bases);
   const rate = parseMoney(entry?.rate);
   const rateHigh = parseMoney(entry?.rateHigh);
@@ -366,6 +511,9 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
   const base = {
     priced: false, fee: null, feeHigh: null, value: null, valueHigh: null, recurring, years,
     unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
+    // Filled in by estimateService, which wraps this — kept in the shape so
+    // a caller reading a line never has to check whether the field is there.
+    setup: 0, setupOnly: false,
   };
 
   // A fee typed into the Year 1 Fee column is the answer, whatever the basis
@@ -477,6 +625,11 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
   let recurringAnnual = 0;
   let oneTime = 0;
   let contractValue = 0;
+  // Setup money, tracked on its own as well as inside the one-time total:
+  // "what does standing this up cost?" is a question the estimator gets
+  // asked directly, and digging it back out of a total that also holds the
+  // project work wouldn't answer it.
+  let setupTotalAll = 0;
   // The top of each total, run alongside rather than derived: a scope where
   // three services carry a range and five don't is not the low total times
   // anything, it's the low ends of five added to the high ends of three.
@@ -504,25 +657,40 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     // changes nothing.
     if (est.unit && !est.unitsTyped && !est.typed) unitsUsed.add(est.unit);
     if (!est.priced) { unpriced.push(row.name); }
-    else if (est.recurring) {
-      recurringAnnual += est.fee; contractValue += est.value;
-      recurringAnnualHigh += est.feeHigh; contractValueHigh += est.valueHigh;
-    } else {
-      oneTime += est.fee; contractValue += est.value;
-      oneTimeHigh += est.feeHigh; contractValueHigh += est.valueHigh;
+    else {
+      if (est.recurring) {
+        recurringAnnual += est.fee; contractValue += est.value;
+        recurringAnnualHigh += est.feeHigh; contractValueHigh += est.valueHigh;
+      } else {
+        oneTime += est.fee; contractValue += est.value;
+        oneTimeHigh += est.feeHigh; contractValueHigh += est.valueHigh;
+      }
+      // Setup is one-time whatever the service is, so it lands in the
+      // one-time total on both sides of a recurring service's range and is
+      // billed once into the contract value — never multiplied by the term
+      // the way the annual fee is.
+      if (est.setup) {
+        setupTotalAll += est.setup;
+        oneTime += est.setup; oneTimeHigh += est.setup;
+        contractValue += est.setup; contractValueHigh += est.setup;
+      }
     }
     lines.push({ name: row.name, entry, ...est });
   }
 
   // What the scope costs in its FIRST year: a recurring service bills its
-  // annual fee, a project bills the job. Which is the two halves added — the
-  // same two the contract value keeps apart, because after year one they stop
-  // agreeing. It is also the sum of the Estimated Year 1 Fee column, which is
-  // why that column and the headline figure on the estimator always tie out.
+  // annual fee, a project bills the job, and anything with a setup fee bills
+  // that once. Which is the two halves added — the same two the contract
+  // value keeps apart, because after year one they stop agreeing. It is the
+  // sum of the Estimated Year 1 Fee column plus the Setup Fee column beside
+  // it: setup stays out of the fee column because that cell is editable and
+  // typing into it states the service's fee, not its fee plus its setup.
   const year1Total = recurringAnnual + oneTime;
   const year1TotalHigh = recurringAnnualHigh + oneTimeHigh;
   return {
     lines, recurringAnnual, oneTime, year1Total, contractValue,
+    // The setup slice of `oneTime`, for a caller that wants to name it.
+    setup: setupTotalAll,
     recurringAnnualHigh, oneTimeHigh, year1TotalHigh, contractValueHigh,
     // Whether any of this is a range at all, so a caller can say "$45,000"
     // without checking eight figures against each other.

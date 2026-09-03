@@ -70,6 +70,10 @@ export function buildPricingAnalysis({
     feeHigh: num(line.feeHigh) ?? num(line.fee),
     value: num(line.value),
     valueHigh: num(line.valueHigh) ?? num(line.value),
+    // The one-time setup fee this line carried, already inside the totals
+    // below. Recorded per line because a first year that runs ahead of the
+    // annual fee has a reason, and the reason is on the row.
+    setup: num(line.setup) ?? 0,
     note: str(line.note),
     };
   });
@@ -81,6 +85,9 @@ export function buildPricingAnalysis({
     lines,
     recurringAnnual: num(totals?.recurringAnnual) ?? 0,
     oneTime: num(totals?.oneTime) ?? 0,
+    // The setup slice of oneTime, so a saved analysis can say what the
+    // standing-up cost was without re-deriving it from the lines.
+    setup: num(totals?.setup) ?? 0,
     year1Total: num(totals?.year1Total) ?? 0,
     contractValue: num(totals?.contractValue) ?? 0,
     recurringAnnualHigh: num(totals?.recurringAnnualHigh) ?? num(totals?.recurringAnnual) ?? 0,
@@ -135,6 +142,9 @@ export function normalizePricingAnalysis(raw) {
       feeHigh: num(l.feeHigh) ?? num(l.fee),
       value: num(l.value),
       valueHigh: num(l.valueHigh) ?? num(l.value),
+      // An analysis saved before setup fees existed carries none, which is
+      // what it was: nothing.
+      setup: num(l.setup) ?? 0,
       note: str(l.note),
     }));
   if (lines.length === 0) return null;
@@ -146,6 +156,7 @@ export function normalizePricingAnalysis(raw) {
     lines,
     recurringAnnual: num(raw.recurringAnnual) ?? 0,
     oneTime: num(raw.oneTime) ?? 0,
+    setup: num(raw.setup) ?? 0,
     year1Total: num(raw.year1Total) ?? 0,
     contractValue: num(raw.contractValue) ?? 0,
     recurringAnnualHigh: num(raw.recurringAnnualHigh) ?? num(raw.recurringAnnual) ?? 0,

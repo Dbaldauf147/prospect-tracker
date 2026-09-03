@@ -140,12 +140,26 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
                   {formatMoneyRange(analysis.recurringAnnual, analysis.recurringAnnualHigh) || '$0'}
                 </td>
               </tr>
+              {/* The one-time half. It holds the setup fees as well as the
+                  project work, so the label says so whenever there are any
+                  — a reader comparing this to a quote needs to know which
+                  of the two a figure came from. */}
               <tr>
-                <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>One-off projects</td>
+                <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>
+                  {analysis.setup > 0 ? 'One-off + setup' : 'One-off projects'}
+                </td>
                 <td style={{ ...footCell, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
                   {formatMoneyRange(analysis.oneTime, analysis.oneTimeHigh) || '$0'}
                 </td>
               </tr>
+              {analysis.setup > 0 && (
+                <tr>
+                  <td style={{ ...footCell, ...muted, borderTop: 'none', paddingLeft: 24 }} colSpan={3}>of which setup fees</td>
+                  <td style={{ ...footCell, ...muted, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
+                    {formatMoneyRange(analysis.setup, analysis.setup) || '$0'}
+                  </td>
+                </tr>
+              )}
               <tr>
                 <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>Contract value</td>
                 <td style={{ ...footCell, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>

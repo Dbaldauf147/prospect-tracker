@@ -2713,3 +2713,100 @@
   font-variant-numeric: tabular-nums;
   border-bottom: 1px dashed #C4B5FD;
 }
+
+/* --- Setup fee panel (Services Pricing › Setup Fee) --- */
+
+/* One grid for the header and every component row, same as the bases
+   panel: what it's for, how it's charged, the amount (plus its unit
+   picker), what that comes to on the open scenario, and the remove. */
+.setupHeadRow,
+.setupRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px minmax(0, 200px) minmax(0, 150px) 24px;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.setupHeadRow {
+  padding: 0 0 0.35rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.setupRow {
+  padding: 0.25rem 0;
+}
+
+/* The amount and, for a per-unit component, the count it multiplies. */
+.setupAmountCol {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.setupLineTotal {
+  font-size: 0.75rem;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The sum of the rows above, against the scenario currently in the
+   estimator — the figure the Setup Fee column will show. */
+.setupTotalRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.setupTotalRow strong {
+  font-size: 0.95rem;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The Setup Fee cell: a button that reads as a value, opening the panel. */
+.setupCellBtn {
+  width: 100%;
+  text-align: left;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: var(--color-text);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setupCellBtn:hover {
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
+.setupCellEmpty {
+  color: var(--color-text-muted);
+}
+
+/* The per-unit half of a setup fee, next to the dollar total it produced. */
+.setupCellRate {
+  color: var(--color-text-muted);
+  margin-left: 0.3rem;
+  font-size: 0.68rem;
+}
