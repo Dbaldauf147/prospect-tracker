@@ -1,19 +1,20 @@
-// Reading more out of the open events than "how many".
+// Reading more out of the image-load events than "how many".
 //
-// A single open is the weakest thing on the tracking page: Apple Mail Privacy
+// A single load is the weakest thing on the tracking page: Apple Mail Privacy
 // Protection fetches the pixel when the message is DELIVERED, before anybody
 // has seen it, and it does so through a relay carrying an ordinary Safari
-// user-agent — there is no honest way to tell that apart from a real Mac open.
-// So one open, shortly after the send, may be nothing at all.
+// user-agent — there is no honest way to tell that apart from a real Mac read.
+// So one load, shortly after the send, may be nothing at all. It is why the
+// metric is called an image load and not an open.
 //
 // What a privacy pre-fetch does NOT do is come back three days later, from a
-// second device, in a different city. The shape of the opens carries signal the
+// second device, in a different city. The shape of the loads carries signal the
 // count throws away:
 //
-//   • opens on several distinct days — somebody kept coming back
-//   • opens from several cities on different devices — the message was
+//   • loads on several distinct days — somebody kept coming back
+//   • loads from several cities on different devices — the message was
 //     probably forwarded inside the company, which is a buying-committee tell
-//   • a first open minutes after the send — it went to the top of the inbox
+//   • a first load minutes after the send — it went to the top of the inbox
 //
 // None of these is proof. They are labelled as inferences ("Maybe forwarded"),
 // and each carries the reasoning in its tooltip, because a seller acting on
@@ -25,8 +26,8 @@
 
 import { trackingMillis } from './emailOpens.js';
 
-// A first open this soon after the send is worth calling out — the message was
-// read off the top of the inbox rather than dug out later.
+// A first load this soon after the send is worth calling out — the message was
+// most likely opened off the top of the inbox rather than dug out later.
 export const FAST_OPEN_MS = 60 * 60 * 1000;
 
 // Coarse device family from a user-agent, used to decide whether two opens
@@ -141,7 +142,7 @@ export function engagementSignals(openSummary, { sentAt } = {}) {
     out.push({
       key: 'shared',
       label: 'Maybe forwarded',
-      title: `Opened from ${shape.places} locations on ${shape.devices} kinds of device. That usually means the message was passed to someone else — but a VPN, travel, or a mail proxy can look the same, so treat it as a lead, not a fact.`,
+      title: `The pixel loaded from ${shape.places} locations on ${shape.devices} kinds of device. That usually means the message was passed to someone else — but a VPN, travel, or a mail proxy can look the same, so treat it as a lead, not a fact.`,
     });
   }
 
@@ -151,8 +152,8 @@ export function engagementSignals(openSummary, { sentAt } = {}) {
   if (shape.days > 1) {
     out.push({
       key: 'repeat',
-      label: `Opened on ${shape.days} days`,
-      title: 'Came back to the message on separate days. Harder to explain away as an automated pre-fetch than a single open is, since those fire around delivery rather than days later.',
+      label: `Loaded on ${shape.days} days`,
+      title: 'The pixel loaded again on separate days. Harder to explain away as an automated pre-fetch than a single load is, since those fire around delivery rather than days later.',
     });
   }
 
@@ -160,8 +161,8 @@ export function engagementSignals(openSummary, { sentAt } = {}) {
   if (shape.msToFirstOpen != null && shape.msToFirstOpen <= FAST_OPEN_MS) {
     out.push({
       key: 'fast',
-      label: `Opened in ${shortDuration(shape.msToFirstOpen)}`,
-      title: 'First open came within an hour of the send. Worth noting on its own, though an Apple Mail privacy pre-fetch also lands quickly — a fast open plus a click is the combination that means something.',
+      label: `Loaded in ${shortDuration(shape.msToFirstOpen)}`,
+      title: 'The pixel first loaded within an hour of the send. Worth noting on its own, though an Apple Mail privacy pre-fetch also lands quickly — a fast load plus a click is the combination that means something.',
     });
   }
 

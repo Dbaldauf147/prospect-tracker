@@ -6,7 +6,7 @@
 //
 // Each send is attributed to a saved email campaign by subject, so the
 // dashboard can be narrowed to one campaign and the tiles then read as that
-// campaign's open/click performance. The campaign name is a link across to
+// campaign's engagement. The campaign name is a link across to
 // the Email Campaigns tab.
 //
 // A deliberate note on accuracy sits at the top of the table: opens are
@@ -15,10 +15,18 @@
 // clicks are a hard signal. Same limitations HubSpot has.
 //
 // Above that note, MetricsExplainer says in plain English what the three
-// words mean — an open is a passive image load, a click is a deliberate
+// words mean — an image load is a passive fetch, a click is a deliberate
 // action, a reply is a person writing back — because that difference is what
-// every question about these numbers turns on: why clicks trail opens, why a
-// send can click without ever opening, why an open is worth less than it looks.
+// every question about these numbers turns on: why clicks trail loads, why a
+// send can click without ever loading, why a load is worth less than it looks.
+//
+// The pixel metric is called "image loads" and not "opens" on purpose. An open
+// claims a person read the message, and the pixel cannot know that: Apple Mail
+// Privacy Protection fetches it on delivery, a preview pane fetches it without
+// anyone reading, and Outlook blocks it for people who did. Naming it after
+// the mechanism keeps it from competing with the two columns that do mean
+// somebody acted; what it's genuinely good for — recency, and comparing sends
+// with each other — is called out where it's shown.
 //
 // Replies come from the saved campaign rosters, not from the tracking docs:
 // api/email-campaign.js already matches HubSpot's incoming mail to a campaign
@@ -133,20 +141,22 @@ function Pill({ children, tone }) {
 function MetricsExplainer() {
   return (
     <section
-      aria-label="What opens, clicks and replies mean"
+      aria-label="What image loads, clicks and replies mean"
       style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.7rem 0.85rem', margin: '0.6rem 0 0.75rem' }}
     >
       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-        Opens vs. clicks vs. replies
+        Image loads vs. clicks vs. replies
       </div>
 
       <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #86EFAC', paddingLeft: '0.7rem' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534', marginBottom: 2 }}>Open — the email was displayed</div>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534', marginBottom: 2 }}>Image load — something fetched the pixel</div>
           <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
-            An invisible 1×1 image is tucked into the email body. An open is that image being fetched, which happens when
-            the recipient&rsquo;s mail client renders the message. It is <strong>passive</strong>: nobody has to do anything but
-            look at the message — and a client that blocks images never fetches it, so a real read can go unrecorded.
+            An invisible 1×1 image is tucked into the email body, and this counts the times it was fetched. Deliberately not
+            called an &ldquo;open&rdquo;: <strong>nobody has to read anything for it to fire</strong> — a preview pane or Apple&rsquo;s
+            privacy pre-fetch will do it — and a client that blocks images never fires it at all, so a real read can go
+            unrecorded. Useful for <em>when</em> (a load in the last hour means it&rsquo;s in front of someone now) and for
+            comparing one send against another. Not for judging one person&rsquo;s interest.
           </div>
         </div>
         <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #93C5FD', paddingLeft: '0.7rem' }}>
@@ -169,24 +179,24 @@ function MetricsExplainer() {
 
       <details style={{ marginTop: '0.7rem', borderTop: '1px dashed #E2E8F0', paddingTop: '0.55rem' }}>
         <summary style={{ cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, color: '#1D4ED8' }}>
-          How each number is counted, and why opens and clicks don&rsquo;t line up
+          How each number is counted, and why the three don&rsquo;t line up
         </summary>
         <div style={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.55, marginTop: '0.5rem' }}>
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>The tiles</div>
           <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <li><strong>Tracked emails</strong> — drafts created with tracking on, inside the campaign filter above.</li>
-            <li><strong>Opened (%)</strong> — how many of those emails registered at least one open. One recipient counts once here however many times they come back.</li>
-            <li><strong>Total opens</strong> — every open. The same person reading twice an hour apart adds two.</li>
+            <li><strong>Images loaded (%)</strong> — how many of those emails had the pixel fetched at least once. One recipient counts once here however many times it fires.</li>
+            <li><strong>Total image loads</strong> — every fetch. The same person coming back an hour later adds two.</li>
             <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
             <li><strong>Total clicks</strong> — every click: the same link twice, or two different links in one email, each add one.</li>
             <li><strong>Replied (%)</strong> — of the sends a saved campaign is tracking, how many wrote back. Sends no campaign claims are left out of both halves of that fraction rather than counted as silence, and so are bounced addresses: nobody received those, so they aren&rsquo;t recipients who chose not to answer.</li>
           </ul>
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>When they disagree</div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <li><strong>Clicks well below opens is normal.</strong> Reading costs nothing; clicking is a decision. The gap between the two is roughly the gap between attention and interest.</li>
-            <li><strong>A click with no open is normal too</strong> — the reader&rsquo;s client blocked the image, so the pixel never fired, but the link still worked. Read that row as engaged, not as a glitch.</li>
-            <li><strong>An open with no click isn&rsquo;t nothing</strong>, but it is the weakest of the three: it can also be a privacy pre-fetch or a scanner (see the note below).</li>
-            <li><strong>A reply with no open or click happens</strong>, and it is the best outcome on the page — someone read the message in a client that blocked the image and answered it without following a link.</li>
+            <li><strong>Clicks well below image loads is normal.</strong> Being shown a message costs nothing; clicking is a decision. The gap between the two is roughly the gap between attention and interest.</li>
+            <li><strong>A click with no image load is normal too</strong> — the reader&rsquo;s client blocked the image, so the pixel never fired, but the link still worked. Read that row as engaged, not as a glitch.</li>
+            <li><strong>An image load with no click isn&rsquo;t nothing</strong>, but it is the weakest of the three, and a zero is weaker still: it is as likely to be Outlook blocking images as it is disinterest.</li>
+            <li><strong>A reply with no load or click happens</strong>, and it is the best outcome on the page — someone read the message in a client that blocked the image and answered it without following a link.</li>
           </ul>
         </div>
       </details>
@@ -337,8 +347,8 @@ export function EmailTrackingView({ onOpenCampaign }) {
         <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>Email Tracking</h2>
         <span style={{ fontSize: '0.8rem', color: '#64748B' }}>
           {selectedCampaign
-            ? <>Opens, clicks &amp; replies for <strong>{campaignLabel(selectedCampaign)}</strong>.</>
-            : 'Opens, clicks & replies for emails sent with tracking on.'}
+            ? <>Activity for <strong>{campaignLabel(selectedCampaign)}</strong>.</>
+            : 'Image loads, clicks & replies for emails sent with tracking on.'}
         </span>
         {selectedCampaign && onOpenCampaign && (
           <button
@@ -355,7 +365,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
 
       {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
-        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating opens), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so some real opens never register). <strong>Clicks are a hard signal; a reply is the hardest.</strong>
+        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating the count), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so plenty of real reads never register). <strong>Clicks are a hard signal; a reply is the hardest.</strong>
       </div>
 
       {/* Shown only when the realtime read was blocked and we fell back to
@@ -372,11 +382,11 @@ export function EmailTrackingView({ onOpenCampaign }) {
         <div style={tile} title="Drafts created with tracking on, within the campaign filter.">
           <div style={tileNum}>{stats.trackedEmails}</div><div style={tileLabel}>Tracked emails</div>
         </div>
-        <div style={tile} title="Emails whose tracking pixel was loaded at least once — the message was displayed. Each email counts once here however many times it is re-opened.">
-          <div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Opened ({stats.openRate}%)</div>
+        <div style={tile} title="Emails whose tracking pixel was fetched at least once. Not the same as being read: a preview pane or a privacy pre-fetch counts, and a client that blocks images never fires it.">
+          <div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Images loaded ({stats.openRate}%)</div>
         </div>
-        <div style={tile} title="Every open, not just the first: the same recipient reading twice adds two.">
-          <div style={tileNum}>{stats.totalOpens}</div><div style={tileLabel}>Total opens</div>
+        <div style={tile} title="Every fetch of the pixel, not just the first: the same recipient coming back later adds another.">
+          <div style={tileNum}>{stats.totalOpens}</div><div style={tileLabel}>Total image loads</div>
         </div>
         <div style={tile} title="Emails where at least one link was followed. A deliberate action, so this is the harder signal of the two.">
           <div style={tileNum}>{stats.clickedEmails}</div><div style={tileLabel}>Clicked ({stats.clickRate}%)</div>
@@ -441,7 +451,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
           Sort by
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit' }}>
             <option value="sent">Most recent</option>
-            <option value="opens">Most opens</option>
+            <option value="opens">Most image loads</option>
             <option value="clicks">Most clicks</option>
             <option value="replies">Replied first</option>
           </select>
@@ -458,7 +468,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
       ) : rows.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', border: '1px dashed #CBD5E1', borderRadius: 10 }}>
           <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 4 }}>No tracked emails yet</div>
-          <div style={{ fontSize: '0.8rem' }}>Go to the <strong>Drafts</strong> tab, keep “Track opens &amp; clicks” checked, and download your drafts. Opens and clicks will show up here once recipients engage.</div>
+          <div style={{ fontSize: '0.8rem' }}>Go to the <strong>Drafts</strong> tab, keep “Track image loads &amp; clicks” checked, and download your drafts. Activity shows up here once recipients engage.</div>
         </div>
       ) : visible.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', border: '1px dashed #CBD5E1', borderRadius: 10 }}>
@@ -479,10 +489,10 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th}>Subject</th>
                 <th style={th}>Campaign</th>
                 <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
-                <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel loaded — i.e. the message was displayed. Passive: a client that blocks images never registers one.">Opens</th>
-                <th style={th}>Last open</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel was fetched. Passive — a preview pane or a privacy pre-fetch fires it, and a client that blocks images never does — so treat it as a weak signal, and a zero as no signal at all.">Loads</th>
+                <th style={th} title="When the pixel was last fetched. The most useful thing this metric gives you: a load in the last hour means the message is in front of someone now.">Last load</th>
                 <th style={th} title="What the pattern of opens says beyond the count: repeat reads on separate days, opens from several places on several devices (often a forward), a first open within the hour. Inferences, not facts — hover one for its reasoning.">Signals</th>
-                <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than an open — and can happen on a send that never registered one.">Clicks</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than any number of image loads — and can happen on a send that never registered one.">Clicks</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Whether the recipient wrote back, from the campaign's HubSpot activity. Out-of-office and auto-replies don't count. The one signal here a machine can't produce — so it outranks both of the columns to its left.">Replied</th>
               </tr>
             </thead>
@@ -592,8 +602,8 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
           <div style={{ fontWeight: 600 }}>{r.recipientName || '-'}</div>
           <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{r.to || ''}</div>
         </td>
-        <td style={{ ...td, maxWidth: 280 }}>
-          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }} title={r.subject || ''}>{r.subject || '-'}</div>
+        <td style={{ ...td, maxWidth: 220 }}>
+          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }} title={r.subject || ''}>{r.subject || '-'}</div>
         </td>
         <td style={{ ...td, maxWidth: 200 }}>
           {link ? (
@@ -683,11 +693,11 @@ function FragmentRow({ r, link, opens: openSummary, reply, signals = [], onOpenC
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 320px', minWidth: 280 }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
-                  Opens ({openSummary.count})
+                  Image loads ({openSummary.count})
                   {excluded && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600, color: '#B45309' }} title={excluded}> · {openSummary.raw - openSummary.count} hit{openSummary.raw - openSummary.count === 1 ? '' : 's'} not counted</span>}
                 </div>
                 {opens.length === 0 ? (
-                  <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No opens recorded yet.</div>
+                  <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No image loads recorded yet.</div>
                 ) : (
                   <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {opens.map(({ event: ev, verdict }, i) => {
