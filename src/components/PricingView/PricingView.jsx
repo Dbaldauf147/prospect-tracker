@@ -7,6 +7,7 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount } from '../../utils/altFeeAutoBuild';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
@@ -138,7 +139,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, onBuildRows, buildRows = [], automatedNameCount = 0, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -264,12 +265,48 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     window.setTimeout(() => setFlash(''), 2500);
   }
 
+  // "Build from Automated Fee Names": one row per fee the cost table's
+  // Automated Fee Name column already implies, for the names the schedule
+  // doesn't price yet. It only ever adds rows — nothing typed in here is
+  // touched — so it's safe to press on a schedule that's already half built.
+  const buildCount = buildRows.length;
+  const buildNames = (() => {
+    const seen = [];
+    for (const r of buildRows) {
+      const name = String(r.altItem || '').trim();
+      if (name && !seen.includes(name)) seen.push(name);
+    }
+    return seen;
+  })();
+  const buildTitle = buildCount > 0
+    ? `Add ${buildCount} fee row${buildCount === 1 ? '' : 's'} for ${buildNames.slice(0, 4).join(', ')}${buildNames.length > 4 ? `, +${buildNames.length - 4} more` : ''}. Each row is typed to match the costs carrying its name; its fee and start month derive from them.`
+    : automatedNameCount > 0
+    ? 'Every Automated Fee Name on this option already has a row in the schedule.'
+    : 'No Automated Fee Names on this option\u2019s cost rows yet \u2014 fill in the Automated Fee Name column above, then build the schedule from it.';
+
   return (
     <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
       <div className={styles.altFeeReminder}>
         Reminder: start with bulk fees to create wiggle room for negotiations.
       </div>
-      <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
+      <div className={styles.altFeeHeader}>
+        <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
+        {onBuildRows && (
+          <button
+            type="button"
+            className={buildCount > 0 ? styles.buildBtnOn : styles.buildBtn}
+            disabled={buildCount === 0}
+            onClick={() => {
+              onBuildRows(buildRows);
+              setFlash(`Built ${buildCount} fee row${buildCount === 1 ? '' : 's'} from the Automated Fee Names. Fees derive from the costs carrying each name \u2014 type over any of them to fix a price.`);
+              window.setTimeout(() => setFlash(''), 5000);
+            }}
+            title={buildTitle}
+          >
+            Build from Automated Fee Names{buildCount > 0 ? ` (${buildCount})` : ''}
+          </button>
+        )}
+      </div>
       {flash && <div className={styles.pasteFlash}>{flash}</div>}
       <datalist id={altItemListId}>
         {altItemSuggestions.map(opt => <option key={opt} value={opt} />)}
@@ -2801,9 +2838,40 @@ export function PricingView({ settings } = {}) {
   // Unit Count to pair with a unit on this option — the same fill the
   // schedule's own Unit dropdown does when you pick Per Site / Per Account.
   function unitCountForUnit(unit, opt) {
-    if (unit === 'Per Site' && typeof opt?.siteCount === 'number' && opt.siteCount > 0) return opt.siteCount;
-    if (unit === 'Per Account' && typeof opt?.accountCount === 'number' && opt.accountCount > 0) return opt.accountCount;
-    return 1;
+    return altFeeUnitCount(unit, { siteCount: opt?.siteCount, accountCount: opt?.accountCount });
+  }
+
+  // The whole Alternative Fee schedule this option's Automated Fee Names
+  // imply, minus whatever the schedule already carries — what the "Build
+  // from Automated Fee Names" button appends. Same idea as the per-row
+  // "+ Fee" button above, run across every cost line at once: names come
+  // off the costs, fees and start months are left to derive from them.
+  //
+  // Deliberately reads the Automated Fee Name (not mappingNameFor) whatever
+  // Map by is set to — the button says which column it builds from, and a
+  // cost pinned to some other schedule row still carries the name that names
+  // its fee.
+  function automatedFeeBuildRows(opt) {
+    if (!opt) return [];
+    const costs = [];
+    for (const sec of (opt.sections || [])) {
+      for (const item of (sec.items || [])) {
+        const effType = effectiveType(item);
+        costs.push({
+          name: resolvedLinkedTo(item),
+          type: effType,
+          unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, effType)] || '',
+          cost: ctsItemEffectiveCost(item),
+          passThrough: isPassThrough(item),
+        });
+      }
+    }
+    return buildAltFeeRowsFromAutomatedNames({
+      costs,
+      existingRows: altFees[opt.optionNumber] || [],
+      siteCount: opt.siteCount,
+      accountCount: opt.accountCount,
+    });
   }
 
   // Add a row to this option's Alternative Fee schedule for a cost row's
@@ -4929,6 +4997,18 @@ export function PricingView({ settings } = {}) {
                         const unlinkedCostItems = [...unlinkedByKey.values()]
                           .sort((a, b) => b.cost - a.cost);
 
+                        // The rows "Build from Automated Fee Names" would add,
+                        // plus how many names the column carries at all — the
+                        // button words itself differently for a schedule that's
+                        // already complete and one with no names to build from.
+                        const buildRows = automatedFeeBuildRows(opt);
+                        const automatedNameCount = new Set(
+                          opt.sections
+                            .flatMap(s => s.items)
+                            .map(it => resolvedLinkedTo(it).trim().toLowerCase())
+                            .filter(Boolean)
+                        ).size;
+
                         return (
                           <>
                           {unlinkedCostItems.length > 0 && (
@@ -4974,6 +5054,9 @@ export function PricingView({ settings } = {}) {
                             onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
                             onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                             onClearRows={() => replaceAltFeeRows(opt.optionNumber, altFeeStarter())}
+                            buildRows={buildRows}
+                            automatedNameCount={automatedNameCount}
+                            onBuildRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                           />
                           </>
                         );
