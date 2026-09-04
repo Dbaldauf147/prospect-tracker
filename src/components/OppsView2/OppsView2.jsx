@@ -5559,11 +5559,44 @@ function followUpWhenLabel(days) {
 // here read straight off the record and write straight back through
 // `updateOppField` — the Notes rows and Timelines keep local state only
 // because they're edited as tables and flattened on commit.
+// Subtabs inside the Follow Up Notes popup. The screen had grown to three
+// stacked sections — the short fields, the Timelines table, the Notes rows —
+// and Notes, the thing the popup is named for and the thing that gets typed
+// into, sat last: on a deal with a few timeline rows and a call summary you
+// scrolled past everything else to reach the cursor. The short fields stay
+// pinned (they're the deal's state, read while writing the note); the two
+// tables take a tab each.
+const FOLLOW_UP_TABS = [
+  { key: 'notes', label: 'Notes' },
+  { key: 'timelines', label: 'Timelines' },
+];
+const FOLLOW_UP_TAB_KEY = 'follow-up-notes-active-tab';
+
+// Sticky across opps and sessions, like the Opp details popup's tabs: a user
+// who works out of Timelines shouldn't land on Notes every time. Notes is the
+// default because it's what the popup is for.
+function loadFollowUpTab() {
+  try {
+    const raw = userLsGet(FOLLOW_UP_TAB_KEY);
+    return FOLLOW_UP_TABS.some(t => t.key === raw) ? raw : 'notes';
+  } catch { return 'notes'; }
+}
+
+function saveFollowUpTab(key) {
+  try { userLsSet(FOLLOW_UP_TAB_KEY, key); }
+  catch (err) { console.warn('opps2: save follow-up tab failed', err); }
+}
+
 function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions, serviceOverrides, settings, prevFollowUp, onClose, onCancel, updateOppField }) {
   // Only the date-change route has a previous date to restore, and only it
   // opens without the user having asked for this screen — so that's the route
   // that gets the Cancel button and the focused Status picker.
   const fromFollowUpChange = !!onCancel;
+
+  // Which of the two tables is showing. Sticky across opps; see
+  // loadFollowUpTab above.
+  const [tab, setTab] = useState(() => loadFollowUpTab());
+  const selectTab = (key) => { setTab(key); saveFollowUpTab(key); };
 
   const followUp = toISODate(opp?.['Follow Up']);
   const status = String(opp?.['Status'] ?? '');
@@ -5636,6 +5669,13 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     commit(safe);
     return safe;
   });
+
+  // Rows with something in them, per tab — an empty seed row isn't content.
+  const tabCounts = {
+    notes: rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim()).length,
+    timelines: timelineList.filter(t => (t?.type || '').trim() || (t?.value || '').trim()
+      || (t?.kickoff || '').trim() || (t?.leadTime || '').trim()).length,
+  };
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
 
@@ -5763,7 +5803,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
           </div>
         </div>
 
-        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
+        <div style={{ padding: '0.85rem 1rem 0.7rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
               <label style={labelStyle}>Follow Up</label>
@@ -5828,27 +5868,69 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               />
             </div>
           </div>
+        </div>
 
-          <div>
-            <label style={labelStyle}>Timelines</label>
+        <div style={{
+          display: 'flex', gap: '0.15rem', flexWrap: 'wrap',
+          padding: '0 1rem', borderBottom: '1px solid var(--color-border-light)',
+          flexShrink: 0,
+        }}>
+          {FOLLOW_UP_TABS.map(t => {
+            const isActive = t.key === tab;
+            // What's actually on the tab, so a table hidden behind it still
+            // announces itself — the kickoff date on a timeline row is the
+            // kind of thing that must not go quiet just because it moved.
+            const count = tabCounts[t.key];
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => selectTab(t.key)}
+                aria-pressed={isActive}
+                style={{
+                  padding: '0.45rem 0.75rem', background: 'transparent',
+                  border: 'none', borderBottom: '2px solid transparent',
+                  borderBottomColor: isActive ? 'var(--color-accent)' : 'transparent',
+                  marginBottom: -1,
+                  fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                {t.label}
+                {count > 0 && (
+                  <span style={{
+                    marginLeft: 5, fontSize: '0.68rem', fontWeight: 600,
+                    color: 'var(--color-text-muted)', opacity: isActive ? 0.9 : 0.7,
+                  }}>{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* The pane is the only scroller, so switching tabs doesn't move the
+            fields above it. A floor on its height keeps the popup from
+            jumping between a short Timelines table and a long note. */}
+        <div style={{ padding: '0.7rem 1rem 0.85rem', overflow: 'auto', flex: '1 1 auto', minHeight: 180 }}>
+          {tab === 'timelines' ? (
             <TimelinesEditor
               list={timelineList}
               onChangeList={changeTimelineList}
               serviceOverrides={serviceOverrides}
             />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Notes</label>
-            <LastCallLine opp={opp} />
-            <NextStepsRowsEditor
-              rows={rows}
-              onUpdateRow={updateRow}
-              onAddRow={addRow}
-              onDeleteRow={deleteRow}
-              onCommit={() => commit(rows)}
-            />
-          </div>
+          ) : (
+            <>
+              <LastCallLine opp={opp} />
+              <NextStepsRowsEditor
+                rows={rows}
+                onUpdateRow={updateRow}
+                onAddRow={addRow}
+                onDeleteRow={deleteRow}
+                onCommit={() => commit(rows)}
+              />
+            </>
+          )}
         </div>
 
         <div style={{
