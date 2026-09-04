@@ -5932,16 +5932,17 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
             // this popup are someone typing a note.
             <CallNextStepsLog oppId={opp._id} />
           ) : (
-            <>
-              <LastCallLine opp={opp} onOpenCalls={() => selectTab('calls')} />
-              <NextStepsRowsEditor
-                rows={rows}
-                onUpdateRow={updateRow}
-                onAddRow={addRow}
-                onDeleteRow={deleteRow}
-                onCommit={() => commit(rows)}
-              />
-            </>
+            // No Most Recent Call banner: the Calls tab is the whole call
+            // history, newest first, so a summary of its top entry above
+            // the checklist was the same call twice on one screen — and
+            // the half that pushed the boxes down the page.
+            <NextStepsRowsEditor
+              rows={rows}
+              onUpdateRow={updateRow}
+              onAddRow={addRow}
+              onDeleteRow={deleteRow}
+              onCommit={() => commit(rows)}
+            />
           )}
         </div>
 
@@ -7708,11 +7709,17 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // parent owns the `rows` state and the add / delete / commit handlers.
 // The last call mapped to this opp, above the notes it explains.
 //
-// Steps arrive in this list from a tagged call recording, so the first
-// thing worth knowing when reading them is which conversation they came
-// out of and how long ago it was. Read straight off the opp — the Call
-// Recordings page stamps the reference when the call is mapped, so this
-// costs no lookup and is there on whatever device the opp syncs to.
+// The close-out screen's only view of the deal's calls: it has no Calls
+// tab, and the steps it is asking about arrived from a tagged call
+// recording, so the first thing worth knowing when reading them is which
+// conversation they came out of and how long ago it was. Read straight
+// off the opp — the Call Recordings page stamps the reference when the
+// call is mapped, so this costs no lookup and is there on whatever device
+// the opp syncs to.
+//
+// The Follow Up Notes popup used to render this too, and doesn't: its
+// Calls tab is the same call plus every earlier one, so the banner was
+// the top of that list repeated above the checklist.
 //
 // Renders nothing for an opp no call has been mapped to, which includes
 // every opp mapped before the stamp existed: an empty frame saying "no
@@ -7722,7 +7729,7 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // given call barely changes, so refetching per open is waste.
 const callStepsCache = new Map();
 
-function LastCallLine({ opp, onOpenCalls }) {
+function LastCallLine({ opp }) {
   // Read once per mount rather than on every render: the popup is open
   // for seconds, "5 days ago" cannot change while it is, and a clock read
   // in the render body is impure.
@@ -7793,41 +7800,22 @@ function LastCallLine({ opp, onOpenCalls }) {
         </div>
       )}
       {steps && steps.length > 0 && (
-        // Where there's a Calls tab to send them to, this is a pointer
-        // rather than a second copy: the same follow-ups are bulleted
-        // under their own call one tab over, along with every earlier
-        // call's. Without that tab (the close-out screen) the list is the
-        // only place they appear, so it still renders here.
-        onOpenCalls ? (
-          <div style={{ marginTop: 6, fontSize: '0.75rem', color: '#475569' }}>
-            {steps.length} follow-up{steps.length === 1 ? '' : 's'} from this call —{' '}
-            <button
-              type="button"
-              onClick={onOpenCalls}
-              style={{
-                background: 'none', border: 'none', padding: 0, font: 'inherit',
-                color: '#1D4ED8', textDecoration: 'underline', cursor: 'pointer',
-              }}
-            >see the Calls tab</button>
-          </div>
-        ) : (
-          <div style={{ marginTop: 6 }}>
-            <div style={{
-              fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
-              letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
-            }}>Next steps from this call</div>
-            <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
-              {steps.map((line, i) => (
-                // Steps carry their own internal newlines as U+2028 so a
-                // multi-line follow-up stays one step; put them back for
-                // display rather than running the lines together.
-                <li key={i} style={{ whiteSpace: 'pre-wrap' }}>
-                  {line.split(NOTE_LINEBREAK).join('\n')}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )
+        <div style={{ marginTop: 6 }}>
+          <div style={{
+            fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
+          }}>Next steps from this call</div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
+            {steps.map((line, i) => (
+              // Steps carry their own internal newlines as U+2028 so a
+              // multi-line follow-up stays one step; put them back for
+              // display rather than running the lines together.
+              <li key={i} style={{ whiteSpace: 'pre-wrap' }}>
+                {line.split(NOTE_LINEBREAK).join('\n')}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
