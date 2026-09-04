@@ -9,6 +9,7 @@ import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingPar
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { recurringFeePerUnit } from '../../utils/altFeePricing';
+import { year1ValueFor } from '../../utils/year1Value';
 import {
   collectPassThroughPairs,
   pickerSuggestions,
@@ -2066,6 +2067,15 @@ const SUMMARY_COLS = [
   { key: 'techDepr',   label: 'Tech Depr.',                   defaultWidth: 110 },
   { key: 'totalCost',  label: 'Total cost (incl. tech depr)', defaultWidth: 150 },
   { key: 'price',      label: 'Marked-up',                    defaultWidth: 130 },
+  {
+    key: 'year1Price',
+    label: 'Year 1 (marked-up)',
+    defaultWidth: 150,
+    hint: 'What this bucket bills the customer inside the first year, at face value — '
+      + 'the escalator starts in Year 2. Setup and One Time land whole; Recurring is '
+      + 'twelve months; Rolled charges amortize across the term, so only the first '
+      + 'year\u2019s slice of one lands here. A term under 12 months bills only what it covers.',
+  },
   { key: 'termPrice',  label: 'Term value (marked-up)',       defaultWidth: 160 },
 ];
 
@@ -5078,6 +5088,17 @@ export function PricingView({ settings } = {}) {
                     }
                     if (typeof price === 'number') acc.price += price;
 
+                    // Year 1 sits between the per-period columns and the
+                    // term one: what this row bills the customer inside the
+                    // first year, at face value (the escalator starts in
+                    // Year 2). Rolled rows amortize rather than land whole.
+                    acc.year1Price += year1ValueFor({
+                      price: typeof price === 'number' ? price : 0,
+                      termMonths,
+                      recurring: isRecurring,
+                      rolled: isRolled,
+                    });
+
                     if (isRecurring) {
                       acc.termCost += projectMonthlyOverTerm(i.cts ?? null, costEscalator, termMonths);
                       acc.termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
@@ -5095,7 +5116,7 @@ export function PricingView({ settings } = {}) {
                       if (typeof price === 'number') acc.termPrice += price;
                     }
                     return acc;
-                  }, { cost: 0, depreciableCost: 0, price: 0, termCost: 0, termPrice: 0 });
+                  }, { cost: 0, depreciableCost: 0, price: 0, year1Price: 0, termCost: 0, termPrice: 0 });
                   // Setup and One Time (and their Rolled variants) share
                   // a single bucket for fee/margin math, but the Totals
                   // by Type table below still breaks them out so the
@@ -5106,12 +5127,14 @@ export function PricingView({ settings } = {}) {
                     cost: setup.cost + oneTime.cost,
                     depreciableCost: setup.depreciableCost + oneTime.depreciableCost,
                     price: setup.price + oneTime.price,
+                    year1Price: setup.year1Price + oneTime.year1Price,
                     termCost: setup.termCost + oneTime.termCost,
                     termPrice: setup.termPrice + oneTime.termPrice,
                   };
                   const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
                   const grandTermCost = setupOneTime.termCost + recurring.termCost;
                   const grandTermPrice = setupOneTime.termPrice + recurring.termPrice;
+                  const grandYear1Price = setupOneTime.year1Price + recurring.year1Price;
                   return (
                     <div className={styles.section}>
                       <table className={styles.table}>
@@ -5434,7 +5457,7 @@ export function PricingView({ settings } = {}) {
                         {(() => {
                           const cellClassFor = (k) => k === 'bucket' ? '' : (k === 'cost' || k === 'techDepr' || k === 'totalCost') ? styles.numCell : styles.priceCell;
                           const renderHeaders = () => SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => (
-                            <th key={col.key} style={{ width: summaryColWidths[col.key] ?? col.defaultWidth }} className={cellClassFor(col.key)}>
+                            <th key={col.key} style={{ width: summaryColWidths[col.key] ?? col.defaultWidth }} className={cellClassFor(col.key)} title={col.hint}>
                               <span className={styles.thInner}>
                                 <span className={styles.thLabel}>{col.label}</span>
                                 <span
@@ -5479,10 +5502,10 @@ export function PricingView({ settings } = {}) {
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
-                                {renderRow('Setup', { cost: setup.cost, techDepr: setupDepr, totalCost: setup.cost + setupDepr, price: setup.price, termPrice: setup.termPrice })}
-                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTimeDepr, totalCost: oneTime.cost + oneTimeDepr, price: oneTime.price, termPrice: oneTime.termPrice })}
+                                {renderRow('Setup', { cost: setup.cost, techDepr: setupDepr, totalCost: setup.cost + setupDepr, price: setup.price, year1Price: setup.year1Price, termPrice: setup.termPrice })}
+                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTimeDepr, totalCost: oneTime.cost + oneTimeDepr, price: oneTime.price, year1Price: oneTime.year1Price, termPrice: oneTime.termPrice })}
                                 {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurringDepr, totalCost: recurring.cost + recurringDepr, price: recurring.price })}
-                                {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recurringAnnualDepr, totalCost: recAnnualCost + recurringAnnualDepr, price: recAnnualPrice, termPrice: recurring.termPrice })}
+                                {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recurringAnnualDepr, totalCost: recAnnualCost + recurringAnnualDepr, price: recAnnualPrice, year1Price: recurring.year1Price, termPrice: recurring.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
                                   {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                     if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
@@ -5491,6 +5514,7 @@ export function PricingView({ settings } = {}) {
                                       techDepr: summaryY1Depr,
                                       totalCost: summaryY1Cost + summaryY1Depr,
                                       price: summaryY1Price,
+                                      year1Price: grandYear1Price,
                                       termPrice: grandTermPrice,
                                     };
                                     return <td key={col.key} className={cellClassFor(col.key)}>{fmtMoneyWhole(map[col.key])}</td>;
