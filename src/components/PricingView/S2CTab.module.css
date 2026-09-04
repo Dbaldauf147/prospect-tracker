@@ -108,7 +108,6 @@
 .colSetupUom    { width: 130px; }
 .colOngoing     { width: 150px; }
 .colOngoingUom  { width: 130px; }
-.colTag         { width: 150px; }
 .actionCol      { width: 32px; background: #f1f5f9; }
 
 .grid th,
@@ -150,9 +149,78 @@
   font-weight: 700;
 }
 
-/* The TAGS block, marked out from the cost columns either side of it: these
-   three are typed here, everything else on the row came from Excel, and the
-   header is where that distinction is cheapest to make.
+/* The SIA line-item tag table, below the pasted worksheet. */
+.siaSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.siaHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.siaToolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.siaFilter {
+  flex: 0 1 240px;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.siaCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.siaEmpty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  padding: 0.5rem 0;
+}
+
+.siaCell {
+  background: #fff;
+  padding: 0.35rem 0.55rem;
+  font-size: var(--font-size-xs);
+}
+
+/* The parser sometimes lands a paragraph of fee prose in the Type column.
+   Clamp it so one such row can't stretch the table; the full text stays in
+   the cell's title. */
+.siaType {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.siaMuted { color: var(--color-text-muted); }
+
+/* The TAGS block, marked out from the workbook's own columns either side of
+   it: these three are typed here, everything else on the row came from the
+   SIA.
    Qualified with `.grid th` on purpose — the plain `.grid th` rule above is a
    class-plus-element selector, so a bare class here would lose to it on
    specificity and the colour would silently never appear. (That is why the
@@ -170,6 +238,10 @@
   color: #1e3a5f;
   text-align: center;
   font-weight: 600;
+  white-space: normal;
+}
+
+.grid th.siaMetaHeader {
   white-space: normal;
 }
 
