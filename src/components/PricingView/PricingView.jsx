@@ -9,6 +9,13 @@ import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingPar
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { recurringFeePerUnit } from '../../utils/altFeePricing';
+import {
+  collectPassThroughPairs,
+  pickerSuggestions,
+  resolvePassThroughDraft,
+  pairLabelShort,
+  pairTypes,
+} from '../../utils/passThroughTags';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
@@ -1053,117 +1060,145 @@ function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
 }
 
 // Maps CTS Line Item costs to pass-through billing. Pass-through is a
-// property of the (Line Item, Type) pair — not of an individual row —
-// so ticking one here bills every matching CTS row at face cost on
-// every option, with no markup and no contribution to Deal margin.
-// Pairs come from every option in the loaded workbook, plus any pair
-// already mapped (so a mapping stays clearable after the workbook it
-// came from is gone).
+// property of the (Line Item, Type) pair — not of an individual row — so
+// tagging one here bills every matching CTS row at face cost on every option,
+// with no markup and no contribution to Deal margin.
+//
+// The mapping is a set, so this reads as one: tag the pairs that pass through,
+// see only those. An exhaustive list of every pair in the workbook with a
+// Yes/No beside it asked a question about eighty line items to record an
+// answer about three. Browsing the full list is still one click away, for
+// picking a pair out by its CTS rather than by name.
+//
+// Suggestions, key building and the "which Type did you mean" resolution live
+// in utils/passThroughTags.js — see scripts/passThroughTags.test.mjs.
 function PassThroughSection({
   workbook,
   activeOpt,
   linkedToPassThroughDefaults,
   setLinkedToPassThroughDefault,
-  linkedToDefaultKey,
   effectiveType,
 }) {
+  const pairListId = useId();
+  const [draft, setDraft] = useState('');
+  const [draftType, setDraftType] = useState('');
+  const [message, setMessage] = useState(null); // { tone: 'error' | 'ok', text }
+  const [browseOpen, setBrowseOpen] = useState(false);
   const [filter, setFilter] = useState('');
-  const [mappedOnly, setMappedOnly] = useState(false);
 
-  const rows = useMemo(() => {
-    const byKey = new Map();
-    const activeNumber = activeOpt?.optionNumber;
-    for (const opt of workbook?.options || []) {
-      for (const section of opt.sections || []) {
-        for (const item of section.items || []) {
-          const key = linkedToDefaultKey(item.description, effectiveType(item));
-          let row = byKey.get(key);
-          if (!row) {
-            row = {
-              key,
-              lineItem: item.description || '',
-              type: effectiveType(item),
-              options: new Set(),
-              activeCts: null,
-              reachable: true,
-            };
-            byKey.set(key, row);
-          }
-          row.options.add(opt.sheetName);
-          if (opt.optionNumber === activeNumber && typeof item.cts === 'number') {
-            row.activeCts = (row.activeCts || 0) + item.cts;
-          }
-        }
-      }
-    }
-    // Mapped pairs the current workbook can't reach still need a row —
-    // otherwise the mapping is invisible and impossible to undo.
-    for (const [key, on] of Object.entries(linkedToPassThroughDefaults || {})) {
-      if (!on || byKey.has(key)) continue;
-      const [keyItem, keyType] = String(key).split('::');
-      byKey.set(key, {
-        key,
-        lineItem: keyItem || '',
-        type: keyType || '',
-        options: new Set(),
-        activeCts: null,
-        reachable: false,
-      });
-    }
-    return [...byKey.values()].sort((a, b) =>
-      (a.lineItem || '').localeCompare(b.lineItem || '')
-      || (a.type || '').localeCompare(b.type || ''));
-  }, [workbook, activeOpt, linkedToPassThroughDefaults, linkedToDefaultKey, effectiveType]);
+  const pairs = useMemo(() => collectPassThroughPairs({
+    options: workbook?.options || [],
+    tagged: linkedToPassThroughDefaults,
+    activeOptionNumber: activeOpt?.optionNumber,
+    typeOf: effectiveType,
+  }), [workbook, activeOpt, linkedToPassThroughDefaults, effectiveType]);
 
-  const mappedCount = rows.filter(r => linkedToPassThroughDefaults?.[r.key] === true).length;
+  const suggestions = useMemo(
+    () => pickerSuggestions(pairs.all, linkedToPassThroughDefaults),
+    [pairs.all, linkedToPassThroughDefaults]);
+  const typeOptions = useMemo(() => pairTypes(pairs.all), [pairs.all]);
 
-  const filteredRows = useMemo(() => {
+  const browseRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    return rows.filter(r => {
-      if (mappedOnly && linkedToPassThroughDefaults?.[r.key] !== true) return false;
-      if (!q) return true;
-      return r.lineItem.toLowerCase().includes(q) || (r.type || '').toLowerCase().includes(q);
+    if (!q) return pairs.all;
+    return pairs.all.filter(r =>
+      r.lineItem.toLowerCase().includes(q) || (r.type || '').toLowerCase().includes(q));
+  }, [pairs.all, filter]);
+
+  function tagDraft() {
+    const r = resolvePassThroughDraft({
+      text: draft,
+      type: draftType,
+      pairs: pairs.all,
+      tagged: linkedToPassThroughDefaults,
     });
-  }, [rows, filter, mappedOnly, linkedToPassThroughDefaults]);
+    if (!r.ok) {
+      setMessage({ tone: 'error', text: passTagError(r) });
+      return;
+    }
+    setLinkedToPassThroughDefault(r.key, true);
+    setDraft('');
+    setDraftType('');
+    setMessage({
+      tone: 'ok',
+      text: `${pairLabelShort(r.lineItem, r.type)} now bills at cost on every option.`
+        + (r.known ? '' : ' Nothing in this workbook carries that pair yet — it applies as soon as one does.'),
+    });
+  }
+
+  function untag(row) {
+    setLinkedToPassThroughDefault(row.key, false);
+    setMessage({ tone: 'ok', text: `${pairLabelShort(row.lineItem, row.type)} is marked up again.` });
+  }
+
+  const typeCell = (row) => (
+    <span className={styles.passTypeCell} title={row.type || ''}>
+      {row.type || <span className={styles.linkedMuted}>-</span>}
+    </span>
+  );
+  const ctsCell = (row) => (row.activeCts == null
+    ? <span className={styles.linkedMuted}>-</span>
+    : fmtMoney(row.activeCts));
+  const lineItemCell = (row) => (
+    <>
+      {row.lineItem || <span className={styles.linkedMuted}>-</span>}
+      {workbook && !row.reachable && (
+        <span className={styles.linkedMuted}> · not in this workbook</span>
+      )}
+    </>
+  );
 
   return (
     <section className={styles.linkedSection}>
-      <h3 className={styles.linkedSubheading}>Pass-through line items ({mappedCount})</h3>
+      <h3 className={styles.linkedSubheading}>Pass-through line items ({pairs.tagged.length})</h3>
       <p className={styles.linkedHint}>
-        Tick a Line Item + Type pair to bill its CTS to the customer at face cost — no markup, and excluded
+        Tag a Line Item + Type pair to bill its CTS to the customer at face cost — no markup, and excluded
         from Deal margin (its revenue and cost cancel out). The mapping applies to every matching row on every
-        option and persists across uploaded files, the Clear button, and parser updates. Rows mapped here are
+        option and persists across uploaded files, the Clear button, and parser updates. Rows tagged here are
         shaded on the Pricing table and their GM% cell reads <code>pass</code>.
       </p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+
+      <div className={styles.passTagBar}>
         <input
           type="text"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter line items…"
-          style={{
-            flex: '0 1 220px', padding: '0.3rem 0.45rem',
-            border: '1px solid var(--color-border)', borderRadius: 4,
-            fontSize: '0.82rem', fontFamily: 'inherit',
-            background: '#fff', color: 'var(--color-text)',
-          }}
+          list={pairListId}
+          value={draft}
+          onChange={(e) => { setDraft(e.target.value); setMessage(null); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); tagDraft(); } }}
+          placeholder="Tag a line item as pass-through…"
+          className={styles.passTagInput}
+          title="Start typing a Line Item from the loaded workbook. A name carrying both a Setup and a Recurring cost is offered once per Type — pick the one that passes through."
         />
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8rem' }}>
-          <input
-            type="checkbox"
-            checked={mappedOnly}
-            onChange={(e) => setMappedOnly(e.target.checked)}
-          />
-          Pass-through only
-        </label>
+        <datalist id={pairListId}>
+          {suggestions.map(s => <option key={s.key} value={s.value} />)}
+        </datalist>
+        <select
+          value={draftType}
+          onChange={(e) => { setDraftType(e.target.value); setMessage(null); }}
+          className={styles.passTagType}
+          title="Only needed for a name carrying more than one Type, or a name this workbook doesn't have at all."
+        >
+          <option value="">Type (if needed)…</option>
+          {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <button
+          type="button"
+          onClick={tagDraft}
+          disabled={!draft.trim()}
+          className={draft.trim() ? styles.passTagBtnOn : styles.passTagBtn}
+        >Tag</button>
       </div>
-      {filteredRows.length === 0 ? (
+      {message && (
+        <div className={message.tone === 'error' ? styles.passTagError : styles.passTagOk} role="status">
+          {message.text}
+        </div>
+      )}
+
+      {pairs.tagged.length === 0 ? (
         <div className={styles.linkedEmptyInline}>
-          {rows.length === 0
+          {pairs.all.length === 0
             ? 'No line items yet. Upload a workbook on the Pricing subtab.'
-            : (mappedOnly && mappedCount === 0
-              ? 'Nothing is mapped as pass-through yet.'
-              : 'No line items match the filter.')}
+            : 'Nothing passes through yet — every line item is marked up. Tag one above to bill it at cost.'}
         </div>
       ) : (
         <table className={styles.linkedTable}>
@@ -1173,49 +1208,119 @@ function PassThroughSection({
               <th>Type</th>
               <th>CTS ({activeOpt?.sheetName || 'active option'})</th>
               <th>On options</th>
-              <th style={{ width: 110 }}>Pass-through</th>
+              <th style={{ width: 90 }} />
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map(row => {
-              const on = linkedToPassThroughDefaults?.[row.key] === true;
-              return (
-                <tr key={row.key} className={on ? styles.passThroughRow : undefined}>
-                  <td>
-                    {row.lineItem || <span className={styles.linkedMuted}>-</span>}
-                    {workbook && !row.reachable && (
-                      <span className={styles.linkedMuted}> · not in this workbook</span>
-                    )}
-                  </td>
-                  <td>{row.type || <span className={styles.linkedMuted}>-</span>}</td>
-                  <td>
-                    {row.activeCts == null
-                      ? <span className={styles.linkedMuted}>-</span>
-                      : fmtMoney(row.activeCts)}
-                  </td>
-                  <td>
-                    {row.options.size === 0
-                      ? <span className={styles.linkedMuted}>-</span>
-                      : [...row.options].join(', ')}
-                  </td>
-                  <td title="Bill every CTS row with this Line Item + Type at cost, on every option.">
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(row.key, e.target.checked)}
-                      />
-                      {on ? 'Yes' : 'No'}
-                    </label>
-                  </td>
-                </tr>
-              );
-            })}
+            {pairs.tagged.map(row => (
+              <tr key={row.key} className={styles.passThroughRow}>
+                <td>{lineItemCell(row)}</td>
+                <td>{typeCell(row)}</td>
+                <td>{ctsCell(row)}</td>
+                <td>
+                  {row.options.length === 0
+                    ? <span className={styles.linkedMuted}>-</span>
+                    : row.options.join(', ')}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className={styles.passUntagBtn}
+                    onClick={() => untag(row)}
+                    title="Stop passing this pair through — it goes back to being marked up at the usual GM%."
+                  >× Untag</button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       )}
+
+      {pairs.all.length > 0 && (
+        <div className={styles.passBrowse}>
+          <button
+            type="button"
+            className={styles.passBrowseToggle}
+            aria-expanded={browseOpen}
+            onClick={() => setBrowseOpen(o => !o)}
+            title="Every Line Item + Type pair the workbook carries, with its CTS — for finding a pair by what it costs rather than by name."
+          >
+            {browseOpen ? '▾' : '▸'} Browse all line items ({pairs.all.length})
+          </button>
+          {browseOpen && (
+            <>
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter line items…"
+                className={styles.passTagInput}
+                style={{ marginTop: '0.45rem' }}
+              />
+              {browseRows.length === 0 ? (
+                <div className={styles.linkedEmptyInline}>No line items match the filter.</div>
+              ) : (
+                <table className={styles.linkedTable}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '38%' }}>Line Item</th>
+                      <th>Type</th>
+                      <th>CTS ({activeOpt?.sheetName || 'active option'})</th>
+                      <th>On options</th>
+                      <th style={{ width: 110 }}>Pass-through</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {browseRows.map(row => {
+                      const on = linkedToPassThroughDefaults?.[row.key] === true;
+                      return (
+                        <tr key={row.key} className={on ? styles.passThroughRow : undefined}>
+                          <td>{lineItemCell(row)}</td>
+                          <td>{typeCell(row)}</td>
+                          <td>{ctsCell(row)}</td>
+                          <td>
+                            {row.options.length === 0
+                              ? <span className={styles.linkedMuted}>-</span>
+                              : row.options.join(', ')}
+                          </td>
+                          <td title="Bill every CTS row with this Line Item + Type at cost, on every option.">
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(row.key, e.target.checked)}
+                              />
+                              {on ? 'Yes' : 'No'}
+                            </label>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
+}
+
+// What to say when a draft doesn't resolve to one pair. The ambiguous case is
+// the one that earns its words: the name is real, it just means two
+// differently-priced things, and choosing for the user reprices the other one.
+function passTagError(r) {
+  if (r.error === 'ambiguous') {
+    return `"${r.lineItem}" has more than one Type in this workbook (${r.types.join(', ')}). `
+      + 'Pick which one passes through — they are priced separately.';
+  }
+  if (r.error === 'need-type') {
+    return `Nothing in this workbook is called "${r.lineItem}". Pick a Type to tag it anyway, `
+      + 'and it applies as soon as a workbook carries that pair.';
+  }
+  if (r.error === 'already-tagged') return `${pairLabelShort(r.lineItem, r.type)} already passes through.`;
+  return 'Type a line item to tag.';
 }
 
 // Read-only panel describing the existing Linked To logic and showing
@@ -1529,7 +1634,6 @@ function LinkedToPanel({
         activeOpt={opt}
         linkedToPassThroughDefaults={linkedToPassThroughDefaults}
         setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
-        linkedToDefaultKey={linkedToDefaultKey}
         effectiveType={effectiveType}
       />
 
