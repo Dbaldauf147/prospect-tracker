@@ -74,6 +74,27 @@
   color: var(--color-text-muted);
 }
 
+/* "Last updated" under the subtitle. Quiet by default — it only earns
+   attention when the data is old, and the relative wording carries that. */
+.lastUpdated,
+.lastUpdatedUnknown {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: default;
+}
+
+.lastUpdated {
+  color: var(--color-text-muted);
+}
+
+/* Pasted before paste times were recorded: not an error, but not a time
+   either, so it shouldn't read like one. */
+.lastUpdatedUnknown {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-weight: 500;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

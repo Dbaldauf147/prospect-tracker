@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
+import { LastUpdatedLine } from './LastUpdatedLine';
 
 // Salesforce Leads print the Name column as "Last, First"; the Leads tab
 // wants it shown as "First Last". Split on the first comma only, so any
@@ -92,15 +93,20 @@ export function PasteTableView({
           // into header names — strip it on load and remap row keys.
           const cleaned = saved.headers.map(cleanHeader);
           const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
+          // updatedAt travels with the rows rather than in its own state:
+          // the save effect below fires on `data`, so a separate field would
+          // save twice on every paste and could save new rows against the old
+          // timestamp.
+          const updatedAt = typeof saved.updatedAt === 'number' ? saved.updatedAt : null;
           if (needsRemap) {
             const rows = saved.rows.map(r => {
               const next = {};
               saved.headers.forEach((h, i) => { next[cleaned[i] || h] = r[h]; });
               return next;
             });
-            setData({ headers: cleaned, rows });
+            setData({ headers: cleaned, rows, updatedAt });
           } else {
-            setData({ headers: saved.headers, rows: saved.rows });
+            setData({ headers: saved.headers, rows: saved.rows, updatedAt });
           }
         }
         const prefs = await dbGet(storeName, prefsKey);
@@ -117,7 +123,8 @@ export function PasteTableView({
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(storeName, { headers: data.headers, rows: data.rows }, dataKey).catch(err => console.warn('table data save failed', err));
+    dbPut(storeName, { headers: data.headers, rows: data.rows, updatedAt: data.updatedAt ?? null }, dataKey)
+      .catch(err => console.warn('table data save failed', err));
   }, [data, storeName, dataKey]);
 
   useEffect(() => {
@@ -158,7 +165,9 @@ export function PasteTableView({
       return;
     }
     const next = flipNameColumn ? withFlippedNames(parsed) : parsed;
-    setData(next);
+    // A paste is the only thing that moves the clock — not a reload, not a
+    // column resize.
+    setData({ ...next, updatedAt: Date.now() });
     let extra = '';
     if (onRowsPasted) {
       // The table is already saved above — a failure in the hook must not
@@ -181,7 +190,7 @@ export function PasteTableView({
 
   function clearAll() {
     if (!confirm('Clear all data on this tab?')) return;
-    setData({ headers: [], rows: [] });
+    setData({ headers: [], rows: [], updatedAt: null });
     dbDelete(storeName, dataKey).catch(() => {});
   }
 
@@ -235,6 +244,7 @@ export function PasteTableView({
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>{title}</h1>
           <span className={styles.subtitle}>{subtitle}</span>
+          <LastUpdatedLine updatedAt={data.updatedAt} hasRows={data.rows.length > 0} />
         </div>
         <div className={styles.toolbar}>
           <input

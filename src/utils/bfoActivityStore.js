@@ -24,6 +24,12 @@ export async function loadBfoActivity() {
 
 // Save the pasted rows and queue the Firestore mirror. Callers that write
 // this record go through here so the mirror can't be skipped at one of them.
-export async function saveBfoActivity({ headers, rows }) {
-  await mirrorDbPut(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, { headers, rows });
+//
+// `updatedAt` is when the rows were last pasted, not when this function ran —
+// re-saving the same table (a reload rewrites what it just read) must not make
+// stale data look fresh, so the caller owns the timestamp and passes back
+// whatever it loaded. It rides along to Firestore with the rows so the tab
+// reads the same age on every device the mirror reaches.
+export async function saveBfoActivity({ headers, rows, updatedAt = null }) {
+  await mirrorDbPut(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, { headers, rows, updatedAt });
 }
