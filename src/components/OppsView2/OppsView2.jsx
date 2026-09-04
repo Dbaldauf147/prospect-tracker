@@ -5566,8 +5566,15 @@ function followUpWhenLabel(days) {
 // scrolled past everything else to reach the cursor. The short fields stay
 // pinned (they're the deal's state, read while writing the note); the two
 // tables take a tab each.
+//
+// "Calls" is the third: the same per-call log the Opp details popup shows,
+// one call with its follow-ups bulleted under it. The checklist merges
+// every call's follow-ups into one editable list of boxes, which answers
+// "what do I do now" and loses "which call asked for this" — so the log
+// lives beside it here rather than only two popups away.
 const FOLLOW_UP_TABS = [
   { key: 'notes', label: 'Notes' },
+  { key: 'calls', label: 'Calls' },
   { key: 'timelines', label: 'Timelines' },
 ];
 const FOLLOW_UP_TAB_KEY = 'follow-up-notes-active-tab';
@@ -5919,9 +5926,14 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               onChangeList={changeTimelineList}
               serviceOverrides={serviceOverrides}
             />
+          ) : tab === 'calls' ? (
+            // Mounted only while the tab is showing: the log reads every
+            // stored call record, transcripts included, and most opens of
+            // this popup are someone typing a note.
+            <CallNextStepsLog oppId={opp._id} />
           ) : (
             <>
-              <LastCallLine opp={opp} />
+              <LastCallLine opp={opp} onOpenCalls={() => selectTab('calls')} />
               <NextStepsRowsEditor
                 rows={rows}
                 onUpdateRow={updateRow}
@@ -7710,7 +7722,7 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // given call barely changes, so refetching per open is waste.
 const callStepsCache = new Map();
 
-function LastCallLine({ opp }) {
+function LastCallLine({ opp, onOpenCalls }) {
   // Read once per mount rather than on every render: the popup is open
   // for seconds, "5 days ago" cannot change while it is, and a clock read
   // in the render body is impure.
@@ -7781,22 +7793,41 @@ function LastCallLine({ opp }) {
         </div>
       )}
       {steps && steps.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          <div style={{
-            fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
-            letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
-          }}>Next steps from this call</div>
-          <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
-            {steps.map((line, i) => (
-              // Steps carry their own internal newlines as U+2028 so a
-              // multi-line follow-up stays one step; put them back for
-              // display rather than running the lines together.
-              <li key={i} style={{ whiteSpace: 'pre-wrap' }}>
-                {line.split(NOTE_LINEBREAK).join('\n')}
-              </li>
-            ))}
-          </ul>
-        </div>
+        // Where there's a Calls tab to send them to, this is a pointer
+        // rather than a second copy: the same follow-ups are bulleted
+        // under their own call one tab over, along with every earlier
+        // call's. Without that tab (the close-out screen) the list is the
+        // only place they appear, so it still renders here.
+        onOpenCalls ? (
+          <div style={{ marginTop: 6, fontSize: '0.75rem', color: '#475569' }}>
+            {steps.length} follow-up{steps.length === 1 ? '' : 's'} from this call —{' '}
+            <button
+              type="button"
+              onClick={onOpenCalls}
+              style={{
+                background: 'none', border: 'none', padding: 0, font: 'inherit',
+                color: '#1D4ED8', textDecoration: 'underline', cursor: 'pointer',
+              }}
+            >see the Calls tab</button>
+          </div>
+        ) : (
+          <div style={{ marginTop: 6 }}>
+            <div style={{
+              fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
+              letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 2,
+            }}>Next steps from this call</div>
+            <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.78rem', lineHeight: 1.45, color: '#475569' }}>
+              {steps.map((line, i) => (
+                // Steps carry their own internal newlines as U+2028 so a
+                // multi-line follow-up stays one step; put them back for
+                // display rather than running the lines together.
+                <li key={i} style={{ whiteSpace: 'pre-wrap' }}>
+                  {line.split(NOTE_LINEBREAK).join('\n')}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
       )}
     </div>
   );
