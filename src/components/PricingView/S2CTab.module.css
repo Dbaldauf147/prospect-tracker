@@ -108,6 +108,7 @@
 .colSetupUom    { width: 130px; }
 .colOngoing     { width: 150px; }
 .colOngoingUom  { width: 130px; }
+.colTag         { width: 150px; }
 .actionCol      { width: 32px; background: #f1f5f9; }
 
 .grid th,
@@ -148,6 +149,31 @@
   text-align: left;
   font-weight: 700;
 }
+
+/* The TAGS block, marked out from the cost columns either side of it: these
+   three are typed here, everything else on the row came from Excel, and the
+   header is where that distinction is cheapest to make.
+   Qualified with `.grid th` on purpose — the plain `.grid th` rule above is a
+   class-plus-element selector, so a bare class here would lose to it on
+   specificity and the colour would silently never appear. (That is why the
+   green .s2cGroup / .s2cHeader banners don't currently show either; left as
+   they are rather than changing how the existing headers look.) */
+.grid th.tagGroup {
+  background: #bfdbfe;
+  color: #1e3a5f;
+  text-align: center;
+  font-weight: 700;
+}
+
+.grid th.tagHeader {
+  background: #dbeafe;
+  color: #1e3a5f;
+  text-align: center;
+  font-weight: 600;
+  white-space: normal;
+}
+
+.tagCell { background: #f5f9ff; }
 
 .tan { background: #fdf6e3; }
 .calc {
