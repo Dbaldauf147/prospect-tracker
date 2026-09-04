@@ -10,21 +10,18 @@
 // schedule of eight rows with auto-derived fees is where the discount ends up
 // guessed at.
 //
-// The model:
+// The rule is one line: TOTAL Year-1 fees must stay at or above TOTAL Year-1
+// cost, tech depreciation included. Everything else on the page is held as it
+// is — costs, recurring fees and one-time fees are not what is being
+// discounted, and moving them would make the answer depend on assumptions the
+// user did not make.
 //
-//   Headroom. Year-1 cash flow at today's numbers. Every dollar of it can come
-//   off the setup fees and the year still breaks even at exactly $0. Nothing
-//   else on the page moves — costs, recurring fees and one-time fees are taken
-//   as given, because those are not what is being discounted.
-//
-//   Cost floor. The setup fees are not allowed below what setup actually costs
-//   to deliver, tech depreciation included — the "Setup" row of Totals by type.
-//   Year-1 break-even alone would happily give the setup work away for free and
-//   let the recurring stream carry it, which is a real number but not one worth
-//   quoting: it books the delivery at a loss and hides that inside a healthy
-//   looking year. Whichever of the two constraints binds first is the floor.
-//   Setup fee revenue held outside the cut (pass-through setup rows) counts
-//   toward covering that cost, so it is not asked for twice.
+// The setup fees are NOT held to what Setup alone costs to deliver. A deal is
+// won or lost as a whole year, and a recurring stream that covers the setup
+// work is a deal that pays for itself — the floor answers "how low CAN I go",
+// which is the question asked. Where the floor does take the Setup fees under
+// their own cost, the solve reports that (belowSetupCostBy) so the panel can
+// say so; it just doesn't stop the cut there.
 //
 //   Reducible rows. Only Setup rows that actually bill inside Year 1. A Setup
 //   fee starting in month 14 contributes nothing to Year-1 revenue, so cutting
@@ -37,10 +34,8 @@
 //   percentage. Any split summing to the same total holds the year at break
 //   even; proportional is the one that needs no further input.
 //
-// The floor is a floor, not a recommendation — at it the setup work bills at
-// exactly its own cost, or the year nets exactly zero, whichever bound is
-// reached first. Neither leaves anything for the cost of carrying the deal. It
-// answers "how low CAN I go", which is the question asked.
+// The floor is a floor, not a recommendation — at it Year 1 nets exactly zero,
+// which leaves nothing for the cost of carrying the deal.
 //
 // Per-unit fees round UP to the cent. The solved fee is a floor — a minimum —
 // so shaving it further is the one rounding direction that lands the year
@@ -63,25 +58,25 @@ export function isSetupFeeType(type) {
 }
 
 /**
- * Solve for the lowest Setup fees that keep Year-1 cash flow at or above zero
- * AND keep the Setup fees at or above what Setup costs to deliver.
+ * Solve for the lowest Setup fees that keep TOTAL Year-1 fees at or above
+ * TOTAL Year-1 cost (tech depreciation included).
  *
  * @param {object} input
- * @param {number} input.y1Cost          Year-1 cost, all of it.
+ * @param {number} input.y1Cost          Year-1 cost, all of it, incl. tech depr.
  * @param {number} input.fixedY1Revenue  Year-1 revenue from everything that is
  *                                       NOT being cut (recurring, one-time,
  *                                       pass-through and out-of-year setup).
  * @param {number} input.setupCostFloor  Setup cost including tech depreciation
  *                                       — the "Total cost (incl. tech depr)"
  *                                       on the Setup row of Totals by type.
- *                                       The Setup fees may not go below it.
- *                                       Omitted / 0 means break-even only.
+ *                                       REPORTED ONLY: it says how far under
+ *                                       its own cost the floor puts the Setup
+ *                                       work, and does not bound the cut.
  * @param {number} input.heldSetupY1Revenue
  *                                       Year-1 Setup fee revenue that is NOT
  *                                       reducible (pass-through setup rows).
- *                                       It already covers part of the setup
- *                                       cost, so the cost floor asked of the
- *                                       reducible rows drops by it.
+ *                                       Netted off setupCostFloor for that
+ *                                       same reporting.
  * @param {Array} input.rows             Reducible setup rows:
  *                                       { key, label, fee, unitCount, y1Revenue }
  *                                       `fee` is the effective per-unit fee
@@ -105,10 +100,9 @@ export function solveSetupFeeFloor({
   const currentY1Revenue = fixedY1Revenue + setupY1Revenue;
   const currentCashFlow = currentY1Revenue - y1Cost;
 
-  // What the reducible rows have to keep billing to cover the setup cost.
-  // Pass-through setup fees already pay for part of it, so only the remainder
-  // is asked of the rows being cut. A fee can never go below zero either, so
-  // that is the other bound on the floor.
+  // Reported, not enforced: what Setup costs to deliver, less the pass-through
+  // Setup fee already covering part of it. The panel uses it to say when the
+  // floor bills the Setup work under its own cost.
   const costFloor = Math.max(0, Number(setupCostFloor) || 0);
   const heldSetup = Math.max(0, Number(heldSetupY1Revenue) || 0);
   const reducibleFloor = Math.max(0, costFloor - heldSetup);
@@ -127,6 +121,7 @@ export function solveSetupFeeFloor({
     maxReduction: 0,
     floorSetupY1Revenue: setupY1Revenue,
     resultingCashFlow: currentCashFlow,
+    belowSetupCostBy: Math.max(0, reducibleFloor - setupY1Revenue),
     scale: 1,
   };
 
@@ -140,23 +135,11 @@ export function solveSetupFeeFloor({
   if (usable.length === 0) {
     return { ...base, status: 'nothing-to-reduce' };
   }
-  // The setup fees are already at or under what setup costs to deliver. The
-  // year may still be healthy on the recurring stream, but the setup work is
-  // not paying for itself and there is nothing here to give away.
-  if (costFloor > 0 && setupY1Revenue <= reducibleFloor) {
-    return {
-      ...base,
-      status: 'at-cost-floor',
-      bindingConstraint: 'setupCost',
-      belowCostBy: reducibleFloor - setupY1Revenue,
-    };
-  }
 
-  // Room to the cost floor, and room to break even. The cut is whichever runs
-  // out first.
-  const roomToCostFloor = setupY1Revenue - reducibleFloor;
-  const bindingConstraint = roomToCostFloor < currentCashFlow ? 'setupCost' : 'cashFlow';
-  const maxReduction = Math.min(currentCashFlow, roomToCostFloor);
+  // One bound on the cut — the year's headroom — and one floor under it: a fee
+  // cannot go below zero. Whichever runs out first ends the cut.
+  const bindingConstraint = setupY1Revenue <= currentCashFlow ? 'zeroFee' : 'cashFlow';
+  const maxReduction = Math.min(currentCashFlow, setupY1Revenue);
   const scale = setupY1Revenue > 0 ? (setupY1Revenue - maxReduction) / setupY1Revenue : 0;
 
   const solved = usable.map(r => {
@@ -172,14 +155,15 @@ export function solveSetupFeeFloor({
 
   return {
     ...base,
-    // "zero-floor" is only honest when the fees really can reach $0 — with a
-    // cost floor in play they stop at it instead, however much headroom is left.
-    status: (reducibleFloor <= 0 && maxReduction >= setupY1Revenue) ? 'zero-floor' : 'ok',
+    status: bindingConstraint === 'zeroFee' ? 'zero-floor' : 'ok',
     bindingConstraint,
     rows: solved,
     scale,
     maxReduction: setupY1Revenue - floorSetupY1Revenue,
     floorSetupY1Revenue,
     resultingCashFlow: fixedY1Revenue + floorSetupY1Revenue - y1Cost,
+    // How far under its own cost the floor leaves the Setup work. Context for
+    // the panel, not a limit that was enforced.
+    belowSetupCostBy: Math.max(0, reducibleFloor - floorSetupY1Revenue),
   };
 }
