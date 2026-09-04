@@ -14,11 +14,12 @@ import { solveSetupFeeFloor } from '../../utils/setupFeeFloor';
 // fees. They are not what is being negotiated, and moving them would make the
 // answer depend on assumptions the user did not make.
 //
-// Two things stop the cut, and the panel says which one did: Year 1 running out
-// of headroom, and the Setup fees reaching what Setup costs to deliver (tech
-// depreciation included — the "Setup" row of Totals by type). Break-even alone
-// would hand back a floor of $0 on any deal whose recurring stream carries the
-// year, which quotes the delivery work away at a loss.
+// One rule sets the floor: total Year 1 fees must stay at or above total Year 1
+// cost, tech depreciation included. The cut stops when that headroom runs out,
+// or when the Setup fees reach $0 — on a deal whose recurring stream already
+// pays for the year, the Setup fee really can go all the way, and the panel
+// says so rather than inventing a limit. Where the floor takes the Setup work
+// under what it costs to deliver, that is called out as context, not enforced.
 //
 // The solve itself lives in utils/setupFeeFloor.js so it can be asserted
 // directly (scripts/setupFeeFloor.test.mjs) — a floor that is quietly a few
@@ -47,11 +48,11 @@ export function SetupFeeFloorPanel({
   });
   const {
     status, rows, maxReduction, currentCashFlow, setupY1Revenue, floorSetupY1Revenue,
-    bindingConstraint, reducibleFloor,
+    reducibleFloor,
   } = result;
   const pctOff = setupY1Revenue > 0 ? (maxReduction / setupY1Revenue) * 100 : 0;
   const canApply = !!onApply && (status === 'ok' || status === 'zero-floor') && maxReduction > 0;
-  const costBound = bindingConstraint === 'setupCost';
+  const belowCost = result.belowSetupCostBy > 0;
 
   return (
     <div className={styles.floorWrap}>
@@ -60,7 +61,7 @@ export function SetupFeeFloorPanel({
         className={styles.floorBtn}
         aria-expanded={open}
         onClick={() => { setOpen(o => !o); setApplied(''); }}
-        title="Solve for the lowest Setup fees that still cover the Setup cost (incl. tech depreciation) and keep Year 1 cash flow at or above zero. Cost, recurring fees and one-time fees are held as they are."
+        title="Solve for the lowest Setup fees that still keep total Year 1 fees at or above total Year 1 cost (incl. tech depreciation). Cost, recurring fees and one-time fees are held as they are."
       >
         {open ? '▾' : '▸'} How low can Setup fees go?
       </button>
@@ -83,40 +84,25 @@ export function SetupFeeFloorPanel({
                 {' '}(Pass-through rows and fees starting after month 12 are left out — neither moves Year 1.)
               </>
             )}
-            {status === 'at-cost-floor' && (
-              <>
-                Setup fees are already at their floor: {fmtMoney(setupY1Revenue)} against
-                {' '}<strong>{fmtMoney(reducibleFloor)}</strong> of Setup cost (incl. tech depreciation),
-                so there is nothing to discount.
-                {result.belowCostBy > 0 && (
-                  <> They are <strong>{fmtMoney(result.belowCostBy)}</strong> under that cost as it is —
-                  the Setup work is billing at a loss, whatever Year 1 nets overall.</>
-                )}
-              </>
-            )}
             {status === 'zero-floor' && (
               <>
                 The rest of the deal already pays for Year 1: Setup fees can go all the way to
-                {' '}<strong>$0</strong> and Year 1 still nets <strong>{fmtMoney(result.resultingCashFlow)}</strong>.
+                {' '}<strong>$0</strong> — all {fmtMoney(setupY1Revenue)} of them — and Year 1 fees
+                still clear Year 1 cost by <strong>{fmtMoney(result.resultingCashFlow)}</strong>.
               </>
             )}
             {status === 'ok' && (maxReduction > 0 ? (
               <>
                 Setup fees can come down by <strong>{fmtMoney(maxReduction)}</strong>
                 {' '}(<strong>{pctOff.toFixed(1)}%</strong> off) — from {fmtMoney(setupY1Revenue)} to
-                {' '}<strong>{fmtMoney(floorSetupY1Revenue)}</strong> —{' '}
-                {costBound
-                  ? 'before they stop covering the Setup cost (incl. tech depreciation).'
-                  : 'before Year 1 cash flow turns negative.'}
+                {' '}<strong>{fmtMoney(floorSetupY1Revenue)}</strong> — before total Year 1 fees drop
+                below total Year 1 cost (incl. tech depreciation).
               </>
             ) : (
               <>
-                Setup fees are already at the floor:{' '}
-                {costBound
-                  ? <>they bill {fmtMoney(setupY1Revenue)} against {fmtMoney(reducibleFloor)} of Setup
-                    cost (incl. tech depreciation), so a dollar off puts the Setup work under its own cost.</>
-                  : <>Year 1 nets <strong>{fmtMoney(currentCashFlow)}</strong>, so a dollar off any Setup
-                    fee puts it under water.</>}
+                Setup fees are already at the floor: Year 1 fees clear Year 1 cost by exactly{' '}
+                <strong>{fmtMoney(currentCashFlow)}</strong>, so a dollar off any Setup fee puts the
+                year under its own cost.
               </>
             ))}
           </div>
@@ -127,16 +113,6 @@ export function SetupFeeFloorPanel({
               {fmtWhole(currentCashFlow)}
             </span>
             {currentCashFlow < 0 ? ' short.' : ' of headroom.'}
-            {reducibleFloor > 0 && (
-              <>
-                {' '}Setup cost floor <strong>{fmtWhole(reducibleFloor)}</strong> (incl. tech depreciation)
-                {result.heldSetupY1Revenue > 0 && (
-                  <>, after {fmtWhole(result.heldSetupY1Revenue)} of pass-through Setup fee already
-                  covering part of it</>
-                )}
-                .
-              </>
-            )}
             {' '}Cost, recurring fees and one-time fees are held as they are.
           </div>
 
@@ -174,18 +150,21 @@ export function SetupFeeFloorPanel({
             <div className={styles.floorNote}>
               The cut is spread across the rows in proportion to what each bills, so every Setup
               fee gives up the same percentage. Any other split adding up to {fmtMoney(maxReduction)}
-              {' '}holds the {costBound ? 'Setup fees at their cost' : 'year at break even'} just as well.
+              {' '}keeps Year 1 covered just as well.
             </div>
           )}
 
-          {status === 'ok' && maxReduction > 0 && (
+          {(status === 'ok' || status === 'zero-floor') && maxReduction > 0 && (
             <div className={styles.floorNote}>
-              {costBound
-                ? <>At the floor the Setup fees bill exactly what Setup costs to deliver — no margin on
-                  that work at all. Year 1 still nets {fmtMoney(result.resultingCashFlow)}, so the cut
-                  stops here on the cost, not on the year.</>
-                : <>At the floor Year 1 nets {fmtMoney(result.resultingCashFlow)} — it covers its own cost
-                  and nothing more.</>}
+              {status === 'zero-floor'
+                ? <>Even at $0 the year covers its own cost, so nothing here stops the cut —
+                  the recurring stream is carrying it.</>
+                : <>At the floor Year 1 fees cover Year 1 cost and nothing more.</>}
+              {belowCost && (
+                <> That bills the Setup work {fmtMoney(result.belowSetupCostBy)} under what Setup
+                itself costs to deliver ({fmtMoney(reducibleFloor)} incl. tech depreciation) — the
+                year carries it, that line does not.</>
+              )}
               {' '}It is a limit to negotiate against, not a price to open with.
             </div>
           )}

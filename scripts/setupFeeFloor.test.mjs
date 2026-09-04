@@ -5,10 +5,15 @@
 //
 // This number gets quoted at a customer, so the properties worth pinning are
 // the ones that would be believed if they were wrong: the floor must never
-// land Year 1 under water NOR bill the Setup work below what it costs to
-// deliver (rounding included — it is a minimum, so cents round UP), a row that
-// bills outside Year 1 buys no headroom, and a deal already under water must
-// not come back with a discount to give away.
+// land total Year-1 fees under total Year-1 cost (rounding included — it is a
+// minimum, so cents round UP), a row that bills outside Year 1 buys no
+// headroom, and a deal already under water must not come back with a discount
+// to give away.
+//
+// What Setup alone costs to deliver does NOT bound the cut — a year the
+// recurring stream pays for is a year that pays for itself — but the solve
+// still reports how far under that cost the floor lands, so the panel can say
+// so.
 import { solveSetupFeeFloor, isSetupFeeType } from '../src/utils/setupFeeFloor.js';
 
 let passed = 0, failed = 0;
@@ -77,10 +82,10 @@ check('type: blank', isSetupFeeType(''), false);
   check('zero floor: the rest of the headroom survives', r.resultingCashFlow, 70000);
 }
 
-// ── The Setup cost floor ──────────────────────────────────────────────────
-// Same deal as above, but Setup costs $6,000 to deliver (tech depreciation
-// included). Break-even alone would give the setup work away for free on the
-// strength of the recurring stream; the cost floor stops the cut at $6,000.
+// ── Setup cost is reported, not enforced ─────────────────────────────────
+// Same deal, but Setup costs $6,000 to deliver (tech depreciation included).
+// The recurring stream already covers the year, so the fee can still go to $0
+// — the cost is context, and the solve says how far under it that lands.
 {
   const r = solveSetupFeeFloor({
     y1Cost: 20000,
@@ -88,16 +93,15 @@ check('type: blank', isSetupFeeType(''), false);
     setupCostFloor: 6000,
     rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
   });
-  check('cost floor: not a zero floor any more', r.status, 'ok');
-  check('cost floor: the cost is what binds', r.bindingConstraint, 'setupCost');
-  check('cost floor: fee stops at cost / units', r.rows[0].floorFee, 150);
-  check('cost floor: revenue stops at the cost', round2(r.floorSetupY1Revenue), 6000);
-  check('cost floor: only the excess is cuttable', round2(r.maxReduction), 4000);
-  ok('cost floor: never below the cost', r.floorSetupY1Revenue >= 6000);
+  check('setup cost: does not stop the cut', r.status, 'zero-floor');
+  check('setup cost: fee still reaches zero', r.rows[0].floorFee, 0);
+  check('setup cost: the whole setup fee is cuttable', round2(r.maxReduction), 10000);
+  check('setup cost: how far under its own cost that lands', round2(r.belowSetupCostBy), 6000);
+  ok('setup cost: the year still clears', r.resultingCashFlow >= 0);
 }
 
-// Year 1 is the tighter of the two bounds: only $2,000 of headroom against a
-// $6,000 cost floor that would have allowed $4,000 off. Break-even wins.
+// Year 1 is what binds: only $2,000 of headroom, so that is the whole cut,
+// whatever Setup costs.
 {
   const r = solveSetupFeeFloor({
     y1Cost: 98000,
@@ -105,15 +109,16 @@ check('type: blank', isSetupFeeType(''), false);
     setupCostFloor: 6000,
     rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
   });
-  check('tighter bound: cash flow binds', r.bindingConstraint, 'cashFlow');
-  check('tighter bound: only the headroom comes off', round2(r.maxReduction), 2000);
-  check('tighter bound: fee', r.rows[0].floorFee, 200);
-  ok('tighter bound: still above the cost floor', r.floorSetupY1Revenue >= 6000);
-  ok('tighter bound: year still clears', r.resultingCashFlow >= 0);
+  check('year binds: status', r.status, 'ok');
+  check('year binds: cash flow is the constraint', r.bindingConstraint, 'cashFlow');
+  check('year binds: only the headroom comes off', round2(r.maxReduction), 2000);
+  check('year binds: fee', r.rows[0].floorFee, 200);
+  ok('year binds: year still clears', r.resultingCashFlow >= 0);
+  check('year binds: floor is still above the setup cost', r.belowSetupCostBy, 0);
 }
 
-// Setup fees already below what Setup costs: the year may be healthy, but the
-// setup work is billing at a loss and there is nothing to give away.
+// Setup fees already below what Setup costs: that is worth reporting, but the
+// year has headroom, so there is still room to discount.
 {
   const r = solveSetupFeeFloor({
     y1Cost: 20000,
@@ -121,14 +126,12 @@ check('type: blank', isSetupFeeType(''), false);
     setupCostFloor: 14000,
     rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
   });
-  check('at cost floor: status', r.status, 'at-cost-floor');
-  check('at cost floor: nothing to give away', r.maxReduction, 0);
-  check('at cost floor: fee stays put', r.rows[0].floorFee, 250);
-  check('at cost floor: how far under cost', r.belowCostBy, 4000);
+  check('under cost already: still cuttable', r.status, 'zero-floor');
+  check('under cost already: reported before the cut', round2(r.belowSetupCostBy), 14000);
 }
 
-// Pass-through Setup fees pay part of the cost, so the reducible rows are only
-// asked for the remainder: $9,000 of cost, $4,000 already held, floor $5,000.
+// Pass-through Setup fees pay part of the setup cost, so the shortfall
+// reported against the reducible rows nets them off.
 {
   const r = solveSetupFeeFloor({
     y1Cost: 20000,
@@ -137,46 +140,35 @@ check('type: blank', isSetupFeeType(''), false);
     heldSetupY1Revenue: 4000,
     rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
   });
-  check('held setup: floor drops by what is held', round2(r.reducibleFloor), 5000);
-  check('held setup: fee', r.rows[0].floorFee, 125);
-  check('held setup: cut', round2(r.maxReduction), 5000);
+  check('held setup: reported floor drops by what is held', round2(r.reducibleFloor), 5000);
+  check('held setup: fee still reaches zero', r.rows[0].floorFee, 0);
+  check('held setup: shortfall is net of it', round2(r.belowSetupCostBy), 5000);
 }
 
-// A cost floor exactly at the current fees leaves no room, and the panel still
-// reports a clean "already at the floor" rather than a negative cut.
-{
-  const r = solveSetupFeeFloor({
-    y1Cost: 20000,
-    fixedY1Revenue: 90000,
-    setupCostFloor: 10000,
-    rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
-  });
-  check('exactly at cost: status', r.status, 'at-cost-floor');
-  check('exactly at cost: not under by anything', r.belowCostBy, 0);
-  check('exactly at cost: no cut', r.maxReduction, 0);
-}
-
-// No cost floor given: the old break-even-only behaviour is untouched.
+// No setup cost given at all: nothing to report, same answer.
 {
   const r = solveSetupFeeFloor({
     y1Cost: 20000,
     fixedY1Revenue: 90000,
     rows: [{ key: 'a', label: 'Setup A', fee: 250, unitCount: 40, y1Revenue: 10000 }],
   });
-  check('no cost floor: still a zero floor', r.status, 'zero-floor');
-  check('no cost floor: reducible floor is zero', r.reducibleFloor, 0);
+  check('no setup cost: still a zero floor', r.status, 'zero-floor');
+  check('no setup cost: nothing to report', r.belowSetupCostBy, 0);
 }
 
-// Rounding still goes UP against the cost floor — a floor fee that rounds down
-// bills less than the cost it is meant to cover.
+// The reported deal: $458,698 of Year-1 fees against $272,321 of Year-1 cost,
+// with $132,767.48 of that fee being Setup. The headroom covers the whole
+// Setup fee, so it can go to zero and the year still clears.
 {
   const r = solveSetupFeeFloor({
-    y1Cost: 1000,
-    fixedY1Revenue: 90000,
-    setupCostFloor: 9999,
-    rows: [{ key: 'a', label: 'Odd', fee: 3, unitCount: 3333, y1Revenue: 9999.99 }],
+    y1Cost: 272320.52,
+    fixedY1Revenue: 458698 - 132767.48,
+    setupCostFloor: 73022.11,
+    rows: [{ key: 'a', label: 'Setup', fee: 132767.48, unitCount: 1, y1Revenue: 132767.48 }],
   });
-  ok('cost floor rounding: never bills under the cost', r.floorSetupY1Revenue >= 9999);
+  check('reported deal: setup can go to zero', r.status, 'zero-floor');
+  check('reported deal: the whole setup fee', round2(r.maxReduction), 132767.48);
+  check('reported deal: year still nets', round2(r.resultingCashFlow), 53610);
 }
 
 // ── Already under water ───────────────────────────────────────────────────
@@ -208,6 +200,7 @@ check('type: blank', isSetupFeeType(''), false);
     ],
   });
   check('out-of-year: dropped from the solve', r.rows.map(x => x.key), ['y1']);
+  check('out-of-year: cut is capped at what bills in Y1', round2(r.maxReduction), 20000);
   check('out-of-year: only in-year revenue is reducible', r.setupY1Revenue, 20000);
   check('out-of-year: whole in-year fee can go', r.rows[0].floorFee, 0);
 }
