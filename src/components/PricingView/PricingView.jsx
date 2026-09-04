@@ -5394,11 +5394,17 @@ export function PricingView({ settings } = {}) {
                         // held even so: they bill at face cost, so discounting
                         // one spends margin rather than the year's slack.
                         let fixedY1Revenue = 0;
+                        // Setup fee revenue the floor can't touch — pass-through
+                        // Setup rows. It still pays for part of the Setup cost,
+                        // so the floor doesn't ask the reducible rows for it
+                        // twice.
+                        let heldSetupY1Revenue = 0;
                         const setupRows = [];
                         feeRows.forEach((r, idx) => {
                           const rev = y1RevByRow[idx];
                           if (!isSetupFeeType(r.type) || r.passThrough === true) {
                             fixedY1Revenue += rev;
+                            if (isSetupFeeType(r.type)) heldSetupY1Revenue += rev;
                             return;
                           }
                           const manualFee = Number(r.fee);
@@ -5427,6 +5433,8 @@ export function PricingView({ settings } = {}) {
                             <SetupFeeFloorPanel
                               y1Cost={y1Cost}
                               fixedY1Revenue={fixedY1Revenue}
+                              setupCostFloor={setup.cost + setup.depreciableCost * techDeprPct}
+                              heldSetupY1Revenue={heldSetupY1Revenue}
                               setupRows={setupRows}
                               onApply={(updates) => applySetupFeeFloor(opt.optionNumber, updates)}
                             />
