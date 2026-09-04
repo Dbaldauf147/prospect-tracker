@@ -7,7 +7,7 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
-import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount } from '../../utils/altFeeAutoBuild';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey } from '../../utils/altFeeAutoBuild';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
@@ -1063,6 +1063,10 @@ function LinkedToPanel({
   linkedToStartMonthDefaults,
   setLinkedToStartMonthDefault,
   linkedToPassThroughDefaults,
+  feeDefaults,
+  setFeeDefaultField,
+  removeFeeDefault,
+  linkedToOptionsList,
   setLinkedToPassThroughDefault,
   altFees,
   resolvedLinkedTo,
@@ -1157,6 +1161,51 @@ function LinkedToPanel({
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
     return rows;
+  })();
+
+  // Every Automated Fee Name in play, so each one can carry its own Fee
+  // Type / Fee Start Month / Unit default. Names come from the saved
+  // (Line Item, Type) defaults, per-row overrides, the alt-fee schedules of
+  // every option, and the hand-added dropdown options — deduped
+  // case-insensitively, first casing seen wins for display. A name the user
+  // removed from the dropdown is dropped too, unless something still uses it
+  // or it already carries a default.
+  const feeNameEntries = (() => {
+    const label = new Map();  // lower -> display casing
+    const used = new Set();   // lower names something actually references
+    const add = (name, isUsed) => {
+      const trimmed = String(name || '').trim();
+      if (!trimmed) return;
+      const k = trimmed.toLowerCase();
+      if (!label.has(k)) label.set(k, trimmed);
+      if (isUsed) used.add(k);
+    };
+    for (const v of Object.values(linkedToDefaults || {})) add(v, true);
+    for (const o of Object.values(overrides || {})) if (o?.linkedTo) add(o.linkedTo, true);
+    for (const rows of Object.values(altFees || {})) {
+      for (const r of (rows || [])) add(r?.altItem, true);
+    }
+    for (const c of (linkedToOptionsList?.custom || [])) add(c, false);
+    // Last, so a name already seen somewhere keeps that casing — these keys
+    // are lowercased.
+    for (const k of Object.keys(feeDefaults || {})) add(k, true);
+    const hidden = new Set((linkedToOptionsList?.hidden || []).map(v => String(v).trim().toLowerCase()));
+    return [...label.entries()]
+      .filter(([k]) => used.has(k) || !hidden.has(k))
+      .map(([k, name]) => {
+        const def = feeDefaults?.[k] || null;
+        return {
+          key: k,
+          name,
+          type: def?.type || '',
+          startMonth: Number.isFinite(Number(def?.startMonth)) && Number(def?.startMonth) > 0
+            ? Number(def.startMonth)
+            : null,
+          unit: def?.unit || '',
+          hasDefault: !!def && Object.keys(def).length > 0,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   })();
 
   // Group rows by the alt-fee tag they currently resolve to. Untagged
@@ -1302,6 +1351,100 @@ function LinkedToPanel({
                           className={styles.rowDelBtn}
                           title="Remove this saved default"
                           onClick={() => removeLinkedToDefault(d.key)}
+                        >×</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className={styles.linkedSection}>
+        <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
+        <p className={styles.linkedHint}>
+          Defaults for the fees themselves — the values in the <strong>Default Linked To</strong> column above.
+          Fee Type and Unit pre-fill the Alternative Fee schedule row built for that name (Build from Automated
+          Fee Names, the per-row <strong>+ Fee</strong> button, and the seed on upload); a Fee Type also keeps the
+          name to a single row, whatever its costs are typed as. Fee Start Month applies live to every schedule
+          row carrying the name, on any option, unless that row has a typed-in value of its own.
+        </p>
+        {feeNameEntries.length === 0 ? (
+          <div className={styles.linkedEmptyInline}>
+            No fee names yet. Tag a row&apos;s Automated Fee Name — or save a default above — and it shows up here.
+          </div>
+        ) : (
+          <table className={styles.linkedTable}>
+            <thead>
+              <tr>
+                <th>Fee Name</th>
+                <th>Fee Type</th>
+                <th>Fee Start Month</th>
+                <th>Unit</th>
+                <th style={{ width: 32 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {feeNameEntries.map(f => {
+                const unitCount = unitCountForOption(f.unit);
+                return (
+                  <tr key={f.key}>
+                    <td><code>{f.name}</code></td>
+                    <td title="Type for every schedule row built for this fee. With one set, the fee gets a single row instead of one per cost bucket.">
+                      <select
+                        value={f.type}
+                        onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'type', e.target.value)}
+                        style={{
+                          padding: '1px 4px',
+                          border: '1px solid var(--color-border)', borderRadius: 3,
+                          fontSize: '0.78rem', fontFamily: 'inherit',
+                          background: '#fff', color: 'var(--color-text)',
+                        }}
+                      >
+                        <option value="">-</option>
+                        <option value="Setup">Setup</option>
+                        <option value="One Time">One Time</option>
+                        <option value="Recurring (monthly)">Recurring (monthly)</option>
+                      </select>
+                    </td>
+                    <td title="Fee Start Month for every schedule row carrying this name. Outranks the month derived from the linked CTS rows; a value typed on the row itself still wins.">
+                      <LinkedStartMonthInput
+                        key={`fee-${f.key}-${f.startMonth ?? ''}`}
+                        initial={f.startMonth ?? ''}
+                        placeholder=""
+                        onCommit={(v) => setFeeDefaultField && setFeeDefaultField(f.name, 'startMonth', v)}
+                      />
+                    </td>
+                    <td title="Unit for every schedule row built for this fee. Per Site / Per Account inherit the SIA count automatically.">
+                      <select
+                        value={f.unit}
+                        onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'unit', e.target.value)}
+                        style={{
+                          padding: '1px 4px',
+                          border: '1px solid var(--color-border)', borderRadius: 3,
+                          fontSize: '0.78rem', fontFamily: 'inherit',
+                          background: '#fff', color: 'var(--color-text)',
+                        }}
+                      >
+                        <option value="">-</option>
+                        <option value="Fixed">Fixed</option>
+                        <option value="Per Site">Per Site</option>
+                        <option value="Per Account">Per Account</option>
+                        <option value="Per Meter">Per Meter</option>
+                      </select>
+                      {unitCount != null && (
+                        <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
+                      )}
+                    </td>
+                    <td>
+                      {f.hasDefault && removeFeeDefault && (
+                        <button
+                          type="button"
+                          className={styles.rowDelBtn}
+                          title="Clear every default saved for this fee"
+                          onClick={() => removeFeeDefault(f.name)}
                         >×</button>
                       )}
                     </td>
@@ -1633,6 +1776,13 @@ const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
 // pair are billed at cost (no markup) unless a per-row override on the
 // pricing table says otherwise. Persisted on its own DB key.
 const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
+// Per-fee defaults, keyed by Automated Fee Name (lowercased, trimmed):
+// { [feeName]: { type, startMonth, unit } }. Where the keys above describe a
+// COST row's (Line Item, Type) pair, these describe the FEE itself — the
+// values in the Default Linked To column — and pre-fill the Alternative Fee
+// schedule row built for that name. Its own DB key, for the same reason the
+// rest are: they're user-curated and outlive any one workbook.
+const FEE_DEFAULTS_KEY = 'feeDefaults';
 // User-curated vocabulary for the per-row Linked To dropdown on the
 // pricing page. `custom` holds options the user added by hand; `hidden`
 // suppresses auto-derived suggestions (tags pulled from saved defaults,
@@ -1730,6 +1880,7 @@ export function PricingView({ settings } = {}) {
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
   const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
+  const [feeDefaults, setFeeDefaults] = useState({}); // { [feeName]: { type, startMonth, unit } } — per-fee defaults for the Alternative Fee schedule (see FEE_DEFAULTS_KEY)
   const [linkedToOptionsList, setLinkedToOptionsList] = useState({ custom: [], hidden: [] }); // user-curated Linked To dropdown vocabulary (see LINKED_TO_OPTIONS_KEY)
   const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } — open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
@@ -1799,6 +1950,10 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedPassThroughDefaults && typeof savedPassThroughDefaults === 'object') {
           setLinkedToPassThroughDefaults(savedPassThroughDefaults);
         }
+        const savedFeeDefaults = await dbGet(STORE, FEE_DEFAULTS_KEY);
+        if (!cancelled && savedFeeDefaults && typeof savedFeeDefaults === 'object') {
+          setFeeDefaults(savedFeeDefaults);
+        }
         const savedOptionsList = await dbGet(STORE, LINKED_TO_OPTIONS_KEY);
         if (!cancelled && savedOptionsList && typeof savedOptionsList === 'object') {
           setLinkedToOptionsList({
@@ -1825,6 +1980,7 @@ export function PricingView({ settings } = {}) {
           if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
           if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
           if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+          if (!savedFeeDefaults && saved.feeDefaults) setFeeDefaults(saved.feeDefaults);
           if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
             setLinkedToOptionsList({
               custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
@@ -1853,6 +2009,7 @@ export function PricingView({ settings } = {}) {
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
         if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
         if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
+        if (!savedFeeDefaults && saved.feeDefaults) setFeeDefaults(saved.feeDefaults);
         if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
           setLinkedToOptionsList({
             custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
@@ -1898,9 +2055,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1930,6 +2087,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
   }, [linkedToPassThroughDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, feeDefaults, FEE_DEFAULTS_KEY).catch(err => console.warn('Failed to save fee defaults:', err));
+  }, [feeDefaults]);
 
   // Line items on the active option that still need a service, for the
   // banner on the Pricing subtab. Computed from the same rows and the same
@@ -2180,16 +2342,22 @@ export function PricingView({ settings } = {}) {
     return Math.round((totalMarkup / uc) * 100) / 100;
   }
 
-  // Earliest start month from CTS rows linked to this alt-fee row's
-  // tag. Falls back through type matching (Setup/One Time bucket vs
+  // Fee Start Month for an alt-fee row: the fee's own saved default when it
+  // has one, else the earliest start month from the CTS rows linked to this
+  // alt-fee row's tag. Falls back through type matching (Setup/One Time bucket vs
   // Recurring incl. Rolled) so a Setup alt-fee row picks up the start
   // month of the upfront CTS lines and a Recurring row picks up the
   // monthly ones. Returns null if no linked rows carry a usable start
   // month.
   function autoStartMonthFor(row) {
-    if (!workbook) return null;
-    const target = String(row?.altItem || '').trim().toLowerCase();
+    const target = feeDefaultKey(row?.altItem);
     if (!target) return null;
+    // A Fee Start Month saved for this fee on the Linked To page speaks for
+    // the fee itself, so it outranks whatever its costs start at. The row
+    // can still override it by typing a value.
+    const defSm = Number(feeDefaults[target]?.startMonth);
+    if (Number.isFinite(defSm) && defSm > 0) return Math.round(defSm);
+    if (!workbook) return null;
     const opt = workbook.options.find(o => o.optionNumber === activeOption);
     if (!opt) return null;
     const rowType = String(row?.type || '').trim();
@@ -2438,6 +2606,9 @@ export function PricingView({ settings } = {}) {
     if (s.linkedToUnitDefaults && typeof s.linkedToUnitDefaults === 'object') {
       setLinkedToUnitDefaults(prev => ({ ...prev, ...s.linkedToUnitDefaults }));
     }
+    if (s.feeDefaults && typeof s.feeDefaults === 'object') {
+      setFeeDefaults(prev => ({ ...prev, ...s.feeDefaults }));
+    }
     if (s.linkedToOptionsList && typeof s.linkedToOptionsList === 'object') {
       // Same union semantics as the defaults above — fold the snapshot's
       // curated dropdown options into this device's list.
@@ -2564,7 +2735,10 @@ export function PricingView({ settings } = {}) {
           rows = tags.map(tag => {
             const item = firstItemByTag.get(tag);
             const unitKey = linkedToDefaultKey(item.description, item.type || '');
-            const unit = linkedToUnitDefaults[unitKey] || '';
+            // Defaults saved for the fee name itself win over the ones
+            // saved for the cost row's (Line Item, Type) pair.
+            const feeDef = feeDefaults[feeDefaultKey(tag)] || null;
+            const unit = feeDef?.unit || linkedToUnitDefaults[unitKey] || '';
             let unitCount = 1;
             if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
               unitCount = opt.siteCount;
@@ -2577,10 +2751,12 @@ export function PricingView({ settings } = {}) {
             // One Time Rolled → One Time) since the alt-fee table doesn't
             // expose Rolled types — the user can refine if needed.
             const rawType = String(item.type || '').trim();
-            let type = '';
-            if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
-            else if (/^setup/i.test(rawType)) type = 'Setup';
-            else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+            let type = feeDef?.type || '';
+            if (!type) {
+              if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
+              else if (/^setup/i.test(rawType)) type = 'Setup';
+              else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+            }
             // Leave startMonth null so autoStartMonthFor derives it from
             // the linked CTS rows; the user can type a value to override.
             return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
@@ -2869,6 +3045,7 @@ export function PricingView({ settings } = {}) {
     return buildAltFeeRowsFromAutomatedNames({
       costs,
       existingRows: altFees[opt.optionNumber] || [],
+      feeDefaults,
       siteCount: opt.siteCount,
       accountCount: opt.accountCount,
     });
@@ -2893,13 +3070,18 @@ export function PricingView({ settings } = {}) {
       .some(r => String(r.altItem || '').trim().toLowerCase() === lower);
     if (exists) return;
     const effType = effectiveType(item);
-    const unit = linkedToUnitDefaults?.[linkedToDefaultKey(item.description, effType)] || '';
+    // The fee's own saved defaults win over what the cost row implies: the
+    // user set them for this fee name, whatever line item it hangs off.
+    const def = feeDefaultsFor(name);
+    const unit = def?.unit || linkedToUnitDefaults?.[linkedToDefaultKey(item.description, effType)] || '';
     appendAltFeeRows(opt.optionNumber, [{
       altItem: name,
-      type: altFeeTypeForCtsType(effType),
+      type: def?.type || altFeeTypeForCtsType(effType),
       fee: null,
       unit,
       unitCount: unitCountForUnit(unit, opt),
+      // Left blank so autoStartMonthFor keeps deriving it — from the fee's
+      // saved default when there is one, else the linked CTS rows.
       startMonth: null,
     }]);
   }
@@ -3089,6 +3271,54 @@ export function PricingView({ settings } = {}) {
       } else {
         next[key] = unit;
       }
+      return next;
+    });
+  }
+
+  // The per-fee defaults saved for an Automated Fee Name, or null. Keyed
+  // case-insensitively, like every other Linked To lookup on the page.
+  function feeDefaultsFor(name) {
+    const k = feeDefaultKey(name);
+    return k ? (feeDefaults[k] || null) : null;
+  }
+
+  // Save / clear one field of a fee's defaults. An empty value drops just
+  // that field, and a fee left with no fields at all drops out entirely so
+  // the table doesn't keep an empty row around. startMonth is stored as a
+  // rounded positive number; anything else clears it.
+  function setFeeDefaultField(name, field, value) {
+    const key = feeDefaultKey(name);
+    if (!key) return;
+    setFeeDefaults(prev => {
+      const current = prev[key] || {};
+      let next;
+      if (field === 'startMonth') {
+        const n = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
+        next = (Number.isFinite(n) && n > 0)
+          ? { ...current, startMonth: Math.round(n) }
+          : (() => { const { startMonth: _drop, ...rest } = current; return rest; })();
+      } else {
+        const v = String(value || '').trim();
+        if (v) next = { ...current, [field]: v };
+        else { const { [field]: _drop, ...rest } = current; next = rest; }
+      }
+      const out = { ...prev };
+      if (Object.keys(next).length === 0) {
+        if (!(key in prev)) return prev;
+        delete out[key];
+      } else {
+        out[key] = next;
+      }
+      return out;
+    });
+  }
+
+  function removeFeeDefault(name) {
+    const key = feeDefaultKey(name);
+    setFeeDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
       return next;
     });
   }
@@ -4102,6 +4332,10 @@ export function PricingView({ settings } = {}) {
           setLinkedToStartMonthDefault={setLinkedToStartMonthDefault}
           linkedToPassThroughDefaults={linkedToPassThroughDefaults}
           setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
+          feeDefaults={feeDefaults}
+          setFeeDefaultField={setFeeDefaultField}
+          removeFeeDefault={removeFeeDefault}
+          linkedToOptionsList={linkedToOptionsList}
           altFees={altFees}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
@@ -4665,7 +4899,7 @@ export function PricingView({ settings } = {}) {
                                                 ? 'Give this cost an Automated Fee Name first, then add it to the fee schedule below.'
                                                 : tagMapped
                                                 ? `"${tagName}" is already a row in the Alternative Fee schedule below.`
-                                                : `Add "${currentVal.trim()}" to the Alternative Fee schedule below as ${altFeeTypeForCtsType(effType) || 'an untyped row'}. Its fee and start month derive from every cost carrying this name.`
+                                                : `Add "${currentVal.trim()}" to the Alternative Fee schedule below as ${feeDefaultsFor(currentVal)?.type || altFeeTypeForCtsType(effType) || 'an untyped row'}. Its fee and start month derive from every cost carrying this name.`
                                             }
                                           >
                                             + Fee

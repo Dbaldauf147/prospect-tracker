@@ -28,6 +28,10 @@
 // here. Both derive from the costs carrying the name, and a written-in value
 // would freeze what should keep following them.
 //
+// The exception to "the costs decide" is the per-fee defaults the user saves
+// on the Linked To page: a fee told it is Recurring is Recurring, whatever
+// its costs are typed as. See feeDefaults below.
+//
 // Lives outside PricingView.jsx so the bucketing and claiming can be
 // asserted directly — see scripts/altFeeAutoBuild.test.mjs. Getting it wrong
 // is quiet: the schedule still renders, it just prices the deal wrongly.
@@ -68,6 +72,13 @@ export function altFeeUnitCount(unit, { siteCount, accountCount } = {}) {
   return 1;
 }
 
+// Key a per-fee default by its Automated Fee Name. Matching is
+// case-insensitive and ignores surrounding whitespace, the same way every
+// other Linked To lookup on the page is.
+export function feeDefaultKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
 const BUCKET_RANK = { [ALT_FEE_UPFRONT]: 0, [ALT_FEE_RECURRING]: 1, '': 2 };
 
 // The schedule rows this Option's Automated Fee Names imply, minus the ones
@@ -80,6 +91,13 @@ const BUCKET_RANK = { [ALT_FEE_UPFRONT]: 0, [ALT_FEE_RECURRING]: 1, '': 2 };
 //                 pair, cost its effective cost, passThrough whether it bills
 //                 at face value.
 //   existingRows  the Option's current schedule rows.
+//   feeDefaults   the per-fee defaults saved on the Linked To page, keyed by
+//                 feeDefaultKey: { type, unit }. A default Type is the fee's
+//                 own answer to which costs it prices, so it REPLACES the
+//                 bucketing the cost types imply — every cost carrying the
+//                 name lands in that one bucket and the name gets exactly one
+//                 row. A default Unit pre-fills the row over the unit its
+//                 costs carry.
 //
 // Only costs carrying both a name and an actual cost count: a name with no
 // money behind it derives no fee, so a row for it would just be a blank line
@@ -89,9 +107,12 @@ const BUCKET_RANK = { [ALT_FEE_UPFRONT]: 0, [ALT_FEE_RECURRING]: 1, '': 2 };
 export function buildAltFeeRowsFromAutomatedNames({
   costs = [],
   existingRows = [],
+  feeDefaults = {},
   siteCount,
   accountCount,
 } = {}) {
+  const defaultsFor = (name) => feeDefaults?.[feeDefaultKey(name)] || null;
+  const defaultTypeFor = (name) => String(defaultsFor(name)?.type || '').trim();
   const claimedBuckets = new Set(); // `${name}|${bucket}` the schedule already prices
   const claimedNames = new Set();   // names whose row hasn't been typed yet
   for (const row of existingRows) {
@@ -110,7 +131,10 @@ export function buildAltFeeRowsFromAutomatedNames({
     if (!Number.isFinite(cost) || cost <= 0) return;
     const lower = name.toLowerCase();
     if (claimedNames.has(lower)) return;
-    const bucket = altFeeBucketForCostType(c?.type);
+    const defType = defaultTypeFor(name);
+    const bucket = defType
+      ? altFeeBucketForScheduleType(defType)
+      : altFeeBucketForCostType(c?.type);
     const key = `${lower}|${bucket}`;
     if (claimedBuckets.has(key)) return;
     let group = groups.get(key);
@@ -143,12 +167,13 @@ export function buildAltFeeRowsFromAutomatedNames({
     .map((group) => {
       // Setup and One Time price identically here; the label follows what
       // the costs are actually called, so the row reads like them.
-      const type = group.bucket === ALT_FEE_RECURRING
+      const def = defaultsFor(group.name);
+      const type = String(def?.type || '').trim() || (group.bucket === ALT_FEE_RECURRING
         ? 'Recurring (monthly)'
         : group.bucket === ALT_FEE_UPFRONT
         ? (group.anySetup ? 'Setup' : 'One Time')
-        : '';
-      const unit = group.unit || '';
+        : '');
+      const unit = String(def?.unit || '').trim() || group.unit || '';
       return {
         altItem: group.name,
         type,
