@@ -1051,6 +1051,172 @@ function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
   );
 }
 
+// Maps CTS Line Item costs to pass-through billing. Pass-through is a
+// property of the (Line Item, Type) pair — not of an individual row —
+// so ticking one here bills every matching CTS row at face cost on
+// every option, with no markup and no contribution to Deal margin.
+// Pairs come from every option in the loaded workbook, plus any pair
+// already mapped (so a mapping stays clearable after the workbook it
+// came from is gone).
+function PassThroughSection({
+  workbook,
+  activeOpt,
+  linkedToPassThroughDefaults,
+  setLinkedToPassThroughDefault,
+  linkedToDefaultKey,
+  effectiveType,
+}) {
+  const [filter, setFilter] = useState('');
+  const [mappedOnly, setMappedOnly] = useState(false);
+
+  const rows = useMemo(() => {
+    const byKey = new Map();
+    const activeNumber = activeOpt?.optionNumber;
+    for (const opt of workbook?.options || []) {
+      for (const section of opt.sections || []) {
+        for (const item of section.items || []) {
+          const key = linkedToDefaultKey(item.description, effectiveType(item));
+          let row = byKey.get(key);
+          if (!row) {
+            row = {
+              key,
+              lineItem: item.description || '',
+              type: effectiveType(item),
+              options: new Set(),
+              activeCts: null,
+              reachable: true,
+            };
+            byKey.set(key, row);
+          }
+          row.options.add(opt.sheetName);
+          if (opt.optionNumber === activeNumber && typeof item.cts === 'number') {
+            row.activeCts = (row.activeCts || 0) + item.cts;
+          }
+        }
+      }
+    }
+    // Mapped pairs the current workbook can't reach still need a row —
+    // otherwise the mapping is invisible and impossible to undo.
+    for (const [key, on] of Object.entries(linkedToPassThroughDefaults || {})) {
+      if (!on || byKey.has(key)) continue;
+      const [keyItem, keyType] = String(key).split('::');
+      byKey.set(key, {
+        key,
+        lineItem: keyItem || '',
+        type: keyType || '',
+        options: new Set(),
+        activeCts: null,
+        reachable: false,
+      });
+    }
+    return [...byKey.values()].sort((a, b) =>
+      (a.lineItem || '').localeCompare(b.lineItem || '')
+      || (a.type || '').localeCompare(b.type || ''));
+  }, [workbook, activeOpt, linkedToPassThroughDefaults, linkedToDefaultKey, effectiveType]);
+
+  const mappedCount = rows.filter(r => linkedToPassThroughDefaults?.[r.key] === true).length;
+
+  const filteredRows = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return rows.filter(r => {
+      if (mappedOnly && linkedToPassThroughDefaults?.[r.key] !== true) return false;
+      if (!q) return true;
+      return r.lineItem.toLowerCase().includes(q) || (r.type || '').toLowerCase().includes(q);
+    });
+  }, [rows, filter, mappedOnly, linkedToPassThroughDefaults]);
+
+  return (
+    <section className={styles.linkedSection}>
+      <h3 className={styles.linkedSubheading}>Pass-through line items ({mappedCount})</h3>
+      <p className={styles.linkedHint}>
+        Tick a Line Item + Type pair to bill its CTS to the customer at face cost — no markup, and excluded
+        from Deal margin (its revenue and cost cancel out). The mapping applies to every matching row on every
+        option and persists across uploaded files, the Clear button, and parser updates. Rows mapped here are
+        shaded on the Pricing table and their GM% cell reads <code>pass</code>.
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter line items…"
+          style={{
+            flex: '0 1 220px', padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8rem' }}>
+          <input
+            type="checkbox"
+            checked={mappedOnly}
+            onChange={(e) => setMappedOnly(e.target.checked)}
+          />
+          Pass-through only
+        </label>
+      </div>
+      {filteredRows.length === 0 ? (
+        <div className={styles.linkedEmptyInline}>
+          {rows.length === 0
+            ? 'No line items yet. Upload a workbook on the Pricing subtab.'
+            : (mappedOnly && mappedCount === 0
+              ? 'Nothing is mapped as pass-through yet.'
+              : 'No line items match the filter.')}
+        </div>
+      ) : (
+        <table className={styles.linkedTable}>
+          <thead>
+            <tr>
+              <th style={{ width: '38%' }}>Line Item</th>
+              <th>Type</th>
+              <th>CTS ({activeOpt?.sheetName || 'active option'})</th>
+              <th>On options</th>
+              <th style={{ width: 110 }}>Pass-through</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map(row => {
+              const on = linkedToPassThroughDefaults?.[row.key] === true;
+              return (
+                <tr key={row.key} className={on ? styles.passThroughRow : undefined}>
+                  <td>
+                    {row.lineItem || <span className={styles.linkedMuted}>-</span>}
+                    {workbook && !row.reachable && (
+                      <span className={styles.linkedMuted}> · not in this workbook</span>
+                    )}
+                  </td>
+                  <td>{row.type || <span className={styles.linkedMuted}>-</span>}</td>
+                  <td>
+                    {row.activeCts == null
+                      ? <span className={styles.linkedMuted}>-</span>
+                      : fmtMoney(row.activeCts)}
+                  </td>
+                  <td>
+                    {row.options.size === 0
+                      ? <span className={styles.linkedMuted}>-</span>
+                      : [...row.options].join(', ')}
+                  </td>
+                  <td title="Bill every CTS row with this Line Item + Type at cost, on every option.">
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(row.key, e.target.checked)}
+                      />
+                      {on ? 'Yes' : 'No'}
+                    </label>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 // Read-only panel describing the existing Linked To logic and showing
 // the active relationships on the current workbook. Rendered on the
 // "Linked To" page subtab.
@@ -1158,7 +1324,6 @@ function LinkedToPanel({
         autoStartMonth,
         overrideStartMonth,
         effectiveStartMonth: overrideStartMonth ?? autoStartMonth,
-        passThrough: linkedToPassThroughDefaults?.[key] === true,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -1262,6 +1427,11 @@ function LinkedToPanel({
             whose resolved Linked To matches that tag contribute to the chart.
           </li>
           <li>
+            <strong>Pass-through</strong> is mapped on the same (Line Item, Type) pair, in the section below.
+            A mapped pair bills its CTS at face cost on every option — no markup, and excluded from Deal
+            margin. There is no per-row toggle on the pricing table.
+          </li>
+          <li>
             Matching is case-insensitive and ignores surrounding whitespace.
           </li>
         </ul>
@@ -1283,7 +1453,6 @@ function LinkedToPanel({
                 <th>Unit</th>
                 <th>Default Linked To</th>
                 <th>Fee Start Month</th>
-                <th>Pass-through</th>
                 <th style={{ width: 32 }} />
               </tr>
             </thead>
@@ -1336,16 +1505,6 @@ function LinkedToPanel({
                         onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
                       />
                     </td>
-                    <td title="Bill every CTS row matching this Line Item + Type at cost (no markup). Per-row checkboxes on the pricing table still override.">
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
-                        <input
-                          type="checkbox"
-                          checked={d.passThrough}
-                          onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(d.key, e.target.checked)}
-                        />
-                        {d.passThrough ? 'Yes' : 'No'}
-                      </label>
-                    </td>
                     <td>
                       {removeLinkedToDefault && (
                         <button
@@ -1363,6 +1522,15 @@ function LinkedToPanel({
           </table>
         )}
       </section>
+
+      <PassThroughSection
+        workbook={workbook}
+        activeOpt={opt}
+        linkedToPassThroughDefaults={linkedToPassThroughDefaults}
+        setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
+        linkedToDefaultKey={linkedToDefaultKey}
+        effectiveType={effectiveType}
+      />
 
       <section className={styles.linkedSection}>
         <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
@@ -1742,10 +1910,29 @@ const COLS = [
   { key: 'comments',    label: 'Comments',          defaultWidth: 280 },
   { key: 'gm',          label: 'GM%',               defaultWidth: 90 },
   { key: 'price',       label: 'Marked-up Price',   defaultWidth: 140 },
-  { key: 'passThrough', label: 'Pass-through',      defaultWidth: 100 },
   { key: 'linkedTo',    label: 'Automated Fee Name', defaultWidth: 200 },
   { key: 'siaFee',      label: 'Fee Name Below',     defaultWidth: 190 },
 ];
+
+// Pass-through used to be a per-row checkbox on the pricing table; it's
+// now mapped per (Line Item, Type) pair on the Linked To subtab. Older
+// caches and state exports can still carry per-row `passThrough` flags
+// that nothing can clear any more, so they're stripped on the way in.
+function stripPassThroughOverrides(overrides) {
+  if (!overrides || typeof overrides !== 'object') return {};
+  let touched = false;
+  const next = {};
+  for (const [id, ov] of Object.entries(overrides)) {
+    if (ov && typeof ov === 'object' && 'passThrough' in ov) {
+      touched = true;
+      const { passThrough: _drop, ...rest } = ov;
+      if (Object.keys(rest).length > 0) next[id] = rest;
+    } else {
+      next[id] = ov;
+    }
+  }
+  return touched ? next : overrides;
+}
 
 const SUMMARY_COLS = [
   { key: 'bucket',     label: 'Bucket',                       defaultWidth: 200 },
@@ -2002,7 +2189,7 @@ export function PricingView({ settings } = {}) {
             : { ...saved.workbook, id: newWorkbookId(), legacyLinks: true });
         }
         if (typeof saved.globalGmPct === 'number') setGlobalGmPct(saved.globalGmPct);
-        if (saved.overrides) setOverrides(saved.overrides);
+        if (saved.overrides) setOverrides(stripPassThroughOverrides(saved.overrides));
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
@@ -2594,7 +2781,7 @@ export function PricingView({ settings } = {}) {
       setWorkbook({ ...s.workbook, id: newWorkbookId(), legacyLinks: false });
     }
     if (typeof s.globalGmPct === 'number') setGlobalGmPct(s.globalGmPct);
-    setOverrides(s.overrides || {});
+    setOverrides(stripPassThroughOverrides(s.overrides || {}));
     if (typeof s.activeOption === 'number') setActiveOption(s.activeOption);
     else if (s.workbook?.options?.[0]?.optionNumber != null) setActiveOption(s.workbook.options[0].optionNumber);
     setColWidths(s.colWidths || {});
@@ -3360,10 +3547,10 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // Pass-through is mapped per (Line Item, Type) pair on the Linked To
+  // subtab — there is no per-row toggle, so every CTS row carrying the
+  // same Line Item + Type bills the same way on every option.
   function isPassThrough(item) {
-    const ov = overrides[item.id]?.passThrough;
-    if (ov === true) return true;
-    if (ov === false) return false;
     const key = linkedToDefaultKey(item.description, effectiveType(item));
     return linkedToPassThroughDefaults[key] === true;
   }
@@ -3458,28 +3645,6 @@ export function PricingView({ settings } = {}) {
       costByYear,
       ctsPassByYear: passThroughByYear,
       altPassByYear,
-    });
-  }
-
-  // Per-row pass-through toggle. Stores an explicit boolean so the row
-  // can also mute a Linked-To default (toggle off when the (Line Item,
-  // Type) default is on). If the toggled value matches the default,
-  // we drop the per-row override so the default flows through cleanly.
-  function setItemPassThrough(itemId, on, item) {
-    const defaultIsOn = !!(item
-      && linkedToPassThroughDefaults[linkedToDefaultKey(item.description, effectiveType(item))] === true);
-    setOverrides(prev => {
-      const next = { ...prev };
-      if (Boolean(on) === defaultIsOn) {
-        if (next[itemId]) {
-          const { passThrough: _drop, ...rest } = next[itemId];
-          if (Object.keys(rest).length === 0) delete next[itemId];
-          else next[itemId] = rest;
-        }
-      } else {
-        next[itemId] = { ...next[itemId], passThrough: !!on };
-      }
-      return next;
     });
   }
 
@@ -4837,7 +5002,7 @@ export function PricingView({ settings } = {}) {
                                       disabled={passThrough}
                                       title={
                                         passThrough
-                                          ? 'Pass-through row: billed to the customer at cost. Untick Pass-through to apply markup.'
+                                          ? 'Pass-through row: billed to the customer at cost. Unmap this Line Item + Type on the Linked To subtab to apply markup.'
                                           : source === 'override'
                                           ? 'Per-line override. Clear to revert to global GM%.'
                                           : source === 'global'
@@ -4851,18 +5016,6 @@ export function PricingView({ settings } = {}) {
                                   </td>
                                 )}
                                 {!colHidden('price') && <td className={styles.priceCell}>{fmtMoney(price)}</td>}
-                                {!colHidden('passThrough') && (
-                                  <td className={styles.passThroughCell}>
-                                    <label className={styles.passThroughLabel} title="Bill this row to the customer at cost (no markup). The line still appears in totals but contributes zero margin.">
-                                      <input
-                                        type="checkbox"
-                                        checked={passThrough}
-                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked, item)}
-                                      />
-                                      <span>Pass-through</span>
-                                    </label>
-                                  </td>
-                                )}
                                 {!colHidden('linkedTo') && (() => {
                                   const tagName = resolvedLinkedTo(item).trim();
                                   const tagMapped = !!feeScheduleNames.find(n => n.toLowerCase() === tagName.toLowerCase());
