@@ -819,6 +819,18 @@
   color: var(--color-text-muted);
 }
 
+/* The "same margin, lower setup" proposal, set off from the floor above it —
+   the floor is the limit, this is the deal you would actually put forward. */
+.shiftBlock {
+  margin-top: 0.7rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #5eead4;
+}
+
+.shiftHeadline {
+  font-weight: 500;
+}
+
 .floorPos { color: #047857; font-weight: 600; }
 .floorNeg { color: #b91c1c; font-weight: 600; }
 

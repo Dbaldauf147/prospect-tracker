@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import styles from './PricingView.module.css';
 import { solveSetupFeeFloor } from '../../utils/setupFeeFloor';
+import { proposeSetupShift } from '../../utils/setupFeeShift';
 
 // "How low can the Setup fees go?" — the discount question, asked forwards.
 //
@@ -21,6 +22,11 @@ import { solveSetupFeeFloor } from '../../utils/setupFeeFloor';
 // says so rather than inventing a limit. Where the floor takes the Setup work
 // under what it costs to deliver, that is called out as context, not enforced.
 //
+// Under the floor sits the deal that keeps the margin: the floor says how far
+// the Setup fee can drop, and the proposal says where that money goes instead
+// — onto the recurring fees, term-revenue-neutral, so the margin is exactly
+// where it was. See utils/setupFeeShift.js.
+//
 // The solve itself lives in utils/setupFeeFloor.js so it can be asserted
 // directly (scripts/setupFeeFloor.test.mjs) — a floor that is quietly a few
 // cents too low reads exactly like one that isn't.
@@ -38,6 +44,10 @@ export function SetupFeeFloorPanel({
   setupCostFloor = 0,
   heldSetupY1Revenue = 0,
   setupRows = [],
+  recurringRows = [],
+  totalY1Revenue = 0,
+  totalTermRevenue = 0,
+  termCost = 0,
   onApply,
 }) {
   const [open, setOpen] = useState(false);
@@ -50,6 +60,11 @@ export function SetupFeeFloorPanel({
     status, rows, maxReduction, currentCashFlow, setupY1Revenue, floorSetupY1Revenue,
     reducibleFloor,
   } = result;
+  const shift = proposeSetupShift({
+    y1Cost, totalY1Revenue, totalTermRevenue, termCost,
+    setupRows, recurringRows,
+  });
+  const canApplyShift = !!onApply && shift.status === 'ok' && shift.shift > 0;
   const pctOff = setupY1Revenue > 0 ? (maxReduction / setupY1Revenue) * 100 : 0;
   const canApply = !!onApply && (status === 'ok' || status === 'zero-floor') && maxReduction > 0;
   const belowCost = result.belowSetupCostBy > 0;
@@ -166,6 +181,81 @@ export function SetupFeeFloorPanel({
                 year carries it, that line does not.</>
               )}
               {' '}It is a limit to negotiate against, not a price to open with.
+            </div>
+          )}
+
+          {canApplyShift && (
+            <div className={styles.shiftBlock}>
+              <div className={styles.shiftHeadline}>
+                Same margin, {shift.bindingConstraint === 'zeroSetup' ? 'no setup fee' : 'a smaller setup fee'}:
+                move <strong>{fmtMoney(shift.shift)}</strong> off Setup and onto the recurring fees
+                {' '}(<strong>+{shift.liftPct.toFixed(1)}%</strong> on every recurring fee).
+              </div>
+              <div className={styles.floorMath}>
+                Term revenue stays at {fmtWhole(shift.proposedTermRevenue)}
+                {typeof shift.proposedMargin === 'number' && (
+                  <>, so the term margin stays at{' '}
+                  <strong>{(shift.proposedMargin * 100).toFixed(1)}%</strong></>
+                )}
+                . Year 1 goes from {fmtWhole(shift.currentY1Revenue)} to{' '}
+                {fmtWhole(shift.proposedY1Revenue)} against {fmtWhole(y1Cost)} of cost —{' '}
+                <span className={shift.proposedY1CashFlow < 0 ? styles.floorNeg : styles.floorPos}>
+                  {fmtWhole(shift.proposedY1CashFlow)}
+                </span>
+                {' '}left over.
+              </div>
+              <table className={styles.floorTable}>
+                <thead>
+                  <tr>
+                    <th>Fee</th>
+                    <th>Type</th>
+                    <th className={styles.numCell}>Fee now</th>
+                    <th className={styles.numCell}>Proposed</th>
+                    <th className={styles.numCell}>Units</th>
+                    <th className={styles.numCell}>Term now</th>
+                    <th className={styles.numCell}>Term proposed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shift.rows.map(r => (
+                    <tr key={`shift-${r.key}`}>
+                      <td>
+                        {r.label}
+                        {r.isAuto && <span className={styles.floorAutoTag} title="This row's fee is auto-derived from its linked costs. Applying the proposal writes a fixed fee over it; clear the cell to go back to auto.">auto</span>}
+                      </td>
+                      <td>{r.kind === 'setup' ? 'Setup' : 'Recurring'}</td>
+                      <td className={styles.numCell}>{fmtMoney(r.fee)}</td>
+                      <td className={`${styles.numCell} ${styles.floorFeeCell}`}>{fmtMoney(r.proposedFee)}</td>
+                      <td className={styles.numCell}>{r.unitCount || ''}</td>
+                      <td className={styles.numCell}>{fmtMoney(r.termRevenue)}</td>
+                      <td className={styles.numCell}>{fmtMoney(r.proposedTermRevenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className={styles.floorNote}>
+                Every dollar off Setup is added back across the recurring fees over the term, in
+                proportion to what each already bills — so the term brings in the same money at the
+                same margin, and the customer pays {shift.bindingConstraint === 'zeroSetup' ? 'none of it' : 'less of it'} up front.
+                {shift.bindingConstraint === 'cashFlow' && (
+                  <> The shift stops here because Year 1 has to keep covering its own cost: Setup bills
+                  in Year 1 in full while the uplift only bills a year of itself.</>
+                )}
+                {' '}Any smaller move works the same way — this is the far end of it.
+              </div>
+              <div className={styles.floorActions}>
+                <button
+                  type="button"
+                  className={styles.floorApplyBtn}
+                  onClick={() => {
+                    onApply(shift.rows.map(r => ({ index: r.index, fee: r.proposedFee })));
+                    setApplied(`Wrote the proposed fees into ${shift.rows.length} row${shift.rows.length === 1 ? '' : 's'}. Clear a Fee cell to put it back on auto.`);
+                  }}
+                  title="Type this structure into the schedule's Fee column — Setup down, recurring up, same term revenue. Any row that was auto-deriving its fee gets a fixed value written over it."
+                >
+                  Apply this structure
+                </button>
+              </div>
             </div>
           )}
 

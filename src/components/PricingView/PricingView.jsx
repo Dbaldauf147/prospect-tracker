@@ -5587,6 +5587,19 @@ export function PricingView({ settings } = {}) {
                         const y1Revenue = y1RevByRow.reduce((s, v) => s + v, 0);
                         const y1CashFlow = y1Revenue - y1Cost;
 
+                        // Term totals, for the "same margin, lower setup"
+                        // proposal: it moves money between fees without
+                        // changing what the term brings in, so it needs the
+                        // term on both sides. Same per-year projections the
+                        // rest of the page renders from.
+                        const numYearsForShift = Math.max(1, Math.ceil(termMonths / 12));
+                        const yearsForShift = Array.from({ length: numYearsForShift }, (_, i) => i + 1);
+                        const termRevByRow = feeRows.map(r =>
+                          yearsForShift.reduce((s, y) => s + altFeeYearRevenue(r, y), 0));
+                        const totalTermRevenue = termRevByRow.reduce((s, v) => s + v, 0);
+                        const termCost = flatItems.reduce((acc, i) =>
+                          acc + yearsForShift.reduce((s, y) => s + ctsItemYearCost(i, y), 0), 0);
+
                         // Split Year-1 revenue into what the Setup-fee floor is
                         // allowed to cut and what it has to hold fixed. Only
                         // Setup rows are in scope, and pass-through rows are
@@ -5599,26 +5612,36 @@ export function PricingView({ settings } = {}) {
                         // twice.
                         let heldSetupY1Revenue = 0;
                         const setupRows = [];
+                        // Recurring rows that can absorb a Setup cut. Pass-through
+                        // is left out for the same reason it is on the Setup side:
+                        // it bills at face cost, so moving money onto it moves
+                        // margin rather than shape.
+                        const recurringRows = [];
                         feeRows.forEach((r, idx) => {
                           const rev = y1RevByRow[idx];
-                          if (!isSetupFeeType(r.type) || r.passThrough === true) {
-                            fixedY1Revenue += rev;
-                            if (isSetupFeeType(r.type)) heldSetupY1Revenue += rev;
-                            return;
-                          }
                           const manualFee = Number(r.fee);
                           const hasManualFee = r.fee != null && r.fee !== ''
                             && Number.isFinite(manualFee) && manualFee >= 0;
                           const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
-                          setupRows.push({
-                            key: `setup-${idx}`,
+                          const rowFor = (prefix) => ({
+                            key: `${prefix}-${idx}`,
                             index: idx,
                             label: String(r.altItem || '').trim() || `Fee row ${idx + 1}`,
                             fee,
                             unitCount: Number(r.unitCount) || 0,
                             y1Revenue: rev,
+                            termRevenue: termRevByRow[idx],
                             isAuto: !hasManualFee,
                           });
+                          if (!r.passThrough && /recurring/i.test(r.type || '')) {
+                            recurringRows.push(rowFor('rec'));
+                          }
+                          if (!isSetupFeeType(r.type) || r.passThrough === true) {
+                            fixedY1Revenue += rev;
+                            if (isSetupFeeType(r.type)) heldSetupY1Revenue += rev;
+                            return;
+                          }
+                          setupRows.push(rowFor('setup'));
                         });
 
                         const fmtAbs = (n) => Math.abs(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -5635,6 +5658,10 @@ export function PricingView({ settings } = {}) {
                               setupCostFloor={setup.cost + setup.depreciableCost * techDeprPct}
                               heldSetupY1Revenue={heldSetupY1Revenue}
                               setupRows={setupRows}
+                              recurringRows={recurringRows}
+                              totalY1Revenue={y1Revenue}
+                              totalTermRevenue={totalTermRevenue}
+                              termCost={termCost}
                               onApply={(updates) => applySetupFeeFloor(opt.optionNumber, updates)}
                             />
                           </>
