@@ -771,6 +771,124 @@
   line-height: 1.4;
 }
 
+/* Setup-fee floor: the collapsed button sits under the Year-1 banner, the
+   panel unfolds beneath it. Deliberately quieter than .year1Warning — this is
+   a tool you reach for, not a problem shouting at you. */
+.floorWrap {
+  margin: 0 0 0.75rem;
+}
+
+.floorBtn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #0f766e;
+  border-radius: var(--radius-sm);
+  background: #f0fdfa;
+  color: #0f766e;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.floorBtn:hover {
+  background: #ccfbf1;
+}
+
+.floorPanel {
+  margin-top: 0.45rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid #99f6e4;
+  border-left: 4px solid #0f766e;
+  border-radius: 6px;
+  background: #f0fdfa;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  color: var(--color-text);
+}
+
+.floorHeadline {
+  font-weight: 500;
+}
+
+.floorMath,
+.floorNote {
+  margin-top: 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.floorPos { color: #047857; font-weight: 600; }
+.floorNeg { color: #b91c1c; font-weight: 600; }
+
+.floorTable {
+  margin-top: 0.55rem;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  background: #fff;
+}
+
+.floorTable th,
+.floorTable td {
+  border: 1px solid #ccfbf1;
+  padding: 0.2rem 0.5rem;
+  white-space: nowrap;
+}
+
+.floorTable th {
+  background: #ccfbf1;
+  font-weight: 600;
+  text-align: left;
+}
+
+.floorFeeCell {
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.floorAutoTag {
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: #e2e8f0;
+  color: var(--color-text-muted);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.floorActions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.floorApplyBtn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid #0f766e;
+  border-radius: var(--radius-sm);
+  background: #0f766e;
+  color: #fff;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.floorApplyBtn:hover {
+  background: #115e59;
+  border-color: #115e59;
+}
+
+.floorApplied {
+  font-size: var(--font-size-xs);
+  color: #047857;
+  font-weight: 600;
+}
+
 .unlinkedWarning {
   margin: 0.5rem 0 0.75rem;
   padding: 0.55rem 0.85rem;

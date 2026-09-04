@@ -15,6 +15,8 @@ import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
 import { CalculatorTab } from './CalculatorTab';
+import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
+import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
@@ -2973,6 +2975,22 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // Write the solved Setup-fee floor into the schedule's Fee column. One pass
+  // over the rows rather than a call per row: the floor only holds as a set,
+  // and a half-applied schedule is a price nobody chose.
+  function applySetupFeeFloor(optionNumber, updates) {
+    if (!Array.isArray(updates) || updates.length === 0) return;
+    setAltFees(prev => {
+      const list = (prev[optionNumber] || altFeeStarter()).slice();
+      for (const u of updates) {
+        const row = list[u.index];
+        if (!row || !Number.isFinite(u.fee)) continue;
+        list[u.index] = { ...row, fee: u.fee };
+      }
+      return { ...prev, [optionNumber]: list };
+    });
+  }
+
   function replaceAltFeeRows(optionNumber, newRows) {
     setAltFees(prev => ({ ...prev, [optionNumber]: newRows.slice() }));
   }
@@ -5158,15 +5176,54 @@ export function PricingView({ settings } = {}) {
                           if (isRecurring) return acc + c * 12;
                           return acc + c;
                         }, 0);
-                        const y1Revenue = (altFees[opt.optionNumber] || [])
-                          .reduce((s, r) => s + altFeeYearRevenue(r, 1), 0);
+                        const feeRows = altFees[opt.optionNumber] || [];
+                        const y1RevByRow = feeRows.map(r => altFeeYearRevenue(r, 1));
+                        const y1Revenue = y1RevByRow.reduce((s, v) => s + v, 0);
                         const y1CashFlow = y1Revenue - y1Cost;
-                        if (y1CashFlow >= 0) return null;
+
+                        // Split Year-1 revenue into what the Setup-fee floor is
+                        // allowed to cut and what it has to hold fixed. Only
+                        // Setup rows are in scope, and pass-through rows are
+                        // held even so: they bill at face cost, so discounting
+                        // one spends margin rather than the year's slack.
+                        let fixedY1Revenue = 0;
+                        const setupRows = [];
+                        feeRows.forEach((r, idx) => {
+                          const rev = y1RevByRow[idx];
+                          if (!isSetupFeeType(r.type) || r.passThrough === true) {
+                            fixedY1Revenue += rev;
+                            return;
+                          }
+                          const manualFee = Number(r.fee);
+                          const hasManualFee = r.fee != null && r.fee !== ''
+                            && Number.isFinite(manualFee) && manualFee >= 0;
+                          const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
+                          setupRows.push({
+                            key: `setup-${idx}`,
+                            index: idx,
+                            label: String(r.altItem || '').trim() || `Fee row ${idx + 1}`,
+                            fee,
+                            unitCount: Number(r.unitCount) || 0,
+                            y1Revenue: rev,
+                            isAuto: !hasManualFee,
+                          });
+                        });
+
                         const fmtAbs = (n) => Math.abs(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         return (
-                          <div className={styles.year1Warning} role="alert">
-                            ⚠ Negative cash flow in Year 1: projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
-                          </div>
+                          <>
+                            {y1CashFlow < 0 && (
+                              <div className={styles.year1Warning} role="alert">
+                                ⚠ Negative cash flow in Year 1: projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
+                              </div>
+                            )}
+                            <SetupFeeFloorPanel
+                              y1Cost={y1Cost}
+                              fixedY1Revenue={fixedY1Revenue}
+                              setupRows={setupRows}
+                              onApply={(updates) => applySetupFeeFloor(opt.optionNumber, updates)}
+                            />
+                          </>
                         );
                       })()}
 
