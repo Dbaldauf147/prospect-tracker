@@ -525,6 +525,8 @@ Type a value to override.`
         //         and Recurring rows (the breakdown stays as-billed)
         //         but Total fee drops to revenue net of pass-through.
         //         Only rendered when the deal has any pass-through.
+        // Cumulative fees runs whichever Total fee row its own table
+        // shows, so the net table accumulates net revenue.
         // Deal margin and Linked CTS cost are identical in both — the
         // existing margin formula already excludes pass-through from
         // both sides, so the % doesn't change between scenarios.
@@ -563,6 +565,15 @@ Type a value to override.`
 
         const cellMoney = (v, showZero = false) => (showZero || v > 0) ? fmtMoneyCell(v) : '';
 
+        // Running total of the scenario's own Total fee row, so the
+        // "Revenue less pass-through" table accumulates its net figures
+        // rather than the gross ones. The last column is what the deal
+        // has billed by the end of the term.
+        const runningTotal = (values) => {
+          let acc = 0;
+          return values.map(v => (acc += (v || 0)));
+        };
+
         const renderScenario = (heading, totalFeeValues) => (
           <table className={styles.scenarioTable}>
             <thead>
@@ -590,6 +601,14 @@ Type a value to override.`
                 <td style={{ fontWeight: 600 }}>Total fee</td>
                 {totalFeeValues.map((v, i) => (
                   <td key={`tot-${i}`} className={styles.numCell} style={{ fontWeight: 600 }}>{cellMoney(v, true)}</td>
+                ))}
+              </tr>
+              <tr>
+                <td title="Total fee added up year over year. The last column is what the deal bills across the whole term.">
+                  Cumulative fees
+                </td>
+                {runningTotal(totalFeeValues).map((v, i) => (
+                  <td key={`cum-${i}`} className={styles.numCell}>{cellMoney(v, true)}</td>
                 ))}
               </tr>
               {hasCost && (
