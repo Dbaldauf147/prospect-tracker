@@ -6,6 +6,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './WeeklyReportView.module.css';
 import { WeeklyReportEmailModal } from './WeeklyReportEmailModal';
+import { WeeklyReportEmailPreview } from './WeeklyReportEmailPreview';
 import { publishSnapshot } from '../../utils/weeklyReportSchedulesStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { userLsGet } from '../../utils/userLs';
@@ -576,6 +577,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const isCurrent = refDate === todayIso();
 
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // What the scheduled email will send. The report's numbers come from
   // caches that only exist in this browser, so rather than have the server
@@ -692,6 +694,12 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
               onClick={() => setEmailModalOpen(true)}
               title="Send this report on a schedule — e.g. every Monday at 06:00"
             >Email this report</button>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={() => setPreviewOpen(true)}
+              title="See exactly what the emailed report looks like in an inbox"
+            >Preview email</button>
             {copyFlash && <span className={styles.flash}>{copyFlash}</span>}
           </div>
         </div>
@@ -784,6 +792,16 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
           uid={user?.uid}
           defaultRecipient={settings?.workEmail || user?.email || ''}
           snapshot={emailSnapshot}
+        />
+
+        {/* The same preview the scheduler offers, reachable without opening
+            it: "what does this look like when it lands" is a question about
+            the report, not about the schedule. */}
+        <WeeklyReportEmailPreview
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          snapshot={anyData || kpisReady ? emailSnapshot : null}
+          uid={user?.uid}
         />
 
         {!anyData && (
