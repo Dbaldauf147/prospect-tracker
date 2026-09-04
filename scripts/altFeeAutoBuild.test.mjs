@@ -195,6 +195,74 @@ check('unit count: no metadata to fill from', altFeeUnitCount('Per Site', {}), 1
     rows.map(r => [r.altItem, r.passThrough]), [['Supplier charges', true], ['Mixed', false]]);
 }
 
+// ── Per-fee defaults ──────────────────────────────────────────────────────
+// A fee told what it is answers for its own type: every cost carrying the
+// name lands in that one bucket, so the name gets ONE row rather than one
+// per cost bucket.
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [
+      cost({ name: 'Program fee', type: 'Setup' }),
+      cost({ name: 'Program fee', type: 'Recurring (monthly)' }),
+    ],
+    feeDefaults: { 'program fee': { type: 'Recurring (monthly)' } },
+  });
+  check('a default type collapses a name to one row',
+    names(rows), ['Program fee|Recurring (monthly)']);
+}
+{
+  // …and it is the type the schedule already claims against, so building
+  // twice doesn't stack a second row on it.
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [
+      cost({ name: 'Program fee', type: 'Setup' }),
+      cost({ name: 'Program fee', type: 'Recurring (monthly)' }),
+    ],
+    existingRows: [{ altItem: 'Program fee', type: 'Recurring (monthly)' }],
+    feeDefaults: { 'program fee': { type: 'Recurring (monthly)' } },
+  });
+  check('a default type claims its bucket once', rows, []);
+}
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [cost({ name: 'Credit', type: 'Credit' })],
+    feeDefaults: { credit: { type: 'Setup' } },
+  });
+  check('a default type prices a name the cost types do not',
+    names(rows), ['Credit|Setup']);
+}
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [cost({ name: 'Per account', unit: 'Per Site' })],
+    feeDefaults: { 'per account': { unit: 'Per Account' } },
+    siteCount: 1500,
+    accountCount: 11000,
+  });
+  check('a default unit outranks the unit off the costs, and fills its count',
+    rows.map(r => [r.unit, r.unitCount]), [['Per Account', 11000]]);
+}
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [cost({ name: 'Per Account', type: 'Setup' })],
+    feeDefaults: { 'per account': { type: 'Recurring (monthly)', unit: 'Per Account' } },
+  });
+  check('defaults match the name case-insensitively',
+    names(rows), ['Per Account|Recurring (monthly)']);
+  check('fee and start month are still left to derive',
+    [rows[0].fee, rows[0].startMonth], [null, null]);
+}
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [
+      cost({ name: 'Program fee', type: 'Setup' }),
+      cost({ name: 'Program fee', type: 'Recurring (monthly)' }),
+    ],
+    feeDefaults: { 'other fee': { type: 'Setup' } },
+  });
+  check('a default for some other fee changes nothing',
+    names(rows), ['Program fee|Setup', 'Program fee|Recurring (monthly)']);
+}
+
 // ── Order follows the cost table ──────────────────────────────────────────
 {
   const rows = buildAltFeeRowsFromAutomatedNames({
