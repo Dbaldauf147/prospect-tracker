@@ -12,6 +12,7 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { setOppBfoLink } from '../../utils/opps2Store';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
+import { LastUpdatedLine } from './LastUpdatedLine';
 import { useAuth } from '../../contexts/AuthContext';
 import { PasteTableView } from './PasteTableView';
 import {
@@ -131,15 +132,20 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
           // requiring a fresh paste.
           const cleaned = saved.headers.map(cleanHeader);
           const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
+          // updatedAt travels with the rows rather than in its own state:
+          // the save effect below fires on `data`, so a separate field would
+          // save twice on every paste and, worse, could save the new rows
+          // against the old timestamp.
+          const updatedAt = typeof saved.updatedAt === 'number' ? saved.updatedAt : null;
           if (needsRemap) {
             const rows = saved.rows.map(r => {
               const next = {};
               saved.headers.forEach((h, i) => { next[cleaned[i] || h] = r[h]; });
               return next;
             });
-            setData({ headers: cleaned, rows });
+            setData({ headers: cleaned, rows, updatedAt });
           } else {
-            setData({ headers: saved.headers, rows: saved.rows });
+            setData({ headers: saved.headers, rows: saved.rows, updatedAt });
           }
         }
         // Prefs in a separate key so Clear can wipe data without losing
@@ -166,7 +172,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
     if (!hydratedRef.current) return;
     // Mirrored to Firestore (see utils/bfoActivityStore) so the pasted rows
     // survive a cleared browser.
-    saveBfoActivity({ headers: data.headers, rows: data.rows })
+    saveBfoActivity({ headers: data.headers, rows: data.rows, updatedAt: data.updatedAt ?? null })
       .catch(err => console.warn('BFO data save failed', err));
   }, [data]);
 
@@ -208,7 +214,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
       window.setTimeout(() => setFlash(''), 2500);
       return;
     }
-    setData(parsed);
+    setData({ ...parsed, updatedAt: Date.now() });
     setFlash(`Imported ${parsed.rows.length} rows · ${parsed.headers.length} columns.`);
     window.setTimeout(() => setFlash(''), 2500);
   }
@@ -224,7 +230,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
 
   function clearAll() {
     if (!confirm('Clear all BFO activity data?')) return;
-    setData({ headers: [], rows: [] });
+    setData({ headers: [], rows: [], updatedAt: null });
     dbDelete(STORE, KEY).catch(() => {});
   }
 
@@ -458,6 +464,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
           <span className={styles.subtitle}>
             Paste rows from BFO (⌘V / Ctrl+V) anywhere on this page. First row is the header.
           </span>
+          <LastUpdatedLine updatedAt={data.updatedAt} hasRows={data.rows.length > 0} />
         </div>
         <div className={styles.toolbar}>
           <input
