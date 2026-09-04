@@ -7,7 +7,7 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
-import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows } from '../../utils/altFeeAutoBuild';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
@@ -2194,7 +2194,21 @@ export function PricingView({ settings } = {}) {
         if (saved.overrides) setOverrides(stripPassThroughOverrides(saved.overrides));
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
-        if (saved.altFees) setAltFees(saved.altFees);
+        if (saved.altFees) {
+          // Bring the cached schedule back in line with the saved fee
+          // defaults before it goes on screen: a row that arrived with an
+          // upload, or was built before its fee had a default, is stale
+          // otherwise — and a stale row is one a fee can be typed into,
+          // billing what the live row already bills.
+          const hydratedFeeDefaults = (savedFeeDefaults && typeof savedFeeDefaults === 'object')
+            ? savedFeeDefaults
+            : (saved.feeDefaults || {});
+          setAltFees(reconcileScheduleWithFeeDefaults(
+            saved.altFees,
+            hydratedFeeDefaults,
+            saved.workbook?.options || [],
+          ));
+        }
         if (saved.feeMapBy === 'automated' || saved.feeMapBy === 'below') setFeeMapBy(saved.feeMapBy);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);

@@ -15,6 +15,7 @@ import {
   altFeeBucketForScheduleType,
   altFeeUnitCount,
   applyFeeDefaultToRows,
+  reconcileScheduleWithFeeDefaults,
   ALT_FEE_UPFRONT,
   ALT_FEE_RECURRING,
 } from '../src/utils/altFeeAutoBuild.js';
@@ -314,6 +315,66 @@ check('unit count: no metadata to fill from', altFeeUnitCount('Per Site', {}), 1
     applyFeeDefaultToRows(rows, { key: 'other fee', field: 'type', value: 'Setup' }), rows);
   check('re-applying the same value is a no-op',
     applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: 'Setup' }), rows);
+}
+
+// A fee whose type is defaulted is one row, so the row the schedule has for
+// it claims the name whatever that row currently says — otherwise Build
+// adds the default's bucket beside it and the name ends up with two rows.
+{
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [
+      cost({ name: 'Program fee', type: 'Recurring (monthly)' }),
+      cost({ name: 'Program fee', type: 'Setup' }),
+    ],
+    existingRows: [{ altItem: 'Program fee', type: 'Setup' }],
+    feeDefaults: { 'program fee': { type: 'Recurring (monthly)' } },
+  });
+  check('an existing row of a defaulted fee claims every bucket', rows, []);
+}
+{
+  // Without a default the bucket rule still applies, so the other bucket
+  // still earns its row.
+  const rows = buildAltFeeRowsFromAutomatedNames({
+    costs: [
+      cost({ name: 'Program fee', type: 'Recurring (monthly)' }),
+      cost({ name: 'Program fee', type: 'Setup' }),
+    ],
+    existingRows: [{ altItem: 'Program fee', type: 'Setup' }],
+  });
+  check('with no default the untouched bucket still builds',
+    names(rows), ['Program fee|Recurring (monthly)']);
+}
+
+// ── Bringing a whole schedule back in line on load ────────────────────────
+{
+  const schedule = {
+    1: [
+      { altItem: 'Program fee', type: 'Setup', fee: null, unit: '', unitCount: 1 },
+      { altItem: 'Program fee', type: 'Recurring (monthly)', fee: null, unit: 'Fixed', unitCount: 1 },
+      { altItem: 'Setup', type: 'Setup', fee: 100, unit: '', unitCount: 1 },
+    ],
+    2: [{ altItem: 'Program fee', type: 'One Time', fee: null, unit: '', unitCount: 1 }],
+  };
+  const out = reconcileScheduleWithFeeDefaults(
+    schedule,
+    { 'program fee': { type: 'Recurring (monthly)', unit: 'Per Account' } },
+    [{ optionNumber: 1, siteCount: 1500, accountCount: 11000 }, { optionNumber: 2, accountCount: 20 }],
+  );
+  check('every option is brought in line, and the stale row goes',
+    Object.fromEntries(Object.entries(out).map(([k, rows]) => [k, rows.map(r => `${r.altItem}|${r.type}|${r.unit}|${r.unitCount}`)])),
+    {
+      1: ['Program fee|Recurring (monthly)|Per Account|11000', 'Setup|Setup||1'],
+      2: ['Program fee|Recurring (monthly)|Per Account|20'],
+    });
+}
+{
+  const schedule = { 1: [{ altItem: 'Program fee', type: 'Recurring (monthly)', fee: null, unit: 'Per Account', unitCount: 11000 }] };
+  check('a schedule already in line is returned untouched',
+    reconcileScheduleWithFeeDefaults(schedule, { 'program fee': { type: 'Recurring (monthly)', unit: 'Per Account' } },
+      [{ optionNumber: 1, accountCount: 11000 }]), schedule);
+  check('no defaults, nothing to do', reconcileScheduleWithFeeDefaults(schedule, {}, []), schedule);
+  check('a start-month-only default moves nothing',
+    reconcileScheduleWithFeeDefaults(schedule, { 'program fee': { startMonth: 4 } }, []), schedule);
 }
 
 // ── Order follows the cost table ──────────────────────────────────────────
