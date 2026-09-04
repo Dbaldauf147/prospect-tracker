@@ -1,8 +1,15 @@
-import { useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import styles from './S2CTab.module.css';
+import { S2C_TAG_FIELDS, carryTagsOnPaste, tagSuggestions } from '../../utils/s2cTags';
 
 const EMPTY_ROW = () => ({
   costElement: '',
+  // What this cost is for. Free text, suggested from what the sheet already
+  // uses — see utils/s2cTags.js. Rows saved before these existed simply have
+  // no value for them, which reads as untagged.
+  serviceSegment: '',
+  productName: '',
+  deliverable: '',
   setup: '',      // SET-UP or ONE-OFF ($)
   setupUom: '',   // Cost UoM (Per Site, Per Account, etc.)
   ongoing: '',    // ON-GOING per month ($)
@@ -43,6 +50,7 @@ function parseRowsFromText(text) {
       first.startsWith('set up')
     ) continue;
     out.push({
+      ...EMPTY_ROW(),
       costElement: cell(0),
       setup: cell(1),
       setupUom: cell(2),
@@ -73,7 +81,30 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
+// Same cell as above, offering back what the sheet already uses in this
+// column. Free text either way — the list is a shortcut, never a constraint.
+function TagCellInput({ value, onCommit, listId, placeholder }) {
+  const initial = value == null ? '' : String(value);
+  const [draft, setDraft] = useState(initial);
+  return (
+    <input
+      type="text"
+      list={listId}
+      className={styles.input}
+      value={draft}
+      placeholder={placeholder || ''}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== initial) onCommit(draft); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
 export function S2CTab({ rows, setRows }) {
+  const tagListPrefix = useId();
   const safeRows = Array.isArray(rows) && rows.length
     ? rows
     : Array.from({ length: 10 }, EMPTY_ROW);
@@ -92,14 +123,19 @@ export function S2CTab({ rows, setRows }) {
     next.splice(idx, 1);
     setRows(next.length ? next : [EMPTY_ROW()]);
   };
+  // A paste refreshes the costs; it is not a re-tagging. Rows coming back
+  // under a Cost Element that was already tagged keep their tags, so pulling
+  // fresh numbers out of Excel doesn't quietly undo the classification work.
   const replaceRows = (newRows) => {
-    const padded = newRows.length < 10
-      ? newRows.concat(Array.from({ length: 10 - newRows.length }, EMPTY_ROW))
-      : newRows;
+    const carried = carryTagsOnPaste(newRows, safeRows);
+    const padded = carried.length < 10
+      ? carried.concat(Array.from({ length: 10 - carried.length }, EMPTY_ROW))
+      : carried;
     setRows(padded);
   };
   const clearAll = () => {
-    const hasData = safeRows.some(r => r.costElement || r.setup || r.setupUom || r.ongoing || r.ongoingUom);
+    const hasData = safeRows.some(r => r.costElement || r.setup || r.setupUom || r.ongoing || r.ongoingUom
+      || r.serviceSegment || r.productName || r.deliverable);
     if (!hasData) {
       setRows(Array.from({ length: 10 }, EMPTY_ROW));
       return;
@@ -125,6 +161,14 @@ export function S2CTab({ rows, setRows }) {
     window.setTimeout(() => setFlash(''), 2500);
   }
 
+  // What each tag column offers back. Keyed by field so the datalists can be
+  // rendered once for the whole table rather than per row.
+  const suggestionsByField = useMemo(() => {
+    const out = {};
+    for (const f of S2C_TAG_FIELDS) out[f.key] = tagSuggestions(safeRows, f.key);
+    return out;
+  }, [safeRows]);
+
   let setupSum = 0;
   let ongoingSum = 0;
   for (const r of safeRows) {
@@ -139,7 +183,8 @@ export function S2CTab({ rows, setRows }) {
       <div className={styles.intro}>
         Costs to Serve worksheet: paste a block straight from Excel (5 columns: Cost Element ·
         SET-UP or ONE-OFF · Cost UoM · ON-GOING per month · Cost UoM). The two-row header banner
-        from the source workbook is auto-skipped.
+        from the source workbook is auto-skipped. Tag each cost with its Service Segment, Product
+        Name and Deliverable — typed here, not pasted, and kept when you re-paste the costs.
       </div>
 
       <div className={styles.toolbar}>
@@ -184,10 +229,19 @@ export function S2CTab({ rows, setRows }) {
         </div>
       )}
 
+      {S2C_TAG_FIELDS.map(f => (
+        <datalist key={f.key} id={`${tagListPrefix}-${f.key}`}>
+          {suggestionsByField[f.key].map(v => <option key={v} value={v} />)}
+        </datalist>
+      ))}
+
       <div className={styles.gridWrap}>
         <table className={styles.grid}>
           <colgroup>
             <col className={styles.colCostElement} />
+            <col className={styles.colTag} />
+            <col className={styles.colTag} />
+            <col className={styles.colTag} />
             <col className={styles.colSetup} />
             <col className={styles.colSetupUom} />
             <col className={styles.colOngoing} />
@@ -197,10 +251,14 @@ export function S2CTab({ rows, setRows }) {
           <thead>
             <tr>
               <th rowSpan={2} className={styles.costElementHeader}>Cost Element</th>
+              <th colSpan={S2C_TAG_FIELDS.length} className={styles.tagGroup} title="What this cost is for. Free text — each column suggests what the sheet already uses. Tags survive a re-paste when the Cost Element comes back under the same name.">TAGS</th>
               <th colSpan={4} className={styles.s2cGroup}>COSTS TO SERVE (includes Tech Depreciation)</th>
               <th rowSpan={2} className={styles.actionCol} />
             </tr>
             <tr>
+              {S2C_TAG_FIELDS.map(f => (
+                <th key={f.key} className={styles.tagHeader}>{f.label}</th>
+              ))}
               <th className={styles.s2cHeader}>SET-UP<br/>or ONE-OFF</th>
               <th className={styles.s2cHeader}>Cost UoM</th>
               <th className={styles.s2cHeader}>ON-GOING<br/>per month</th>
@@ -219,6 +277,17 @@ export function S2CTab({ rows, setRows }) {
                   <td className={styles.tan}>
                     <CellInput key={`ce-${k}`} value={row.costElement} onCommit={(v) => updateRow(idx, 'costElement', v)} />
                   </td>
+                  {S2C_TAG_FIELDS.map(f => (
+                    <td key={f.key} className={styles.tagCell}>
+                      <TagCellInput
+                        key={`${f.key}-${idx}-${row[f.key] ?? ''}`}
+                        value={row[f.key]}
+                        listId={`${tagListPrefix}-${f.key}`}
+                        placeholder={f.placeholder}
+                        onCommit={(v) => updateRow(idx, f.key, v)}
+                      />
+                    </td>
+                  ))}
                   <td className={`${styles.tan} ${styles.numCell}`}>
                     <CellInput key={`su-${k}`} value={setupDisplay} align="right" onCommit={(v) => updateRow(idx, 'setup', v)} />
                   </td>
@@ -244,6 +313,7 @@ export function S2CTab({ rows, setRows }) {
             })}
             <tr className={styles.totalsRow}>
               <td style={{ textAlign: 'right' }}>Totals</td>
+              {S2C_TAG_FIELDS.map(f => <td key={f.key} />)}
               <td className={styles.numCell}>{setupSum > 0 ? fmtMoney(setupSum) : ''}</td>
               <td />
               <td className={styles.numCell}>{ongoingSum > 0 ? fmtMoney(ongoingSum) : ''}</td>
