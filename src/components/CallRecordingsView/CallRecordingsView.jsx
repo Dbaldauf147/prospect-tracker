@@ -41,7 +41,7 @@ import {
 } from '../../utils/localRecordings';
 import {
   loadCallRecords, loadCallRecordsResult, saveCallRecordResult, deleteCallRecordResult, migrateSettingsLinks,
-  oppLabel, summaryForOpp, mergeIntoNotes,
+  oppLabel,
 } from '../../utils/callRecordingsStore';
 import {
   probeGranola, recordingFromStored,
@@ -66,11 +66,12 @@ import {
 import { DataTable } from '../common/DataTable';
 import { buildCompanyGuessIndex } from '../../utils/companyGuess';
 import { runGranolaSync } from '../../utils/runGranolaSync';
+import { runCallSummary, pushSummaryToOpp, recordCallOnOpp } from '../../utils/runCallSummary';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
 import { setOppFields, bulkSetOppFields } from '../../utils/opps2Store';
-import { nextStepLinesFromCall, appendNextSteps, backfillNextStepPatches, callOnOppPatch } from '../../utils/nextSteps';
-import { withLastCallStamp, clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
+import { backfillNextStepPatches } from '../../utils/nextSteps';
+import { clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
 import {
   tagOppPatch, markOppNaPatch, clearOppTagPatch, oppTagStateOf, oppTagLabelOf,
   filterByOppTag, oppTagCounts, isAutoNa, autoNaPatch, OPP_TAG_FILTERS,
@@ -714,6 +715,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // waiting for the "Push to opp" button. Off by default — AI text
   // editing pipeline data unreviewed should be a deliberate choice.
   const autoPush = settings.callRecordingsAutoPush === true;
+  // Default ON: a transcript nobody has summarised is the state the user
+  // asked us to stop leaving them in. Opting out is explicit, so an
+  // account that never set it still gets summaries.
+  const autoSummarize = settings.callRecordingsAutoSummarize !== false;
 
   // Meeting names that never belong to an opportunity. Stored in synced
   // settings rather than per-browser: a recurring 1:1 is one on every
@@ -1775,7 +1780,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     // then, on the tag this made.
     if (!saved?.oppId) return;
     try {
-      await recordCallOnOpp(recordingId, saved);
+      await recordCallOnOpp({ uid, recordingId, record: saved, persist });
     } catch (err) {
       // The tag itself is saved; only the copy onto the opp failed. Say
       // which, so the user doesn't re-tag chasing a step that landed.
@@ -1924,160 +1929,37 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   }
 
   // ---- summarize -----------------------------------------------------------
-  const pushSummaryToOpp = useCallback(async (recordingId, record) => {
-    const oppId = record?.oppId;
-    if (!oppId) throw new Error('Tag this call to an opportunity first.');
-    const block = summaryForOpp(record);
-    if (!block) throw new Error('Nothing to push: summarize the call first.');
-
-    // Read the opp's current Notes so the summary is appended to the
-    // user's own text rather than replacing it.
-    const cache = await loadOppsFromCache();
-    const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
-    if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
-
-    const patch = { Notes: mergeIntoNotes(opp['Notes'], block, recordingId) };
-    // "Last Spoke" is the date the call happened, not today — a call
-    // transcribed a week late shouldn't read as a fresh conversation.
-    const when = record?.recordedAt ? new Date(record.recordedAt) : null;
-    if (when && !Number.isNaN(when.getTime())) {
-      patch['Last Spoke'] = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
-    }
-
-    // The call's follow-ups, onto the opp's Next Steps checklist — the
-    // column Opps 2 shows as "Notes", which is where the rep actually
-    // works from. The summary block above lands in the Memo field and is
-    // prose about the call; this is the list of what to do next.
-    const steps = appendNextSteps(
-      opp['Next Steps'], opp['_nextStepsWaiting'], nextStepLinesFromCall(record),
-    );
-    if (steps.added > 0) {
-      patch['Next Steps'] = steps.text;
-      patch['_nextStepsWaiting'] = steps.waiting;
-    }
-
-    // One write: the steps and their Waiting On array are index-aligned,
-    // and an opp holding one without the other reads every step below
-    // the break against the wrong Waiting On. The call reference goes in
-    // the same write — it is what the Notes popup names as the last
-    // conversation, and it explains the steps sitting under it.
-    await setOppFields(uid, oppId, withLastCallStamp(patch, opp, record));
-    return persist(recordingId, {
-      pushedToOppAt: new Date().toISOString(),
-      nextStepsPushed: steps.added,
-    });
-  }, [uid, persist]);
-
-  /**
-   * What the opp learns from a call mapped to it: the call's next steps,
-   * and the call itself.
-   *
-   * Runs at both moments that can make those facts true — tagging a call
-   * that already has follow-ups, and summarising one that was tagged
-   * before it had any. Either way the user has said which deal this call
-   * belongs to, which is what makes its follow-ups that deal's to-do list
-   * and makes it that deal's last conversation.
-   *
-   * This runs on its own rather than through pushSummaryToOpp because the
-   * two push different things for different reasons: that one writes AI
-   * prose into the Memo field and is opt-in for exactly that reason,
-   * while these are the facts of the mapping and are what was asked for.
-   *
-   * Returns how many next steps were added — zero when the call hasn't
-   * been summarised yet, or when the opp already had every one of them.
-   * The reference is still stamped in that case.
-   */
-  const recordCallOnOpp = useCallback(async (recordingId, record) => {
-    const oppId = record?.oppId;
-    if (!oppId) return 0;
-
-    const cache = await loadOppsFromCache();
-    const opp = (cache?.records || []).find(r => String(r?._id) === String(oppId));
-    if (!opp) throw new Error('That opp is no longer in the Opps cache: open the Opps 2 tab and try again.');
-
-    // The steps and the reference together, through the same helper the
-    // Opps page's "Calls to map" queue uses — mapping a call means the
-    // same thing whichever page it was mapped from.
-    const { patch, added } = callOnOppPatch(opp, record);
-    if (Object.keys(patch).length === 0) return 0;
-
-    await setOppFields(uid, oppId, patch);
-    if (added > 0) await persist(recordingId, { nextStepsPushed: added });
-    return added;
-  }, [uid, persist]);
+  // The solve itself lives in utils/runCallSummary.js so the app-level
+  // background pass (hooks/useGranolaAutoSync) can summarise a call from
+  // wherever the user is, without this page being mounted. Both go through
+  // the same function, so a summary means the same thing either way.
+  const pushToOppFor = useCallback(
+    (recordingId, record) => pushSummaryToOpp({ uid, recordingId, record, persist }),
+    [uid, persist],
+  );
 
   async function summarize(rec) {
     const id = rec.id;
     const stored = recordsRef.current[id] || {};
     const live = transcripts[id];
     const transcript = (live?.status === 'completed' ? live.text : '') || stored.transcript || '';
-    if (!transcript.trim()) {
-      setErrorFor(id, 'Transcribe this recording first: there is nothing to summarize.');
-      return;
-    }
     setErrorFor(id, '');
     setBusyFor(id, 'summarizing');
     try {
-      const r = await apiFetch('/api/call-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript,
-          company: stored.company || '',
-          oppContext: stored.oppLabel || '',
-          // Who was on the call is what tells an internal meeting from a
-          // client one, and machine speaker labels ("A"/"B") don't carry
-          // it. Only Granola records have attendees; the others send
-          // nothing and the summariser classifies from the transcript.
-          attendees: stored.attendees || null,
-          owner: stored.owner || null,
-        }),
+      const { ok, error, oppError } = await runCallSummary({
+        uid,
+        recordingId: id,
+        record: stored,
+        transcript,
+        meta: metaFor(rec),
+        autoPush,
+        persist,
       });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setErrorFor(id, data.error || `Summary failed (HTTP ${r.status})`);
+      if (!ok) {
+        setErrorFor(id, error);
         return;
       }
-      const saved = await persist(id, {
-        ...metaFor(rec),
-        meetingType: data.meetingType || '',
-        summary: data.summary || '',
-        keyItems: data.keyItems || [],
-        followUps: data.followUps || [],
-        nextSteps: data.nextSteps || '',
-        sentiment: data.sentiment || '',
-        risks: data.risks || [],
-        summarizedAt: new Date().toISOString(),
-        summaryClipped: !!data.clipped,
-      });
-      // A summary is the moment a call finally HAS follow-ups, and most
-      // calls are tagged long before that: a Granola call is mapped to its
-      // deal when it lands, and summarised whenever the rep gets to it.
-      // Tagging pushed nothing because there was nothing to push, so
-      // without this the steps never reach the opp at all — the one path
-      // that would have taken them (the summary push below) is opt-in, and
-      // off by default.
-      //
-      // Which write depends on what the user asked for, and only one of
-      // them runs: the summary push carries the follow-ups anyway, so
-      // doing both would land the steps twice over — deduped to nothing,
-      // but reported as "0 next steps added" on a call that just added
-      // several. Without it, the facts of the mapping go on their own —
-      // the steps and the call reference, and none of the AI prose that
-      // makes the summary push a choice.
-      //
-      // A failure here is reported but never discards the summary that was
-      // just saved.
-      if (saved?.oppId) {
-        try {
-          if (autoPush) await pushSummaryToOpp(id, saved);
-          else await recordCallOnOpp(id, saved);
-        } catch (err) {
-          setErrorFor(id, autoPush
-            ? `Summary saved, but the push to the opp failed: ${err?.message || err}`
-            : `Summary saved, but its next steps didn’t reach the opp: ${err?.message || err}`);
-        }
-      }
+      if (oppError) setErrorFor(id, oppError);
     } catch (err) {
       setErrorFor(id, err?.message || String(err));
     } finally {
@@ -2090,7 +1972,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setErrorFor(id, '');
     setBusyFor(id, 'pushing');
     try {
-      await pushSummaryToOpp(id, recordsRef.current[id]);
+      await pushToOppFor(id, recordsRef.current[id]);
     } catch (err) {
       setErrorFor(id, err?.message || String(err));
     } finally {
@@ -2343,6 +2225,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           </div>
         </div>
         <div className={styles.toolbar}>
+          <label
+            className={styles.autoPush}
+            title="When on, a transcribed call is summarized in the background — up to three per hourly check, newest first — so its summary is on the opp without anyone opening this page. Calls marked N/A are left alone."
+          >
+            <input
+              type="checkbox"
+              checked={autoSummarize}
+              onChange={e => updateSettings?.({ callRecordingsAutoSummarize: e.target.checked })}
+            />
+            Auto-summarize transcribed calls
+          </label>
           <label
             className={styles.autoPush}
             title="When on, a finished summary is written straight into the tagged opp's Notes without waiting for the Push button."
