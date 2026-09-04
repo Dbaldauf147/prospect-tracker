@@ -1306,6 +1306,133 @@ select.altCellInput::-ms-expand {
   background: var(--color-bg);
 }
 
+/* Pass-through tagging: the picker bar, the tagged list's untag button, and
+   the collapsed browse-everything escape hatch. */
+.passTagBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.passTagInput {
+  flex: 0 1 300px;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.passTagType {
+  flex: 0 1 200px;
+  max-width: 200px;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.passTagBtn,
+.passTagBtnOn {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.passTagBtn {
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.passTagBtnOn {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.passTagError,
+.passTagOk {
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.passTagError {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.passTagOk {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+/* The parser sometimes lands a paragraph of fee prose in the Type column.
+   Clamp it here so one such row can't stretch the table off the page — the
+   full text stays in the cell's title. */
+.passTypeCell {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.passUntagBtn {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.passUntagBtn:hover {
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+.passBrowse {
+  margin-top: 0.75rem;
+}
+
+.passBrowseToggle {
+  padding: 0.2rem 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.passBrowseToggle:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
 .linkedEmptyInline {
   padding: 0.5rem 0.7rem;
   border: 1px dashed var(--color-border);
