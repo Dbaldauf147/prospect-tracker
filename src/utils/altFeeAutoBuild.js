@@ -23,6 +23,8 @@
 //   bucket. A row with no type picked yet claims every bucket of its name:
 //   it's the user's own placeholder, and the moment they pick a type on it,
 //   a sibling row built next to it would be pricing the same costs twice.
+//   So does a row whose name carries a default Type — that fee is one row,
+//   and the row the schedule has is it.
 //
 // Fee and Fee Start Month are deliberately left blank on every row built
 // here. Both derive from the costs carrying the name, and a written-in value
@@ -119,7 +121,11 @@ export function buildAltFeeRowsFromAutomatedNames({
     const name = String(row?.altItem || '').trim().toLowerCase();
     if (!name) continue;
     const bucket = altFeeBucketForScheduleType(row?.type);
-    if (!bucket) claimedNames.add(name);
+    // A fee with a default Type is ONE row by definition, so whatever row
+    // the schedule already carries for that name claims every bucket of it
+    // — the type on that row is the default's to set, and a row built
+    // beside it would price the same costs a second time.
+    if (!bucket || defaultTypeFor(name)) claimedNames.add(name);
     else claimedBuckets.add(`${name}|${bucket}`);
   }
 
@@ -234,4 +240,36 @@ export function applyFeeDefaultToRows(rows = [], { key, field, value, siteCount,
     out.push(updated);
   }
   return changed ? out : rows;
+}
+
+// Bring a whole schedule back in line with the saved fee defaults —
+// `altFeesByOption` is the { [optionNumber]: rows } map the page keeps, and
+// `options` the workbook's options, for the counts a unit change refills.
+//
+// Runs when the page hydrates, because a default only reaches rows through
+// the moment it was saved: rows that arrived with a later upload, or that a
+// build added before the default existed, would otherwise sit there
+// contradicting the Fee defaults table — and a stale row of a name is a row
+// someone can type a fee into, billing costs the live row already bills.
+//
+// Returns the same map when nothing moved.
+export function reconcileScheduleWithFeeDefaults(altFeesByOption = {}, feeDefaults = {}, options = []) {
+  const keys = Object.keys(feeDefaults || {}).filter(k => feeDefaults[k]?.type || feeDefaults[k]?.unit);
+  if (keys.length === 0) return altFeesByOption;
+  let changed = false;
+  const out = {};
+  for (const [optNum, rows] of Object.entries(altFeesByOption || {})) {
+    const opt = (options || []).find(o => String(o?.optionNumber) === String(optNum));
+    const before = rows || [];
+    let next = before;
+    for (const key of keys) {
+      const def = feeDefaults[key];
+      const opts = { key, siteCount: opt?.siteCount, accountCount: opt?.accountCount };
+      if (def?.type) next = applyFeeDefaultToRows(next, { ...opts, field: 'type', value: def.type });
+      if (def?.unit) next = applyFeeDefaultToRows(next, { ...opts, field: 'unit', value: def.unit });
+    }
+    if (next !== before) changed = true;
+    out[optNum] = next;
+  }
+  return changed ? out : altFeesByOption;
 }

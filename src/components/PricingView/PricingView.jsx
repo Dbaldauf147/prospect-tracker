@@ -7,7 +7,8 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
-import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows } from '../../utils/altFeeAutoBuild';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
+import { recurringFeePerUnit } from '../../utils/altFeePricing';
 import {
   collectPassThroughPairs,
   pickerSuggestions,
@@ -2298,7 +2299,21 @@ export function PricingView({ settings } = {}) {
         if (saved.overrides) setOverrides(stripPassThroughOverrides(saved.overrides));
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
-        if (saved.altFees) setAltFees(saved.altFees);
+        if (saved.altFees) {
+          // Bring the cached schedule back in line with the saved fee
+          // defaults before it goes on screen: a row that arrived with an
+          // upload, or was built before its fee had a default, is stale
+          // otherwise — and a stale row is one a fee can be typed into,
+          // billing what the live row already bills.
+          const hydratedFeeDefaults = (savedFeeDefaults && typeof savedFeeDefaults === 'object')
+            ? savedFeeDefaults
+            : (saved.feeDefaults || {});
+          setAltFees(reconcileScheduleWithFeeDefaults(
+            saved.altFees,
+            hydratedFeeDefaults,
+            saved.workbook?.options || [],
+          ));
+        }
         if (saved.feeMapBy === 'automated' || saved.feeMapBy === 'below') setFeeMapBy(saved.feeMapBy);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
@@ -2590,7 +2605,10 @@ export function PricingView({ settings } = {}) {
   //   alt-fee One Time           ← CTS One Time        (face value)
   //   alt-fee Recurring (monthly)← CTS Recurring (monthly)            (face monthly)
   //                                + CTS Setup Rolled / One Time Rolled
-  //                                  (markup amortized over the term)
+  //                                  (billed across the term, cost booked once)
+  // A recurring row prices to the whole term rather than to year 1 — its
+  // fee escalates slower than its cost does, so a year-1 derivation drifts
+  // under target every year after. See recurringFeePerUnit.
   // Returns null if there is no linked + type-matched markup yet, or
   // the row has no usable unit count.
   function autoFeePerUnitFor(row) {
@@ -2610,7 +2628,12 @@ export function PricingView({ settings } = {}) {
     // bucket and are amortized over the term.
     const isSetupOrOneTimeRow = /^(setup|one\s*time)$/i.test(rowType);
 
-    let totalMarkup = 0;
+    // Kept apart because the term treats them differently: a monthly cost
+    // escalates over the term, a Rolled one is incurred once upfront, and
+    // an upfront row's fee doesn't escalate at all.
+    let recurringMonthlyPrice = 0;
+    let rolledUpfrontPrice = 0;
+    let upfrontPrice = 0;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
         if (mappingNameFor(item).trim().toLowerCase() !== target) continue;
@@ -2622,19 +2645,31 @@ export function PricingView({ settings } = {}) {
         const itemIsSetupOrOneTime = /^(setup|one\s*time)$/i.test(t);
 
         if (isRecurringRow) {
-          if (itemIsRecurring) totalMarkup += price;
-          else if (itemIsRolled && termMonths > 0) totalMarkup += price / termMonths;
+          if (itemIsRecurring) recurringMonthlyPrice += price;
+          else if (itemIsRolled) rolledUpfrontPrice += price;
         } else if (isSetupOrOneTimeRow && itemIsSetupOrOneTime) {
-          totalMarkup += price;
+          upfrontPrice += price;
         }
       }
     }
-    if (totalMarkup <= 0) return null;
     // Round to two decimals so the value the user sees in the Fee
     // column is exactly the same number used by every downstream
     // calculation (year revenue, margin, totals). Without rounding,
     // a displayed $1.93 can multiply out from an underlying $1.9263.
-    return Math.round((totalMarkup / uc) * 100) / 100;
+    if (isRecurringRow) {
+      const perUnit = recurringFeePerUnit({
+        recurringMonthlyPrice,
+        rolledUpfrontPrice,
+        annualEscalator,
+        costEscalator,
+        termMonths,
+        unitCount: uc,
+      });
+      if (perUnit == null) return null;
+      return Math.round(perUnit * 100) / 100;
+    }
+    if (upfrontPrice <= 0) return null;
+    return Math.round((upfrontPrice / uc) * 100) / 100;
   }
 
   // Fee Start Month for an alt-fee row: the fee's own saved default when it
@@ -5484,11 +5519,17 @@ export function PricingView({ settings } = {}) {
                         // held even so: they bill at face cost, so discounting
                         // one spends margin rather than the year's slack.
                         let fixedY1Revenue = 0;
+                        // Setup fee revenue the floor can't touch — pass-through
+                        // Setup rows. It still pays for part of the Setup cost,
+                        // so the floor doesn't ask the reducible rows for it
+                        // twice.
+                        let heldSetupY1Revenue = 0;
                         const setupRows = [];
                         feeRows.forEach((r, idx) => {
                           const rev = y1RevByRow[idx];
                           if (!isSetupFeeType(r.type) || r.passThrough === true) {
                             fixedY1Revenue += rev;
+                            if (isSetupFeeType(r.type)) heldSetupY1Revenue += rev;
                             return;
                           }
                           const manualFee = Number(r.fee);
@@ -5517,6 +5558,8 @@ export function PricingView({ settings } = {}) {
                             <SetupFeeFloorPanel
                               y1Cost={y1Cost}
                               fixedY1Revenue={fixedY1Revenue}
+                              setupCostFloor={setup.cost + setup.depreciableCost * techDeprPct}
+                              heldSetupY1Revenue={heldSetupY1Revenue}
                               setupRows={setupRows}
                               onApply={(updates) => applySetupFeeFloor(opt.optionNumber, updates)}
                             />
