@@ -14,6 +14,7 @@ import {
   altFeeBucketForCostType,
   altFeeBucketForScheduleType,
   altFeeUnitCount,
+  applyFeeDefaultToRows,
   ALT_FEE_UPFRONT,
   ALT_FEE_RECURRING,
 } from '../src/utils/altFeeAutoBuild.js';
@@ -261,6 +262,58 @@ check('unit count: no metadata to fill from', altFeeUnitCount('Per Site', {}), 1
   });
   check('a default for some other fee changes nothing',
     names(rows), ['Program fee|Setup', 'Program fee|Recurring (monthly)']);
+}
+
+// ── A saved default reaching rows the schedule already carries ────────────
+// The schedule an SIA arrives with is the case that bit: its rows predate
+// the default, so without this they'd sit there contradicting it.
+{
+  const rows = [
+    { altItem: 'Program fee', type: 'Setup', fee: null, unit: '', unitCount: 1 },
+    { altItem: 'Other', type: 'Setup', fee: null, unit: '', unitCount: 1 },
+  ];
+  const out = applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: 'Recurring (monthly)' });
+  check('the default retypes the row already there, and leaves other names alone',
+    names(out), ['Program fee|Recurring (monthly)', 'Other|Setup']);
+}
+{
+  const rows = [{ altItem: 'Per account', type: 'Recurring (monthly)', fee: null, unit: 'Fixed', unitCount: 1 }];
+  const out = applyFeeDefaultToRows(rows, { key: 'per account', field: 'unit', value: 'Per Account', siteCount: 1500, accountCount: 11000 });
+  check('a unit default refills the unit count',
+    out.map(r => [r.unit, r.unitCount]), [['Per Account', 11000]]);
+}
+// Two rows of one name in the same bucket derive the same costs, so they'd
+// bill them twice.
+{
+  const rows = [
+    { altItem: 'Program fee', type: 'Setup', fee: null, unit: '', unitCount: 1 },
+    { altItem: 'Program fee', type: 'Recurring (monthly)', fee: null, unit: '', unitCount: 1 },
+  ];
+  const out = applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: 'Recurring (monthly)' });
+  check('retyping collapses the name to one row',
+    names(out), ['Program fee|Recurring (monthly)']);
+}
+{
+  // …but never at the cost of a fee the user typed in by hand.
+  const rows = [
+    { altItem: 'Program fee', type: 'Setup', fee: null, unit: '', unitCount: 1 },
+    { altItem: 'Program fee', type: 'Recurring (monthly)', fee: 12.5, unit: '', unitCount: 1 },
+  ];
+  const out = applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: 'Recurring (monthly)' });
+  check('a hand-typed fee survives the collapse',
+    out.map(r => [r.altItem, r.type, r.fee]),
+    [['Program fee', 'Recurring (monthly)', null], ['Program fee', 'Recurring (monthly)', 12.5]]);
+}
+{
+  const rows = [{ altItem: 'Program fee', type: 'Setup', fee: null, unit: '', unitCount: 1 }];
+  check('clearing a default retracts nothing',
+    applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: '' }), rows);
+  check('Fee Start Month never writes into a row',
+    applyFeeDefaultToRows(rows, { key: 'program fee', field: 'startMonth', value: 4 }), rows);
+  check('a default for some other name changes nothing',
+    applyFeeDefaultToRows(rows, { key: 'other fee', field: 'type', value: 'Setup' }), rows);
+  check('re-applying the same value is a no-op',
+    applyFeeDefaultToRows(rows, { key: 'program fee', field: 'type', value: 'Setup' }), rows);
 }
 
 // ── Order follows the cost table ──────────────────────────────────────────

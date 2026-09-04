@@ -187,3 +187,51 @@ export function buildAltFeeRowsFromAutomatedNames({
       };
     });
 }
+
+// Apply one saved fee default (Type or Unit) to the schedule rows an Option
+// already carries. Defaults have to reach the rows that are already there,
+// not just the ones built afterwards — the schedule an SIA arrives with, or
+// a schedule built before the default was saved, would otherwise sit there
+// contradicting the Fee defaults table.
+//
+//   rows    the Option's current schedule rows.
+//   key     the fee name being defaulted, as feeDefaultKey returns it.
+//   field   'type' or 'unit'. Anything else is a no-op — Fee Start Month
+//           stays derived, so it never writes into a row.
+//   value   the default. Empty is a no-op: clearing a default retracts
+//           nothing, the same way it leaves already-built rows alone.
+//
+// Retyping can leave two rows of one name in the same bucket, and two rows
+// deriving the same costs bill them twice — so a matching row that would
+// duplicate one already kept is dropped. A row carrying a hand-typed fee is
+// never dropped: that number is the user's, not something this page derived.
+//
+// Returns the same array when nothing changed, so callers can skip the state
+// write.
+export function applyFeeDefaultToRows(rows = [], { key, field, value, siteCount, accountCount } = {}) {
+  if (field !== 'type' && field !== 'unit') return rows;
+  const v = String(value || '').trim();
+  if (!key || !v) return rows;
+  let changed = false;
+  const out = [];
+  const kept = new Set(); // `${key}|${type}` already standing on this Option
+  for (const row of rows) {
+    if (feeDefaultKey(row?.altItem) !== key) { out.push(row); continue; }
+    const updated = { ...row };
+    if (field === 'type') {
+      updated.type = v;
+    } else {
+      updated.unit = v;
+      updated.unitCount = altFeeUnitCount(v, { siteCount, accountCount });
+    }
+    const hasManualFee = updated.fee != null && updated.fee !== '';
+    const bucketKey = `${key}|${String(updated.type || '').trim().toLowerCase()}`;
+    if (field === 'type' && kept.has(bucketKey) && !hasManualFee) { changed = true; continue; }
+    kept.add(bucketKey);
+    if (updated.type !== row.type || updated.unit !== row.unit || updated.unitCount !== row.unitCount) {
+      changed = true;
+    }
+    out.push(updated);
+  }
+  return changed ? out : rows;
+}

@@ -7,7 +7,7 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
-import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey } from '../../utils/altFeeAutoBuild';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows } from '../../utils/altFeeAutoBuild';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
@@ -1368,10 +1368,12 @@ function LinkedToPanel({
         <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
         <p className={styles.linkedHint}>
           Defaults for the fees themselves — the values in the <strong>Default Linked To</strong> column above.
-          Fee Type and Unit pre-fill the Alternative Fee schedule row built for that name (Build from Automated
-          Fee Names, the per-row <strong>+ Fee</strong> button, and the seed on upload); a Fee Type also keeps the
-          name to a single row, whatever its costs are typed as. Fee Start Month applies live to every schedule
-          row carrying the name, on any option, unless that row has a typed-in value of its own.
+          Setting a Fee Type or Unit here retypes every Alternative Fee schedule row carrying that name, on every
+          option, and pre-fills the rows built for it later (Build from Automated Fee Names, the per-row
+          <strong>+ Fee</strong> button, and the schedule an uploaded SIA brings with it). A Fee Type also keeps
+          the name to a single row, whatever its costs are typed as. Fee Start Month applies live to every row
+          carrying the name unless that row has a typed-in value of its own. Clearing a default leaves the rows
+          it already set alone.
         </p>
         {feeNameEntries.length === 0 ? (
           <div className={styles.linkedEmptyInline}>
@@ -2722,14 +2724,30 @@ export function PricingView({ settings } = {}) {
         const wbAltRows = (opt.altFees || []).filter(a => a && a.fee != null);
         let rows;
         if (wbAltRows.length > 0) {
-          rows = wbAltRows.map(wb => ({
-            altItem: wb.altItem,
-            type: normAltType(wb.type),
-            fee: wb.fee,
-            unit: wb.unit || '',
-            unitCount: wb.unitCount == null ? 1 : wb.unitCount,
-            startMonth: wb.startMonth == null ? null : wb.startMonth,
-          }));
+          rows = wbAltRows.map(wb => {
+            // The file's fee row still loses to a default the user saved
+            // for that fee name: the default is the answer for this fee
+            // everywhere, the file's row is whatever one workbook happened
+            // to carry.
+            const feeDef = feeDefaults[feeDefaultKey(wb.altItem)] || null;
+            const unit = feeDef?.unit || wb.unit || '';
+            let unitCount = wb.unitCount == null ? 1 : wb.unitCount;
+            if (feeDef?.unit) {
+              unitCount = 1;
+              if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) unitCount = opt.siteCount;
+              else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) unitCount = opt.accountCount;
+            }
+            return {
+              altItem: wb.altItem,
+              type: feeDef?.type || normAltType(wb.type),
+              fee: wb.fee,
+              unit,
+              unitCount,
+              // A saved Fee Start Month answers for the fee, so leave the
+              // row blank and let autoStartMonthFor read the default.
+              startMonth: feeDef?.startMonth != null ? null : (wb.startMonth == null ? null : wb.startMonth),
+            };
+          });
         } else {
           // No alt-fee table in the file → seed the schedule from the
           // cost rows' Linked To tags so the user has a starting grid to
@@ -3328,6 +3346,28 @@ export function PricingView({ settings } = {}) {
         out[key] = next;
       }
       return out;
+    });
+    applyFeeDefaultToSchedules(key, field, value);
+  }
+
+  // Push a Type / Unit default onto the schedule rows that already carry the
+  // fee's name, on every option — see applyFeeDefaultToRows for the retype
+  // and the de-duplication it does.
+  function applyFeeDefaultToSchedules(key, field, value) {
+    setAltFees(prev => {
+      let changed = false;
+      const next = {};
+      for (const [optNum, rows] of Object.entries(prev || {})) {
+        const opt = workbook?.options?.find(o => String(o.optionNumber) === String(optNum));
+        const applied = applyFeeDefaultToRows(rows || [], {
+          key, field, value,
+          siteCount: opt?.siteCount,
+          accountCount: opt?.accountCount,
+        });
+        if (applied !== (rows || [])) changed = true;
+        next[optNum] = applied;
+      }
+      return changed ? next : prev;
     });
   }
 
