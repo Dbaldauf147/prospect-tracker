@@ -8,7 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
-import { recurringFeePerUnit } from '../../utils/altFeePricing';
+import { recurringFeePerUnit, billedMonthFactor } from '../../utils/altFeePricing';
 import {
   collectPassThroughPairs,
   pickerSuggestions,
@@ -2618,6 +2618,23 @@ export function PricingView({ settings } = {}) {
     return fee * uc * monthCount * escMult;
   }
 
+  // The month a CTS row's cost starts, read the way ctsItemYearCost reads
+  // it — the fee derivation and the margin have to agree on it or the fee
+  // recovers a different span than the margin charges.
+  function ctsItemStartMonth(item) {
+    return Math.max(1, Math.round(Number(item?.startMonth) || 1));
+  }
+
+  // The month an alt-fee row starts billing: its own typed value, else the
+  // derived one (the fee's saved default, else the linked CTS rows).
+  function altFeeRowStartMonth(row) {
+    const manual = Number(row?.startMonth);
+    if (row?.startMonth != null && row.startMonth !== '' && Number.isFinite(manual) && manual > 0) {
+      return Math.max(1, Math.round(manual));
+    }
+    return Math.max(1, Math.round(autoStartMonthFor(row) || 1));
+  }
+
   // Per-unit fee auto-computed from the marked-up prices of CTS rows
   // linked to this alt-fee row. Type matching:
   //   alt-fee Setup              ← CTS Setup           (face value)
@@ -2650,8 +2667,8 @@ export function PricingView({ settings } = {}) {
     // Kept apart because the term treats them differently: a monthly cost
     // escalates over the term, a Rolled one is incurred once upfront, and
     // an upfront row's fee doesn't escalate at all.
-    let recurringMonthlyPrice = 0;
-    let rolledUpfrontPrice = 0;
+    const recurringCosts = [];
+    const rolledCosts = [];
     let upfrontPrice = 0;
     for (const sec of opt.sections) {
       for (const item of sec.items) {
@@ -2664,8 +2681,12 @@ export function PricingView({ settings } = {}) {
         const itemIsSetupOrOneTime = /^(setup|one\s*time)$/i.test(t);
 
         if (isRecurringRow) {
-          if (itemIsRecurring) recurringMonthlyPrice += price;
-          else if (itemIsRolled) rolledUpfrontPrice += price;
+          // The cost's own start month, read the way the per-year cost
+          // projection reads it, so the fee recovers exactly the months
+          // the margin charges it for.
+          const startMonth = ctsItemStartMonth(item);
+          if (itemIsRecurring) recurringCosts.push({ price, startMonth });
+          else if (itemIsRolled) rolledCosts.push({ price, startMonth });
         } else if (isSetupOrOneTimeRow && itemIsSetupOrOneTime) {
           upfrontPrice += price;
         }
@@ -2677,8 +2698,9 @@ export function PricingView({ settings } = {}) {
     // a displayed $1.93 can multiply out from an underlying $1.9263.
     if (isRecurringRow) {
       const perUnit = recurringFeePerUnit({
-        recurringMonthlyPrice,
-        rolledUpfrontPrice,
+        recurringCosts,
+        rolledCosts,
+        feeStartMonth: altFeeRowStartMonth(row),
         annualEscalator,
         costEscalator,
         termMonths,
@@ -2739,8 +2761,9 @@ export function PricingView({ settings } = {}) {
   //   totalUnits = Σ unitCount over alt-fee rows with this tag
   //                (used to compute fee revenue, not cost)
   //   totalFee   = Σ over alt-fee rows of fee × unitCount, with
-  //                Recurring (monthly) rows projected over the term
-  //                using the annual escalator
+  //                Recurring (monthly) rows projected over the months they
+  //                bill — from the row's start month through the term,
+  //                escalated annually
   //   totalCost  = Σ over linked upper-table CTS rows of their term
   //                cost. CTS values are treated as totals (not
   //                per-unit), so no unit-count multiplication. Per
@@ -2776,8 +2799,12 @@ export function PricingView({ settings } = {}) {
       const uc = Number(r.unitCount);
       if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return s;
       const isRecurring = /recurring/i.test(r.type || '');
-      if (isRecurring) return s + projectMonthlyOverTerm(fee, annualEscalator, termMonths) * uc;
-      return s + fee * uc;
+      // Bill from the row's start month, not from month 1: a fee that
+      // starts in month 4 bills 33 months of a 36-month term, and crediting
+      // it with 36 shows margin the deal never earns.
+      const startMonth = altFeeRowStartMonth(r);
+      if (isRecurring) return s + fee * uc * billedMonthFactor(annualEscalator, termMonths, startMonth);
+      return startMonth > termMonths ? s : s + fee * uc;
     }, 0);
     if (totalFee <= 0) return null;
 
@@ -2794,7 +2821,11 @@ export function PricingView({ settings } = {}) {
       const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
       // Effective cost folds tech depr into non-pass-through cost.
       const baseCost = ctsItemEffectiveCost(item);
-      if (isRecurring) return s + projectMonthlyOverTerm(baseCost, costEscalator, termMonths);
+      // Same start-month treatment as the fee side, and as the per-year
+      // cost the Deal margin row sums — so the two margins can't disagree.
+      const startMonth = ctsItemStartMonth(item);
+      if (isRecurring) return s + baseCost * billedMonthFactor(costEscalator, termMonths, startMonth);
+      if (startMonth > termMonths) return s;
       // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
       // booked upfront, not amortized — the customer is billed on a
       // rolled schedule but our cost has already been incurred.
