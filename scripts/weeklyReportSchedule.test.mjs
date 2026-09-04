@@ -303,9 +303,13 @@ check('draws the funnel stages', html.includes('Stage 4: Influence and Develop')
 check('carries the funnel caption', html.includes('495 days end to end'), true);
 check('carries the projected total', html.includes('$833K'), true);
 check('carries the share of target', html.includes('63% of $1.3M target'), true);
-check('a stage with no life or close rate reads as a dash', html.includes('>-<'), true);
-check('lists the goals', html.includes('#1 Close Berkshire'), true);
-check('names the period in the goal heading', html.includes('Goals set this week'), true);
+check('a stage with no life or close rate reads as a dash', html.includes('>—<'), true);
+// A goal's priority is drawn as the same dark pill the tab uses, so the
+// text arrives split around it.
+check('lists the goals', html.includes('Close Berkshire'), true);
+check('draws the goal priority as a pill', /#1<\/span>/.test(html), true);
+// The goal groups sit inside a "Goals" card, titled as the tab titles them.
+check('names the period in the goal heading', html.includes('Set this week'), true);
 check('omits goal groups with nothing in them', html.includes('completed / closed'), false);
 
 // A snapshot with no funnel must not leave an empty heading behind.

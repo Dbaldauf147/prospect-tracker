@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { WeeklyReportEmailPreview } from './WeeklyReportEmailPreview';
 import {
   listSchedules, createSchedule, updateSchedule, removeSchedule, setEnabled, sendNow,
   describeSchedule, normalizeRecipients, isValidEmail, FREQUENCIES, WEEKDAYS,
@@ -51,6 +52,9 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(false);
+  // What the preview should show: a saved schedule's own subject/message
+  // and recipients, or the form's while one is being written.
+  const [preview, setPreview] = useState(null);
 
   const reload = async () => {
     if (!uid) { setSchedules([]); return; }
@@ -212,6 +216,11 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
                       <button type="button" onClick={() => handleSendNow(s)} disabled={busyId === s.id} style={btnGhost}>{busyId === s.id ? 'Sending…' : 'Send now'}</button>
+                      <button
+                        type="button"
+                        onClick={() => setPreview({ subject: s.subject, message: s.message, recipients: (s.recipients || []).join(', ') })}
+                        style={btnGhost}
+                      >Preview</button>
                       <button type="button" onClick={() => startEdit(s)} style={btnGhost}>Edit</button>
                       <button type="button" onClick={() => handleToggle(s)} style={btnGhost}>{s.enabled === false ? 'Resume' : 'Pause'}</button>
                       <button type="button" onClick={() => handleDelete(s)} style={{ ...btnGhost, color: '#B91C1C', borderColor: '#FCA5A5' }}>Delete</button>
@@ -280,7 +289,14 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
               {error && <div style={errBox}>{error}</div>}
 
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', marginTop: '0.3rem' }}>
-                <button type="button" onClick={() => handleSendNow(null)} disabled={busyId === 'form'} style={btnGhost}>{busyId === 'form' ? 'Sending…' : 'Send test now'}</button>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button type="button" onClick={() => handleSendNow(null)} disabled={busyId === 'form'} style={btnGhost}>{busyId === 'form' ? 'Sending…' : 'Send test now'}</button>
+                  <button
+                    type="button"
+                    onClick={() => setPreview({ subject: form.subject, message: form.message, recipients: form.recipients })}
+                    style={btnGhost}
+                  >Preview email</button>
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button type="button" onClick={() => { setEditing(false); setError(''); }} style={btnGhost}>Cancel</button>
                   <button type="button" onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save schedule'}</button>
@@ -290,6 +306,19 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
           )}
         </div>
       </div>
+
+      {/* Renders the mailer's own HTML from the same snapshot this modal
+          would send, so "what will they get" is answerable without
+          mailing yourself a test. */}
+      <WeeklyReportEmailPreview
+        open={!!preview}
+        onClose={() => setPreview(null)}
+        snapshot={snapshot}
+        uid={uid}
+        subject={preview?.subject || ''}
+        message={preview?.message || ''}
+        recipients={preview?.recipients || ''}
+      />
     </div>
   );
 }
