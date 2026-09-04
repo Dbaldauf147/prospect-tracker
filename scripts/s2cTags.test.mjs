@@ -1,13 +1,16 @@
-// Assertion tests for tagging Costs to Serve rows. Plain Node, no test
-// framework (the project has none). Run:
+// Assertion tests for tagging SIA line items on the S2C tab. Plain Node, no
+// test framework (the project has none). Run:
 //   node scripts/s2cTags.test.mjs
 //
-// The cost block is re-pasted from Excel whenever costs change, and that paste
-// replaces every row. Tags live only in this app, so the thing worth pinning
-// is that a refresh doesn't quietly throw the tagging away — including when
-// Excel comes back with different casing or a stray trailing space.
+// The tags are curated by hand and outlive the workbook they were made
+// against, so the failures worth pinning are the ones that lose them or hide
+// them: a key built differently from the one the rest of the page uses, a
+// blank tag left behind as a hollow "tagged" entry, and a tagged line item the
+// current workbook no longer carries dropping off the table (invisible, and
+// impossible to clear).
 import {
-  carryTagsOnPaste, tagSuggestions, costElementKey, hasTags, S2C_TAG_FIELDS,
+  S2C_TAG_FIELDS, s2cTagKey, hasAnyTag, setS2cTag, clearS2cTags,
+  collectS2cLineItems, countTagged, s2cTagSuggestions,
 } from '../src/utils/s2cTags.js';
 
 let passed = 0, failed = 0;
@@ -19,102 +22,134 @@ function check(label, actual, expected) {
   console.error(`FAIL ${label}\n  expected ${e}\n  actual   ${a}`);
 }
 
-const row = (costElement, over = {}) => ({
-  costElement, setup: '', setupUom: '', ongoing: '', ongoingUom: '',
-  serviceSegment: '', productName: '', deliverable: '', ...over,
-});
-const tags = (r) => [r.serviceSegment, r.productName, r.deliverable];
-
-// ── The three columns ─────────────────────────────────────────────────────
+// ── The three columns, and the key ────────────────────────────────────────
 check('fields', S2C_TAG_FIELDS.map(f => f.key), ['serviceSegment', 'productName', 'deliverable']);
 
-// ── Matching a Cost Element ───────────────────────────────────────────────
-check('key: folded and trimmed', costElementKey('  Implementation '), 'implementation');
-check('key: casing', costElementKey('IMPLEMENTATION'), 'implementation');
-check('key: nothing', costElementKey(), '');
+// Must match PricingView's linkedToDefaultKey — a key built differently here
+// tags a pair nothing else on the page can find.
+check('key: lowercased and joined', s2cTagKey('CCM NAM', 'Setup'), 'ccm nam::setup');
+check('key: trims both halves', s2cTagKey('  CCM NAM ', ' Setup '), 'ccm nam::setup');
+check('key: type is part of it', s2cTagKey('CCM NAM', 'Recurring (monthly)') === s2cTagKey('CCM NAM', 'Setup'), false);
 
-check('hasTags: untagged', hasTags(row('X')), false);
-check('hasTags: whitespace is not a tag', hasTags(row('X', { productName: '   ' })), false);
-check('hasTags: one is enough', hasTags(row('X', { deliverable: 'Report' })), true);
+// ── What counts as tagged ─────────────────────────────────────────────────
+check('hasAnyTag: nothing', hasAnyTag(undefined), false);
+check('hasAnyTag: empty entry', hasAnyTag({}), false);
+check('hasAnyTag: whitespace is not a tag', hasAnyTag({ productName: '   ' }), false);
+check('hasAnyTag: one is enough', hasAnyTag({ deliverable: 'Report' }), true);
 
-// ── Carrying tags across a re-paste ───────────────────────────────────────
-const previous = [
-  row('Implementation', { serviceSegment: 'Sustainability', productName: 'ESL', deliverable: 'Onboarding' }),
-  row('Managed service', { serviceSegment: 'Ops', productName: 'CCM', deliverable: 'Monthly report' }),
-  row('Untagged element'),
-  row(''),
+// ── Setting and clearing ──────────────────────────────────────────────────
+{
+  const a = setS2cTag({}, 'ccm nam::setup', 'serviceSegment', 'Sustainability');
+  check('set: creates the entry', a, { 'ccm nam::setup': { serviceSegment: 'Sustainability' } });
+
+  const b = setS2cTag(a, 'ccm nam::setup', 'productName', '  ESL  ');
+  check('set: trims on the way in', b['ccm nam::setup'].productName, 'ESL');
+  check('set: leaves the sibling alone', b['ccm nam::setup'].serviceSegment, 'Sustainability');
+
+  // Typing a tag back to blank clears it rather than storing an empty string.
+  const c = setS2cTag(b, 'ccm nam::setup', 'productName', '');
+  check('set: blank removes the field', Object.keys(c['ccm nam::setup']), ['serviceSegment']);
+
+  // Clearing the last tag drops the entry — otherwise the map fills with
+  // hollow entries that count as tagged everywhere they are counted.
+  const d = setS2cTag(c, 'ccm nam::setup', 'serviceSegment', '   ');
+  check('set: last tag out drops the entry', d, {});
+  check('set: and it is not merely empty', 'ccm nam::setup' in d, false);
+
+  // A no-op returns the original map, so React state doesn't churn.
+  const same = setS2cTag(d, 'nothing::here', 'deliverable', '');
+  check('set: clearing what was never set is a no-op', same, d);
+
+  check('clear: removes everything for the pair',
+    clearS2cTags(b, 'ccm nam::setup'), {});
+  check('clear: unknown key is a no-op', clearS2cTags(b, 'nope::nope'), b);
+}
+
+// ── Which line items the table lists ──────────────────────────────────────
+const workbook = [
+  {
+    optionNumber: 1, sheetName: 'Option 1',
+    sections: [{ items: [
+      { description: 'CCM NAM', type: 'Recurring (monthly)', cts: 3796 },
+      { description: 'CCM NAM', type: 'Setup', cts: 9224 },
+      { description: 'ENERGY STAR Link (RA)', type: 'Recurring (monthly)', cts: 725.83 },
+    ] }],
+  },
+  {
+    optionNumber: 2, sheetName: 'Option 2',
+    sections: [{ items: [
+      { description: 'CCM NAM', type: 'Recurring (monthly)', cts: 4100 },
+      { description: 'Budgets', type: 'Recurring (monthly)', cts: 140 },
+    ] }],
+  },
 ];
 
 {
-  // The ordinary refresh: same elements, new numbers.
-  const pasted = [row('Implementation', { setup: '2500' }), row('Managed service', { ongoing: '25' })];
-  const out = carryTagsOnPaste(pasted, previous);
-  check('carry: tags come across', tags(out[0]), ['Sustainability', 'ESL', 'Onboarding']);
-  check('carry: and the new numbers survive', out[0].setup, '2500');
-  check('carry: second row too', tags(out[1]), ['Ops', 'CCM', 'Monthly report']);
+  const pairs = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
+  check('collect: one row per (Line Item, Type), sorted',
+    pairs.map(p => `${p.lineItem}|${p.type}`), [
+      'Budgets|Recurring (monthly)',
+      'CCM NAM|Recurring (monthly)',
+      'CCM NAM|Setup',
+      'ENERGY STAR Link (RA)|Recurring (monthly)',
+    ]);
+  const ccm = pairs.find(p => p.key === 'ccm nam::recurring (monthly)');
+  check('collect: CTS is the active option only', ccm.activeCts, 3796);
+  check('collect: every option it appears on', ccm.options, ['Option 1', 'Option 2']);
+}
+
+{
+  // A pair tagged against a workbook since replaced still gets a row —
+  // otherwise the tags are invisible and can never be cleared.
+  const tags = { 'supplier charges::one time': { productName: 'Pass-through energy' } };
+  const pairs = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  const orphan = pairs.find(p => p.key === 'supplier charges::one time');
+  check('collect: a tagged pair the workbook lost still shows', !!orphan, true);
+  check('collect: ...and is marked as not in this workbook', orphan.reachable, false);
 }
 {
-  // Excel gives the name back differently — the tags must still find it.
-  const out = carryTagsOnPaste([row('  IMPLEMENTATION  ')], previous);
-  check('carry: casing and whitespace still match', tags(out[0]), ['Sustainability', 'ESL', 'Onboarding']);
+  // An entry of three blanks is not a tagged line item and must not drag a
+  // row onto the table.
+  const tags = { 'ghost::setup': { serviceSegment: '', productName: '  ' } };
+  const pairs = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  check('collect: hollow entries pull in no row',
+    pairs.some(p => p.key === 'ghost::setup'), false);
 }
 {
-  // A genuinely new cost element has nothing to inherit.
-  const out = carryTagsOnPaste([row('Brand new element')], previous);
-  check('carry: new elements arrive blank', tags(out[0]), ['', '', '']);
+  // No workbook yet: the table has nothing to list but still surfaces tags
+  // already made, so they can be read and cleared.
+  const tags = { 'ccm nam::setup': { productName: 'CCM' } };
+  check('collect: no workbook, tags still listed',
+    collectS2cLineItems({ tags }).map(p => p.key), ['ccm nam::setup']);
+  check('collect: nothing at all', collectS2cLineItems(), []);
 }
+
+// ── Counting, for the heading ─────────────────────────────────────────────
 {
-  // A blank Cost Element names nothing and must not collect another row's tags.
-  const out = carryTagsOnPaste([row('')], previous);
-  check('carry: blank names match nothing', tags(out[0]), ['', '', '']);
-}
-{
-  // Nothing was tagged before, so nothing changes — and the same array comes
-  // back rather than a rebuilt one.
-  const plain = [row('A'), row('B')];
-  const out = carryTagsOnPaste(plain, [row('A'), row('B')]);
-  check('carry: no tags to carry', out, plain);
-}
-{
-  // Duplicate elements: first tagged row wins, so the result doesn't depend on
-  // where in the sheet the duplicate sat.
-  const dupes = [
-    row('Meters', { productName: 'First' }),
-    row('Meters', { productName: 'Second' }),
-  ];
-  check('carry: first tagged row wins',
-    carryTagsOnPaste([row('Meters')], dupes)[0].productName, 'First');
-}
-{
-  // A partially tagged row carries only the tags it has — an empty tag must
-  // not overwrite anything, and must not invent a value.
-  const partial = [row('Setup', { productName: 'ESL' })];
-  const out = carryTagsOnPaste([row('Setup')], partial);
-  check('carry: partial tags', tags(out[0]), ['', 'ESL', '']);
-}
-{
-  // The paste itself carrying a tag is not clobbered by the old one. (Not a
-  // path the UI offers today, but the merge should be sane if it ever does.)
-  const out = carryTagsOnPaste([row('Implementation', { productName: 'FromExcel' })], previous);
-  check('carry: existing tag still wins on a name match', out[0].productName, 'ESL');
+  const pairs = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
+  const tags = {
+    'ccm nam::setup': { productName: 'CCM' },
+    'budgets::recurring (monthly)': { serviceSegment: 'Ops' },
+    'ghost::setup': { productName: '   ' },
+  };
+  check('count: tagged pairs only', countTagged(pairs, tags), 2);
+  check('count: nothing tagged', countTagged(pairs, {}), 0);
 }
 
 // ── Suggestions ───────────────────────────────────────────────────────────
 {
-  const rows = [
-    row('a', { serviceSegment: 'Sustainability' }),
-    row('b', { serviceSegment: 'sustainability' }),
-    row('c', { serviceSegment: 'Ops' }),
-    row('d', { serviceSegment: '  ' }),
-    row('e', {}),
-  ];
+  const tags = {
+    a: { serviceSegment: 'Sustainability' },
+    b: { serviceSegment: 'sustainability' },
+    c: { serviceSegment: 'Ops', deliverable: 'Monthly report' },
+    d: { serviceSegment: '   ' },
+  };
   check('suggest: deduped case-insensitively, sorted',
-    tagSuggestions(rows, 'serviceSegment'), ['Ops', 'Sustainability']);
-  check('suggest: first spelling is the one offered',
-    tagSuggestions([row('a', { productName: 'esl' }), row('b', { productName: 'ESL' })], 'productName'),
-    ['esl']);
-  check('suggest: empty column', tagSuggestions(rows, 'deliverable'), []);
-  check('suggest: no rows', tagSuggestions([], 'productName'), []);
+    s2cTagSuggestions(tags, 'serviceSegment'), ['Ops', 'Sustainability']);
+  check('suggest: first spelling wins',
+    s2cTagSuggestions({ a: { productName: 'esl' }, b: { productName: 'ESL' } }, 'productName'), ['esl']);
+  check('suggest: empty column', s2cTagSuggestions(tags, 'productName'), []);
+  check('suggest: no tags at all', s2cTagSuggestions({}, 'deliverable'), []);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

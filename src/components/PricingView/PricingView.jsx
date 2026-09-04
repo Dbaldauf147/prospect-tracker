@@ -2120,6 +2120,11 @@ const LINKED_TO_OPTIONS_KEY = 'linkedToOptionsList';
 // Solutions / Service Catalog. Persisted on its own key so it survives
 // parser bumps and Clear-button workbook wipes, just like Linked-To
 // defaults.
+// Per (Line Item, Type) tags shown on the S2C tab: what business the cost
+// belongs to — { [key]: { serviceSegment, productName, deliverable } }. Keyed
+// exactly like the Linked To defaults above, and on its own DB key for the
+// same reason: hand-curated, and it outlives any one workbook.
+const S2C_LINE_ITEM_TAGS_KEY = 's2cLineItemTags';
 const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
 const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
 // Line items the user has chosen to ignore in the Line Item → Services
@@ -2231,6 +2236,7 @@ export function PricingView({ settings } = {}) {
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
+  const [s2cLineItemTags, setS2cLineItemTags] = useState({}); // { [lineItem::type]: { serviceSegment, productName, deliverable } }
   const [s2cTabData, setS2cTabData] = useState(null); // S2CTab state: array of { costElement, setup, setupUom, ongoing, ongoingUom }
   // Opps 2 records + Option ↔ Opp link map, shared with the Options
   // sub-tab so saving from either tab updates the Opps 2 "Pricing
@@ -2286,6 +2292,10 @@ export function PricingView({ settings } = {}) {
             hidden: Array.isArray(savedOptionsList.hidden) ? savedOptionsList.hidden : [],
           });
         }
+        const savedS2cLineItemTags = await dbGet(STORE, S2C_LINE_ITEM_TAGS_KEY);
+        if (!cancelled && savedS2cLineItemTags && typeof savedS2cLineItemTags === 'object') {
+          setS2cLineItemTags(savedS2cLineItemTags);
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
@@ -2306,6 +2316,7 @@ export function PricingView({ settings } = {}) {
           if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
           if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
           if (!savedFeeDefaults && saved.feeDefaults) setFeeDefaults(saved.feeDefaults);
+          if (!savedS2cLineItemTags && saved.s2cLineItemTags) setS2cLineItemTags(saved.s2cLineItemTags);
           if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
             setLinkedToOptionsList({
               custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
@@ -2394,9 +2405,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -2426,6 +2437,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
   }, [linkedToPassThroughDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, s2cLineItemTags, S2C_LINE_ITEM_TAGS_KEY).catch(err => console.warn('Failed to save S2C line item tags:', err));
+  }, [s2cLineItemTags]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -4803,6 +4819,11 @@ export function PricingView({ settings } = {}) {
         <S2CTab
           rows={s2cTabData}
           setRows={setS2cTabData}
+          workbook={workbook}
+          activeOption={activeOption}
+          lineItemTags={s2cLineItemTags}
+          setLineItemTags={setS2cLineItemTags}
+          effectiveType={effectiveType}
         />
       )}
 

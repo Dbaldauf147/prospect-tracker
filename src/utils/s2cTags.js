@@ -1,23 +1,29 @@
-// Tagging a Costs to Serve row with what it is for.
+// Tagging the SIA line items on the S2C tab with what they are for.
 //
-// The S2C worksheet is a cost block pasted out of Excel: an element, what it
-// costs to set up, what it costs per month. What it never said is which part
-// of the business the cost belongs to — so a worksheet answers "what does this
-// cost" and can't answer "what does this segment cost", which is the question
-// that gets asked of it.
+// The pricing workbook gives every cost a Line Item and a Type; what it never
+// says is which part of the business the cost belongs to. So the page can
+// answer "what does this line item cost" and can't answer "what does this
+// segment cost", which is the question actually asked of it.
 //
-// Three tags per row: Service Segment, Product Name, Deliverable. Free text,
-// because nobody knows the final vocabulary yet and a strict list would mean
-// nothing can be tagged until someone writes one. What keeps free text from
-// becoming forty spellings of the same thing is that each column offers back
-// what the sheet already uses — so the second row is picked from a list even
-// though the first had to be typed.
+// Three tags per line item — Service Segment, Product Name, Deliverable —
+// modelled on the Linked To page, because the problem is the same one and it
+// was solved there already:
 //
-// The rule that matters is on re-paste. The cost block gets refreshed from
-// Excel regularly and that paste replaces every row; tags live only here, so a
-// refresh would silently throw away all the tagging. Instead the tags are
-// carried across by Cost Element: a row that comes back under the same name
-// keeps what it was tagged with, and only genuinely new elements arrive blank.
+//   Keyed by (Line Item, Type), not by row. The same line item appears on
+//   every option of a workbook and again in the next workbook. Tagging a row
+//   would mean tagging it once per option and re-tagging it after every
+//   upload; tagging the pair means answering once.
+//
+//   Stored apart from the workbook. The tags are curated by hand and outlive
+//   any one file, so they survive a re-upload, the Clear button, and a parser
+//   bump — the same reason the Linked To defaults live on their own key.
+//
+// Free text, because the vocabulary isn't settled and a managed list would
+// mean nothing could be tagged until someone wrote one. What keeps free text
+// from becoming forty spellings of the same segment is that each column offers
+// back what has already been used.
+
+import { passThroughPairKey, collectPassThroughPairs } from './passThroughTags.js';
 
 export const S2C_TAG_FIELDS = [
   { key: 'serviceSegment', label: 'Service Segment', placeholder: 'e.g. Sustainability' },
@@ -27,58 +33,81 @@ export const S2C_TAG_FIELDS = [
 
 const TAG_KEYS = S2C_TAG_FIELDS.map(f => f.key);
 
-// Cost Elements are matched on trimmed, case-folded text — the same name
-// re-exported from Excel with different casing or a trailing space is the same
-// cost, and losing its tags to whitespace would be the least explicable
-// version of this going wrong.
-export function costElementKey(value) {
-  return String(value ?? '').trim().toLowerCase();
-}
+// The (Line Item, Type) key. Shared with the pass-through map rather than
+// spelled out again, so both tables key the same pair the same way — and both
+// match PricingView's linkedToDefaultKey, which is what the pricing table
+// itself looks up.
+export const s2cTagKey = passThroughPairKey;
 
-// Does this row carry any tag at all? Used to decide whether a row is worth
-// remembering across a paste.
-export function hasTags(row) {
-  return TAG_KEYS.some(k => String(row?.[k] ?? '').trim() !== '');
+// Does this entry carry any tag at all? An entry of three blanks is not a
+// tagged line item, and must not count as one anywhere.
+export function hasAnyTag(entry) {
+  return TAG_KEYS.some(k => String(entry?.[k] ?? '').trim() !== '');
 }
 
 /**
- * Carry existing tags onto a freshly pasted block, matched on Cost Element.
+ * Set one tag on one line item, returning a new map.
  *
- * @param {Array} pastedRows  Rows straight out of the paste parser.
- * @param {Array} previousRows The rows on screen before the paste.
- * @returns {Array} the pasted rows, tagged where a name matches.
+ * Empty clears: a tag typed back to blank is removed, and an entry left with
+ * no tags at all drops out entirely. Otherwise the map fills up with hollow
+ * entries that count as tagged everywhere they are counted.
  */
-export function carryTagsOnPaste(pastedRows = [], previousRows = []) {
-  const byElement = new Map();
-  for (const row of previousRows) {
-    const key = costElementKey(row?.costElement);
-    // A blank Cost Element names nothing, so it can't be matched to anything.
-    if (!key || !hasTags(row)) continue;
-    // First tagged row wins. A sheet listing the same element twice has one
-    // answer for what it is, and taking the last would depend on row order.
-    if (!byElement.has(key)) byElement.set(key, row);
-  }
-  if (byElement.size === 0) return pastedRows;
+export function setS2cTag(tags, key, field, value) {
+  const next = { ...(tags || {}) };
+  const entry = { ...(next[key] || {}) };
+  const trimmed = String(value ?? '').trim();
+  if (trimmed) entry[field] = trimmed;
+  else delete entry[field];
 
-  return pastedRows.map(row => {
-    const prev = byElement.get(costElementKey(row?.costElement));
-    if (!prev) return row;
-    const next = { ...row };
-    for (const k of TAG_KEYS) {
-      const v = String(prev[k] ?? '').trim();
-      if (v) next[k] = prev[k];
-    }
-    return next;
-  });
+  if (hasAnyTag(entry)) next[key] = entry;
+  else if (key in next) delete next[key];
+  else return tags || {};
+  return next;
 }
 
-// What a tag column offers back: every value the sheet already uses in that
-// column, deduped case-insensitively and sorted. The first spelling entered
-// wins the display form, so the suggestion matches what is already on screen.
-export function tagSuggestions(rows = [], field) {
+// Clear all three tags on one line item.
+export function clearS2cTags(tags, key) {
+  if (!tags || !(key in tags)) return tags || {};
+  const next = { ...tags };
+  delete next[key];
+  return next;
+}
+
+/**
+ * Every (Line Item, Type) pair the loaded workbook offers, plus any pair that
+ * carries tags — a pair tagged against a workbook since replaced still needs a
+ * row, or the tags are invisible and impossible to clear.
+ *
+ * Pair collection is shared with the pass-through table (its `tagged` argument
+ * is exactly "keys that must appear even when the workbook lacks them") so the
+ * two tables can't end up listing different line items for the same workbook.
+ */
+export function collectS2cLineItems({ options = [], tags = {}, activeOptionNumber, typeOf } = {}) {
+  const mustAppear = {};
+  for (const [key, entry] of Object.entries(tags || {})) {
+    if (hasAnyTag(entry)) mustAppear[key] = true;
+  }
+  return collectPassThroughPairs({
+    options,
+    tagged: mustAppear,
+    activeOptionNumber,
+    typeOf,
+  }).all;
+}
+
+// How many of the listed line items carry a tag. Shown in the heading so the
+// size of the job left is visible without scrolling the table.
+export function countTagged(pairs = [], tags = {}) {
+  return pairs.reduce((n, p) => (hasAnyTag(tags?.[p.key]) ? n + 1 : n), 0);
+}
+
+// What a tag column offers back: every value already used in that column,
+// deduped case-insensitively and sorted. The first spelling entered wins the
+// display form, so the suggestion matches what is already on screen.
+export function s2cTagSuggestions(tags = {}, field) {
   const seen = new Map();
-  for (const row of rows) {
-    const raw = String(row?.[field] ?? '').trim();
+  for (const entry of Object.values(tags || {})) {
+    const raw = String(entry?.[field] ?? '').trim();
     if (!raw) continue;
     const key = raw.toLowerCase();
     if (!seen.has(key)) seen.set(key, raw);
