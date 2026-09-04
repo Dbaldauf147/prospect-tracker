@@ -3,6 +3,8 @@ import { probeGranola } from '../utils/granolaCalls';
 import { loadCallRecords, saveCallRecord } from '../utils/callRecordingsStore';
 import { normalizeRules } from '../utils/callNaRules';
 import { runGranolaSync } from '../utils/runGranolaSync';
+import { runCallSummary } from '../utils/runCallSummary';
+import { callsDueForAutoSummary, autoSummaryFailurePatch } from '../utils/autoSummarize';
 
 // How stale the stored calls are allowed to get before this pulls again.
 export const AUTO_SYNC_MS = 60 * 60 * 1000;
@@ -25,6 +27,13 @@ const CHECK_MS = 60 * 1000;
  * through runGranolaSync, so they agree on the watermark. Nothing here
  * renders — a background sync is silent, and the calls simply appear on
  * the page next time it is opened.
+ *
+ * Each run also summarises what's due. A Granola call arrives already
+ * transcribed, and until this existed the summary — the only part anyone
+ * reads — waited on the user opening the Call Recordings page and
+ * clicking Summarize, per call. Same reasoning as the sync: the page is
+ * lazy-mounted, and the person who wants the summary is on Opps.
+ * `callRecordingsAutoSummarize: false` in settings turns it off.
  */
 export function useGranolaAutoSync(user, settings, updateSettings, prospects, enabled = true) {
   const uid = user?.uid || null;
@@ -46,6 +55,69 @@ export function useGranolaAutoSync(user, settings, updateSettings, prospects, en
     if (!enabled || !uid) return undefined;
     let cancelled = false;
 
+    // A snapshot of the stored records for one run, plus the writer that
+    // keeps it current — so a call touched twice in the same run (the sync
+    // storing it, then the summary pass reading it) sees what was written.
+    const openSnapshot = async () => {
+      const stored = await loadCallRecords(uid);
+      return {
+        stored,
+        getStored: (id) => stored[id] || null,
+        persist: async (id, patch) => {
+          const base = stored[id] || null;
+          const saved = await saveCallRecord(uid, id, patch, base);
+          if (saved) stored[id] = saved;
+          return saved;
+        },
+      };
+    };
+
+    const syncGranola = async (snap) => {
+      // Only sync when Granola is actually reachable. Without the probe
+      // every tick would walk the pagination just to fail on the key.
+      const status = await probeGranola();
+      if (cancelled || !status?.ok) return;
+      const { settings: s, updateSettings: update, prospects: p } = latest.current;
+      await runGranolaSync({
+        uid,
+        prospects: p || [],
+        settings: s || {},
+        updateSettings: update,
+        naRules: normalizeRules(s?.callRecordingsNaRules || []),
+        getStored: snap.getStored,
+        persist: snap.persist,
+      });
+    };
+
+    // Summarise what's due, over the same snapshot the sync just updated —
+    // so a call that arrived in this run is summarised in it rather than an
+    // hour later. Runs whatever the sync did, and whether Granola is
+    // configured at all: a OneDrive recording transcribed on the page is
+    // just as due as a Granola one.
+    const summarizeDue = async (snap) => {
+      const { settings: s } = latest.current;
+      if (s?.callRecordingsAutoSummarize === false) return;
+      for (const record of callsDueForAutoSummary(snap.stored)) {
+        if (cancelled) return;
+        try {
+          const { ok, error } = await runCallSummary({
+            uid,
+            recordingId: record.id,
+            record,
+            transcript: record.transcript,
+            autoPush: s?.callRecordingsAutoPush === true,
+            persist: snap.persist,
+          });
+          // A failure is banked on the record, not just dropped: it is
+          // what stops a transcript the summariser can't read from being
+          // paid for again every hour.
+          if (!ok) await snap.persist(record.id, autoSummaryFailurePatch(record, error));
+        } catch (err) {
+          await snap.persist(record.id, autoSummaryFailurePatch(record, err?.message || err));
+        }
+      }
+    };
+
     const run = async () => {
       // `running` is the real guard: the ticker fires every minute and a
       // sync over a long back-fill window can take longer than that.
@@ -56,36 +128,26 @@ export function useGranolaAutoSync(user, settings, updateSettings, prospects, en
       // be retried next hour, not every minute for the rest of the day.
       lastSyncedAt.current = Date.now();
       try {
-        // Only sync when Granola is actually reachable. Without the probe
-        // every tick would walk the pagination just to fail on the key.
-        const status = await probeGranola();
-        if (cancelled || !status?.ok) return;
-        // A snapshot for this run: the sync needs to know what is already
-        // stored so it can skip notes that haven't changed. Reading it
-        // here rather than holding it means this hook keeps nothing in
-        // memory between syncs.
-        const stored = await loadCallRecords(uid);
+        // Reading the snapshot here rather than holding it means this hook
+        // keeps nothing in memory between runs.
+        const snap = await openSnapshot();
         if (cancelled) return;
-        const { settings: s, updateSettings: update, prospects: p } = latest.current;
-        await runGranolaSync({
-          uid,
-          prospects: p || [],
-          settings: s || {},
-          updateSettings: update,
-          naRules: normalizeRules(s?.callRecordingsNaRules || []),
-          getStored: (id) => stored[id] || null,
-          persist: async (id, patch) => {
-            const base = stored[id] || null;
-            const saved = await saveCallRecord(uid, id, patch, base);
-            // Keep the snapshot current so a call touched twice in one
-            // run (or the next run in this session) sees what was written.
-            if (saved) stored[id] = saved;
-            return saved;
-          },
-        });
+        // A broken Granola key must not cost the summaries: they are
+        // separate jobs over the same records, and one failing says
+        // nothing about the other.
+        try {
+          await syncGranola(snap);
+        } catch {
+          // A background sync has nowhere to report to. The page's own
+          // Sync button is where a broken key or a lapsed plan gets
+          // explained.
+        }
+        if (cancelled) return;
+        await summarizeDue(snap);
       } catch {
-        // A background sync has nowhere to report to. The page's own Sync
-        // button is where a broken key or a lapsed plan gets explained.
+        // Same as above: nowhere to report to. The page's Summarize
+        // button is where a failure gets explained, and the attempt
+        // counter on the record is what stops this retrying forever.
       } finally {
         running.current = false;
       }

@@ -1,9 +1,11 @@
 // "Calls" section inside the opp detail popup: every call recording
 // tagged to this opp on the Call Recordings page, newest first.
 //
-// Read-only by design. Tagging, transcribing, and summarizing all happen
-// on the Call Recordings page where the audio is; this is the view from
-// the deal's side — "what was said on this opportunity, and when".
+// Read-only by design. Tagging and transcribing happen on the Call
+// Recordings page where the audio is; this is the view from the deal's
+// side — "what was said on this opportunity, and when". Summarizing no
+// longer needs that trip: a transcribed call is summarised by the
+// app-level background pass, so this fills itself in.
 //
 // Renders nothing at all when the opp has no tagged calls, so it costs a
 // user who doesn't use recordings a single Firestore read and no visual
@@ -12,6 +14,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadCallRecords } from '../../utils/callRecordingsStore';
+import { autoSummaryGaveUp } from '../../utils/autoSummarize';
 
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -135,7 +138,9 @@ export function LinkedCalls({ oppId }) {
                 )}
                 {!c.summary && c.transcript && (
                   <p style={{ margin: '0.4rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                    Transcribed, but not summarized yet: run Summarize on the Call Recordings page.
+                    {autoSummaryGaveUp(c)
+                      ? `Couldn’t be summarized automatically${c.autoSummaryError ? `: ${String(c.autoSummaryError).replace(/[.\s]+$/, '')}` : ''}. Open the Call Recordings page and run Summarize to try again.`
+                      : 'Transcribed. The summary is written automatically within the hour — or run Summarize on the Call Recordings page now.'}
                   </p>
                 )}
               </>
