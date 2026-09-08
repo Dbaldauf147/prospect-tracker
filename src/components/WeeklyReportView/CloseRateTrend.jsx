@@ -135,17 +135,55 @@ function RateCell({ cell, stageLabel, monthLabel }) {
  * and two copies of this markup is how they'd end up formatting the same
  * number two ways.
  */
-function TotalCell({ tally, title, strong }) {
+function TotalCell({ tally, title, strong, better, betterBy }) {
   if (tally === null) {
     return <td className={styles.overallCell}><span className={styles.cellEmptyInline}>—</span></td>;
   }
   const total = tally.sold + tally.notSold;
+  const cls = [
+    strong ? styles.rollingCell : styles.overallCell,
+    better ? styles.cellBetter : '',
+  ].filter(Boolean).join(' ');
   return (
-    <td className={strong ? styles.rollingCell : styles.overallCell} title={`${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}>
-      <span className={styles.cellRate}>{pct(tally.rate)}</span>
-      <span className={styles.cellCount}>{tally.sold}/{total}</span>
+    <td
+      className={cls}
+      title={better
+        ? `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}, ${betterBy} points above the rolling year. The recent months are running ahead of it.`
+        : `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}
+    >
+      {/* An inset chip rather than a fill on the cell itself: green cells
+          stack down this column, and edge-to-edge backgrounds on adjacent
+          rows merge into one tall block that reads as a single highlighted
+          region. The chip leaves a gap in the surface colour between them,
+          and keeps the row rules on the cell where they belong. */}
+      <span className={better ? styles.betterChip : undefined}>
+        <span className={styles.cellRate}>
+          {/* The arrow, not just the green. A status colour on its own is
+              unreadable to anyone who can't separate it from the ink beside
+              it, and this cell has no legend to fall back on. */}
+          {better && <span className={styles.betterArrow} aria-hidden="true">▲</span>}
+          {pct(tally.rate)}
+        </span>
+        <span className={styles.cellCount}>{tally.sold}/{total}</span>
+        {better && <span className={styles.srOnly}> — ahead of the rolling year</span>}
+      </span>
     </td>
   );
+}
+
+/**
+ * Is the six months shown running ahead of the trailing year?
+ *
+ * Compared on the ROUNDED figures, the ones actually printed. Two cells
+ * both reading 46% must not have one of them green because the numbers
+ * behind them differ in the first decimal — a cue the reader can't check
+ * against what's on the page is worse than no cue.
+ */
+function aheadOfYear(overall, rolling12) {
+  if (!overall || !rolling12) return null;
+  const six = Math.round(overall.rate * 100);
+  const year = Math.round(rolling12.rate * 100);
+  return six > year ? six - year : null;
 }
 
 export function CloseRateTrend({ trend }) {
@@ -191,6 +229,12 @@ export function CloseRateTrend({ trend }) {
             // the same blue in both pictures. The total row is deliberately
             // outside that ramp — it isn't a stage.
             const color = row.num ? (STAGE_FILL[row.num] || STAGE_FILL_DEFAULT) : '#64748b';
+            // Points the recent half-year is running above the rolling
+            // year, or null when it isn't ahead. Green marks the good
+            // direction only; a row that has slipped is left in plain ink
+            // rather than painted red, because a close rate below its own
+            // year average is normal noise, not a fault to flag.
+            const ahead = aheadOfYear(row.overall, row.rolling12);
             return (
               <tr key={row.key} className={row.num ? undefined : styles.totalRow}>
                 <th scope="row" className={styles.stageCell}>
@@ -210,6 +254,8 @@ export function CloseRateTrend({ trend }) {
                 </td>
                 <TotalCell
                   tally={row.overall}
+                  better={ahead !== null}
+                  betterBy={ahead}
                   title={`${row.short}, across the ${months.length} months shown:`}
                 />
                 <TotalCell
@@ -228,7 +274,8 @@ export function CloseRateTrend({ trend }) {
         left out. Each month is the deals whose <strong>Close Date</strong> falls in it; a month a
         stage closed nothing is blank, not 0%. <strong>{months.length} mo</strong> adds up the months
         shown; <strong>12 mo</strong> is a rolling 365 days, the same window the funnel above uses, so it
-        reaches back past the first column.
+        reaches back past the first column. A <strong>6 mo</strong> figure in green with a ▲ is
+        running above the rolling year — the recent months are better than the run rate behind them.
       </div>
     </div>
   );
