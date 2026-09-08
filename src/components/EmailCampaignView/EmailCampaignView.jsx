@@ -10,7 +10,6 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
-import { describeExcludedOpens } from '../../utils/emailOpens';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import { isCampaignActive } from '../../utils/campaignOutreach';
 import {
@@ -38,12 +37,12 @@ const CONTACT_COLUMNS = [
   { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
   {
     key: 'tracking',
-    label: 'Loads / Clicks',
-    width: 160,
+    label: 'Clicks',
+    width: 110,
     // Only worth a column when something in this campaign was actually
     // sent with tracking on.
     needsTracking: true,
-    title: 'Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes; clicks exclude security-gateway link scans. Hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it) — clicks are the better signal.',
+    title: 'Links followed by a person. Clicks before the send (proof-reading the draft in Outlook, where the rewritten links already work), security-gateway scans and automated sweeps are excluded — hover a count to see what was dropped. The Email Tracking tab shows which link each person followed, and on what device.',
   },
   { key: 'repliedBy', label: 'Replied By', sortKey: 'repliedBy', width: 150 },
   { key: 'replyDate', label: 'Reply Date', sortKey: 'replyDate', width: 110 },
@@ -888,10 +887,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   );
   const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
 
-  // Open/click tracking for this campaign. The campaign report never sends
+  // Click tracking for this campaign. The campaign report never sends
   // mail — HubSpot is the source of the sends — so tracking is joined in
   // from the `emailTracking` docs written when the drafts were generated
-  // with "Track image loads & clicks" on (Draft Emails). Matched on the campaign
+  // with "Track clicks & delivery" on (Draft Emails). Matched on the campaign
   // subject + recipient address. A contact row can list several addresses
   // ("a@x; b@y"), so every address is checked and the best signal wins.
   const { rows: trackingRows, error: trackingError } = useEmailTracking();
@@ -937,19 +936,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // the rates line up with the existing Response Rate denominator.
   const trackingStats = useMemo(() => {
     const contacts = displayResults?.contacts || [];
-    let tracked = 0, opened = 0, clicked = 0;
+    let tracked = 0, clicked = 0;
     for (const c of contacts) {
       const t = lookupTracking(c.email);
       if (!t) continue;
       tracked++;
-      if (t.openCount > 0) opened++;
       if (t.clickCount > 0) clicked++;
     }
     return {
       tracked,
-      opened,
       clicked,
-      openRate: tracked ? Math.round((opened / tracked) * 100) : 0,
       clickRate: tracked ? Math.round((clicked / tracked) * 100) : 0,
     };
   }, [displayResults?.contacts, lookupTracking]);
@@ -1145,28 +1141,27 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       }
       case 'tracking': {
         const t = lookupTracking(c.email);
-        if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
-        const excluded = describeExcludedOpens(t);
-        const openTitle = [
-          t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded',
-          excluded,
-          t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
-        ].filter(Boolean).join(' ');
+        if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send wasn't created with tracking on">-</span>;
+        // Every exclusion is named rather than silently subtracted: the sender
+        // is the only one who knows whether they were proof-reading the draft
+        // that afternoon, and a number that quietly shrinks is a number nobody
+        // can check.
         const clickTitle = [
-          t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded',
+          t.clickCount
+            ? `${t.clickCount} click${t.clickCount === 1 ? '' : 's'} by a person.`
+            : 'No clicks by a person recorded.',
+          t.firstClickAt ? `First click ${new Date(t.firstClickAt).toLocaleString()}.` : '',
+          t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}.` : '',
+          t.clickPreSend ? `${t.clickPreSend} click${t.clickPreSend === 1 ? '' : 's'} before the send excluded — the rewritten links already work inside the Outlook draft, so that is you proof-reading it.` : '',
           t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
+          t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
+          'The Email Tracking tab shows which link they followed, and on what device.',
         ].filter(Boolean).join(' ');
         return (
-          <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center', whiteSpace: 'nowrap' }}>
-            <span
-              title={openTitle}
-              style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.openCount ? '#FEF3C7' : '#F3F4F6', color: t.openCount ? '#92400E' : '#6B7280' }}
-            >{t.openCount} load{t.openCount === 1 ? '' : 's'}</span>
-            <span
-              title={clickTitle}
-              style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
-            >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
-          </span>
+          <span
+            title={clickTitle}
+            style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap', background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
+          >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
         );
       }
       case 'repliedBy':
@@ -1229,7 +1224,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   return (
     // Wide: the campaign's contact table carries nine columns — sent date,
-    // delivery, status, loads/clicks, who replied and when, event status —
+    // delivery, status, clicks, who replied and when, event status —
     // and at the old 1000px cap the last of them fell off the right edge of
     // a container that clipped rather than scrolled. The cap is what keeps
     // the search box and the subject line from stretching across an
@@ -1372,31 +1367,31 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</div>
             </div>
-            {/* Image loads / clicks, joined from the tracked drafts. Only shown
-                once at least one send in this campaign carried tracking —
-                otherwise the tiles would read a misleading 0%. */}
+            {/* Clicks, joined from the tracked drafts. Only shown once at
+                least one send in this campaign carried tracking — otherwise
+                the tile would read a misleading 0%.
+
+                Image loads used to sit beside this and no longer do. The pixel
+                still travels with every send and still proves delivery (the
+                Delivery column reads it), but as a metric it moved for reasons
+                that had nothing to do with the recipient — Apple pre-fetches it
+                for messages nobody opened, Outlook never fetches it for people
+                who read every word — so it was reporting noise next to a number
+                that means something. */}
             {trackingStats.tracked > 0 && (
-              <>
-                <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Images loaded</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#F59E0B' }} title={`${trackingStats.opened} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} had the tracking pixel fetched — which is not the same as being read. Hits before the send (proof-reading the draft), automated fetches and repeat loads within 5 minutes don't count. What's left is still directional: Apple Mail pre-loads the pixel and Outlook blocks it.`}>
-                    {trackingStats.opened} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.openRate}%)</span>
-                  </div>
+              <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #0EA5E9' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clicked</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0EA5E9' }} title={`${trackingStats.clicked} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} had a link followed by a person. Clicks before the send (proof-reading the draft), security-gateway scans and automated sweeps don't count. See the Email Tracking tab for which link each person followed.`}>
+                  {trackingStats.clicked} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.clickRate}%)</span>
                 </div>
-                <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #0EA5E9' }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clicked</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0EA5E9' }} title={`${trackingStats.clicked} of ${trackingStats.tracked} tracked send${trackingStats.tracked === 1 ? '' : 's'} clicked a link. Clicks are the hard signal.`}>
-                    {trackingStats.clicked} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>({trackingStats.clickRate}%)</span>
-                  </div>
-                </div>
-              </>
+              </div>
             )}
           </div>
           {/* Nudge when nothing in this campaign was sent with tracking on. */}
           {trackingStats.tracked === 0 && !trackingError && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
               No tracking for {displaySubjects.length > 1 ? 'these subjects' : 'this subject'}. Tracking is added when you generate the drafts from{' '}
-              <strong>Draft Emails</strong> with “Track image loads &amp; clicks” checked.
+              <strong>Draft Emails</strong> with “Track clicks &amp; delivery” checked.
             </div>
           )}
 
@@ -1518,7 +1513,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <button
                 onClick={exportContactsCsv}
                 disabled={!(displayResults.contacts || []).length}
-                title="Download this campaign as a CSV: every contact, with send date, delivery, status, image loads, clicks, replies and event status"
+                title="Download this campaign as a CSV: every contact, with send date, delivery, status, clicks, replies and event status"
                 style={{
                   padding: '0.35rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                   background: 'var(--color-surface)', color: 'var(--color-text-secondary)',

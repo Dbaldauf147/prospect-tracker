@@ -1,7 +1,7 @@
 // Take an email campaign out of the app as a spreadsheet.
 //
 // The Email Campaign tab knows things nothing else does — who was actually
-// emailed, who bounced, who replied, who loaded the images, who is coming to
+// emailed, who bounced, who replied, who followed a link, who is coming to
 // the event — and until now the only way to get any of it out was to read it
 // off the screen. Two files come out of here:
 //
@@ -68,7 +68,7 @@ export function eventStatusLabel(v) {
 export const CAMPAIGN_CONTACT_HEADERS = [
   'Campaign', 'Subjects', 'Sent To', 'Name', 'Company', 'Recipients',
   'Sent Date', 'Delivery', 'Status',
-  'Image Loads', 'Clicks', 'First Load', 'Last Click',
+  'Clicks', 'First Click', 'Last Click',
   'Replied By', 'Reply Date', 'Bounce Date', 'Out of Office Date',
   'Event Status',
 ];
@@ -77,12 +77,18 @@ export const CAMPAIGN_CONTACT_HEADERS = [
  * One contact's row.
  *
  * `delivery` is the campaign's own delivery verdict (already as its label)
- * and `tracking` the joined pixel/click record, both passed in by the view
- * because it already computes them
+ * and `tracking` the joined click record, both passed in by the view because
+ * it already computes them
  * (they need the whole tracking collection, which has no business in here).
- * A contact with no tracking record leaves those four cells empty rather than
- * printing zeros: "nobody was watching" and "watched, never opened" are
+ * A contact with no tracking record leaves those three cells empty rather than
+ * printing zeros: "nobody was watching" and "watched, never clicked" are
  * different answers and a 0 would flatten them into one.
+ *
+ * Image loads used to lead these columns and no longer do, for the same reason
+ * they were dropped from the screen: the pixel fires for messages nobody
+ * opened and stays silent for people who read every word, so the column was
+ * noise sitting next to a number that means something. The pixel still travels
+ * with the mail and still backs the Delivery cell.
  *
  * The two timestamps only go out alongside a non-zero count. The hook's
  * `lastClickAt` is the RAW last click, so a send whose only click was a
@@ -102,9 +108,8 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
     csvDate(c?.sentDate),
     delivery,
     contactStatusLabel(c),
-    tracking ? tracking.openCount : '',
     tracking ? tracking.clickCount : '',
-    tracking && tracking.openCount ? csvDateTime(tracking.firstOpenAt) : '',
+    tracking && tracking.clickCount ? csvDateTime(tracking.firstClickAt) : '',
     tracking && tracking.clickCount ? csvDateTime(tracking.lastClickAt) : '',
     c?.repliedBy || '',
     c?.replied ? csvDate(c?.replyDate) : '',

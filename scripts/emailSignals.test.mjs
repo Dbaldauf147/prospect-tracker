@@ -1,27 +1,38 @@
-// Assertion tests for the engagement signals on the Email Tracking tab.
+// Assertion tests for the click signals on the Email Tracking tab.
 // Plain Node — no test framework (the project has none). Run:
 //   node scripts/emailSignals.test.mjs
 //
 // These signals are inferences shown to a seller, so the failure mode that
 // matters is the confident wrong one: telling somebody their email was
 // forwarded around a company when it was one person on a phone and a laptop,
-// or counting a security scanner's fetch as a second reader.
+// or counting a security scanner's sweep as a second reader.
 //
-// Two rules do most of that work and both are asserted here.
+// They used to be derived from the tracking pixel. They read the clicks now,
+// which is a stronger foundation for exactly the reason the pixel was dropped
+// from the page: a load fires when Apple pre-fetches a message nobody opened,
+// while a click needs somebody to choose to make it. "Clicked on 3 days" is a
+// claim that survives scrutiny in a way "loaded on 3 days" never did.
 //
-//   1. Only opens countOpens() COUNTED contribute. A machine fetch or a
+// Three rules do most of the work and all three are asserted here.
+//
+//   1. Only clicks countClicks() COUNTED contribute. A gateway sweep or a
 //      pre-send draft preview must not add a day, a place or a device — those
 //      are exactly the events that come from somewhere else on some other
 //      machine, so letting them through would manufacture the forward signal.
-//   2. A proxied fetch contributes no place and no device. The city on a
-//      Gmail-proxied open is Google's; treating it as somewhere the reader was
-//      would invent a second location for every Gmail recipient alive.
+//   2. The forward signal needs BOTH several places and several devices.
+//      Either alone is ordinary: a laptop and a phone at one desk, or one
+//      machine that commutes.
+//   3. The booking chip says "opened", never "booked". A click on a scheduling
+//      link means somebody went to look at the calendar; whether they took a
+//      slot happens on the provider's site and is not recorded here. Getting
+//      this wrong would have the seller believe they have meetings they don't.
 import {
-  engagementSignals,
-  openShape,
+  clickSignals,
+  clickShape,
   deviceFamily,
   shortDuration,
 } from '../src/utils/emailSignals.js';
+import { countClicks } from '../src/utils/emailClicks.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -34,132 +45,160 @@ const UA = {
   mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-  proxy: 'Mozilla/5.0 (X11; Linux) GoogleImageProxy',
   scanner: 'Mimecast link scanner',
 };
-
-// A countOpens()-shaped summary: what the view actually passes in.
-const summary = (events) => ({ events });
-const ev = (at, ua, city, extra = {}) => ({
-  verdict: 'counted',
-  event: { at, ua, city, region: 'MA', country: 'US', ...extra },
-});
+const BOOKING = 'https://outlook.office.com/bookwithme/user/dan@se.com/meetingtype/XYZ';
+const REPORT = 'https://example.com/savings-analysis';
 
 const DAY = 86400000;
 const t0 = new Date('2026-03-02T14:00:00Z').getTime();
 const keys = (list) => list.map(s => s.key);
 const labels = (list) => list.map(s => s.label);
 
+// A tracking doc, built so the tests exercise the real classifier rather than
+// a hand-made summary that could drift away from what countClicks() produces.
+const doc = (clicks) => ({ clickCount: clicks.length, clicks });
+const click = (at, ua, city, url = REPORT, extra = {}) => ({
+  at: new Date(at).toISOString(), ua, city, region: 'MA', country: 'US', url, ...extra,
+});
+
 // ---- deviceFamily --------------------------------------------------------
 
 check('device: a phone and a laptop are different machines',
   [deviceFamily(UA.iphone), deviceFamily(UA.mac)], ['iphone', 'mac']);
 check('device: an image proxy is not a machine the reader owns',
-  deviceFamily(UA.proxy), 'proxy');
+  deviceFamily('Mozilla/5.0 (X11; Linux) GoogleImageProxy'), 'proxy');
 check('device: no user-agent, no family', deviceFamily(''), '');
 
-// ---- the ordinary send says nothing --------------------------------------
+// ---- shortDuration -------------------------------------------------------
 
-check('one open on one day from one place produces no signals',
-  engagementSignals(summary([ev(t0, UA.mac, 'Boston')])), []);
-check('no opens at all produces no signals', engagementSignals(summary([])), []);
-check('a missing summary does not throw', engagementSignals(null), []);
+check('duration: minutes, hours and days each at one unit',
+  [shortDuration(12 * 60000), shortDuration(3 * 3600000), shortDuration(2 * DAY)],
+  ['12m', '3h', '2d']);
+check('duration: under a minute is not "0m"', shortDuration(20000), '<1m');
+check('duration: nothing in, nothing out', shortDuration(null), '');
 
-// ---- repeat reads --------------------------------------------------------
+// ---- clickShape ----------------------------------------------------------
 
-check('opens on separate days are called out',
-  labels(engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    ev(t0 + DAY, UA.mac, 'Boston'),
-    ev(t0 + 2 * DAY, UA.mac, 'Boston'),
-  ]))), ['Loaded on 3 days']);
-check('several opens inside ONE day are not repeat reads',
-  engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    ev(t0 + 3600000, UA.mac, 'Boston'),
-  ])), []);
+check('shape: one click is one day, one place, one device',
+  (() => {
+    const s = clickShape(countClicks(doc([click(t0, UA.mac, 'Boston')])));
+    return [s.days, s.places, s.devices, s.booking];
+  })(), [1, 1, 1, 0]);
 
-// ---- the forwarding inference --------------------------------------------
+check('shape: an excluded click contributes no day, place or device',
+  (() => {
+    // The scanner clicked from another city on another machine — precisely the
+    // event that would manufacture a forward signal if it leaked through.
+    const s = clickShape(countClicks(doc([
+      click(t0, UA.mac, 'Boston'),
+      click(t0 + 60000, UA.scanner, 'Dublin', REPORT, { ip: '9.9.9.9' }),
+    ])));
+    return [s.days, s.places, s.devices];
+  })(), [1, 1, 1]);
 
-check('two places AND two devices reads as maybe forwarded',
-  keys(engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    ev(t0 + 3600000, UA.windows, 'Denver'),
-  ]))), ['shared']);
-check('one person on a laptop and a phone in one city is NOT a forward',
-  engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    ev(t0 + 3600000, UA.iphone, 'Boston'),
-  ])), []);
-check('one device that moves city is NOT a forward',
-  engagementSignals(summary([
-    ev(t0, UA.iphone, 'Boston'),
-    ev(t0 + 3600000, UA.iphone, 'Denver'),
-  ])), []);
+check('shape: a booking-link click is counted as one',
+  clickShape(countClicks(doc([click(t0, UA.mac, 'Boston', BOOKING)]))).booking, 1);
 
-// Rule 1: only counted events contribute. A scanner fetch from Ashburn on a
-// different machine is exactly what would fake a forward — it must report the
-// screening it IS evidence of, and nothing it isn't.
-check('an excluded machine fetch cannot manufacture a forward',
-  keys(engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    { verdict: 'machine', event: { at: t0 + 60000, ua: UA.scanner, city: 'Ashburn', country: 'US' } },
-  ]))), ['screened']);
-check('and it names the gateway when the user-agent gives it away',
-  labels(engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    { verdict: 'machine', event: { at: t0 + 60000, ua: UA.scanner, city: 'Ashburn', country: 'US' } },
-  ]))), ['Screened (Mimecast)']);
+check('shape: time to the first click is measured from the send',
+  clickShape(countClicks(doc([click(t0 + 20 * 60000, UA.mac, 'Boston')])), { sentAt: t0 }).msToFirstClick,
+  20 * 60000);
+check('shape: with no send time there is no time-to-first-click',
+  clickShape(countClicks(doc([click(t0, UA.mac, 'Boston')]))).msToFirstClick, null);
 
-// A generic crawler tripping the machine filter is not evidence of a corporate
-// gateway, so an unnamed machine OPEN alone says nothing. A machine CLICK is
-// different: nothing else follows a tracking redirect.
-check('an unnamed machine open alone does not claim screening',
-  engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    { verdict: 'machine', event: { at: t0 + 60000, ua: 'some-crawler/1.0', city: 'Ashburn' } },
-  ])), []);
-check('an unnamed machine CLICK does claim screening',
-  keys(engagementSignals(summary([ev(t0, UA.mac, 'Boston')]), {
-    clickSummary: { events: [{ verdict: 'machine', event: { ua: 'python-requests/2.31.0' } }] },
-  })), ['screened']);
-check('an excluded pre-send preview cannot manufacture one either',
-  engagementSignals(summary([
-    ev(t0, UA.mac, 'Boston'),
-    { verdict: 'pre-send', event: { at: t0 - DAY, ua: UA.windows, city: 'Denver', country: 'US' } },
-  ])), []);
+// ---- clickSignals --------------------------------------------------------
 
-// Rule 2: a proxied open's city is the proxy's, not the reader's.
-check('a proxied open adds neither a place nor a device',
-  openShape(summary([
-    ev(t0, UA.mac, 'Boston'),
-    ev(t0 + 60000, UA.proxy, 'Mountain View', { proxied: true }),
-  ])), { days: 1, places: 1, devices: 1, firstOpenAt: t0, msToFirstOpen: null });
+check('signals: an ordinary single click says nothing',
+  clickSignals(countClicks(doc([click(t0 + 5 * DAY, UA.mac, 'Boston')])), { sentAt: t0 }), []);
 
-// ---- time to first open --------------------------------------------------
+check('signals: the booking page is called out, and named for what it is',
+  labels(clickSignals(countClicks(doc([click(t0 + 5 * DAY, UA.mac, 'Boston', BOOKING)])), { sentAt: t0 })),
+  ['Opened booking page']);
 
-check('a first open within the hour is called out',
-  labels(engagementSignals(summary([ev(t0 + 12 * 60000, UA.mac, 'Boston')]), { sentAt: t0 })),
-  ['Loaded in 12m']);
-check('a first open the next day is not',
-  engagementSignals(summary([ev(t0 + DAY, UA.mac, 'Boston')]), { sentAt: t0 }), []);
-check('no send time means no timing signal — not a fabricated one',
-  engagementSignals(summary([ev(t0, UA.mac, 'Boston')]), { sentAt: null }), []);
-check('an open BEFORE the send yields no timing signal',
-  openShape(summary([ev(t0 - 60000, UA.mac, 'Boston')]), { sentAt: t0 }).msToFirstOpen, null);
+// The wording is the test. "Opened" and "not a booking" both have to survive
+// any future edit, because a seller who reads this chip as a booking will
+// stop following up on the one group most worth following up.
+check('signals: the booking chip never claims a booking was made',
+  (() => {
+    const chip = clickSignals(countClicks(doc([click(t0 + DAY, UA.mac, 'Boston', BOOKING)])), { sentAt: t0 })[0];
+    return [/not a booking/i.test(chip.title), /\bbooked\b/i.test(chip.label)];
+  })(), [true, false]);
 
-// ---- ordering + formatting ----------------------------------------------
+check('signals: clicks on separate days are the repeat signal',
+  labels(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston'),
+    click(t0 + 4 * DAY, UA.mac, 'Boston'),
+  ])), { sentAt: t0 })), ['Clicked on 2 days']);
 
-check('signals come strongest first',
-  keys(engagementSignals(summary([
-    ev(t0 + 5 * 60000, UA.mac, 'Boston'),
-    ev(t0 + DAY, UA.windows, 'Denver'),
-  ]), { sentAt: t0 })), ['shared', 'repeat', 'fast']);
+check('signals: a first click within the hour is called out',
+  labels(clickSignals(countClicks(doc([click(t0 + 20 * 60000, UA.mac, 'Boston')])), { sentAt: t0 })),
+  ['Clicked in 20m']);
 
-check('duration: minutes', shortDuration(12 * 60000), '12m');
-check('duration: hours', shortDuration(3 * 3600000), '3h');
-check('duration: days', shortDuration(2 * DAY), '2d');
-check('duration: under a minute', shortDuration(20000), '<1m');
+// Two places on two devices — the forward tell.
+check('signals: several places on several devices reads as a forward',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston'),
+    click(t0 + 3 * DAY, UA.windows, 'Chicago'),
+  ])), { sentAt: t0 })), ['shared', 'repeat']);
 
-console.log(failures === 0 ? '\nAll engagement-signal tests passed.' : `\n${failures} test(s) failed.`);
+check('signals: one person on two devices in one city is not a forward',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston'),
+    click(t0 + 3 * DAY, UA.iphone, 'Boston'),
+  ])), { sentAt: t0 })), ['repeat']);
+
+check('signals: one device that travels is not a forward either',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston'),
+    click(t0 + 3 * DAY, UA.mac, 'Chicago'),
+  ])), { sentAt: t0 })), ['repeat']);
+
+// A gateway sweeping the message is context, not engagement — and it has to
+// come last, after anything the recipient actually did.
+check('signals: screening is reported, and reported last',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston', BOOKING),
+    click(t0 + 3 * DAY, UA.mac, 'Boston'),
+    click(t0 + 3 * DAY + 1000, UA.scanner, 'Dublin'),
+  ])), { sentAt: t0 })), ['booking', 'repeat', 'screened']);
+
+// Excluded clicks must not be able to raise a signal on their own: a send
+// where the ONLY activity was a scanner has nothing to say about the reader.
+check('signals: a scanner alone raises screening and nothing else',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 1000, UA.scanner, 'Dublin', BOOKING),
+  ])), { sentAt: t0 })), ['screened']);
+
+// ---- nothing to say, said as nothing -------------------------------------
+//
+// A send with no clicks gets an empty list, not a chip announcing the absence.
+
+check('signals: no clicks at all produces no signals',
+  clickSignals(countClicks(doc([])), { sentAt: t0 }), []);
+check('signals: a missing summary does not throw', clickSignals(null), []);
+check('signals: several clicks inside ONE day are not a repeat signal',
+  keys(clickSignals(countClicks(doc([
+    click(t0 + 2 * DAY, UA.mac, 'Boston'),
+    click(t0 + 2 * DAY + 3600000, UA.mac, 'Boston'),
+  ])), { sentAt: t0 })), []);
+
+// ---- timing signals are never fabricated ---------------------------------
+
+check('signals: a first click the next day is not a fast click',
+  clickSignals(countClicks(doc([click(t0 + DAY, UA.mac, 'Boston')])), { sentAt: t0 }), []);
+check('signals: no send time means no timing signal, not a made-up one',
+  clickSignals(countClicks(doc([click(t0, UA.mac, 'Boston')])), { sentAt: null }), []);
+check('shape: a click BEFORE the send yields no timing signal',
+  clickShape(countClicks(doc([click(t0 - 60000, UA.mac, 'Boston')])), { sentAt: t0 }).msToFirstClick, null);
+
+// An excluded pre-send preview is the sender, on the sender's own machine in
+// the sender's own city — exactly the event that would fake a forward if the
+// gate ever stopped holding.
+check('signals: an excluded draft preview cannot manufacture a signal',
+  keys(clickSignals(countClicks(doc([
+    click(t0 - DAY, UA.windows, 'Chicago'),
+    click(t0 + 3 * DAY, UA.mac, 'Boston'),
+  ]), { sentAt: t0 }), { sentAt: t0 })), []);
+
+console.log(failures === 0 ? '\nAll click-signal tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

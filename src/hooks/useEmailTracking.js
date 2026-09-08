@@ -188,10 +188,16 @@ export function replyByRecipient(contacts) {
 // enable the pre-send rule. Addresses missing from the map keep their raw
 // timeline, since we then have nothing to gate on.
 //
+// The same send-time map gates the CLICKS now as well. The links are rewritten
+// inside the draft exactly like the pixel is, so a link followed while
+// proof-reading counted as the recipient clicking until this was threaded
+// through — the one number the campaign report called a hard signal was the
+// one with no send gate on it.
+//
 // Returns a Map keyed by normalized recipient email:
 //   { openCount, raw, preSend, machine, repeat,
-//     clickCount, clickMachine, rawClickCount, screened, scanner,
-//     firstOpenAt, lastClickAt, sends }
+//     clickCount, clickMachine, clickPreSend, rawClickCount, screened, scanner,
+//     firstOpenAt, firstClickAt, lastClickAt, sends }
 export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
   const wanted = (Array.isArray(subject) ? subject : [subject])
     .map(s => String(s || '').trim().toLowerCase())
@@ -211,13 +217,15 @@ export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
     const opens = sentAtByEmail?.has(key)
       ? countOpens(r, { sentAt: sentAtByEmail.get(key) ?? null })
       : countOpens(r);
-    const clicks = countClicks(r);
+    const clicks = sentAtByEmail?.has(key)
+      ? countClicks(r, { sentAt: sentAtByEmail.get(key) ?? null })
+      : countClicks(r);
     const screening = screeningEvidence(clicks, opens);
     const prev = byEmail.get(key) || {
       openCount: 0, raw: 0, preSend: 0, machine: 0, repeat: 0,
-      clickCount: 0, clickMachine: 0, rawClickCount: 0,
+      clickCount: 0, clickMachine: 0, clickPreSend: 0, rawClickCount: 0,
       screened: false, scanner: '',
-      firstOpenAt: 0, lastClickAt: 0, sends: 0,
+      firstOpenAt: 0, firstClickAt: 0, lastClickAt: 0, sends: 0,
     };
     const firstOpen = opens.firstOpenAt;
     const lastClick = trackingMillis(r.lastClickAt);
@@ -228,11 +236,16 @@ export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
       machine: prev.machine + opens.machine,
       repeat: prev.repeat + opens.repeat,
       clickCount: prev.clickCount + clicks.count,
-      clickMachine: prev.clickMachine + clicks.machine,
+      // A gateway that swept the message is the same fact as a gateway that
+      // named itself, so the two roll up together — the row only needs to say
+      // that a machine did it, not which of the two ways we spotted it.
+      clickMachine: prev.clickMachine + clicks.machine + clicks.sweep,
+      clickPreSend: prev.clickPreSend + clicks.preSend,
       rawClickCount: prev.rawClickCount + clicks.raw,
       screened: prev.screened || screening.screened,
       scanner: prev.scanner || screening.scanner,
       firstOpenAt: firstOpen && (!prev.firstOpenAt || firstOpen < prev.firstOpenAt) ? firstOpen : prev.firstOpenAt,
+      firstClickAt: clicks.firstClickAt && (!prev.firstClickAt || clicks.firstClickAt < prev.firstClickAt) ? clicks.firstClickAt : prev.firstClickAt,
       lastClickAt: lastClick > prev.lastClickAt ? lastClick : prev.lastClickAt,
       sends: prev.sends + 1,
     });
