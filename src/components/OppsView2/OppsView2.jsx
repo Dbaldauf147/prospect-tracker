@@ -6030,14 +6030,34 @@ const OPP_DETAIL_TABS = [
   // — the "does this tab have any fields" test that hides an empty tab
   // would hide this one on every record.
   { key: 'callnotes', label: 'Call Notes' },
+  // The numbered BFO sales stages, so the popup can be arranged the way the
+  // deal actually moves: the fields you fill in to get through Stage 5 sit
+  // on Stage 5, rather than being spread across buckets named after what
+  // kind of data they are. The hints are the stage names the rest of the
+  // app already uses (the Days-in-Stage bands, the pipeline funnel).
+  //
+  // They start empty and fill up as fields are moved onto them — Stage 7
+  // has the close-out set, the rest are waiting for theirs — so they're in
+  // ALWAYS_ON_TABS below: a tab that only appears once something has been
+  // moved onto it is a tab nobody can move anything onto.
+  { key: 'stage3', label: 'Stage 3', hint: 'Stage 3 — Qualify Opportunity' },
+  { key: 'stage4', label: 'Stage 4', hint: 'Stage 4 — Influence and Develop' },
+  { key: 'stage5', label: 'Stage 5', hint: 'Stage 5 — Prepare & Bid' },
+  { key: 'stage6', label: 'Stage 6', hint: 'Stage 6 — Negotiate to Win' },
+  { key: 'stage7', label: 'Stage 7', hint: 'Stage 7 — closing the deal out' },
   { key: 'close', label: 'Close' },
   { key: 'other', label: 'Other' },
 ];
 
+// The stage tabs, for the empty-state line and the "is this one of them"
+// checks below.
+const OPP_DETAIL_STAGE_TABS = new Set(['stage3', 'stage4', 'stage5', 'stage6', 'stage7']);
+
 // Tabs that show whether or not the record has fields for them. Scope &
 // Quote carries the two ticket links, which every opp can have; Call
-// Notes is content in its own right.
-const ALWAYS_ON_TABS = new Set(['scope', 'callnotes']);
+// Notes is content in its own right; the stage tabs are being filled in
+// over time and have to be reachable while they're still empty.
+const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', ...OPP_DETAIL_STAGE_TABS]);
 
 // Stage is the deal's headline field, so it belongs in Overview and
 // nowhere else. Matched on the normalised header rather than one exact
@@ -6101,11 +6121,15 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Next Steps': 'overview',
   'Notes': 'overview',
   // How and when it ends
-  'Close Date': 'close',
   'Target Signature Date': 'close',
   'Verbal': 'close',
-  'Competition': 'close',
-  'Reason Not Sold': 'close',
+  // The close-out set lives on Stage 7: what the deal closed as, when, and
+  // against whom is the work of that stage, not a category of its own.
+  // ("Close Year" / "Close Month" join them via the regexes below, since
+  // their labels vary by import.)
+  'Close Date': 'stage7',
+  'Competition': 'stage7',
+  'Reason Not Sold': 'stage7',
 }));
 
 // Same map keyed by the normalised header, so a saved or imported label
@@ -6125,8 +6149,9 @@ function oppDetailTabFor(header) {
   if (known) return known;
   // "Close Year" / "Close Month" are derived from the Close Date and can
   // carry a few different labels depending on the import, so match them
-  // the same loose way the auto-fill does.
-  if (CLOSE_YEAR_RE.test(norm) || CLOSE_MONTH_RE.test(norm)) return 'close';
+  // the same loose way the auto-fill does. They follow the Close Date onto
+  // Stage 7 — a date and the year it lands in are one fact.
+  if (CLOSE_YEAR_RE.test(norm) || CLOSE_MONTH_RE.test(norm)) return 'stage7';
   return 'other';
 }
 
@@ -6465,6 +6490,10 @@ export function OppInfoModal({
                 type="button"
                 onClick={() => selectTab(t.key)}
                 aria-pressed={isActive}
+                // "Stage 5" says where in the process you are and nothing
+                // about what that stage is called, so the name is a hover
+                // away rather than in a strip that already wraps.
+                title={t.hint || undefined}
                 style={{
                   padding: '0.45rem 0.75rem', background: 'transparent',
                   border: 'none', borderBottom: '2px solid transparent',
@@ -6778,6 +6807,20 @@ export function OppInfoModal({
               })()}
             </tbody>
           </table>
+          )}
+
+          {/* A stage tab with nothing moved onto it yet says so. Every
+              other empty tab has something else to show (Call Notes its
+              log, Scope & Quote its ticket links); these would be a blank
+              pane that reads as a bug. */}
+          {OPP_DETAIL_STAGE_TABS.has(currentTab) && tabFields.length === 0 && (
+            <div style={{
+              padding: '0.75rem 0.85rem', border: '1px dashed var(--color-border)',
+              borderRadius: 6, fontSize: '0.8rem', lineHeight: 1.5,
+              color: 'var(--color-text-muted)',
+            }}>
+              No fields on this stage yet.
+            </div>
           )}
 
           {/* Call recordings tagged to this opp on the Call Recordings
