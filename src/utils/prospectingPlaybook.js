@@ -9,7 +9,7 @@
 //
 // What CAN'T move into settings is the behaviour attached to five of the
 // steps — the due-opps count, the renewals count, the service-coverage
-// and Top-PC lists, and the market-updates step going red once the ladder
+// and Top-PC lists, and the two outreach steps going red once the ladder
 // reaches it. Those are wired to a step's `key`, so a stored step is
 // a thin overlay: it carries the key plus whatever text the user changed,
 // and the code-side default supplies the rest. Retitling "Follow up on
@@ -39,6 +39,7 @@ export const STEP_VIEW_OPTIONS = [
   { view: 'pe', label: 'PE Portfolio' },
   { view: 'contacts', label: 'Contacts' },
   { view: 'drafts', label: 'Draft Emails' },
+  { view: 'campaigns', label: 'Email Campaigns' },
   { view: 'recordings', label: 'Call Recordings' },
   { view: 'charts', label: 'Charts' },
   { view: 'pricing', label: 'Pricing' },
@@ -76,12 +77,34 @@ export const DEFAULT_STEPS = [
     workTitle: n => `${n} ${n === 1 ? 'opp is' : 'opps are'} due to be called (Call In 0 or less), not counting any marked "No Further Action Today"`,
     clearTitle: 'No opp is due to be called, other than ones marked "No Further Action Today"',
   },
+  // Knowing who they are and writing to them are two different mornings'
+  // work, and they used to share one step: the tag-coverage bars and the
+  // unfinished campaigns both hung under "market updates", so a book that
+  // was 22% tagged and a campaign stalled at 39% sent were one line on the
+  // ladder that a single "Mark caught up" cleared. Split, each can be
+  // reached, worked and marked on its own — mapping first, because a market
+  // update is only worth sending to someone you have placed.
+  {
+    key: 'contact-mapping',
+    title: 'Map and tag your contacts',
+    detail: 'Who your contacts are and what they care about — the tag questions each roster still owes an answer to.',
+    view: 'contacts',
+    viewLabel: 'Contacts',
+    // Same reasoning as the step below: nothing counts it, so it goes red
+    // once it is the warmest work left rather than sitting grey. Only the
+    // topmost unresolved step of the two can be 'due' at a time —
+    // ladderStates stops at the first thing that isn't clear.
+    dueWhenReached: true,
+  },
   {
     key: 'market-updates',
     title: 'Reach out to contacts with market updates',
     detail: 'Give the contacts you already know a reason to reply: what the market is doing right now.',
-    view: 'contacts',
-    viewLabel: 'Contacts',
+    // The campaigns themselves live on the Email Campaigns tab, which is
+    // where this step's work is picked up and where the unfinished ones
+    // listed under it link to.
+    view: 'campaigns',
+    viewLabel: 'Email Campaigns',
     // Nothing counts this step, but it is not optional either: once the
     // steps above it are clear it is the work owed today, so it goes red
     // rather than staying the same grey "Mark caught up" it wears while
@@ -155,6 +178,31 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // the user never edited keeps tracking the default — a later copy fix
 // reaches them instead of being frozen at whatever shipped the day they
 // first dragged a row.
+// One step split into two, for a playbook stored before the split.
+//
+// A stored ladder IS the ladder — a default the array doesn't carry is one
+// the user deleted, and resurrecting those is exactly what this model
+// exists to prevent. "Map and tag your contacts" is the exception, because
+// nobody deleted it: it did not exist. Its work was the tag-coverage half
+// of "Reach out to contacts with market updates", which they kept, so it
+// is put back where it was — immediately above that step. A user who
+// deleted the market-updates step gets neither half, which is what they
+// asked for.
+const SPLIT_FROM = 'market-updates';
+const SPLIT_INTO = 'contact-mapping';
+function applyMarketUpdatesSplit(entries) {
+  const keys = entries.map(e => e.key);
+  const at = keys.indexOf(SPLIT_FROM);
+  if (at === -1 || keys.includes(SPLIT_INTO)) return entries;
+  const base = DEFAULTS_BY_KEY.get(SPLIT_INTO);
+  if (!base) return entries;
+  const next = [...entries];
+  // The shipped step, whole: the user has never edited one that didn't
+  // exist, so there is nothing of theirs to overlay on it.
+  next.splice(at, 0, { ...base });
+  return next;
+}
+
 export function readSteps(settings) {
   const raw = settings?.[PROSPECTING_STEPS_SETTING];
   if (!Array.isArray(raw)) return DEFAULT_STEPS;
@@ -183,7 +231,7 @@ export function readSteps(settings) {
     step.viewLabel = step.view ? viewLabelFor(step.view, base?.viewLabel) : '';
     out.push(step);
   }
-  return out;
+  return applyMarketUpdatesSplit(out);
 }
 
 // The steps as they go into settings: the key, plus only the fields that
