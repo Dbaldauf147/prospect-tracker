@@ -46,6 +46,7 @@ import {
 import { serviceStatusColor, serviceBucket } from '../../utils/serviceStatusColors';
 import {
   CLIENT_COUNT_FIELDS,
+  dealSizingWarnings,
   emptyClientScope,
   estimateClient,
   exploredStatus,
@@ -332,13 +333,10 @@ export function DealSizingView({
       contractValue: estimate.services.length ? estimate.contractValue : null,
       recurringAnnual: estimate.services.length ? estimate.recurringAnnual : null,
       setup: estimate.services.length ? estimate.setup : null,
-      needs: [
-        ...missingCounts(estimate, bases).map(m => `No ${m.label.toLowerCase()} count`),
-        ...(needsDealSize({ services: estimate.services, pricing, bases }) && !estimate.scope.dealSize
-          ? ['No deal size'] : []),
-        ...(estimate.unpriced.length ? [`${estimate.unpriced.length} unpriced`] : []),
-        ...(estimate.missing.length ? [`${estimate.missing.length} not in catalog`] : []),
-      ],
+      // Everything that makes this row's figures understate the deal, built
+      // once: the badge beside the company name and the Needs column both
+      // print it, and building it twice is how the two would disagree.
+      warnings: dealSizingWarnings({ estimate, pricing, bases }),
     };
   }), [clients, scopeFor, serviceRows, pricing, bases, isUntracked]);
 
@@ -428,6 +426,21 @@ export function DealSizingView({
                 background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA', whiteSpace: 'nowrap',
               }}
             >Don&rsquo;t Track</span>
+          )}
+          {/* The missing-input warning, beside the name rather than only in
+              the Needs column ten columns to the right: the figures are read
+              here, so the reason they are low has to be readable here too.
+              Clicking it falls through to the row, which opens the panel the
+              numbers are typed into. */}
+          {row.warnings.length > 0 && (
+            <span
+              title={`${row.warnings.map(w => `\u2022 ${w.detail}`).join('\n')}\n\nClick the row to open it and fill these in.`}
+              style={{
+                fontSize: '0.66rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999,
+                background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A',
+                whiteSpace: 'nowrap', cursor: 'pointer',
+              }}
+            >&#9888; {row.warnings.length === 1 ? row.warnings[0].chip : `${row.warnings.length} missing`}</span>
           )}
         </span>
       ),
@@ -587,22 +600,24 @@ export function DealSizingView({
       // of these is a number the estimate could not find, and saying so beats
       // quietly contributing zero.
       key: 'needs', label: 'Needs', defaultWidth: 230,
-      getFilterValue: (row) => (row.needs.length ? row.needs.join(', ') : 'Nothing'),
-      exportValue: (row) => row.needs.join(', '),
+      getFilterValue: (row) => (row.warnings.length ? row.warnings.map(w => w.chip).join(', ') : 'Nothing'),
+      exportValue: (row) => row.warnings.map(w => w.detail).join(' '),
       render: (row) => (
-        row.needs.length === 0
+        row.warnings.length === 0
           ? <span style={{ color: '#CBD5E1' }}>—</span>
           : (
             <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {row.needs.map(n => (
+              {row.warnings.map(w => (
                 <span
-                  key={n}
-                  title="Until this is filled in, the services that depend on it contribute nothing to the figures on the left. Expand the row to enter it."
+                  key={w.key}
+                  // Names the services waiting on it, so the chip says what to
+                  // go and fix rather than only that something is missing.
+                  title={`${w.detail} Expand the row to enter it.`}
                   style={{
                     fontSize: '0.68rem', fontWeight: 600, padding: '0.05rem 0.4rem', borderRadius: 999,
                     background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', whiteSpace: 'nowrap',
                   }}
-                >{n}</span>
+                >{w.chip}</span>
               ))}
             </span>
           )
@@ -762,7 +777,14 @@ export function DealSizingView({
 
               {missing.length > 0 && (
                 <div style={{ display: 'block', whiteSpace: 'normal', fontSize: '0.72rem', color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, padding: '0.4rem 0.55rem', marginBottom: '0.6rem' }}>
-                  Waiting on {missing.map(m => m.label.toLowerCase()).join(', ')}. Services priced on {missing.length === 1 ? 'it' : 'them'} contribute nothing until there is a number.
+                  {/* Names the services behind each missing count, so the box
+                      says which line is being priced at nothing rather than
+                      leaving it to be worked out from the table above. */}
+                  Waiting on {missing.map(m => (
+                    m.services.length
+                      ? `${m.label.toLowerCase()} (${m.services.join(', ')})`
+                      : m.label.toLowerCase()
+                  )).join('; ')}. {missing.length === 1 ? 'That service contributes' : 'Those services contribute'} nothing until there is a number.
                 </div>
               )}
               {estimate.unpriced.length > 0 && (

@@ -36,6 +36,7 @@ import {
   withoutService,
   emptyClientScope,
   estimateClient,
+  dealSizingWarnings,
   missingCounts,
   needsDealSize,
   normalizeClientScope,
@@ -58,6 +59,9 @@ const serviceRows = [
   { name: 'Bill pay',  meta: { serviceType: 'Recurring', years: '3 years' } },
   { name: 'Retrofit',  meta: { serviceType: 'Project' } },
   { name: 'Meter audit', meta: { serviceType: 'Recurring', years: '1 year' } },
+  // A second per-meter service, so a warning can be checked for naming EVERY
+  // service one missing count is starving rather than just the first.
+  { name: 'Second audit', meta: { serviceType: 'Recurring', years: '1 year' } },
   { name: 'Levy',      meta: { serviceType: 'Project' } },
   { name: 'Unpriced',  meta: { serviceType: 'Project' } },
 ];
@@ -65,6 +69,7 @@ const pricing = {
   'Bill pay': { basis: 'per_site', rate: '450' },
   Retrofit: { basis: 'flat', rate: '25000' },
   'Meter audit': { basis: 'per_meter', rate: '12' },
+  'Second audit': { basis: 'per_meter', rate: '8' },
   Levy: { basis: 'pct_deal', rate: '5' },
   Unpriced: {},
 };
@@ -193,6 +198,50 @@ check('needs: and then it prices', estimateClient({
 
 check('needs: a percentage service wants a deal size',
   needsDealSize({ services: ['Levy'], pricing }), true);
+
+// Which SERVICE is starved, not just which number is absent. "No meters
+// count" tells you something is missing; naming the service tells you what it
+// is costing, which is the difference between a warning you can act on and
+// one you have to go and investigate.
+check('needs: the missing count names the service waiting on it',
+  missingCounts(estimateClient({
+    client: PROLOGIS, scope: { services: ['Meter audit', 'Retrofit'] }, serviceRows, pricing,
+  })).map(m => [m.unit, m.services]), [['meters', ['Meter audit']]]);
+
+// ---- the warning beside the company -------------------------------------
+//
+// One list, printed twice: as a badge next to the company name (where the
+// figures are actually read) and in the Needs column. Built once here so the
+// two can't come to disagree.
+
+const warn = (scope, client = PROLOGIS) => dealSizingWarnings({
+  estimate: estimateClient({ client, scope, serviceRows, pricing }), pricing,
+});
+
+check('warn: a client whose record answers everything has nothing to say',
+  warn({ services: ['Bill pay'] }), []);
+check('warn: a missing count says which service it starves',
+  warn({ services: ['Meter audit'] }).map(w => [w.chip, w.detail]),
+  [['No meters count', 'No meters count for this client, so Meter audit prices at nothing.']]);
+check('warn: two services on one missing count are both named',
+  warn({ services: ['Meter audit', 'Second audit'] }).map(w => w.detail),
+  ['No meters count for this client, so Meter audit, Second audit price at nothing.']);
+check('warn: a percentage service with no deal size',
+  warn({ services: ['Levy'] }).map(w => [w.key, w.chip]), [['dealSize', 'No deal size']]);
+check('warn: and it goes quiet once a deal size is typed',
+  warn({ services: ['Levy'], dealSize: '500000' }), []);
+check('warn: a service with no rate is reported as unpriced',
+  warn({ services: ['Unpriced'] }).map(w => [w.chip, w.detail]),
+  [['1 unpriced', 'No rate set on Unpriced — price it on Dropdowns › Services Pricing.']]);
+check('warn: a service that has left the catalog is reported too',
+  warn({ services: ['Gone away'] }).map(w => w.key), ['catalog']);
+// A count typed against the one service does not need the shared one, so the
+// warning goes — the same rule that decides whether a box is even asked for.
+check('warn: a count typed against the service settles it',
+  warn({ services: ['Meter audit'], serviceUnits: { 'Meter audit': 200 } }), []);
+check('warn: everything wrong at once, in a stable order',
+  warn({ services: ['Meter audit', 'Levy', 'Unpriced', 'Gone away'] }).map(w => w.key),
+  ['count:meters', 'dealSize', 'unpriced', 'catalog']);
 check('needs: a per-unit one does not',
   needsDealSize({ services: ['Bill pay'], pricing }), false);
 

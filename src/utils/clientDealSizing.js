@@ -146,6 +146,11 @@ export function estimateClient({ client, scope, serviceRows = [], pricing, bases
  * which is what makes the per-client inputs self-assembling: tick a per-meter
  * service and a Meters box appears, because a meter count is now load-bearing.
  * A unit the client record already answers is not asked for again.
+ *
+ * Each entry names the in-scope services waiting on that unit. "No meters
+ * count" says a number is missing; "No meters count — SE metering" says which
+ * service is being priced at nothing because of it, which is the difference
+ * between a warning you can act on and one you have to go and investigate.
  */
 export function missingCounts(estimate, bases = PRICING_BASES) {
   const out = [];
@@ -153,7 +158,13 @@ export function missingCounts(estimate, bases = PRICING_BASES) {
     const n = parseMoney(estimate?.counts?.[unit]);
     if (n !== null && n > 0) continue;
     const basis = (bases || []).find(b => b.unit === unit);
-    out.push({ unit, label: basis?.unitLabel || unit });
+    // The lines that consulted the shared count for this unit — the same test
+    // estimateScope used to decide the unit was load-bearing at all, so the
+    // services listed are exactly the ones the missing number is starving.
+    const services = (estimate?.lines || [])
+      .filter(l => l?.unit === unit && !l?.unitsTyped && !l?.typed)
+      .map(l => l.name);
+    out.push({ unit, label: basis?.unitLabel || unit, services });
   }
   return out;
 }
@@ -165,6 +176,63 @@ export function needsDealSize({ services = [], pricing, bases = PRICING_BASES })
     if (basis?.kind === 'percent') return true;
   }
   return false;
+}
+
+/** The in-scope services priced as a percentage of the deal size box. */
+export function dealSizeServices({ services = [], pricing, bases = PRICING_BASES }) {
+  return services.filter(name => (
+    basisFor(pricingFor(pricing, name, bases)?.basis, bases)?.kind === 'percent'
+  ));
+}
+
+/**
+ * Everything about one client's row that makes its figures understate the
+ * deal — as a list the UI can print anywhere.
+ *
+ * There are two places this has to show: a badge beside the company name,
+ * where it is seen without scrolling, and the Needs column, where it is
+ * filtered and exported. Building it twice is how the two would come to
+ * disagree, so both read this.
+ *
+ * Each entry is { key, chip, detail }: `chip` is the short form for a pill,
+ * `detail` the sentence naming the services behind it for a tooltip.
+ */
+export function dealSizingWarnings({ estimate, pricing, bases = PRICING_BASES }) {
+  const out = [];
+  const list = (names) => names.join(', ');
+  for (const m of missingCounts(estimate, bases)) {
+    const unit = m.label.toLowerCase();
+    out.push({
+      key: `count:${m.unit}`,
+      chip: `No ${unit} count`,
+      detail: m.services.length
+        ? `No ${unit} count for this client, so ${list(m.services)} ${m.services.length === 1 ? 'prices' : 'price'} at nothing.`
+        : `No ${unit} count for this client.`,
+    });
+  }
+  const pct = dealSizeServices({ services: estimate?.services || [], pricing, bases });
+  if (pct.length && !String(estimate?.scope?.dealSize ?? '').trim()) {
+    out.push({
+      key: 'dealSize',
+      chip: 'No deal size',
+      detail: `No deal size entered, so ${list(pct)} ${pct.length === 1 ? 'prices' : 'price'} at nothing.`,
+    });
+  }
+  if (estimate?.unpriced?.length) {
+    out.push({
+      key: 'unpriced',
+      chip: `${estimate.unpriced.length} unpriced`,
+      detail: `No rate set on ${list(estimate.unpriced)} — price ${estimate.unpriced.length === 1 ? 'it' : 'them'} on Dropdowns › Services Pricing.`,
+    });
+  }
+  if (estimate?.missing?.length) {
+    out.push({
+      key: 'catalog',
+      chip: `${estimate.missing.length} not in catalog`,
+      detail: `${list(estimate.missing)} ${estimate.missing.length === 1 ? 'is' : 'are'} no longer in the service catalog — renamed or retired since this scope was set.`,
+    });
+  }
+  return out;
 }
 
 /**
