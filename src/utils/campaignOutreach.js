@@ -11,6 +11,8 @@
 // under "Reach out to contacts with market updates". Pure: campaigns in,
 // rows out, with the clock passed in (scripts/campaignOutreach.test.mjs).
 
+import { campaignSubjects, primarySubject } from './campaignSubjects.js';
+
 // A saved campaign goes Inactive once it has had no activity — neither a
 // save nor a refresh — for 60 days. A campaign with no usable date stays
 // Active, so it never greys out purely for missing a timestamp.
@@ -53,7 +55,7 @@ export function campaignSendStats(c) {
 }
 
 export function campaignOutreachLabel(c) {
-  return String(c?.title || c?.subject || '').trim() || '(untitled campaign)';
+  return String(c?.title || primarySubject(c) || '').trim() || '(untitled campaign)';
 }
 
 /**
@@ -82,7 +84,11 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
     rows.push({
       index,
       label: campaignOutreachLabel(c),
-      subject: String(c?.subject || '').trim(),
+      // The campaign's first subject line, plus the rest: a campaign can go
+      // out under several (an A/B test, a reworded second wave) and it is
+      // still one piece of outreach with one list left to finish.
+      subject: primarySubject(c),
+      subjects: campaignSubjects(c),
       active: isCampaignActive(c, nowMs),
       ...stats,
     });

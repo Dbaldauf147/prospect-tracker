@@ -23,6 +23,7 @@ import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { primarySubject } from '../../utils/campaignSubjects';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -2218,7 +2219,7 @@ function KeyContactsViewInner({
   const contactCampaign = useMemo(() => {
     const map = new Map();
     for (const camp of (savedCampaigns || [])) {
-      const subject = String(camp.subject || '').trim();
+      const subject = primarySubject(camp);
       for (const ct of (camp.contacts || [])) {
         const t = ct.sentDate ? new Date(ct.sentDate).getTime() : NaN;
         const tsMs = Number.isFinite(t) ? t : 0;

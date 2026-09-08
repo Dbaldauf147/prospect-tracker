@@ -15,6 +15,7 @@
 // the button. Only `downloadCsv` touches the DOM.
 import { campaignSendStats, isCampaignActive, campaignOutreachLabel } from './campaignOutreach.js';
 import { stripDashes } from './exportSanitize.js';
+import { campaignSubjects } from './campaignSubjects.js';
 
 // One CSV cell. Quoted only where it has to be, doubled quotes inside.
 export function csvCell(v) {
@@ -65,7 +66,7 @@ export function eventStatusLabel(v) {
 }
 
 export const CAMPAIGN_CONTACT_HEADERS = [
-  'Campaign', 'Subject', 'Sent To', 'Name', 'Company', 'Recipients',
+  'Campaign', 'Subjects', 'Sent To', 'Name', 'Company', 'Recipients',
   'Sent Date', 'Delivery', 'Status',
   'Image Loads', 'Clicks', 'First Load', 'Last Click',
   'Replied By', 'Reply Date', 'Bounce Date', 'Out of Office Date',
@@ -91,7 +92,9 @@ export const CAMPAIGN_CONTACT_HEADERS = [
 export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null } = {}) {
   return [
     campaignOutreachLabel(campaign),
-    campaign.subject || '',
+    // Every line the campaign matches on, so a row's send can be traced back
+    // to the campaign that claims it even when that campaign runs several.
+    campaignSubjects(campaign).join(' | '),
     c?.email || '',
     c?.name || '',
     c?.company || '',
@@ -129,7 +132,7 @@ export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingF
 }
 
 export const CAMPAIGN_SUMMARY_HEADERS = [
-  'Campaign', 'Subject', 'Contacts', 'Sent', '% Sent', 'Left to Send',
+  'Campaign', 'Subjects', 'Contacts', 'Sent', '% Sent', 'Left to Send',
   'Replies', 'Response Rate %', 'Status', 'Saved', 'Last Refreshed',
 ];
 
@@ -139,7 +142,7 @@ export function campaignSummaryRow(c, nowMs = Date.now()) {
   const { sent, total, remaining, pct } = campaignSendStats(c);
   return [
     campaignOutreachLabel(c),
-    c?.subject || '',
+    campaignSubjects(c).join(' | '),
     total,
     sent,
     pct,
