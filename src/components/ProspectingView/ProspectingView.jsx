@@ -357,6 +357,14 @@ const COVERAGE_NAMES_SHOWN = 6;
 // Each row reads like the service-coverage rows above it — name, how far
 // it got, how many are left — and opens the Email Campaigns tab, where the
 // unsent recipients can be pushed into a draft.
+// The day a pause lifts, short: "Sep 10". The chip has room for a date, not
+// a sentence, and the row's tooltip carries the rest.
+function fmtPauseDate(iso) {
+  const t = iso ? new Date(iso).getTime() : NaN;
+  if (!Number.isFinite(t)) return 'soon';
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function CampaignOutreachList({ rows, onNavigate }) {
   if (!rows || rows.length === 0) return null;
   return (
@@ -381,7 +389,9 @@ function CampaignOutreachList({ rows, onNavigate }) {
         <div
           key={`${c.index}-${c.label}`}
           title={`${c.sent} of ${c.total} sent (${c.pct}%) — ${c.remaining} still to go`
-            + (c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
+            + (c.status === 'paused'
+              ? ` · Paused until ${fmtPauseDate(c.pausedUntil)}, then back on this list on its own`
+              : c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
           style={{
             display: 'flex', alignItems: 'baseline', gap: '0.5rem',
             fontSize: '0.72rem', lineHeight: 1.35,
@@ -401,7 +411,13 @@ function CampaignOutreachList({ rows, onNavigate }) {
           <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
             {c.pct}% sent · {c.remaining} to go
           </span>
-          {!c.active && (
+          {c.status === 'paused' ? (
+            <span style={{
+              flexShrink: 0, padding: '0 6px', borderRadius: 999,
+              background: '#FEF3C7', color: '#92400E',
+              fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase',
+            }}>Paused to {fmtPauseDate(c.pausedUntil)}</span>
+          ) : !c.active && (
             <span style={{
               flexShrink: 0, padding: '0 6px', borderRadius: 999,
               background: '#F1F5F9', color: '#64748B',

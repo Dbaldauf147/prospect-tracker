@@ -9,6 +9,7 @@
 // one function, so a drift here is a drift there.
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
+  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
 } from '../src/utils/campaignOutreach.js';
 
 let passed = 0, failed = 0;
@@ -22,6 +23,7 @@ function check(label, actual, expected) {
 
 const NOW = Date.parse('2026-09-08T12:00:00Z');
 const daysAgo = (n) => new Date(NOW - n * 24 * 60 * 60 * 1000).toISOString();
+const inDays = (n) => new Date(NOW + n * 24 * 60 * 60 * 1000).toISOString();
 
 // --- one campaign's figures -----------------------------------------
 // The two campaigns as the Saved Campaigns table shows them.
@@ -54,6 +56,37 @@ check('a manual Active beats the 60-day rule',
 check('a manual Inactive beats it too',
   isCampaignActive({ refreshedAt: daysAgo(1), manualActive: false }, NOW), false);
 
+// --- paused ----------------------------------------------------------
+// A pause is stored as the moment it lifts, which is what makes it expire on
+// its own instead of waiting to be switched back off.
+check('a pause runs for two days', CAMPAIGN_PAUSE_DAYS, 2);
+check('pausing now lands two days out', campaignPauseUntil(NOW), inDays(2));
+
+check('paused until tomorrow is paused', isCampaignPaused({ pausedUntil: inDays(1) }, NOW), true);
+check('a pause that has run out is not', isCampaignPaused({ pausedUntil: daysAgo(1) }, NOW), false);
+check('the moment it lifts, it has lifted',
+  isCampaignPaused({ pausedUntil: new Date(NOW).toISOString() }, NOW), false);
+check('no pause field is not paused', isCampaignPaused({ savedAt: daysAgo(1) }, NOW), false);
+// A campaign parked forever by a junk date is the one outcome worth ruling out.
+check('an unparseable pause is not a pause', isCampaignPaused({ pausedUntil: 'whenever' }, NOW), false);
+check('a blanked pause is not a pause', isCampaignPaused({ pausedUntil: '' }, NOW), false);
+
+// A live pause outranks both the 60-day rule and a manual Active.
+check('a paused campaign is not active',
+  isCampaignActive({ savedAt: daysAgo(1), pausedUntil: inDays(1) }, NOW), false);
+check('even one forced Active by hand',
+  isCampaignActive({ manualActive: true, pausedUntil: inDays(1) }, NOW), false);
+check('and it goes back to what it was when the pause lifts',
+  isCampaignActive({ manualActive: true, pausedUntil: daysAgo(1) }, NOW), true);
+check('a manual Inactive underneath survives the pause too',
+  isCampaignActive({ manualActive: false, pausedUntil: daysAgo(1) }, NOW), false);
+
+check('status: paused', campaignStatus({ savedAt: daysAgo(1), pausedUntil: inDays(2) }, NOW), 'paused');
+check('status: active', campaignStatus({ savedAt: daysAgo(1) }, NOW), 'active');
+check('status: inactive', campaignStatus({ savedAt: daysAgo(300), refreshedAt: daysAgo(300) }, NOW), 'inactive');
+check('status: back to active once the pause lifts',
+  campaignStatus({ savedAt: daysAgo(1), pausedUntil: daysAgo(1) }, NOW), 'active');
+
 // --- the list --------------------------------------------------------
 const saved = [
   { title: 'Data Center Impact Outlook', uniqueRecipients: 13, totalContacts: 33, savedAt: daysAgo(8), refreshedAt: daysAgo(5) },
@@ -69,6 +102,24 @@ check('only the unfinished ones, worst gap first, inactive last',
     ['Mexico Electric Power Cost Increase', 74.1, 7, true],
     ['Parked halfway', 1, 98, false],
   ]);
+// Pausing the campaign that led the list drops it to the bottom — below even
+// the inactive one, because it is the campaign already dealt with — and it
+// climbs back on its own when the pause lifts.
+const withPause = saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: inDays(2) } : c));
+check('a paused campaign sorts last and says so',
+  unfinishedCampaigns(withPause, NOW).map(r => [r.label, r.status]),
+  [
+    ['Mexico Electric Power Cost Increase', 'active'],
+    ['Parked halfway', 'inactive'],
+    ['Data Center Impact Outlook', 'paused'],
+  ]);
+check('the row carries when it comes back',
+  unfinishedCampaigns(withPause, NOW)[2].pausedUntil, inDays(2));
+check('a lapsed pause leaves no trace on the row',
+  unfinishedCampaigns(saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: daysAgo(1) } : c)), NOW)[0],
+  { ...unfinishedCampaigns(saved, NOW)[0] });
+check('and it leads the list again',
+  unfinishedCampaigns(withPause, NOW + 3 * 24 * 60 * 60 * 1000).map(r => r.status)[0], 'active');
 check('rows carry their place in the saved list',
   unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 4]);
 check('everything sent', unfinishedCampaigns([{ uniqueRecipients: 5, totalContacts: 5 }], NOW), []);
