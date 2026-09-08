@@ -8,6 +8,7 @@ import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../.
 import { OppImportModal } from './OppImportModal';
 import { PricingBasesModal } from './PricingBasesModal';
 import { SetupFeeModal } from './SetupFeeModal';
+import { ServicePricingModal } from './ServicePricingModal';
 import {
   PRICING_BASES,
   basisFor,
@@ -321,6 +322,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value) });
   }
 
+  // The service whose pricing panel is open, by name. Null when nothing is
+  // open. Clicking a row opens it: the table is fourteen columns wide, so
+  // pricing one service otherwise means scrolling sideways with the name
+  // off the left edge.
+  const [pricingPanelFor, setPricingPanelFor] = useState(null);
+
   // The service whose setup fee is open in the panel, by name. Null when
   // the panel is closed, which is nearly always.
   const [setupFor, setSetupFor] = useState(null);
@@ -557,7 +564,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   );
 
   const term = search.trim().toLowerCase();
-  const rows = useMemo(() => serviceRows
+  // Every service as a table row, before the search box has its say. The
+  // panels open a service by name and stay open while the user types behind
+  // them, so they read from this rather than from the filtered list.
+  const allRows = useMemo(() => serviceRows
     .map(({ name, meta, bucket }) => {
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
@@ -600,9 +610,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _scoped: inScope.has(name),
         _pinned: !!pinnedNames?.has(name),
       };
-    })
-    .filter(r => !term || [r.name, r.serviceBucket, r.basisLabel, r.notes].some(v => String(v).toLowerCase().includes(term))),
-  [serviceRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, term]);
+    }),
+  [serviceRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames]);
+
+  const rows = useMemo(
+    () => (term
+      ? allRows.filter(r => [r.name, r.serviceBucket, r.basisLabel, r.notes]
+        .some(v => String(v).toLowerCase().includes(term)))
+      : allRows),
+    [allRows, term],
+  );
 
   // Band 0 is the imported scope, band 1 everything else, so those rows sit
   // at the top of whatever sort or search is active rather than only when
@@ -619,6 +636,26 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   const columns = PRICING_TABLE_COLUMNS.map(col => {
     const base = { key: col.key, label: col.label, defaultWidth: col.width };
     switch (col.key) {
+      // The name carries the button that opens the service's pricing panel.
+      // Every other cell in the row is an editor that swallows its own
+      // click, so without an affordance of its own the row click is
+      // something you'd have to find by accident.
+      case 'name':
+        return {
+          ...base,
+          render: (row) => (
+            <div className={styles.pricingNameCell}>
+              <button
+                type="button"
+                className={styles.serviceDetailsBtn}
+                onClick={(e) => { e.stopPropagation(); setPricingPanelFor(row.name); }}
+                title={`Open ${row.name} — every pricing field on one screen`}
+                aria-label={`Open pricing for ${row.name}`}
+              >⤢</button>
+              <span className={styles.pricingNameText} title={row.name}>{row.name}</span>
+            </div>
+          ),
+        };
       case 'scope':
         return {
           ...base,
@@ -1134,6 +1171,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           columns={columns}
           rows={rows}
           alwaysVisible={['scope', 'name']}
+          // Every cell that does something with a click swallows it first,
+          // so this fires for the row itself — the name, the read-only
+          // cells, and the padding around the editors.
+          onRowClick={(row) => setPricingPanelFor(row.name)}
           rowGroup={pinnedRowGroup}
           rowClassName={(row) => [
             row._scoped ? styles.pricingRowScoped : '',
@@ -1157,8 +1198,34 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         />
       )}
 
+      {/* One service's pricing on one screen. Rendered before the setup
+          panel so that, when the setup builder is opened from in here, it
+          stacks on top and closing it comes back to this. */}
+      {pricingPanelFor && (() => {
+        const row = rows.find(r => r.name === pricingPanelFor)
+          // A row filtered out by the search box is still a row the user
+          // opened: fall back to the unfiltered set rather than closing the
+          // panel under them when they type behind it.
+          || allRows.find(r => r.name === pricingPanelFor);
+        if (!row) return null;
+        return (
+          <ServicePricingModal
+            row={row}
+            bases={bases}
+            // The setup builder answers Escape while it's open; without this
+            // both panels would close on the one key press.
+            escapeCloses={!setupFor}
+            onSaveField={(field, value) => savePricingField(row.name, field, value)}
+            onSetUnits={(value) => setServiceUnits(row.name, value)}
+            onToggleScope={() => toggleScope(row.name)}
+            onEditSetup={() => setSetupFor(row.name)}
+            onClose={() => setPricingPanelFor(null)}
+          />
+        );
+      })()}
+
       {setupFor && (() => {
-        const row = rows.find(r => r.name === setupFor);
+        const row = rows.find(r => r.name === setupFor) || allRows.find(r => r.name === setupFor);
         const basis = basisFor(row?.basis, bases);
         return (
           <SetupFeeModal
