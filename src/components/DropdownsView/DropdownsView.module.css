@@ -2865,6 +2865,211 @@
   background: #fff;
 }
 
+/* The Pricing Basis cell: the picker, and a count of the lines the picker
+   isn't showing. */
+.pricingBasisCell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pricingBasisCell > select {
+  min-width: 0;
+  flex: 1;
+}
+
+.pricingBasisMore {
+  flex: none;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--color-accent-subtle, #e8f0fb);
+  color: var(--color-accent, #2563eb);
+  font-size: 0.6rem;
+  font-weight: 700;
+  cursor: help;
+}
+
+/* The pricing panel carries a row per pricing basis now, so it gets more
+   room than the two modals it shares its frame with — enough that the
+   Total line at the foot of the breakdown is reachable without scrolling
+   past the fields above it. */
+.pricingPanel {
+  width: min(860px, 96vw);
+  max-height: min(860px, 94vh);
+}
+
+/* --- The fee breakdown (FeeBreakdown, in ServicePricingModal) ----------
+   One row per pricing basis plus a row for setup, because a service is very
+   often sold on more than one of them at once: a per-site fee and a cut of
+   the deal, a retrofit and the annual that keeps it running. The two rate
+   columns are typed; the two Year 1 columns are worked out. Laid out on a
+   grid rather than as a <table> so every column line stays put whether a
+   cell is showing a figure, an input or a dash. */
+.feeGrid {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every row carries the same template rather than a subgrid, so the columns
+   line up on browsers that don't have subgrid too. */
+.feeGridHead,
+.feeGridRow,
+.feeGridTotal {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1.4fr) repeat(4, minmax(4.75rem, 1fr));
+  align-items: center;
+}
+
+/* The band is on the row, not on the cells: the first column's header is
+   empty, and a cell with no text in it paints no band. */
+.feeGridHead {
+  align-items: end;
+  background: var(--color-bg-subtle, #f6f7f9);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.feeGridHead > span {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.feeGridHead > span:first-child {
+  text-align: left;
+}
+
+.feeGridRow {
+  border-bottom: 1px solid var(--color-border-subtle, #eef0f3);
+}
+
+/* A row carrying a rate is a line this service is actually priced on. The
+   other nine are the vocabulary, not the price, so the ones in use are the
+   ones that read first. */
+.feeGridRowOn {
+  background: var(--color-accent-subtle, #f3f7fd);
+}
+
+.feeGridLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--color-text);
+}
+
+/* A rate cell at rest. A button rather than a permanently-open input:
+   eighteen live number boxes in one panel is a wall, and the ones with
+   nothing in them would read as boxes waiting to be filled in. */
+.feeGridCellBtn {
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: text;
+}
+
+.feeGridCellBtn:hover:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-bg, #fff);
+}
+
+.feeGridCellBtn:disabled {
+  cursor: default;
+}
+
+.feeGridInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+.feeGridInput:focus {
+  outline: none;
+}
+
+/* A worked-out figure. Right-aligned against the rates above it so the
+   column reads as one set of numbers. */
+.feeGridFigure {
+  padding: 0.3rem 0.4rem;
+  font-size: 0.74rem;
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.feeGridEmpty {
+  color: var(--color-text-muted);
+  opacity: 0.65;
+}
+
+/* A cell that can never hold anything — the recurring end of setup, which
+   is billed once. Distinct from an empty cell, which is a rate nobody has
+   typed yet. */
+.feeGridNa {
+  padding: 0.3rem 0.4rem;
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  font-size: 0.74rem;
+  text-align: right;
+  cursor: default;
+}
+
+.feeGridSetupBtn {
+  padding: 0.3rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: pointer;
+}
+
+.feeGridSetupBtn:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg, #fff);
+}
+
+.feeGridTotal {
+  border-top: 2px solid var(--color-border);
+  background: var(--color-bg-subtle, #f6f7f9);
+  font-weight: 700;
+}
+
+.feeGridTotal > span:first-child {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--color-text);
+}
+
+.feeGridTotal .feeGridFigure {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
 /* The In Scope tick, in the footer rather than the grid: it belongs to the
    estimate on the tab behind, not to the rate card this panel edits. */
 .pricingModalScope {
