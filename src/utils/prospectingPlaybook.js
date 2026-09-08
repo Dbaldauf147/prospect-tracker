@@ -95,6 +95,12 @@ export const DEFAULT_STEPS = [
     // topmost unresolved step of the two can be 'due' at a time —
     // ladderStates stops at the first thing that isn't clear.
     dueWhenReached: true,
+    // And like that step, it can be answered without a tick. The Tagged row
+    // printed under this one counts exactly the work it asks for, so Key,
+    // Client and Key Prospect all at 100% leaves nothing to confirm — see
+    // tagsAllMapped. Let one of them fall back below 100% (a new contact
+    // arrives untagged) and it is asked for again.
+    clearTitle: 'Key, Client and Key Prospect are all fully tagged — no tag questions are left to answer',
   },
   {
     key: 'market-updates',

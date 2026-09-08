@@ -14,9 +14,11 @@
 // tab reads these gates too, and it's a lazily-loaded chunk that shouldn't
 // have to pull the whole contacts page in behind an import.
 
-import { matchesCdm } from './cdmMatch';
-import { tagReviewScore } from './contactTagReview';
-import { isCancellingForSure } from './serviceCoverage';
+// Imported with the extension so this module also loads under plain Node
+// (scripts/rosterTagDebt.test.mjs), not just through the bundler.
+import { matchesCdm } from './cdmMatch.js';
+import { tagReviewScore } from './contactTagReview.js';
+import { isCancellingForSure } from './serviceCoverage.js';
 
 // Personal-mail domains are nobody's account domain, so they never stand in
 // for a company — a gmail address is matched by company name or not at all.
@@ -210,6 +212,28 @@ export function missingTagRosters(coverage) {
     const pct = coverage[r.key]?.pct;
     return pct != null && pct < 100;
   });
+}
+
+// The other end of the same rule: has the tagging actually been finished?
+//
+// Not `missingTagRosters(coverage).length === 0`. A roster with no contacts
+// reports `pct: null`, which is not a debt — so an empty book, and one whose
+// contacts haven't loaded, look exactly like a finished one from the debt
+// count. Three answers, the same shape campaignsAllSent uses for the step
+// below (campaignOutreach.js):
+//
+//   null   the coverage hasn't landed yet — nothing is known
+//   false  at least one roster is short of 100%, or there is nothing to score
+//   true   every roster with contacts on it is fully mapped
+//
+// The Prospecting page's contact-mapping step clears itself on `true`: the
+// Tagged row it prints is these very percentages, so all three at 100% means
+// there are no tag questions left for it to ask about.
+export function tagsAllMapped(coverage) {
+  if (!coverage) return null;
+  const scored = TAG_DEBT_ROSTERS.filter(r => coverage[r.key]?.pct != null);
+  if (scored.length === 0) return false;
+  return scored.every(r => coverage[r.key].pct >= 100);
 }
 
 // A contact with the user's manual Company override applied, when there is

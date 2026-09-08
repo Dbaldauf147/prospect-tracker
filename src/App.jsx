@@ -140,6 +140,10 @@ function App() {
     prospects: dataLoading ? null : prospects,
     settings,
     userId: user?.uid,
+    // The contact-mapping step's own answer: the same roster percentages the
+    // Tagged row on that step prints, off the one hook that computes them, so
+    // the pill and the row underneath it can't disagree.
+    tagCoverage: tagDebt.coverage,
   });
   // The roster is passed in so the sheet import can diff against what the
   // app already has, instead of re-reading the whole collection on a timer.
