@@ -10,7 +10,7 @@
 // (null, which the card renders as an em dash plus what to open) and a
 // real zero. A coverage ratio of 0.00× is a claim about the pipeline;
 // a blank one is a claim about the cache, and they must not swap.
-import { headlineKpis, buildReviewSnapshot } from '../src/utils/weeklyReview.js';
+import { headlineKpis, buildReviewSnapshot, emailKpiCards } from '../src/utils/weeklyReview.js';
 import { annualSalesProjection } from '../src/utils/oppsMetrics.js';
 
 let failures = 0;
@@ -335,6 +335,51 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
   // coverage divides — 2M over a 1M target.
   check('real snapshot: coverage from hand-entered actuals', k.coverageRatio.actual, 2);
   check('real snapshot: coverage flagged as not live', k.coverageRatio.live, false);
+}
+
+// ---- The email's cut of the same three KPIs --------------------------------
+// The tab shows all three cards with their arithmetic underneath; the email
+// shows two, dollars first. What is pinned here is the shape of that cut,
+// because it is the difference between a report anyone reads on a phone and
+// the wall of figures that shipped before it.
+{
+  const cards = emailKpiCards(headlineKpis(snap()));
+  check('email: two cards, not three', cards.length, 2);
+  check('email: no projected year-end card',
+    cards.some(c => /projected/i.test(c.label)), false);
+  check('email: the progress card leads with the dollars sold',
+    cards[0].value, '$1,200,000');
+  check('email: the percentage follows, with the target',
+    cards[0].lines[0], '40.0% sold of the $3,000,000 target');
+  check('email: one line under the figure, not four', cards[0].lines.length, 1);
+  check('email: the pace verdict is kept', cards[0].chip, 'Behind pace');
+  check('email: the coverage ratio keeps its number', cards[1].value, '2.74×');
+  check('email: a coverage ratio that has an answer needs no working',
+    cards[1].lines.length, 0);
+}
+
+// A missing figure still has to say what to open: an em dash on its own is a
+// claim about the cache that the reader cannot act on.
+{
+  const bare = emailKpiCards(headlineKpis(snap({ noYoy: true, quota: { target: 0, closedYTD: null }, coverage: { actual: null } })));
+  check('email: no target → the progress card says what to set',
+    bare[0].lines[0], 'Set an annual target on Charts → Pipeline.');
+  check('email: no sold figure → an em dash, not a zero', bare[0].value, '—');
+  check('email: no target → the coverage card says that too, not "paste BFO"',
+    bare[1].lines[0], 'Set an annual target on Charts → Pipeline.');
+  // A target with no pipeline behind it is the other half: the fix is a
+  // paste, not a setting.
+  const noPipe = emailKpiCards(headlineKpis(snap({ coverage: { actual: null } })));
+  check('email: target but no pipeline → the card says what to paste',
+    noPipe[1].lines[0], 'Paste BFO Activity so open pipeline can be measured.');
+}
+{
+  // Target set, closes not cached: a different missing piece, a different fix.
+  const cards = emailKpiCards(headlineKpis(snap({ noYoy: true, quota: { closedYTD: null } })));
+  check('email: target but no closes → names Opps 2',
+    cards[0].lines[0].includes('open Opps 2'), true);
+  check('email: target but no closes → still prints the target',
+    cards[0].lines[0].includes('$3,000,000'), true);
 }
 
 console.log(failures === 0 ? '\nAll headlineKpis tests passed.' : `\n${failures} test(s) failed.`);
