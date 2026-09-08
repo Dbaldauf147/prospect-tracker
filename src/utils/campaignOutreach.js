@@ -26,15 +26,58 @@ export function isCampaignFresh(c, nowMs = Date.now()) {
   return (nowMs - Math.max(...times)) <= ACTIVE_WINDOW_MS;
 }
 
+// How long "Pause" parks a campaign for. Two days: long enough to cover a
+// wait on someone else — a list to be checked, a colleague to come back —
+// without being long enough to forget the campaign exists.
+export const CAMPAIGN_PAUSE_DAYS = 2;
+const PAUSE_MS = CAMPAIGN_PAUSE_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * When a pause started now should lift, as an ISO string to store on the
+ * campaign's `pausedUntil`.
+ */
+export function campaignPauseUntil(nowMs = Date.now()) {
+  return new Date(nowMs + PAUSE_MS).toISOString();
+}
+
+/**
+ * Is this campaign currently paused?
+ *
+ * A pause is a timestamp, not a flag, so it lifts on its own: once
+ * `pausedUntil` is in the past the campaign is simply back to whatever it was
+ * before, with nothing to remember to undo. An unparseable value reads as not
+ * paused — a campaign silently parked forever by a bad date is the one
+ * outcome worth ruling out.
+ */
+export function isCampaignPaused(c, nowMs = Date.now()) {
+  const until = c?.pausedUntil ? new Date(c.pausedUntil).getTime() : NaN;
+  return Number.isFinite(until) && until > nowMs;
+}
+
 /**
  * Whether a campaign counts as Active.
  *
- * A manual Active/Inactive override always wins over the 60-day rule:
- * `manualActive` is a boolean when the user has set the status by hand and
- * undefined when the campaign should follow the automatic check.
+ * A live pause wins over everything: a paused campaign isn't active work, and
+ * that is the whole point of pausing it. Otherwise a manual Active/Inactive
+ * override wins over the 60-day rule — `manualActive` is a boolean when the
+ * user has set the status by hand and undefined when the campaign should
+ * follow the automatic check.
  */
 export function isCampaignActive(c, nowMs = Date.now()) {
+  if (isCampaignPaused(c, nowMs)) return false;
   return typeof c?.manualActive === 'boolean' ? c.manualActive : isCampaignFresh(c, nowMs);
+}
+
+/**
+ * The campaign's status as one word: 'paused', 'active' or 'inactive'.
+ *
+ * Both pages read this rather than deciding for themselves, so the Email
+ * Campaigns table and the Prospecting ladder can't end up calling the same
+ * campaign Paused on one page and Inactive on the other.
+ */
+export function campaignStatus(c, nowMs = Date.now()) {
+  if (isCampaignPaused(c, nowMs)) return 'paused';
+  return isCampaignActive(c, nowMs) ? 'active' : 'inactive';
 }
 
 /**
@@ -67,9 +110,12 @@ export function campaignOutreachLabel(c) {
  *
  * Ordered by what's left to do: the campaign owing the most sends leads,
  * ties broken by the lower percentage and then by name so the list is
- * stable between renders. Inactive campaigns sort last — they're still
- * listed, because a parked campaign that never finished is exactly the
- * thing that goes quiet and gets forgotten, but they don't lead.
+ * stable between renders. Inactive campaigns sort below the active ones and
+ * paused ones below those — all three are still listed, because a parked
+ * campaign that never finished is exactly the thing that goes quiet and gets
+ * forgotten, but a campaign deliberately paused until a date is the one the
+ * user has already dealt with, so it sits at the bottom until its pause
+ * lifts and it rejoins the list on its own.
  *
  * Rows carry `index`, the campaign's position in the saved list, which is
  * what identifies it on the Email Campaigns tab (subjects need not be
@@ -90,11 +136,16 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
       subject: primarySubject(c),
       subjects: campaignSubjects(c),
       active: isCampaignActive(c, nowMs),
+      status: campaignStatus(c, nowMs),
+      // When a paused campaign comes back, so the row can say so instead of
+      // just reading as parked.
+      pausedUntil: isCampaignPaused(c, nowMs) ? c.pausedUntil : null,
       ...stats,
     });
   });
+  const rank = { active: 0, inactive: 1, paused: 2 };
   rows.sort((a, b) => (
-    (a.active === b.active ? 0 : a.active ? -1 : 1)
+    (rank[a.status] ?? 1) - (rank[b.status] ?? 1)
     || b.remaining - a.remaining
     || a.pct - b.pct
     || a.label.localeCompare(b.label)

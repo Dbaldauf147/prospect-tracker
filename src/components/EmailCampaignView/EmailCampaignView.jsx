@@ -13,7 +13,9 @@ import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByR
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { brandFromDomain } from '../../utils/companyGuess';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
-import { isCampaignActive } from '../../utils/campaignOutreach';
+import {
+  isCampaignActive, isCampaignPaused, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
+} from '../../utils/campaignOutreach';
 import {
   campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, csvFilename, downloadCsv,
 } from '../../utils/campaignExport';
@@ -399,10 +401,21 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       removedEmails: results.removedEmails || [],
       contacts: results.contacts,
     }, campaignSubjects(results));
-    // Replace if a campaign already leads with the same subject, otherwise add
+    // Replace if a campaign already leads with the same subject, otherwise add.
+    // A replace rebuilds the campaign from the search results, which know
+    // nothing about its status — so the two status fields are carried across
+    // by hand. Without this a re-save silently un-pauses a paused campaign and
+    // wipes a manual Inactive, and the user's next clue is the campaign
+    // reappearing at the top of the Prospecting ladder.
     const existing = savedCampaigns.findIndex(c => primarySubject(c) === campaign.subject);
+    const prev = existing >= 0 ? savedCampaigns[existing] : null;
+    // Only real values are carried: an `undefined` key would go to Firestore
+    // as one, which it refuses.
+    const kept = {};
+    if (typeof prev?.manualActive === 'boolean') kept.manualActive = prev.manualActive;
+    if (prev?.pausedUntil) kept.pausedUntil = prev.pausedUntil;
     const updated = existing >= 0
-      ? savedCampaigns.map((c, i) => i === existing ? campaign : c)
+      ? savedCampaigns.map((c, i) => i === existing ? { ...campaign, ...kept } : c)
       : [campaign, ...savedCampaigns];
     await saveCampaigns(updated);
     setSaving(false);
@@ -847,13 +860,52 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Flip a saved campaign's Active/Inactive status by hand and persist it.
   // Toggling always writes an explicit boolean, so a campaign the auto rule
   // considers stale can be forced Active and a fresh one can be marked
-  // Inactive.
+  // Inactive. A paused campaign resumes instead: while it's paused the pill
+  // reads "Paused", and clicking a status is how you get out of it.
   function toggleCampaignActive(index, e) {
     if (e) e.stopPropagation();
     const c = savedCampaigns[index];
     if (!c) return;
+    if (isCampaignPaused(c)) { resumeCampaign(index); return; }
     const next = !effectiveActive(c);
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, manualActive: next } : x)));
+  }
+
+  // Park a campaign for CAMPAIGN_PAUSE_DAYS days. Stored as the moment the
+  // pause lifts rather than a flag, so it un-pauses itself — there's nothing
+  // to remember to switch back on, and a campaign can't sit paused for a
+  // month because nobody came back to it. The Active/Inactive setting
+  // underneath is untouched and is what the campaign returns to.
+  function pauseCampaign(index, e) {
+    if (e) e.stopPropagation();
+    const c = savedCampaigns[index];
+    if (!c) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (
+      i === index ? { ...x, pausedUntil: campaignPauseUntil() } : x
+    )));
+  }
+
+  // End a pause early. The field is blanked rather than deleted: settings
+  // merge key-by-key across devices, so a removed key can come back from a
+  // stale copy and re-pause a campaign the user has already resumed.
+  function resumeCampaign(index, e) {
+    if (e) e.stopPropagation();
+    const c = savedCampaigns[index];
+    if (!c) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, pausedUntil: '' } : x)));
+  }
+
+  // When a pause lifts, in the user's own words: "in 2 days", "tomorrow",
+  // "in 4 hours" — a date alone reads as an expiry, and the point of a pause
+  // is how long is left of it.
+  function pauseLeftLabel(until) {
+    const ms = new Date(until).getTime() - Date.now();
+    if (!Number.isFinite(ms) || ms <= 0) return 'now';
+    const hours = Math.round(ms / (60 * 60 * 1000));
+    if (hours < 1) return 'within the hour';
+    if (hours < 24) return `in ${hours} hour${hours === 1 ? '' : 's'}`;
+    const days = Math.round(hours / 24);
+    return days === 1 ? 'tomorrow' : `in ${days} days`;
   }
 
   // Click a column header to sort by it; click again to flip direction. A new
@@ -1870,8 +1922,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               const sent = c.uniqueRecipients ?? 0;
               const total = c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients ?? 0;
               const pctSent = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
+              const paused = isCampaignPaused(c);
               const active = effectiveActive(c);
               const manualStatus = typeof c.manualActive === 'boolean';
+              const pauseNote = paused ? `Paused — resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})` : '';
               return (
               <tr
                 key={i}
@@ -1881,7 +1935,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   cursor: isEditing ? 'default' : 'pointer',
                   opacity: active ? 1 : 0.55,
                 }}
-                title={active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive: no save or refresh in the last 60 days')}
+                title={paused ? pauseNote : (active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive: no save or refresh in the last 60 days'))}
                 onClick={isEditing ? undefined : () => viewCampaign(i)}
               >
                 <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
@@ -1950,20 +2004,47 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{pctSent}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', verticalAlign: 'top', color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'center', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-                      <button
-                        onClick={e => toggleCampaignActive(i, e)}
-                        title={active
-                          ? 'Active: click to mark this campaign inactive'
-                          : (manualStatus
-                            ? 'Manually marked inactive: click to mark active'
-                            : 'Inactive (no activity in 60 days): click to mark active')}
-                        style={{
-                          padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
-                          textTransform: 'uppercase', letterSpacing: '0.03em', fontFamily: 'inherit', cursor: 'pointer',
-                          border: active ? '1px solid #86EFAC' : '1px solid var(--color-border)',
-                          background: active ? '#DCFCE7' : '#F3F4F6', color: active ? '#15803D' : '#6B7280',
-                        }}
-                      >{active ? 'Active' : 'Inactive'}</button>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          onClick={e => toggleCampaignActive(i, e)}
+                          title={paused
+                            ? `${pauseNote}. Click to resume now`
+                            : (active
+                              ? 'Active: click to mark this campaign inactive'
+                              : (manualStatus
+                                ? 'Manually marked inactive: click to mark active'
+                                : 'Inactive (no activity in 60 days): click to mark active'))}
+                          style={{
+                            padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
+                            textTransform: 'uppercase', letterSpacing: '0.03em', fontFamily: 'inherit', cursor: 'pointer',
+                            border: paused ? '1px solid #FCD34D' : (active ? '1px solid #86EFAC' : '1px solid var(--color-border)'),
+                            background: paused ? '#FEF3C7' : (active ? '#DCFCE7' : '#F3F4F6'),
+                            color: paused ? '#92400E' : (active ? '#15803D' : '#6B7280'),
+                          }}
+                        >{paused ? 'Paused' : (active ? 'Active' : 'Inactive')}</button>
+                        {/* Pausing is its own control; resuming is the pill
+                            above, which is what a "Paused" badge invites a
+                            click on. So this button only exists while the
+                            campaign is running. */}
+                        {!paused && (
+                          <button
+                            onClick={e => pauseCampaign(i, e)}
+                            title={`Pause this campaign for ${CAMPAIGN_PAUSE_DAYS} days — it goes back to ${active ? 'Active' : 'Inactive'} on its own`}
+                            aria-label={`Pause for ${CAMPAIGN_PAUSE_DAYS} days`}
+                            style={{
+                              padding: '2px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
+                              fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.5,
+                              border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+                              color: 'var(--color-text-secondary)',
+                            }}
+                          >Pause {CAMPAIGN_PAUSE_DAYS}d</button>
+                        )}
+                      </div>
+                      {paused && (
+                        <div style={{ marginTop: 2, fontSize: '0.6rem', color: '#92400E', whiteSpace: 'nowrap' }}>
+                          resumes {pauseLeftLabel(c.pausedUntil)}
+                        </div>
+                      )}
                     </td>
                   </>
                 )}
