@@ -1,5 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { ColumnToggle } from '../common/ColumnToggle';
+import {
+  isColumnVisible, resetToStarred, applyStar, orderColumns, mergeColumnOrder,
+} from '../../utils/tableColumnPrefs';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -8,6 +13,56 @@ import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByR
 import { describeExcludedOpens } from '../../utils/emailOpens';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import { isCampaignActive } from '../../utils/campaignOutreach';
+
+// The contact table's columns, and how wide each one starts.
+//
+// One entry per column the table can show, in the order it ships in. The
+// user's own choices — which show, which are starred as their default view,
+// what order, how wide — sit on top of this in localStorage, keyed by
+// column key, so adding a column here doesn't disturb a layout somebody has
+// already set up: anything not on their hidden list simply appears.
+//
+// "Sent To" is the row's identity, so it can't be hidden; the remove (×)
+// button is table scaffolding rather than a column and isn't offered at all.
+const CONTACT_COLUMNS = [
+  { key: 'email', label: 'Sent To', sortKey: 'email', width: 280 },
+  { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
+  { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
+  { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
+  {
+    key: 'tracking',
+    label: 'Loads / Clicks',
+    width: 160,
+    // Only worth a column when something in this campaign was actually
+    // sent with tracking on.
+    needsTracking: true,
+    title: 'Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes; clicks exclude security-gateway link scans. Hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it) — clicks are the better signal.',
+  },
+  { key: 'repliedBy', label: 'Replied By', sortKey: 'repliedBy', width: 150 },
+  { key: 'replyDate', label: 'Reply Date', sortKey: 'replyDate', width: 110 },
+  { key: 'eventStatus', label: 'Event Status', sortKey: 'eventStatus', width: 130 },
+];
+const CONTACT_COLS_LOCKED = ['email'];
+const ACTIONS_COL_WIDTH = 36;
+const MIN_COL_WIDTH = 60;
+
+// Column prefs live per user, under one key each.
+const COLS_LS = {
+  hidden: 'email-campaign:contact-cols-hidden',
+  removed: 'email-campaign:contact-cols-removed',
+  starred: 'email-campaign:contact-cols-starred',
+  order: 'email-campaign:contact-cols-order',
+  widths: 'email-campaign:contact-cols-widths',
+};
+function readCols(key, fallback) {
+  try {
+    const v = JSON.parse(userLsGet(COLS_LS[key]));
+    return v ?? fallback;
+  } catch { return fallback; }
+}
+function writeCols(key, value) {
+  try { userLsSet(COLS_LS[key], JSON.stringify(value)); } catch { /* a full or blocked localStorage just means prefs don't persist */ }
+}
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
@@ -37,6 +92,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Which column the contact table is sorted by, and the direction. key === null
   // leaves the table in its natural (roster) order.
   const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
+  // Column layout: what's hidden, what's starred as the user's default view,
+  // what's been deleted out of the table, the order, and the widths. Stored
+  // as the user set it and reapplied on every visit.
+  const [colHidden, setColHidden] = useState(() => new Set(readCols('hidden', [])));
+  const [colStarred, setColStarred] = useState(() => new Set(readCols('starred', [])));
+  const [colRemoved, setColRemoved] = useState(() => new Set(readCols('removed', [])));
+  const [colOrder, setColOrder] = useState(() => readCols('order', []));
+  const [colWidths, setColWidths] = useState(() => readCols('widths', {}));
+  useEffect(() => { writeCols('hidden', [...colHidden]); }, [colHidden]);
+  useEffect(() => { writeCols('starred', [...colStarred]); }, [colStarred]);
+  useEffect(() => { writeCols('removed', [...colRemoved]); }, [colRemoved]);
+  useEffect(() => { writeCols('order', colOrder); }, [colOrder]);
+  useEffect(() => { writeCols('widths', colWidths); }, [colWidths]);
   // Identifies the most recent "open a saved campaign" request so a slow
   // refresh for a campaign the user has since navigated away from can't stomp
   // the currently-shown one.
@@ -791,15 +859,219 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     });
   })();
 
-  const SORT_HEADER_STYLE = { padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
-  function SortHeader({ label, sortKey }) {
-    const active = sortConfig.key === sortKey;
+  // ---- Column layout -----------------------------------------------------
+  // The lineup this campaign can show (the tracking column only exists when
+  // something here was sent with a pixel), then the user's order, then what
+  // survives their hidden / deleted lists.
+  const availableColumns = useMemo(
+    () => CONTACT_COLUMNS.filter(c => !c.needsTracking || trackingStats.tracked > 0),
+    [trackingStats.tracked],
+  );
+  const orderedColumns = useMemo(
+    () => orderColumns(availableColumns.filter(c => !colRemoved.has(c.key)), colOrder),
+    [availableColumns, colRemoved, colOrder],
+  );
+  const removedColumns = useMemo(
+    () => availableColumns.filter(c => colRemoved.has(c.key)),
+    [availableColumns, colRemoved],
+  );
+  const visibleColumns = useMemo(
+    () => orderedColumns.filter(c => isColumnVisible(c.key, {
+      hidden: colHidden, removed: colRemoved, alwaysVisible: CONTACT_COLS_LOCKED,
+    })),
+    [orderedColumns, colHidden, colRemoved],
+  );
+  const visibleColKeys = useMemo(() => new Set(visibleColumns.map(c => c.key)), [visibleColumns]);
+  const widthOf = useCallback(
+    (col) => Number(colWidths[col.key]) || col.width,
+    [colWidths],
+  );
+  // The table is laid out at exactly the width of its columns, and at least
+  // the width of its box: resizing then means what it says, and a table
+  // narrower than the pane still fills it rather than leaving a gap.
+  const tableWidth = useMemo(
+    () => visibleColumns.reduce((sum, c) => sum + widthOf(c), 0) + ACTIONS_COL_WIDTH,
+    [visibleColumns, widthOf],
+  );
+
+  const toggleCol = (key) => setColHidden(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const starCol = (key) => {
+    const next = applyStar({ key, starred: colStarred, hidden: colHidden, removed: colRemoved, star: !colStarred.has(key) });
+    setColStarred(next.starred);
+    setColHidden(next.hidden);
+    setColRemoved(next.removed);
+  };
+  const removeCol = (key) => setColRemoved(prev => new Set(prev).add(key));
+  const restoreCol = (key) => setColRemoved(prev => {
+    const next = new Set(prev);
+    next.delete(key);
+    return next;
+  });
+  const reorderCols = (keys) => setColOrder(prev => mergeColumnOrder(prev, keys));
+  // Reset is the way back to a layout that got away from you: the starred
+  // columns (or all of them, with nothing starred), the shipped order, and
+  // the shipped widths.
+  const resetCols = () => {
+    const { hidden, removed } = resetToStarred({
+      columnKeys: availableColumns.map(c => c.key),
+      starred: colStarred,
+      alwaysVisible: CONTACT_COLS_LOCKED,
+    });
+    setColHidden(hidden);
+    setColRemoved(removed);
+    setColOrder([]);
+    setColWidths({});
+  };
+
+  // Drag a header's right edge to set that column's width. The key and the
+  // start metrics are captured in local scope rather than read back off the
+  // ref: a mousemove can land after the mouseup that cleared it, and reading
+  // `.key` off null there would blank the page.
+  const resizingRef = useRef(null);
+  function startColResize(colKey, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const col = CONTACT_COLUMNS.find(c => c.key === colKey);
+    const startWidth = Number(colWidths[colKey]) || col?.width || 120;
+    resizingRef.current = { key: colKey, startX, startWidth };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(MIN_COL_WIDTH, startWidth + (ev.clientX - startX));
+      setColWidths(prev => ({ ...prev, [colKey]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // One cell, by column key. The markup is the same it has always been —
+  // this only moves it behind a key so a column can be hidden, moved or
+  // resized without the row and the header drifting out of step.
+  function renderContactCell(key, c, i, isDup) {
+    switch (key) {
+      case 'email':
+        return (
+          <>
+            <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email}</span>
+              {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
+            </div>
+            {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
+          </>
+        );
+      case 'sentDate':
+        return <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</span>;
+      case 'delivery': {
+        const d = deliveryFor(c);
+        const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
+          : d === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
+            : d === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
+              : { background: 'transparent', color: 'var(--color-text-muted)' };
+        return (
+          <span title={DELIVERY_TITLE[d]} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', ...tone }}>
+            {DELIVERY_LABEL[d]}
+          </span>
+        );
+      }
+      case 'status':
+        return c.replied
+          ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
+          : c.bounced
+            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEE2E2', color: '#991B1B' }} title="The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.">Bounced</span>
+            : c.outOfOffice
+              ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E', whiteSpace: 'nowrap' }} title={c.oooSubject ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.` : "Their auto-responder answered. Not a no — worth a second send when they're back."}>Out of Office</span>
+              : c.sentDate
+                ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280', whiteSpace: 'nowrap' }}>No Reply</span>
+                : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E', whiteSpace: 'nowrap' }} title="In this campaign but not yet sent the email">Not Sent</span>;
+      case 'tracking': {
+        const t = lookupTracking(c.email);
+        if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
+        const excluded = describeExcludedOpens(t);
+        const openTitle = [
+          t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded',
+          excluded,
+          t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
+        ].filter(Boolean).join(' ');
+        const clickTitle = [
+          t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded',
+          t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
+        ].filter(Boolean).join(' ');
+        return (
+          <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center', whiteSpace: 'nowrap' }}>
+            <span
+              title={openTitle}
+              style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.openCount ? '#FEF3C7' : '#F3F4F6', color: t.openCount ? '#92400E' : '#6B7280' }}
+            >{t.openCount} load{t.openCount === 1 ? '' : 's'}</span>
+            <span
+              title={clickTitle}
+              style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
+            >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
+          </span>
+        );
+      }
+      case 'repliedBy':
+        return <span style={{ color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }} title={c.repliedBy || ''}>{c.repliedBy || '-'}</span>;
+      case 'replyDate':
+        return <span style={{ color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</span>;
+      case 'eventStatus': {
+        const EVENT_STATUS_STYLES = {
+          going: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
+          'not-going': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+          maybe: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
+        };
+        const st = EVENT_STATUS_STYLES[c.eventStatus] || { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' };
+        return (
+          <select
+            value={c.eventStatus || ''}
+            onChange={e => setEventStatus(i, e.target.value)}
+            style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', maxWidth: '100%', ...st }}
+          >
+            <option value="">-</option>
+            <option value="going">Going</option>
+            <option value="not-going">Not going</option>
+            <option value="maybe">Maybe</option>
+          </select>
+        );
+      }
+      default:
+        return null;
+    }
+  }
+
+  const SORT_HEADER_STYLE = { position: 'relative', padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
+
+  // A column header: sorts on click where the column can be sorted, and
+  // always carries the grip on its right edge that sets its width.
+  function ColHeader({ col }) {
+    const active = col.sortKey && sortConfig.key === col.sortKey;
     return (
-      <th onClick={() => toggleSort(sortKey)} style={SORT_HEADER_STYLE} title={`Sort by ${label}`}>
-        {label}
-        <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', opacity: active ? 1 : 0.3 }}>
-          {active ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
-        </span>
+      <th
+        style={{ ...SORT_HEADER_STYLE, cursor: col.sortKey ? 'pointer' : 'default' }}
+        title={col.title || (col.sortKey ? `Sort by ${col.label}` : col.label)}
+        onClick={col.sortKey ? () => toggleSort(col.sortKey) : undefined}
+      >
+        {col.label}
+        {col.sortKey && (
+          <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', opacity: active ? 1 : 0.3 }}>
+            {active ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        )}
+        <span
+          onMouseDown={e => startColResize(col.key, e)}
+          onClick={e => e.stopPropagation()}
+          title={`Drag to resize ${col.label}`}
+          style={RESIZE_HANDLE}
+        />
       </th>
     );
   }
@@ -1049,6 +1321,27 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 cursor: addEmail.trim() ? 'pointer' : 'default', opacity: addEmail.trim() ? 1 : 0.6,
               }}
             >Add email</button>
+
+            {/* The same Columns picker the contacts tables use: show / hide,
+                star a default set, drag to reorder, Reset to get back. Widths
+                are set by dragging a header's right edge. */}
+            <div style={{ marginLeft: 'auto' }}>
+              <ColumnToggle
+                align="right"
+                columns={orderedColumns}
+                visibleCols={visibleColKeys}
+                starredCols={colStarred}
+                removedColumns={removedColumns}
+                alwaysVisible={CONTACT_COLS_LOCKED}
+                colNames={{}}
+                onToggle={toggleCol}
+                onStar={starCol}
+                onRemove={removeCol}
+                onRestore={restoreCol}
+                onReorder={reorderCols}
+                onResetColumns={resetCols}
+              />
+            </div>
           </div>
 
           {/* Contact table */}
@@ -1059,24 +1352,24 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                columns don't compress below minWidth, they just go past the
                edge. */
             <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', maxHeight: '500px', overflowY: 'auto', overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '1080px', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+              {/* Fixed layout, so a column is exactly as wide as it is set to
+                  be and a drag on one header edge moves that column and
+                  nothing else. The last column has no width of its own: it
+                  soaks up whatever is left over, which is what keeps a
+                  narrow table filling the pane without the other columns
+                  being stretched to do it. Past the pane's width the table
+                  simply overflows and the box scrolls. */}
+              <table style={{ tableLayout: 'fixed', width: '100%', minWidth: `${tableWidth}px`, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                <colgroup>
+                  {visibleColumns.map(col => <col key={col.key} style={{ width: `${widthOf(col)}px` }} />)}
+                  <col style={{ width: `${ACTIONS_COL_WIDTH}px` }} />
+                  <col />
+                </colgroup>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
-                    <SortHeader label="Sent To" sortKey="email" />
-                    <SortHeader label="Sent Date" sortKey="sentDate" />
-                    <SortHeader label="Delivery" sortKey="delivery" />
-                    <SortHeader label="Status" sortKey="status" />
-                    {/* Only worth a column when something in this campaign
-                        was actually sent with tracking on. */}
-                    {trackingStats.tracked > 0 && (
-                      <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-                        title="Image loads exclude pixel hits before the send, automated fetches and repeat loads within 5 minutes; clicks exclude security-gateway link scans. Hover a count to see what was dropped. A load is not a read (Apple Mail pre-loads the pixel, Outlook blocks it) — clicks are the better signal."
-                      >Loads / Clicks</th>
-                    )}
-                    <SortHeader label="Replied By" sortKey="repliedBy" />
-                    <SortHeader label="Reply Date" sortKey="replyDate" />
-                    <SortHeader label="Event Status" sortKey="eventStatus" />
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', width: '36px' }}></th>
+                    {visibleColumns.map(col => <ColHeader key={col.key} col={col} />)}
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }} aria-label="Remove" />
+                    <th style={{ borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1084,96 +1377,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     const isDup = dupKeys.has(contactKey(c));
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)', background: isDup ? '#FFFBEB' : undefined }}>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text)' }}>
-                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                          {c.email}
-                          {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E' }} title="This contact appears more than once in this campaign">Duplicate</span>}
-                        </div>
-                        {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
-                      </td>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const d = deliveryFor(c);
-                          const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
-                            : d === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
-                            : d === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
-                            : { background: 'transparent', color: 'var(--color-text-muted)' };
-                          return (
-                            <span title={DELIVERY_TITLE[d]} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, ...tone }}>
-                              {DELIVERY_LABEL[d]}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ padding: '0.4rem 0.6rem' }}>
-                        {c.replied
-                          ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
-                          : c.bounced
-                            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEE2E2', color: '#991B1B' }} title="The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.">Bounced</span>
-                            : c.outOfOffice
-                              ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title={c.oooSubject ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.` : "Their auto-responder answered. Not a no — worth a second send when they're back."}>Out of Office</span>
-                              : c.sentDate
-                                ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
-                                : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
-                        }
-                      </td>
-                      {trackingStats.tracked > 0 && (
-                        <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
-                          {(() => {
-                            const t = lookupTracking(c.email);
-                            if (!t) {
-                              return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
-                            }
-                            const excluded = describeExcludedOpens(t);
-                            const openTitle = [
-                              t.firstOpenAt ? `First opened ${new Date(t.firstOpenAt).toLocaleString()}` : 'No opens recorded',
-                              excluded,
-                              t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
-                            ].filter(Boolean).join(' ');
-                            const clickTitle = [
-                              t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}` : 'No clicks recorded',
-                              t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
-                            ].filter(Boolean).join(' ');
-                            return (
-                              <span style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
-                                <span
-                                  title={openTitle}
-                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.openCount ? '#FEF3C7' : '#F3F4F6', color: t.openCount ? '#92400E' : '#6B7280' }}
-                                >{t.openCount} load{t.openCount === 1 ? '' : 's'}</span>
-                                <span
-                                  title={clickTitle}
-                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
-                                >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
-                              </span>
-                            );
-                          })()}
+                      {visibleColumns.map(col => (
+                        <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {renderContactCell(col.key, c, i, isDup)}
                         </td>
-                      )}
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '-'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem' }}>
-                        {(() => {
-                          const EVENT_STATUS_STYLES = {
-                            going: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
-                            'not-going': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
-                            maybe: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
-                          };
-                          const s = EVENT_STATUS_STYLES[c.eventStatus] || { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' };
-                          return (
-                            <select
-                              value={c.eventStatus || ''}
-                              onChange={e => setEventStatus(i, e.target.value)}
-                              style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...s }}
-                            >
-                              <option value="">-</option>
-                              <option value="going">Going</option>
-                              <option value="not-going">Not going</option>
-                              <option value="maybe">Maybe</option>
-                            </select>
-                          );
-                        })()}
-                      </td>
+                      ))}
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => removeContact(i)}
@@ -1183,6 +1391,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                           title="Remove from list"
                         >&times;</button>
                       </td>
+                      <td aria-hidden="true" />
                     </tr>
                     );
                   })}
