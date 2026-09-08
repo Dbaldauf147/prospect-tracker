@@ -31,9 +31,11 @@ import {
   exploredStatus,
   planBulkAdd,
   planBulkRemove,
+  planClearServices,
   scopeStatusCounts,
   withService,
   withoutService,
+  clearServices,
   emptyClientScope,
   estimateClient,
   dealSizingWarnings,
@@ -355,6 +357,20 @@ check('bulk: remove targets only the clients that have it',
 check('bulk: remove with nothing picked targets nobody',
   planBulkRemove({ clients: BOOK, service: '', scopeOf }), []);
 
+// Starting the book over. Unlike the two above this asks nothing about a
+// service — only which clients have anything picked, since a client with an
+// empty scope is not something being cleared and shouldn't be counted as one.
+check('bulk: clearing targets only the clients with services picked',
+  names(planClearServices({ clients: BOOK, scopeOf })), ['Scoped']);
+// A status on the company card is not a pick on this page: "Buyer" already
+// buys the service, and there is still nothing here to clear.
+check('bulk: a client who buys a service but has none picked is left out',
+  names(planClearServices({ clients: [BOOK[2]], scopeOf })), []);
+check('bulk: clearing an empty book plans nothing',
+  planClearServices({ clients: [], scopeOf }), []);
+check('bulk: a client with counts but no services is not something to clear',
+  planClearServices({ clients: [{ company: 'Counted' }], scopeOf: () => ({ counts: { sites: 4 } }) }), []);
+
 // ---- editing one scope --------------------------------------------------
 
 check('edit: adding a service keeps the rest of the scope',
@@ -370,6 +386,20 @@ check('edit: removing a service takes its unit count with it',
   { services: ['B'], counts: {}, serviceUnits: { B: 12 }, dealSize: '' });
 check('edit: removing one that was never there changes nothing',
   withoutService({ services: ['A'] }, 'Z').services, ['A']);
+
+// Clearing is withoutService applied to the lot: the per-service counts go
+// with the services, and what was answered about the CLIENT rather than about
+// a service stays, so re-picking doesn't mean typing the site count again.
+check('edit: clearing takes every service and its unit counts',
+  clearServices({ services: ['A', 'B'], serviceUnits: { A: 400, B: 12 }, counts: { sites: 10 }, dealSize: '25000' }),
+  { services: [], counts: { sites: 10 }, serviceUnits: {}, dealSize: '25000' });
+check('edit: clearing a scope with nothing picked leaves it alone',
+  clearServices({ counts: { sites: 10 } }),
+  { services: [], counts: { sites: 10 }, serviceUnits: {}, dealSize: '' });
+// A scope holding only client-level answers is still an unsized client, which
+// is what stops the cleared rows being stored as scopes that say nothing.
+check('edit: a cleared scope with nothing else in it is empty',
+  scopeIsEmpty(clearServices({ services: ['A'], serviceUnits: { A: 400 } })), true);
 
 console.log(failures === 0 ? '\nAll deal-sizing tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
