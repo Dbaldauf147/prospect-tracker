@@ -84,6 +84,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [editSubject, setEditSubject] = useState('');
   const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject from the results header
   const [subjectDraft, setSubjectDraft] = useState('');
+  // "New Campaign" form: create a campaign by hand instead of searching for a
+  // subject line that has already been sent.
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newSubject, setNewSubject] = useState('');
+  const [creating, setCreating] = useState(false); // manual create in flight
   // Draft for the "add an email to this campaign" input. Manually-added
   // addresses are the only way contacts enter a campaign's fixed list.
   const [addEmail, setAddEmail] = useState('');
@@ -357,6 +363,66 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       : [campaign, ...savedCampaigns];
     await saveCampaigns(updated);
     setSaving(false);
+  }
+
+  // Create a campaign by hand, without searching a subject line first.
+  //
+  // The search flow can only produce a campaign once mail has already gone out
+  // for that subject; this is how one gets set up ahead of the send. The new
+  // campaign starts with an empty roster — the same fixed, manually-curated
+  // list every campaign has — is saved straight away, and is opened so contacts
+  // can be added with "Add an email to this campaign…".
+  async function createCampaign() {
+    const nextSubject = newSubject.trim();
+    if (!nextSubject) {
+      setError('Give the new campaign a subject line.');
+      return;
+    }
+    const title = newTitle.trim() || nextSubject;
+    setCreating(true);
+    setError('');
+    const campaign = {
+      title,
+      subject: nextSubject,
+      savedAt: new Date().toISOString(),
+      ...deriveCounts([]),
+      totalEmails: 0,
+      autoRepliesSuppressed: 0,
+      suppressed: null,
+      removedEmails: [],
+      contacts: [],
+    };
+    // Newest first, matching handleSave.
+    await saveCampaigns([campaign, ...savedCampaigns]);
+    setCreating(false);
+    closeNewForm();
+    // Open it right away so the next thing the user does is add contacts.
+    // Every saved index shifts down one, so drop any edit state that pointed
+    // at the old positions, and cancel a refresh still in flight for whichever
+    // campaign was open before.
+    viewTokenRef.current++;
+    setRefreshing(false);
+    setEditingIndex(null);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
+    setSubject(nextSubject);
+    setResults(campaign);
+    setViewingSaved(0);
+  }
+
+  function openNewForm() {
+    setError('');
+    setNewTitle('');
+    // Seed from the search box: a subject typed there is usually the one the
+    // campaign is being created for.
+    setNewSubject(subject.trim());
+    setShowNewForm(true);
+  }
+
+  function closeNewForm() {
+    setShowNewForm(false);
+    setNewTitle('');
+    setNewSubject('');
   }
 
   // Push every "Not Sent" contact (in the campaign roster but never emailed)
@@ -1108,7 +1174,84 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         >
           {loading ? 'Searching...' : 'Search'}
         </button>
+        <button
+          onClick={() => (showNewForm ? closeNewForm() : openNewForm())}
+          title="Create a campaign by hand, before any mail has gone out for it"
+          style={{
+            padding: '0.5rem 1rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
+            background: 'var(--color-surface)', color: 'var(--color-accent)', fontSize: '0.85rem',
+            fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          {showNewForm ? 'Cancel' : '+ New Campaign'}
+        </button>
       </div>
+
+      {/* Create a campaign by hand. The Search box above only finds campaigns
+          whose mail has already gone out; this sets one up first, with an empty
+          roster to add contacts to. */}
+      {showNewForm && (
+        <div style={{ padding: '0.75rem', marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>New Campaign</div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 220px' }}>
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Title</label>
+              <input
+                autoFocus
+                type="text"
+                value={newTitle}
+                onChange={e => setNewTitle(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); createCampaign(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
+                }}
+                placeholder="Campaign name (defaults to the subject)"
+                style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit' }}
+              />
+            </div>
+            <div style={{ flex: '1 1 280px' }}>
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject line</label>
+              <input
+                type="text"
+                value={newSubject}
+                onChange={e => setNewSubject(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); createCampaign(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
+                }}
+                placeholder="Email subject line to match sent mail on"
+                style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit' }}
+              />
+            </div>
+            <button
+              onClick={createCampaign}
+              disabled={creating || !newSubject.trim()}
+              style={{
+                padding: '0.4rem 0.9rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem',
+                fontWeight: 600, fontFamily: 'inherit',
+                cursor: creating ? 'wait' : (newSubject.trim() ? 'pointer' : 'default'),
+                opacity: newSubject.trim() ? 1 : 0.5,
+              }}
+            >
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+            <button
+              onClick={closeNewForm}
+              style={{
+                padding: '0.4rem 0.9rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.8rem',
+                fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
+            The campaign starts empty — add the contacts it tracks with “Add an email to this campaign…”. The subject line is only used to look up whether those addresses were sent or replied.
+          </div>
+        </div>
+      )}
 
       {error && <div style={{ padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.8rem', color: '#DC2626', marginBottom: '1rem' }}>{error}</div>}
 
@@ -1343,6 +1486,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               />
             </div>
           </div>
+
+          {/* An empty roster — a just-created campaign, or one every contact has
+              been removed from. The table renders nothing at all in that case,
+              so say what to do next instead of showing a blank panel. */}
+          {!(displayResults.contacts || []).length && (
+            <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+              No contacts in this campaign yet — add an email above to start tracking who it goes to.
+            </div>
+          )}
 
           {/* Contact table */}
           {displayResults.contacts && displayResults.contacts.length > 0 && (
