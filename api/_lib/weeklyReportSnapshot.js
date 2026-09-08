@@ -58,6 +58,51 @@ function funnelDoc(f) {
   };
 }
 
+// The close-rate trend, as text the tab already formatted — same reason the
+// funnel travels that way: the email can't draw the grid's sparklines, and
+// re-deriving "17%  1/6" server-side is a second copy of arithmetic free to
+// disagree with the screen.
+//
+// Bounded on both axes. The tab asks for six months and five rows, but this
+// document is rewritten on every visit to the tab and Firestore caps it at
+// ~1 MB, so a payload claiming a hundred of either is trimmed rather than
+// stored. Every row is padded or cut to the month count so no row can hand
+// the email a short grid.
+export const MAX_TREND_MONTHS = 12;
+export const MAX_TREND_ROWS = 8;
+
+function trendCell(c) {
+  if (!c || typeof c !== 'object') return null;
+  const rate = str(c.rate, 8);
+  if (!rate) return null;
+  return { rate, count: str(c.count, 16) };
+}
+
+function closeRateTrendDoc(t) {
+  if (!t || typeof t !== 'object') return null;
+  const months = (Array.isArray(t.months) ? t.months : [])
+    .slice(0, MAX_TREND_MONTHS).map(m => str(m, 12));
+  const rows = (Array.isArray(t.rows) ? t.rows : []).slice(0, MAX_TREND_ROWS).map((r) => {
+    const overall = trendCell(r?.overall);
+    // Only the four close-rate stages get a stage colour; the "All closed
+    // opps" row has no stage of its own and says so with a null. Read as a
+    // number before clamping — clampInt would take a null for a 0 and clamp
+    // that up into the range, painting the total row as Stage 3.
+    const n = Number(r?.stage);
+    return {
+      label: str(r?.label, 80),
+      stage: Number.isInteger(n) && n >= 3 && n <= 6 ? n : null,
+      cells: months.map((_, i) => trendCell(r?.cells?.[i])),
+      overall: overall
+        ? { ...overall, ahead: Number(r?.overall?.ahead) > 0 ? clampInt(r.overall.ahead, 1, 100, 0) : null }
+        : null,
+      rolling12: trendCell(r?.rolling12),
+    };
+  }).filter(r => r.label);
+  if (!months.length || !rows.length) return null;
+  return { months, rows };
+}
+
 // The funnel as a picture: a PNG the tab rasterised off its own chart,
 // carried as a data URL and mailed as an attachment.
 //
@@ -114,6 +159,11 @@ export function buildSnapshotDoc(input, auth) {
     // Only alongside the figures it illustrates: an image with no stage
     // rows behind it is a picture the reader cannot check.
     funnelImage: s.funnel ? funnelImageDoc(s.funnelImage) : null,
+    // The funnel's close-rate column with the time axis put back. Stored
+    // beside the funnel because that is where it sits on the tab and in the
+    // email, but on its own footing: the trend reads the Opps cache alone,
+    // so it can be there on a visit where no stage volumes were.
+    closeRateTrend: closeRateTrendDoc(s.closeRateTrend),
     tiles: (Array.isArray(s.tiles) ? s.tiles : []).slice(0, 8).map(t => ({
       label: str(t?.label, 60),
       value: clampInt(t?.value, 0, 1e9, 0),

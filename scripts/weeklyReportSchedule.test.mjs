@@ -211,6 +211,15 @@ const injected = renderWeeklyReportHtml({
     stages: [{ label: '<img src=x>', count: 1, amount: '<i>$1</i>', life: '<u>1</u>', closeRate: '<b>1%</b>' }],
     outcome: { soldLabel: '<b>sold</b>', sold: '<i>$1</i>', weighted: '<u>$2</u>', total: '<b>$3</b>', note: '<script>n</script>' },
   },
+  closeRateTrend: {
+    months: ['<b>Apr</b>'],
+    rows: [{
+      label: '<img src=x>', stage: 5,
+      cells: [{ rate: '<i>17%</i>', count: '<u>1/6</u>' }],
+      overall: { rate: '<b>44%</b>', count: '<u>7/16</u>', ahead: 25 },
+      rolling12: { rate: '<script>19%</script>', count: '9/47' },
+    }],
+  },
   goals: { active: ['<script>g</script>'] },
   oppChanges: { newOpps: ['<script>x</script>'] },
 }, { message: '<b>intro</b>' });
@@ -219,6 +228,8 @@ check('period label is escaped', injected.includes('&lt;b&gt;label&lt;/b&gt;'), 
 check('intro message is escaped', injected.includes('&lt;b&gt;intro&lt;/b&gt;'), true);
 check('goal text is escaped', injected.includes('&lt;script&gt;g&lt;/script&gt;'), true);
 check('funnel stage names are escaped', injected.includes('&lt;img src=x&gt;'), true);
+check('trend rates are escaped', injected.includes('&lt;i&gt;17%&lt;/i&gt;'), true);
+check('trend month heads are escaped', injected.includes('&lt;b&gt;Apr&lt;/b&gt;'), true);
 check('no attacker tag survives anywhere', /<(script|img|u)\b/i.test(injected), false);
 
 // ---- snapshot builder ----------------------------------------------------
@@ -284,6 +295,65 @@ check('funnel text is bounded',
   buildSnapshotDoc({ funnel: { caption: 'x'.repeat(500), stages: [{ label: 'y'.repeat(200) }] } }, {})
     .funnel.stages[0].label.length, 80);
 
+// ---- the close-rate trend in a snapshot -----------------------------------
+// The trend is the funnel's close-rate column with the time axis put back,
+// and it is what the reader of the email came for: the tab shows it and the
+// email showed nothing. It travels as formatted text for the same reason the
+// funnel does, bounded on both axes because this document is rewritten on
+// every visit to the tab.
+{
+  const trendIn = {
+    months: ['Apr', 'May', 'Jun'],
+    rows: [
+      {
+        label: 'Stage 5: Prepare & Bid', stage: 5,
+        cells: [{ rate: '17%', count: '1/6' }, null, { rate: '100%', count: '2/2' }],
+        overall: { rate: '44%', count: '7/16', ahead: 25 },
+        rolling12: { rate: '19%', count: '9/47' },
+      },
+      {
+        label: 'All closed opps', stage: null,
+        cells: [null, null, null],
+        overall: { rate: '10%', count: '7/68', ahead: null },
+        rolling12: { rate: '5%', count: '9/176' },
+      },
+    ],
+  };
+  const t = buildSnapshotDoc({ closeRateTrend: trendIn }, {}).closeRateTrend;
+  check('the trend survives the snapshot', t.months, ['Apr', 'May', 'Jun']);
+  check('a rate keeps the count under it', t.rows[0].cells[0], { rate: '17%', count: '1/6' });
+  check('a month with nothing closed stays blank', t.rows[0].cells[1], null);
+  check('the points above the rolling year travel, for the ▲', t.rows[0].overall.ahead, 25);
+  check('a stage keeps its number, for the funnel’s own colour', t.rows[0].stage, 5);
+  // A null stage that clamped into range would paint the total row as
+  // Stage 3 — the same blue as a stage whose figures it isn't.
+  check('the all-closed row has no stage of its own', t.rows[1].stage, null);
+  check('and is not flagged as ahead', t.rows[1].overall.ahead, null);
+
+  // Bounds. A row longer than the month list would hand the email a grid
+  // whose columns don't line up; a short one would leave a ragged row.
+  const ragged = buildSnapshotDoc({
+    closeRateTrend: {
+      months: Array.from({ length: 40 }, (_, i) => `M${i}`),
+      rows: Array.from({ length: 40 }, () => ({ label: 'x'.repeat(200), cells: [] })),
+    },
+  }, {}).closeRateTrend;
+  check('the month columns are capped', ragged.months.length, 12);
+  check('so are the rows', ragged.rows.length, 8);
+  check('a row is padded to the month count', ragged.rows[0].cells.length, 12);
+  check('a row that came up short reads as blank months', ragged.rows[0].cells[0], null);
+  check('row labels are bounded', ragged.rows[0].label.length, 80);
+  check('a trend with no months stores none',
+    buildSnapshotDoc({ closeRateTrend: { months: [], rows: [{ label: 'Stage 3' }] } }, {}).closeRateTrend, null);
+  check('a trend with no rows stores none',
+    buildSnapshotDoc({ closeRateTrend: { months: ['Jun'], rows: [] } }, {}).closeRateTrend, null);
+  check('no trend at all stores none', buildSnapshotDoc({}, {}).closeRateTrend, null);
+  // The trend reads the Opps cache alone, so it must not be gated on the
+  // funnel the way the funnel's picture is.
+  check('the trend does not need a funnel behind it',
+    buildSnapshotDoc({ closeRateTrend: trendIn }, {}).closeRateTrend.rows.length, 2);
+}
+
 // ---- rendering -----------------------------------------------------------
 
 const html = renderWeeklyReportHtml({
@@ -302,6 +372,23 @@ const html = renderWeeklyReportHtml({
       { label: 'Stage 4: Influence and Develop', count: 4, amount: '$918,000', life: null, closeRate: null },
     ],
     outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K', note: '63% of $1.3M target' },
+  },
+  closeRateTrend: {
+    months: ['Apr', 'May', 'Jun'],
+    rows: [
+      {
+        label: 'Stage 5: Prepare & Bid', stage: 5,
+        cells: [{ rate: '17%', count: '1/6' }, null, { rate: '100%', count: '2/2' }],
+        overall: { rate: '44%', count: '7/16', ahead: 25 },
+        rolling12: { rate: '19%', count: '9/47' },
+      },
+      {
+        label: 'All closed opps', stage: null,
+        cells: [{ rate: '8%', count: '1/13' }, null, { rate: '13%', count: '2/15' }],
+        overall: { rate: '10%', count: '7/68', ahead: null },
+        rolling12: { rate: '5%', count: '9/176' },
+      },
+    ],
   },
   tiles: [
     { label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' },
@@ -341,9 +428,38 @@ check('draws the goal priority as a pill', /#1<\/span>/.test(html), true);
 check('names the period in the goal heading', html.includes('Set this week'), true);
 check('omits goal groups with nothing in them', html.includes('completed / closed'), false);
 
+// The close rate trend — the section that was on the tab and missing from
+// the inbox. It has to carry the same figures the grid shows, including the
+// denominator under every rate: "17%" off six deals and off sixty read
+// identically without it, and only one is worth reacting to.
+check('draws the trend heading', html.includes('Close rate trend'), true);
+check('names the window in the heading note',
+  html.includes('Last 3 months, by the stage each closed deal reached'), true);
+check('heads the month columns', html.includes('>Apr</th>') && html.includes('>Jun</th>'), true);
+check('heads the two aggregate columns',
+  html.includes('>3 mo</th>') && html.includes('>12 mo</th>'), true);
+check('draws a stage row', html.includes('Stage 5: Prepare &amp; Bid'), true);
+check('draws a month rate', html.includes('>17%</div>'), true);
+check('draws the count under it', html.includes('>1/6</div>'), true);
+check('draws the rolling-year figure', html.includes('>9/47</div>'), true);
+check('marks a row running ahead of its year with the app’s green',
+  html.includes('#DCFCE7') && html.includes('&#9650; 44%'), true);
+check('leaves a row that is not ahead in plain ink', html.includes('&#9650; 10%'), false);
+check('says why a month is blank rather than 0%', html.includes('blank, not 0%'), true);
+check('says which deals the 12 mo column counts', html.includes('rolling 365 days'), true);
+
 // A snapshot with no funnel must not leave an empty heading behind.
 const noFunnel = renderWeeklyReportHtml({ capturedAt: Date.now(), kpiCards: [] });
 check('no funnel means no funnel heading', noFunnel.includes('Pipeline funnel'), false);
+check('no trend means no trend heading', noFunnel.includes('Close rate trend'), false);
+// …and the trend stands on its own: it reads the Opps cache, which can be
+// there on a visit where no stage volumes were.
+const trendOnly = renderWeeklyReportHtml({
+  capturedAt: Date.now(),
+  closeRateTrend: { months: ['Jun'], rows: [{ label: 'All closed opps', stage: null, cells: [{ rate: '13%', count: '2/15' }], overall: { rate: '13%', count: '2/15', ahead: null }, rolling12: null }] },
+});
+check('a trend with no funnel still renders', trendOnly.includes('Close rate trend'), true);
+check('and a missing rolling year reads as a dash', trendOnly.includes('&mdash;'), true);
 
 // A snapshot with nothing cached must still produce a sendable email rather
 // than throwing — the cron has no user to fall back to.

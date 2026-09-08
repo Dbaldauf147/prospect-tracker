@@ -8,7 +8,8 @@
 // cells otherwise, Pipeline Goal derived rather than read, and the close
 // rate that the weighted projection multiplies through.
 import {
-  buildFunnelStages, closeRateTrendByStage, closeRatesByStage, closedOppEntry, closeRateTally,
+  aheadOfRollingYear, buildFunnelStages, closeRateTrendByStage, closeRatesByStage,
+  closedOppEntry, closeRateTally, emailCloseRateTrend,
 } from '../src/utils/pipelineFunnelData.js';
 
 let passed = 0, failed = 0;
@@ -176,6 +177,69 @@ const closed = (stage, days, over = {}) => ({
   eq(stage5.overall.included.length, 2, 'so does the months-shown total');
   eq(stage5.rolling12.included.length, 2, 'and the rolling year');
   eq(thisMonth.included[0].account, 'Acme', 'the deals are the ones that closed');
+}
+
+// ---- emailCloseRateTrend ----------------------------------------------------
+// The trend travels in the emailed report as formatted strings, because the
+// tab's sparklines and hover panels have no equivalent in an inbox. What
+// matters is that the strings are the ones on screen: a rate, the count
+// under it, the blank where a stage closed nothing, and the flag that puts
+// the green ▲ on a row running ahead of its rolling year.
+{
+  const trend = closeRateTrendByStage([
+    // Two closes this month, one lost 40 days back: Stage 5 runs 2/3 across
+    // the months shown and the rolling year alike.
+    closed('Sold', 1), closed('Sold', 2), closed('Not Sold', 40),
+  ], { months: 6, nowMs: NOW });
+  const mail = emailCloseRateTrend(trend);
+
+  eq(mail.months.length, 6, 'the month labels travel, one per column');
+  eq(mail.months[5], 'Jun', 'and read as the tab heads them');
+  eq(mail.rows.length, 5, 'four stages and the all-closed row');
+
+  const s5 = mail.rows.find(r => r.stage === 5);
+  eq(s5.cells.length, 6, 'a row carries one cell per month, filled or not');
+  eq(s5.cells[5], { rate: '100%', count: '2/2' },
+    'a month cell is the rate with the count it rests on');
+  eq(s5.cells[4], { rate: '0%', count: '0/1' },
+    'a month that closed only losses is a real 0%, count and all');
+  eq(s5.cells[0], null, 'a month the stage closed nothing in stays blank, not 0%');
+  eq(s5.overall.rate, '67%', 'the months-shown total is formatted the same way');
+  eq(s5.rolling12, { rate: '67%', count: '2/3' }, 'so is the rolling year');
+  eq(s5.overall.ahead, null, 'a row level with its year is not flagged');
+  eq(mail.rows.find(r => r.stage === null).label, 'All closed opps',
+    'the total row travels with no stage of its own');
+}
+
+{
+  // Ahead of the year: the recent months better than the run rate behind
+  // them, which is the one thing the email marks in green.
+  const trend = closeRateTrendByStage([
+    closed('Sold', 10), closed('Sold', 20),          // in the months shown
+    closed('Not Sold', 250), closed('Not Sold', 300), // only in the rolling year
+  ], { months: 3, nowMs: NOW });
+  const s6 = emailCloseRateTrend(trend).rows.find(r => r.stage === 6);
+  eq([s6.overall.rate, s6.rolling12.rate], ['100%', '50%'], 'the two windows differ');
+  eq(s6.overall.ahead, 50, 'and the gap in points travels, for the ▲');
+
+  // Compared on the printed figures, so a cue the reader can't check
+  // against the page never appears.
+  eq(aheadOfRollingYear({ rate: 0.4649 }, { rate: 0.4551 }), null,
+    'two rates that both print 46% are not "ahead"');
+  eq(aheadOfRollingYear({ rate: 0.5 }, null), null, 'and a missing year cannot be beaten');
+}
+
+{
+  // Nothing to draw → nothing to mail, which is what keeps an empty
+  // heading out of the email.
+  eq(emailCloseRateTrend(closeRateTrendByStage([], { months: 6, nowMs: NOW })), null,
+    'an empty book mails no trend');
+  eq(emailCloseRateTrend(null), null, 'and a missing trend is not a throw');
+  // A book that closed nothing lately but has a rolling year still mails.
+  const old = emailCloseRateTrend(closeRateTrendByStage([closed('Sold', 200)], { months: 2, nowMs: NOW }));
+  eq(old.rows.find(r => r.stage === 3).rolling12, { rate: '100%', count: '1/1' },
+    'a quiet couple of months still mails the year behind it');
+  eq(old.rows.find(r => r.stage === 3).cells, [null, null], 'with the months themselves blank');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

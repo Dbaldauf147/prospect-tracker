@@ -1,5 +1,6 @@
 import { LiveValue, LiveValueProvider } from '../common/LiveValue';
 import { closeRateRows } from '../common/liveValueBreakdown';
+import { aheadOfRollingYear, closeRatePct } from '../../utils/pipelineFunnelData';
 import { STAGE_FILL, STAGE_FILL_DEFAULT } from '../PipelineView/funnelPalette';
 import styles from './CloseRateTrend.module.css';
 
@@ -30,7 +31,10 @@ const PLOT_H = 34;
 // Room for the end dot's surface ring at the extremes of the scale.
 const PAD = 4;
 
-const pct = (n) => `${Math.round(n * 100)}%`;
+// Both shared with the emailed copy of this table (utils/pipelineFunnelData),
+// so a rate reads the same and the green ▲ lands on the same rows in the
+// inbox as it does here.
+const pct = closeRatePct;
 
 /**
  * One row's shape as a sparkline: six months of close rate on a fixed
@@ -221,21 +225,6 @@ function TotalCell({ tally, row, id, title, windowLabel, windowPhrase, strong, b
   );
 }
 
-/**
- * Is the six months shown running ahead of the trailing year?
- *
- * Compared on the ROUNDED figures, the ones actually printed. Two cells
- * both reading 46% must not have one of them green because the numbers
- * behind them differ in the first decimal — a cue the reader can't check
- * against what's on the page is worse than no cue.
- */
-function aheadOfYear(overall, rolling12) {
-  if (!overall || !rolling12) return null;
-  const six = Math.round(overall.rate * 100);
-  const year = Math.round(rolling12.rate * 100);
-  return six > year ? six - year : null;
-}
-
 export function CloseRateTrend({ trend }) {
   const { months, rows, closed, closedRolling } = trend;
   // Nothing in the months shown AND nothing in the trailing year: only then
@@ -287,7 +276,7 @@ export function CloseRateTrend({ trend }) {
             // direction only; a row that has slipped is left in plain ink
             // rather than painted red, because a close rate below its own
             // year average is normal noise, not a fault to flag.
-            const ahead = aheadOfYear(row.overall, row.rolling12);
+            const ahead = aheadOfRollingYear(row.overall, row.rolling12);
             return (
               <tr key={row.key} className={row.num ? undefined : styles.totalRow}>
                 <th scope="row" className={styles.stageCell}>

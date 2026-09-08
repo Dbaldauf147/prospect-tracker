@@ -309,6 +309,103 @@ export function funnelHtml(funnel, image = null) {
     ${CARD_CLOSE}`;
 }
 
+// The close rate trend — the funnel's close-rate column with the time axis
+// put back, as it sits directly under the funnel on the tab.
+//
+// On screen this is a grid with a sparkline per row and a hover panel behind
+// every figure. Neither travels: no mail client renders an inline <svg>, and
+// there is nothing to hover in an inbox. So the Trend column is dropped —
+// the month columns ARE the trend, read left to right — and the figures keep
+// what makes them weighable, the count under every rate. A rate here is
+// three or four deals as often as not, and "17%" with no denominator is a
+// number nobody can act on.
+//
+// The two right-hand columns are the point of the table: the months shown
+// added up, and the rolling year behind them. A six-month figure running
+// above the year is drawn as the tab draws it — the app's "good" green with
+// a ▲ beside it, so the cue never rests on hue alone for a reader whose
+// client has stripped the colour or who can't separate it from the ink.
+const TREND_GOOD = '#166534';
+const TREND_GOOD_BG = '#DCFCE7';
+
+// A row's swatch, from the funnel's own ramp above it, so a stage is the
+// same blue in both pictures. The total row isn't a stage and sits outside
+// the ramp.
+const trendSwatch = (stage) => (Number.isInteger(stage) && stage >= 3 && stage <= 6
+  ? STAGE_FILL[stage - 3]
+  : '#64748B');
+
+export function closeRateTrendHtml(trend) {
+  const months = Array.isArray(trend?.months) ? trend.months : [];
+  const rows = Array.isArray(trend?.rows) ? trend.rows : [];
+  if (!months.length || !rows.length) return '';
+
+  const head = (label, { left = false, ruled = false, title = '' } = {}) =>
+    `<th ${title ? `title="${esc(title)}" ` : ''}style="padding:0 6px 5px ${ruled ? 8 : 6}px;text-align:${left ? 'left' : 'right'};font-family:${FONT};font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER};${ruled ? `border-left:1px solid ${BORDER};` : ''}white-space:nowrap">${esc(label)}</th>`;
+
+  // A rate with its count underneath, or the em dash that says this stage
+  // closed nothing in the month — blank, not 0%, because no evidence is not
+  // a 0% close rate and a zero would put a cliff in the row that nothing in
+  // the pipeline did.
+  const figure = (cell, { strong = false, good = false } = {}) => {
+    if (!cell) return `<div style="font-family:${FONT};font-size:12px;color:${MUTED}">&mdash;</div>`;
+    const ink = good ? TREND_GOOD : INK;
+    const sub = good ? '#3F8B5C' : MUTED;
+    const rate = `<div style="font-family:${FONT};font-size:${strong ? 13 : 12}px;font-weight:700;line-height:1.15;color:${ink};white-space:nowrap">${good ? '&#9650; ' : ''}${esc(cell.rate)}</div>`;
+    const count = cell.count
+      ? `<div style="font-family:${FONT};font-size:10px;font-weight:500;line-height:1.2;color:${sub};white-space:nowrap">${esc(cell.count)}</div>`
+      : '';
+    // The green lives on a cell of its own inside the column rather than on
+    // the column's cell: several green rows stacking would otherwise merge
+    // into one tall block, and the row rules belong to the outer cell.
+    const body = `${rate}${count}`;
+    return good
+      ? table(`align="right" style="border-collapse:collapse"`, `<tr><td bgcolor="${TREND_GOOD_BG}" style="padding:1px 4px;border-radius:4px;text-align:right">${body}</td></tr>`)
+      : body;
+  };
+
+  const cell = (html, { ruled = false } = {}) =>
+    `<td valign="top" style="padding:6px 6px 6px ${ruled ? 8 : 6}px;text-align:right;border-bottom:1px solid ${SURFACE_ALT};${ruled ? `border-left:1px solid ${BORDER};` : ''}">${html}</td>`;
+
+  const body = rows.map((row) => {
+    const ahead = Number(row?.overall?.ahead) > 0;
+    // The swatch is a cell, not a bullet on the label: Word drops the
+    // padding and margins that would keep an inline block off the text.
+    const label = table(`style="border-collapse:collapse"`, `<tr>
+        <td width="8" bgcolor="${trendSwatch(row.stage)}" style="width:8px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+        <td style="padding-left:6px;font-family:${FONT};font-size:12px;font-weight:600;color:${INK};white-space:nowrap">${esc(row.label)}</td>
+      </tr>`);
+    return `<tr>
+        <td valign="top" style="padding:6px 6px 6px 0;border-bottom:1px solid ${SURFACE_ALT}">${label}</td>
+        ${(row.cells || []).map(c => cell(figure(c))).join('')}
+        ${cell(figure(row.overall, { good: ahead }))}
+        ${cell(figure(row.rolling12, { strong: true }), { ruled: true })}
+      </tr>`;
+  }).join('');
+
+  const span = months.length;
+  const note = `A deal counts toward every stage it reached, so Stage 3’s denominator is the widest and `
+    + `Stage 6’s the narrowest, and the rates aren’t meant to add up. Pull-through opps are left out. `
+    + `Each month is the deals whose Close Date falls in it; a month a stage closed nothing is blank, not 0%. `
+    + `${span} mo adds up the months shown; 12 mo is a rolling 365 days, the same window the funnel above `
+    + `uses, so it reaches back past the first column. A ${span} mo figure in green with a ▲ is running `
+    + `above the rolling year — the recent months are better than the run rate behind them.`;
+
+  return `
+    ${cardOpen()}
+      ${table(`width="100%" style="border-collapse:collapse"`, `
+        <tr>
+          ${head('Stage reached', { left: true })}
+          ${months.map(m => head(m)).join('')}
+          ${head(`${span} mo`, { title: `The ${span} months shown, added together.` })}
+          ${head('12 mo', { ruled: true, title: 'A rolling 365 days to today — the same window the pipeline funnel uses.' })}
+        </tr>
+        ${body}
+      `)}
+      <div style="margin-top:8px;font-family:${FONT};font-size:11px;line-height:1.45;color:${MUTED}">${esc(note)}</div>
+    ${CARD_CLOSE}`;
+}
+
 // The narrative arrives as the Markdown Claude wrote for the on-screen
 // recap. Only the subset that recap uses is rendered — ##/# headings,
 // bullets, blank-line paragraphs and **bold** — and everything is escaped
@@ -402,6 +499,10 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
   const funnel = funnelHtml(s.funnel, funnelImageSrc && shot
     ? { ...shot, src: funnelImageSrc }
     : null);
+  // Straight under the funnel, as on the tab: the funnel says where each
+  // stage's close rate stands, this says which way it is going.
+  const trend = closeRateTrendHtml(s.closeRateTrend);
+  const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
   const changeGroups = [
@@ -482,6 +583,8 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
     ${kpiRow}
 
     ${funnel ? `${spacer(20)}${headingHtml('Pipeline funnel', 'The Charts → Pipeline funnel, off the same cached numbers')}${spacer(8)}${funnel}` : ''}
+
+    ${trend ? `${spacer(20)}${headingHtml('Close rate trend', `Last ${trendMonths} months, by the stage each closed deal reached`)}${spacer(8)}${trend}` : ''}
 
     ${tileRow ? `${spacer(16)}${tileRow}` : ''}
 
