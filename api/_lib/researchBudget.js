@@ -20,3 +20,20 @@ export function researchBudgetMs() {
   if (Number.isFinite(raw) && raw >= 5_000) return raw;
   return DEFAULT_BUDGET_MS;
 }
+
+// The acquisition-news digest is a different shape of work: it fans out one
+// web-search call per tracked company, and it runs from the hourly cron with
+// nobody waiting on a spinner. Its ceiling is the cron function's own limit
+// (vercel.json asks for maxDuration 300, which Pro honours), less headroom
+// for loading the prospects, sending the mail, and writing the schedule back.
+//
+// This is deliberately NOT researchBudgetMs(): that one bounds a single call
+// on the request path, where a browser is waiting and 50s is already a long
+// time to stare at nothing.
+const DEFAULT_DIGEST_BUDGET_MS = 200_000;
+
+export function companyNewsBudgetMs() {
+  const raw = Number(process.env.COMPANY_NEWS_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000) return raw;
+  return DEFAULT_DIGEST_BUDGET_MS;
+}

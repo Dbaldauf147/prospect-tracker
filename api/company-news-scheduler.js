@@ -10,14 +10,16 @@
 
 import { adminDb } from './_lib/firebaseAdmin.js';
 import { buildDigest, sendCompanyNewsEmail } from './_lib/companyNews.js';
+import { companyNewsBudgetMs } from './_lib/researchBudget.js';
 // Plain UTC recurrence math, shared with the PE Opps digest — same
 // frequency/hourUtc/dayOfWeek/dayOfMonth fields, nothing PE-specific in it.
 import { computeNextRun } from './_lib/peOppsSchedule.js';
 
-// Each due schedule runs a web-search pass per tracked company, so one
-// invocation can only carry a couple of them inside the function's time
-// budget. The rest stay due and are picked up by the next hourly tick.
-const MAX_SCHEDULES_PER_RUN = 2;
+// Each due schedule now claims most of the invocation's time budget
+// (companyNewsBudgetMs, ~200s of a 300s function), so only one fits per
+// tick. The rest stay due and are picked up by the next hourly one — which
+// is why the response reports `deferred`.
+const MAX_SCHEDULES_PER_RUN = 1;
 
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
@@ -64,14 +66,22 @@ export default async function handler(req, res) {
         lastSentAt: s.lastSentAt,
         message: s.message,
         skipWhenEmpty: s.skipWhenEmpty,
+        // Resume where the last run stopped, so a list too long to research
+        // in one budget still gets covered in full across runs.
+        startIndex: s.researchCursor,
+        budgetMs: companyNewsBudgetMs(),
       });
 
       if (digest.empty) {
         // Nothing sent, so lastSentAt stays put: the window this run
         // covered rolls into the next one instead of being lost.
+        // The cursor advances even when nothing was sent: those companies
+        // were still searched, and re-searching them next run would strand
+        // the rest of the list exactly as before.
         await ref.update({
           lastStatus: `skipped-${digest.reason}`,
           lastError: null,
+          researchCursor: digest.nextStartIndex,
           nextRunAt: computeNextRun(s, now),
         });
         results.push({ id: s.id, status: `skipped-${digest.reason}` });
@@ -91,10 +101,18 @@ export default async function handler(req, res) {
         lastError: null,
         lastDealCount: digest.deals,
         lastCompanyCount: digest.companies,
+        lastSearchedCount: digest.searched,
+        researchCursor: digest.nextStartIndex,
         lastRecipientCount: s.recipients.length,
         nextRunAt: computeNextRun(s, now),
       });
-      results.push({ id: s.id, status: 'sent', deals: digest.deals, companies: digest.companies });
+      results.push({
+        id: s.id,
+        status: 'sent',
+        deals: digest.deals,
+        companies: digest.companies,
+        searched: digest.searched,
+      });
     } catch (err) {
       await ref.update({
         lastStatus: 'error',

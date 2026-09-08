@@ -15,6 +15,7 @@ import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
 import { buildDigest, sendCompanyNewsEmail } from './_lib/companyNews.js';
+import { researchBudgetMs } from './_lib/researchBudget.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,6 +59,14 @@ async function handler(req, res, auth) {
       // A manual send always produces an email, even an empty one — the
       // user pressed the button and needs to see the result.
       skipWhenEmpty: false,
+      // Start where the next scheduled send would, so the test previews the
+      // companies that are actually next in line. Like lastSentAt, the
+      // cursor is not advanced — a test must not consume the real rotation.
+      startIndex: schedule?.researchCursor,
+      // Somebody is watching a spinner, so this gets the interactive budget
+      // rather than the cron's much longer one. It covers fewer companies
+      // than a scheduled run will.
+      budgetMs: researchBudgetMs(),
     });
 
     if (digest.empty) {
@@ -77,6 +86,7 @@ async function handler(req, res, auth) {
       success: true,
       id: result.id,
       companies: digest.companies,
+      searched: digest.searched,
       deals: digest.deals,
       recipients: to.length,
     });
