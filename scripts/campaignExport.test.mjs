@@ -134,6 +134,13 @@ check('order is the order given', lines[2].startsWith('"Q4, revisited","Say ""he
 check('no contacts is just a header', campaignContactsCsv(campaign, []), CAMPAIGN_CONTACT_HEADERS.join(','));
 check('null contacts is just a header', campaignContactsCsv(campaign, null), CAMPAIGN_CONTACT_HEADERS.join(','));
 
+// A campaign matching on several subject lines exports all of them in the
+// one Subjects cell, so a row can be traced back to the campaign that claims
+// it — one line still reads exactly as it always did.
+check('one subject line', campaignContactRow({ email: 'a@x.com' }, { campaign })[1], 'Power prices, September');
+check('several subject lines', campaignContactRow({ email: 'a@x.com' }, {
+  campaign: { title: 'September market update', subjects: ['Power prices, September', 'September: ERCOT'] },
+})[1], 'Power prices, September | September: ERCOT');
 // The export goes out with every column whether or not the table is showing
 // it — this is the data, not a screenshot.
 check('every column ships', CAMPAIGN_CONTACT_HEADERS.length, campaignContactRow({}, { campaign }).length);
@@ -141,6 +148,12 @@ check('every column ships', CAMPAIGN_CONTACT_HEADERS.length, campaignContactRow(
 // --- the saved-campaign summary --------------------------------------
 const NOW = Date.parse('2026-09-08T12:00:00Z');
 const daysAgo = (n) => new Date(NOW - n * 24 * 60 * 60 * 1000).toISOString();
+
+check('the summary carries every subject line too', campaignSummaryRow({
+  title: 'September market update',
+  subjects: ['Power prices, September', 'September: ERCOT'],
+  uniqueRecipients: 1, totalContacts: 2,
+}, NOW)[1], 'Power prices, September | September: ERCOT');
 
 check('a half-sent campaign', campaignSummaryRow({
   title: 'September market update',

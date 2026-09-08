@@ -393,17 +393,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // list every campaign has — is saved straight away, and is opened so contacts
   // can be added with "Add an email to this campaign…".
   async function createCampaign() {
-    const nextSubject = newSubject.trim();
-    if (!nextSubject) {
+    const nextSubjects = parseSubjectLines(newSubject);
+    if (nextSubjects.length === 0) {
       setError('Give the new campaign a subject line.');
       return;
     }
-    const title = newTitle.trim() || nextSubject;
+    const title = newTitle.trim() || nextSubjects[0];
     setCreating(true);
     setError('');
-    const campaign = {
+    const campaign = withSubjects({
       title,
-      subject: nextSubject,
       savedAt: new Date().toISOString(),
       ...deriveCounts([]),
       totalEmails: 0,
@@ -411,7 +410,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       suppressed: null,
       removedEmails: [],
       contacts: [],
-    };
+    }, nextSubjects);
     // Newest first, matching handleSave.
     await saveCampaigns([campaign, ...savedCampaigns]);
     setCreating(false);
@@ -425,7 +424,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setEditingIndex(null);
     setEditingSubjectInline(false);
     setSubjectDraft('');
-    setSubject(nextSubject);
+    setSubject(nextSubjects[0]);
     setResults(campaign);
     setViewingSaved(0);
   }
@@ -1279,7 +1278,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       {showNewForm && (
         <div style={{ padding: '0.75rem', marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>New Campaign</div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          {/* Top-aligned: the subject box is a textarea now and grows
+              downwards, and a bottom-aligned row dragged the Title field down
+              with it. The buttons carry the label's height so they still sit
+              on the fields' first line. */}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
             <div style={{ flex: '1 1 220px' }}>
               <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Title</label>
               <input
@@ -1296,23 +1299,27 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               />
             </div>
             <div style={{ flex: '1 1 280px' }}>
-              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject line</label>
-              <input
-                type="text"
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject lines</label>
+              {/* One per row: a campaign going out under two lines is set up
+                  as one campaign here rather than as two that each hold half
+                  the roster. Enter adds a row, so ⌘/Ctrl+Enter creates. */}
+              <textarea
                 value={newSubject}
+                rows={Math.min(6, Math.max(2, newSubject.split('\n').length + 1))}
                 onChange={e => setNewSubject(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') { e.preventDefault(); createCampaign(); }
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); createCampaign(); }
                   else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
                 }}
-                placeholder="Email subject line to match sent mail on"
-                style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit' }}
+                placeholder={'Email subject line to match sent mail on\nAnother line, if it goes out under more than one'}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
               />
             </div>
             <button
               onClick={createCampaign}
               disabled={creating || !newSubject.trim()}
               style={{
+                marginTop: '0.95rem',
                 padding: '0.4rem 0.9rem', border: 'none', borderRadius: '6px',
                 background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem',
                 fontWeight: 600, fontFamily: 'inherit',
@@ -1325,6 +1332,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             <button
               onClick={closeNewForm}
               style={{
+                marginTop: '0.95rem',
                 padding: '0.4rem 0.9rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.8rem',
                 fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
@@ -1334,7 +1342,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </button>
           </div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
-            The campaign starts empty — add the contacts it tracks with “Add an email to this campaign…”. The subject line is only used to look up whether those addresses were sent or replied.
+            The campaign starts empty — add the contacts it tracks with “Add an email to this campaign…”. The subject lines are only used to look up whether those addresses were sent or replied — one per row, and mail matching any of them counts.
           </div>
         </div>
       )}
