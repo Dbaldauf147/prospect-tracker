@@ -160,16 +160,23 @@ export function campaignsAllSent(campaigns, nowMs = Date.now()) {
  * quiet. Its row says "no contacts yet" rather than counting a send that
  * hasn't been set up (see `total` on the row).
  *
+ * A paused campaign is not listed at all. It used to sit at the bottom of
+ * the list wearing a "Paused to Sep 10" chip, which put it under a step
+ * whose status had already left it out: "All caught up" printed directly
+ * above a campaign at 1% sent reads as a bug however the chip explains
+ * itself. A pause means the user has dealt with that campaign for the next
+ * couple of days, so the step says nothing about it until the pause lifts —
+ * at which point it rejoins this list on its own, with nothing to undo. It
+ * is still on the Email Campaigns tab throughout, which is where a paused
+ * campaign is looked at.
+ *
  * Ordered by what's left to do: the campaign owing the most sends leads,
  * ties broken by the lower percentage and then by name so the list is
  * stable between renders. A campaign with no list yet owes no countable
  * sends, so it sits at the bottom of its group — there is nothing to send
- * until someone is on it. Inactive campaigns sort below the active ones and
- * paused ones below those — all three are still listed, because a parked
- * campaign that never finished is exactly the thing that goes quiet and gets
- * forgotten, but a campaign deliberately paused until a date is the one the
- * user has already dealt with, so it sits at the bottom until its pause
- * lifts and it rejoins the list on its own.
+ * until someone is on it. Inactive campaigns sort below the active ones,
+ * because a parked campaign that never finished is exactly the thing that
+ * goes quiet and gets forgotten, but it isn't live work either.
  *
  * Rows carry `index`, the campaign's position in the saved list, which is
  * what identifies it on the Email Campaigns tab (subjects need not be
@@ -180,7 +187,9 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
   (Array.isArray(campaigns) ? campaigns : []).forEach((c, index) => {
     if (!c || typeof c !== 'object') return;
     const stats = campaignSendStats(c);
-    if (isCampaignFullySent(c)) return;
+    // The same two exclusions the step's status makes, so the list under it
+    // and the pill beside it can never describe different work.
+    if (isCampaignFullySent(c) || isCampaignPaused(c, nowMs)) return;
     rows.push({
       index,
       label: campaignOutreachLabel(c),
@@ -190,14 +199,12 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
       subject: primarySubject(c),
       subjects: campaignSubjects(c),
       active: isCampaignActive(c, nowMs),
+      // 'active' or 'inactive' — the paused ones never get this far.
       status: campaignStatus(c, nowMs),
-      // When a paused campaign comes back, so the row can say so instead of
-      // just reading as parked.
-      pausedUntil: isCampaignPaused(c, nowMs) ? c.pausedUntil : null,
       ...stats,
     });
   });
-  const rank = { active: 0, inactive: 1, paused: 2 };
+  const rank = { active: 0, inactive: 1 };
   rows.sort((a, b) => (
     (rank[a.status] ?? 1) - (rank[b.status] ?? 1)
     || b.remaining - a.remaining

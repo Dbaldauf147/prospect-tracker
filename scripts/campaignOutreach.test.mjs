@@ -110,20 +110,28 @@ check('a campaign with no list yet carries the totals that say so',
   unfinishedCampaigns(saved, NOW).filter(r => r.label === 'Nobody in it')
     .map(r => [r.sent, r.total, r.remaining, r.pct]),
   [[0, 0, 0, 0]]);
-// Pausing the campaign that led the list drops it to the bottom — below even
-// the inactive one, because it is the campaign already dealt with — and it
+// Pausing the campaign that led the list takes it off the list entirely —
+// the step's status already leaves a paused campaign out, so listing it
+// under a row that says "All caught up" only made the two disagree. It
 // climbs back on its own when the pause lifts.
 const withPause = saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: inDays(2) } : c));
-check('a paused campaign sorts last and says so',
+check('a paused campaign is not listed at all',
   unfinishedCampaigns(withPause, NOW).map(r => [r.label, r.status]),
   [
     ['Mexico Electric Power Cost Increase', 'active'],
     ['Nobody in it', 'active'],
     ['Parked halfway', 'inactive'],
-    ['Data Center Impact Outlook', 'paused'],
   ]);
-check('the row carries when it comes back',
-  unfinishedCampaigns(withPause, NOW)[3].pausedUntil, inDays(2));
+check('every campaign left on the list is one of the two live statuses',
+  unfinishedCampaigns(withPause, NOW).every(r => r.status === 'active' || r.status === 'inactive'), true);
+// Pausing the lot empties the list, which is what lets the step read as
+// clear with nothing printed underneath contradicting it.
+check('pause them all and there is nothing left to print',
+  unfinishedCampaigns(saved.map(c => ({ ...c, pausedUntil: inDays(1) })), NOW), []);
+// An inactive campaign is NOT paused: one that went quiet at 1% is still
+// listed, which is the whole reason it is worth printing.
+check('an inactive campaign stays on the list',
+  unfinishedCampaigns(withPause, NOW).map(r => r.label).includes('Parked halfway'), true);
 check('a lapsed pause leaves no trace on the row',
   unfinishedCampaigns(saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: daysAgo(1) } : c)), NOW)[0],
   { ...unfinishedCampaigns(saved, NOW)[0] });
@@ -131,6 +139,10 @@ check('and it leads the list again',
   unfinishedCampaigns(withPause, NOW + 3 * 24 * 60 * 60 * 1000).map(r => r.status)[0], 'active');
 check('rows carry their place in the saved list',
   unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 3, 4]);
+// The index is the campaign's place in the SAVED list, not in this one, so
+// dropping a paused campaign must not shift the rows that follow it.
+check('and keep it when a paused campaign is dropped from in front of them',
+  unfinishedCampaigns(withPause, NOW).map(r => r.index), [1, 3, 4]);
 check('everything sent', unfinishedCampaigns([{ uniqueRecipients: 5, totalContacts: 5 }], NOW), []);
 check('nothing saved', unfinishedCampaigns(undefined, NOW), []);
 // One junk entry must not take the real campaigns with it.
