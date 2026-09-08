@@ -250,10 +250,17 @@ export function dealSizingWarnings({ estimate, pricing, bases = PRICING_BASES })
  * The high totals are run alongside rather than derived, for the same reason
  * estimateScope runs them alongside: a book where three clients carry a range
  * and five don't is not the low total times anything.
+ *
+ * An estimate flagged `onCard` is counted as a scoped client but contributes
+ * no money: the company card already has a status against its services, so
+ * this is not new business to be sized. It is counted separately rather than
+ * dropped so the tiles can say how many clients were set aside — a total
+ * that quietly shrank would be indistinguishable from a total that was
+ * always that size. See onCardScope.
  */
 export function rollUpDealSizing(estimates) {
   const totals = {
-    clients: 0, scoped: 0,
+    clients: 0, scoped: 0, onCard: 0,
     year1: 0, year1High: 0,
     contractValue: 0, contractValueHigh: 0,
     recurringAnnual: 0, recurringAnnualHigh: 0,
@@ -263,6 +270,10 @@ export function rollUpDealSizing(estimates) {
     totals.clients += 1;
     if (!est || !est.services?.length) continue;
     totals.scoped += 1;
+    // Its unpriced services aren't counted either: that tile is a prompt to
+    // go and price them so these figures go up, and for this client they
+    // never will.
+    if (est.onCard) { totals.onCard += 1; continue; }
     totals.year1 += est.year1Total || 0;
     totals.year1High += est.year1TotalHigh || 0;
     totals.contractValue += est.contractValue || 0;
@@ -322,6 +333,25 @@ export function scopeStatusCounts(client, scope) {
   const counts = { sold: 0, inProgress: 0, notSold: 0, na: 0, none: 0 };
   for (const { bucket } of scopeStatuses(client, scope)) counts[bucket] += 1;
   return counts;
+}
+
+/**
+ * Does the company card already have something to say about this scope?
+ *
+ * True when ANY service in it carries a status — Sold, Not sold, anything in
+ * flight, or a deliberate N/A. Only a scope where the card is silent on
+ * every service is new business, and only new business is worth sizing:
+ * this page answers "what would these clients be worth if we sold them
+ * this", and a service the card has already ruled on is not part of that
+ * answer. A client this is true of keeps its row and its scope but shows no
+ * money, and its money stays out of the totals.
+ *
+ * Takes the counts rather than the client so the row that already has them
+ * doesn't work them out twice.
+ */
+export function onCardScope(counts) {
+  if (!counts) return false;
+  return (counts.sold + counts.inProgress + counts.notSold + counts.na) > 0;
 }
 
 // ---------------------------------------------------------------------------

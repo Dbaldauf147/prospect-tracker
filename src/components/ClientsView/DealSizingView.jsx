@@ -55,10 +55,12 @@ import {
   normalizeClientScope,
   planBulkAdd,
   planBulkRemove,
+  onCardScope,
   planClearServices,
   rollUpDealSizing,
   scopeIsEmpty,
   scopeStatusCounts,
+  scopeStatuses,
   withService,
   withoutService,
   clearServices,
@@ -73,10 +75,16 @@ import {
 
 const TABLE_ID = 'clients-deal-sizing';
 
+// Why a scoped client shows no money. One sentence, on every cell it
+// applies to, because a blank figure with no reason on it reads as a bug.
+const ON_CARD_WHY = 'The company card already has a status against a service in this scope — sold, in flight, turned down or N/A — so there is no new business here to size. Not counted in the totals above. Expand the row to see which service.';
+
 // A money figure that may be a range, rendered as one cell. A blank scope
 // shows a dash rather than $0: "nothing picked" and "picked, worth nothing"
-// are different answers and a zero would flatten them into one.
-function Money({ low, high, scoped, bold }) {
+// are different answers and a zero would flatten them into one. A client the
+// card has already ruled on shows the same dash, with the reason on it.
+function Money({ low, high, scoped, onCard, bold }) {
+  if (onCard) return <span style={{ color: '#CBD5E1' }} title={ON_CARD_WHY}>—</span>;
   if (!scoped) return <span style={{ color: '#CBD5E1' }}>—</span>;
   return (
     <span style={{ fontWeight: bold ? 700 : 600, color: low > 0 ? '#0F172A' : '#94A3B8', whiteSpace: 'nowrap' }}>
@@ -318,6 +326,9 @@ export function DealSizingView({
   const rows = useMemo(() => clients.map(c => {
     const scope = scopeFor(c.company);
     const estimate = estimateClient({ client: c, scope, serviceRows, pricing, bases });
+    const counts = scopeStatusCounts(c, scope);
+    const onCard = onCardScope(counts);
+    const sizeable = estimate.services.length > 0 && !onCard;
     return {
       id: c.id != null ? String(c.id) : `name:${normClientName(c.company)}`,
       company: c.company || '',
@@ -330,15 +341,21 @@ export function DealSizingView({
       // Sizing a client for work they demonstrably already buy is the quiet
       // way this page overstates a book, so the count is on the row rather
       // than one expand away.
-      statusCounts: scopeStatusCounts(c, scope),
-      year1: estimate.services.length ? estimate.year1Total : null,
-      contractValue: estimate.services.length ? estimate.contractValue : null,
-      recurringAnnual: estimate.services.length ? estimate.recurringAnnual : null,
-      setup: estimate.services.length ? estimate.setup : null,
+      statusCounts: counts,
+      // The card has already ruled on this scope, so there is no new
+      // business here to size. The row keeps its scope and its history and
+      // shows no money — see onCardScope.
+      onCard,
+      year1: sizeable ? estimate.year1Total : null,
+      contractValue: sizeable ? estimate.contractValue : null,
+      recurringAnnual: sizeable ? estimate.recurringAnnual : null,
+      setup: sizeable ? estimate.setup : null,
       // Everything that makes this row's figures understate the deal, built
       // once: the badge beside the company name and the Needs column both
-      // print it, and building it twice is how the two would disagree.
-      warnings: dealSizingWarnings({ estimate, pricing, bases }),
+      // print it, and building it twice is how the two would disagree. A
+      // client that isn't being sized has no figures to understate, so the
+      // chips would be asking for counts that would move nothing.
+      warnings: sizeable ? dealSizingWarnings({ estimate, pricing, bases }) : [],
     };
   }), [clients, scopeFor, serviceRows, pricing, bases, isUntracked]);
 
@@ -357,7 +374,10 @@ export function DealSizingView({
 
   // Totals over what's on screen, so narrowing to one bucket of clients
   // re-totals to that bucket rather than always reporting the whole book.
-  const totals = useMemo(() => rollUpDealSizing(visible.map(r => r.estimate)), [visible]);
+  const totals = useMemo(
+    () => rollUpDealSizing(visible.map(r => (r.onCard ? { ...r.estimate, onCard: true } : r.estimate))),
+    [visible],
+  );
 
   // What the bulk bar would do, worked out from the clients actually listed
   // below it. Recomputed as the pick changes so the button can say what it is
@@ -541,6 +561,7 @@ export function DealSizingView({
         if (row.statusCounts.sold) parts.push('Sold');
         if (row.statusCounts.inProgress) parts.push('In progress');
         if (row.statusCounts.notSold) parts.push('Not sold');
+        if (row.statusCounts.na) parts.push('N/A');
         return parts.length ? parts.join(', ') : 'Not explored';
       },
       exportValue: (row) => {
@@ -550,6 +571,7 @@ export function DealSizingView({
           c.sold ? `${c.sold} sold` : '',
           c.inProgress ? `${c.inProgress} in progress` : '',
           c.notSold ? `${c.notSold} not sold` : '',
+          c.na ? `${c.na} n/a` : '',
           c.none ? `${c.none} not explored` : '',
         ].filter(Boolean).join(', ');
       },
@@ -560,6 +582,10 @@ export function DealSizingView({
           ['sold', counts.sold, 'already buy this — sizing it as new business counts revenue you already have'],
           ['inProgress', counts.inProgress, 'are already in flight for this client'],
           ['notSold', counts.notSold, 'have been put to this client and turned down'],
+          // N/A was counted but never shown before. It has to be visible now
+          // that it sets a client aside: a suppressed row reading "Not
+          // explored" would look like a bug rather than a rule.
+          ['na', counts.na, 'are marked N/A on the card — deliberately not applicable to this client'],
         ].filter(([, n]) => n > 0);
         if (!chips.length) {
           return <span style={{ fontSize: '0.7rem', color: '#94A3B8' }} title="None of the services in this scope has a status on the company card — all new ground.">Not explored</span>;
@@ -571,7 +597,7 @@ export function DealSizingView({
               return (
                 <span
                   key={key}
-                  title={`${n} of the ${row.serviceCount} service${row.serviceCount === 1 ? '' : 's'} in this scope ${why}. Expand the row to see which.`}
+                  title={`${n} of the ${row.serviceCount} service${row.serviceCount === 1 ? '' : 's'} in this scope ${why}. The card has ruled on this scope, so it isn’t sized and its money is out of the totals. Expand the row to see which.`}
                   style={{
                     fontSize: '0.68rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999,
                     whiteSpace: 'nowrap', background: bucket?.bg, color: bucket?.color,
@@ -594,7 +620,7 @@ export function DealSizingView({
       getSortValue: (row) => row.year1 ?? -1,
       exportValue: (row) => row.year1 ?? '',
       render: (row) => (
-        <Money low={row.estimate.year1Total} high={row.estimate.year1TotalHigh} scoped={row.serviceCount > 0} bold />
+        <Money low={row.estimate.year1Total} high={row.estimate.year1TotalHigh} scoped={row.serviceCount > 0} onCard={row.onCard} bold />
       ),
     },
     {
@@ -602,7 +628,7 @@ export function DealSizingView({
       getSortValue: (row) => row.contractValue ?? -1,
       exportValue: (row) => row.contractValue ?? '',
       render: (row) => (
-        <Money low={row.estimate.contractValue} high={row.estimate.contractValueHigh} scoped={row.serviceCount > 0} />
+        <Money low={row.estimate.contractValue} high={row.estimate.contractValueHigh} scoped={row.serviceCount > 0} onCard={row.onCard} />
       ),
     },
     {
@@ -610,7 +636,7 @@ export function DealSizingView({
       getSortValue: (row) => row.recurringAnnual ?? -1,
       exportValue: (row) => row.recurringAnnual ?? '',
       render: (row) => (
-        <Money low={row.estimate.recurringAnnual} high={row.estimate.recurringAnnualHigh} scoped={row.serviceCount > 0} />
+        <Money low={row.estimate.recurringAnnual} high={row.estimate.recurringAnnualHigh} scoped={row.serviceCount > 0} onCard={row.onCard} />
       ),
     },
     {
@@ -618,9 +644,9 @@ export function DealSizingView({
       getSortValue: (row) => row.setup ?? -1,
       exportValue: (row) => row.setup ?? '',
       render: (row) => (
-        row.serviceCount && row.estimate.setup
+        row.serviceCount && row.estimate.setup && !row.onCard
           ? <span style={{ color: '#475569' }}>{formatMoney(row.estimate.setup)}</span>
-          : <span style={{ color: '#CBD5E1' }}>—</span>
+          : <span style={{ color: '#CBD5E1' }} title={row.onCard ? ON_CARD_WHY : undefined}>—</span>
       ),
     },
     {
@@ -671,6 +697,22 @@ export function DealSizingView({
           </div>
         ) : (
           <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+            {/* Why the row above shows dashes. Here rather than only in a
+                tooltip because this is where the services are listed, and
+                naming the statuses is what makes the rule checkable. */}
+            {row.onCard && (
+              <div style={{
+                flexBasis: '100%', display: 'block', whiteSpace: 'normal', fontSize: '0.74rem',
+                color: '#475569', background: '#F1F5F9', border: '1px solid #E2E8F0',
+                borderRadius: 6, padding: '0.45rem 0.6rem', marginBottom: '0.25rem',
+              }}>
+                <strong>Not sized.</strong> The company card already has a status against{' '}
+                {scopeStatuses(client, scope).filter(x => x.bucket !== 'none')
+                  .map(x => `${x.name} (${x.status})`).join(', ')}
+                {' '}&mdash; so this scope isn&rsquo;t new business. The figures below are what it
+                <em> would</em> be worth; none of them is counted in the totals at the top of the page.
+              </div>
+            )}
             {/* Every line, and how its fee was arrived at. A number that moves
                 when a count changes has the reason for it on the row, which is
                 what makes a total arguable rather than magic. */}
@@ -846,14 +888,30 @@ export function DealSizingView({
         figure here. This is a sizing exercise, not a forecast: nothing here knows whether the client wants the service.
         Scopes are saved per client and never write to the company record&rsquo;s Services Explored &mdash; but what that
         record already says is shown beside them, on the row and against each service, so you can see what a client
-        already buys before you size it again. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
+        already buys before you size it again &mdash; and a client whose card already has a status against a scoped
+        service (sold, in flight, turned down or N/A) shows no figures at all, because that is not new business to
+        size. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
         left out, here as everywhere else &mdash; nobody is working them, so their money does not belong in these totals.
       </div>
 
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-        <div style={tile} title="Clients with at least one service picked, out of the clients shown.">
+        <div
+          style={tile}
+          title={totals.onCard > 0
+            ? `Clients with at least one service picked, out of the clients shown. ${totals.onCard} of them are not sized: their card already has a status against a scoped service, so their money is out of the figures beside this.`
+            : 'Clients with at least one service picked, out of the clients shown.'}
+        >
           <div style={tileNum}>{totals.scoped}<span style={{ fontSize: '0.9rem', color: '#94A3B8', fontWeight: 600 }}> / {totals.clients}</span></div>
           <div style={tileLabel}>Clients scoped</div>
+          {/* Scoped and sized are no longer the same number. A total that
+              quietly shrank would be indistinguishable from one that was
+              always that size, so the gap is named rather than left to be
+              worked out from the rows. */}
+          {totals.onCard > 0 && (
+            <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: 2, whiteSpace: 'nowrap' }}>
+              {totals.onCard} on the card &middot; not sized
+            </div>
+          )}
         </div>
         <div style={tile} title="Every scoped client's first year added up: annual fees on recurring services, the whole job on projects, plus setup fees billed once.">
           <div style={tileNum}>{formatMoneyRange(totals.year1, totals.year1High)}</div>
