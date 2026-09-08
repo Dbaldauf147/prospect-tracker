@@ -1,4 +1,4 @@
-import { DEFAULT_EMAIL_SIGNATURE } from '../data/emailSignature';
+import { DEFAULT_EMAIL_SIGNATURE } from '../data/emailSignature.js';
 
 // Shared draft-email helpers. The Draft Emails page composes rich HTML
 // bodies; this module covers the simpler "plain-text body + shared
