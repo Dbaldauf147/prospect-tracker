@@ -31,7 +31,10 @@ import {
   coverageExclusions,
   serviceLabelMap,
 } from '../../utils/serviceCoverage';
-import { notifyPipelineDashboardChanged } from '../../utils/pipelineDashboardStore';
+import {
+  notifyPipelineDashboardChanged, pipelineNeedsSave, pipelineShouldAdopt,
+  PIPELINE_DASHBOARD_EVENT,
+} from '../../utils/pipelineDashboardStore';
 import { mirrorDbPut } from '../../utils/localMirrorSync';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
@@ -295,6 +298,30 @@ function migrateNotQuoted(saved) {
   carry('notQuoted30', 'notQuotedMonth');
   carry('notQuoted365', 'notQuotedYear');
   return out;
+}
+
+// A stored dashboard record as view state: defaults for anything the record
+// doesn't carry, and every field the record can corrupt normalized back into
+// a shape the page can render.
+//
+// Used by the mount read AND by the mirror-hydration listener, so a record
+// pulled from Firestore minutes after load is read exactly as one found in
+// IndexedDB at load — the restore path is not a second, thinner reader.
+function fromRecord(saved) {
+  return {
+    ...DEFAULT_STATE,
+    ...saved,
+    ...migrateNotQuoted(saved),
+    stages: sanitizeStages(saved.stages),
+    // Label overrides must be a plain object; anything else falls back to
+    // "no overrides" so a corrupt value can't crash the header render.
+    labels: (saved.labels && typeof saved.labels === 'object' && !Array.isArray(saved.labels)) ? saved.labels : {},
+    // Coverage services must be an array of non-empty strings; a corrupt
+    // value falls back to "none tracked" so the table can't crash.
+    coverageServices: Array.isArray(saved.coverageServices)
+      ? saved.coverageServices.filter(s => typeof s === 'string' && s)
+      : [],
+  };
 }
 
 // Outermost safety net for the entire Pipeline page. If anything below
@@ -1091,6 +1118,15 @@ function readClientStores() {
 function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
+  // What storage last gave us, as JSON. The save effect writes only when the
+  // state has moved off it, so a page that merely loaded never writes — see
+  // pipelineNeedsSave for why that matters on a cleared browser. Starts as
+  // the defaults, which is exactly what an empty store means.
+  const baselineRef = useRef(JSON.stringify(DEFAULT_STATE));
+  // The live state for the hydration listener below, which is registered once
+  // and must not re-subscribe on every keystroke to see it.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [bfo, setBfo] = useState(null);
   const [opps, setOpps] = useState(null);
   const [clientStores, setClientStores] = useState(readClientStores);
@@ -1106,20 +1142,11 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       try {
         const saved = await dbGet(STORE, KEY);
         if (cancelled) return;
-        if (saved) setState(() => ({
-          ...DEFAULT_STATE,
-          ...saved,
-          ...migrateNotQuoted(saved),
-          stages: sanitizeStages(saved.stages),
-          // Label overrides must be a plain object; anything else falls back to
-          // "no overrides" so a corrupt value can't crash the header render.
-          labels: (saved.labels && typeof saved.labels === 'object' && !Array.isArray(saved.labels)) ? saved.labels : {},
-          // Coverage services must be an array of non-empty strings; a corrupt
-          // value falls back to "none tracked" so the table can't crash.
-          coverageServices: Array.isArray(saved.coverageServices)
-            ? saved.coverageServices.filter(s => typeof s === 'string' && s)
-            : [],
-        }));
+        if (saved) {
+          const next = fromRecord(saved);
+          baselineRef.current = JSON.stringify(next);
+          setState(next);
+        }
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
         const oppsSaved = await loadOppsFromCache();
@@ -1531,6 +1558,14 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
 
   useEffect(() => {
     if (!hydrated) return;
+    const json = JSON.stringify(state);
+    // Nothing has moved off what storage gave us, so there is nothing to
+    // write. This is the guard that keeps a cleared browser from saving its
+    // defaults over the Firestore copy it is still pulling down — the whole
+    // reason the tracked coverage services could vanish. See
+    // pipelineNeedsSave.
+    if (!pipelineNeedsSave(json, baselineRef.current)) return;
+    baselineRef.current = json;
     // mirrorDbPut is dbPut plus the Firestore mirror, so the dashboard
     // survives a cleared browser.
     mirrorDbPut(STORE, KEY, state)
@@ -1539,6 +1574,42 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       .then(notifyPipelineDashboardChanged)
       .catch(err => console.warn('Pipeline save failed', err));
   }, [state, hydrated]);
+
+  // The restore. hydrateLocalMirrors runs at signin and isn't awaited, so on
+  // a cleared browser the cloud copy lands in IndexedDB seconds AFTER this
+  // page has already read the empty store and rendered defaults. It fires
+  // the dashboard event when it does; without this listener the page kept
+  // showing defaults, and the next edit wrote them back over the restored
+  // record.
+  //
+  // Every save here fires the same event, so the listener re-reads and
+  // compares rather than trusting the event: an echo of our own write is
+  // already on screen and stops at pipelineShouldAdopt.
+  useEffect(() => {
+    let cancelled = false;
+    async function onDashboardChanged() {
+      try {
+        const saved = await dbGet(STORE, KEY);
+        if (cancelled || !saved) return;
+        const next = fromRecord(saved);
+        const incoming = JSON.stringify(next);
+        if (!pipelineShouldAdopt({
+          stateJson: JSON.stringify(stateRef.current),
+          baselineJson: baselineRef.current,
+          incomingJson: incoming,
+        })) return;
+        baselineRef.current = incoming;
+        setState(next);
+      } catch (e) {
+        console.warn('Pipeline dashboard refresh failed', e);
+      }
+    }
+    window.addEventListener(PIPELINE_DASHBOARD_EVENT, onDashboardChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PIPELINE_DASHBOARD_EVENT, onDashboardChanged);
+    };
+  }, []);
 
   function setStage(idx, patch) {
     setState(s => ({ ...s, stages: s.stages.map((row, i) => i === idx ? { ...row, ...patch } : row) }));

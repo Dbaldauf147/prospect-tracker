@@ -376,10 +376,16 @@ function Money({ low, high, scoped, onCard, bold }) {
   );
 }
 
+// The count a line is charged on, named for use mid-sentence: 'sites',
+// 'meters'. Falls back to the unit key, which is already a word.
+function unitWord(unit, bases) {
+  return String((bases || []).find(b => b.unit === unit)?.unitLabel || unit).toLowerCase();
+}
+
 // A number typed against one client — a unit count or the deal size.
 // Commits on blur / Enter, cancels on Escape, and only writes when the value
 // actually changed, so clicking in and back out can't blank a count.
-function CountInput({ value, placeholder, onCommit, width = 96 }) {
+function CountInput({ value, placeholder, onCommit, width = 96, title }) {
   const [draft, setDraft] = useState(null);
   const shown = draft === null ? (value === null || value === undefined ? '' : String(value)) : draft;
   function commit() {
@@ -393,6 +399,7 @@ function CountInput({ value, placeholder, onCommit, width = 96 }) {
     <input
       value={shown}
       placeholder={placeholder}
+      title={title}
       inputMode="decimal"
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
@@ -1080,7 +1087,7 @@ export function DealSizingView({
                 <thead>
                   <tr style={{ color: '#64748B', textAlign: 'left' }}>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem 0', minWidth: 220 }}>Service</th>
-                    <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 110 }} title="Overrides the count this service would otherwise price against — for a rollout that covers part of the portfolio.">Units</th>
+                    <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 110 }} title="Overrides the count this service would otherwise price against — for a rollout that covers part of the portfolio. On a row whose fee was typed on the rate card it is how many of them the deal carries, each at that fee, and blank means one.">Units</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 190, textAlign: 'right' }}>Year 1 fee</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0 0.35rem', minWidth: 190, textAlign: 'right' }}>Deal value</th>
                   </tr>
@@ -1106,7 +1113,20 @@ export function DealSizingView({
                           <CountInput
                             width={92}
                             value={scope.serviceUnits[line.name] ?? ''}
-                            placeholder={estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '—'}
+                            /* A row whose fee was typed on the rate card falls back
+                               to one, not to the shared count: that fee prices ONE
+                               of whatever the service is, and the account-wide
+                               figure never multiplies it (see estimateRecurring).
+                               Offering the count as the placeholder read as a
+                               promise the row wasn't keeping — a site count beside
+                               a fee that isn't per site. Same rule the Projects
+                               panel on Services Pricing prints. */
+                            placeholder={line.typed
+                              ? '1'
+                              : (estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '—')}
+                            title={line.typed
+                              ? `Priced at the fee typed on this service's rate card, once for each of these. Blank means one — the shared ${unitWord(line.unit, bases)} count never multiplies a typed fee.`
+                              : `How many ${unitWord(line.unit, bases)} this service is charged on. Blank prices it against the shared count.`}
                             onCommit={(typed) => {
                               const next = { ...scope.serviceUnits };
                               if (typed === '') delete next[line.name];

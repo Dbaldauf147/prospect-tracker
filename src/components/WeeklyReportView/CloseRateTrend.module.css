@@ -108,6 +108,47 @@
   line-height: 1.2;
 }
 
+/* The six-month total running ahead of the rolling year. The app's own
+   "good" trio (#166534 on #DCFCE7), which is a reserved status colour —
+   never a series colour — and it ships with the ▲ beside it so the cue
+   never rests on hue alone. */
+/* The cell keeps its own borders and padding; the green lives on the chip
+   inside it, so two green rows in a row stay two chips. */
+.betterChip {
+  display: inline-block;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  background: #dcfce7;
+}
+
+.cellBetter .cellRate {
+  color: #166534;
+}
+
+.cellBetter .cellCount {
+  color: #3f8b5c;
+}
+
+.betterArrow {
+  margin-right: 0.15rem;
+  font-size: 0.6rem;
+  vertical-align: 0.05em;
+}
+
+/* Read out by a screen reader, invisible on the page: the arrow is
+   aria-hidden decoration, so the meaning needs saying in words. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .cellEmpty,
 .cellEmptyInline {
   color: var(--color-border, #cbd5e1);
