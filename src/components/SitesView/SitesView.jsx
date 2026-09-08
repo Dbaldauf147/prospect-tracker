@@ -10726,6 +10726,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // with the building attributes rather than the energy columns: it
       // describes what is installed, not what it consumes.
       { label: 'Est. Equipment', get: (s) => s.equipment, numFmt: '#,##0', width: 14, estimated: () => true },
+      // Utility accounts (bills) expected for the site, from the same
+      // property type — the unit a data deal is priced in, and the one
+      // figure this sheet was carrying nowhere despite the page, the saved
+      // site list and the Methodology tab all reporting it.
+      //
+      // The total only. Its per-commodity working ("Elec 1 · Gas Multiple ·
+      // Water 1") is on the Methodology tab's per-site section, where the
+      // labels can say "Multiple" and "0 – 1" in full; a column of those
+      // here would be the one thing on this sheet a reader can't add up.
+      // Two decimals because the roll-up counts a "0 – 1" as 0.5.
+      { label: 'Est. Utility Accounts', get: (s) => s.accounts, numFmt: '#,##0.##', width: 16, estimated: () => true },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
@@ -10965,6 +10976,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // Null rather than 0 for a type that didn't resolve, so the cell
           // stays empty instead of claiming an empty building.
           equipment: propertyTypeEquipment(r.__propertyType__),
+          accounts: propertyTypeAccountTotal(r.__propertyType__),
           // Canonical Owned / Leased where the upload's value could be
           // placed. Where it couldn't, the raw string travels as-is
           // rather than the cell going blank: "Owned/Leased" or "TBD" is
