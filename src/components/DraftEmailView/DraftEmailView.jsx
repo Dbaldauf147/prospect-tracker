@@ -16,7 +16,8 @@ import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, 
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
   normalizeBanners, findBanner, bannerHtml, bannerPlainText, bannerTextColor,
-  bannerIdFor, normalizeBannerColor, BANNER_SWATCHES, DEFAULT_BANNER_COLOR,
+  bannerIdFor, normalizeBannerColor, bannerAccentColor, brandedBanners, needsBrandColors,
+  BANNER_SWATCHES, DEFAULT_BANNER_COLOR,
 } from '../../utils/emailBanners';
 import { htmlSectionLines } from '../../utils/inlineImages.js';
 import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
@@ -1088,6 +1089,19 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   function setBanners(next) {
     updateSettings({ emailBanners: normalizeBanners(next) });
   }
+  // Move the seeded categories onto the Schneider palette, once. A user who
+  // has had banners since before the brand format still has the old blue /
+  // green / amber stored — the format around them changed, their colours
+  // couldn't. Only a colour still sitting on its pre-brand default is
+  // touched, so a colour actually chosen survives, and the flag makes it a
+  // one-off: without it, deliberately picking the old blue again would be
+  // undone on the next load.
+  useEffect(() => {
+    if (!settings || settings.emailBannersBranded) return;
+    if (!needsBrandColors(banners)) return;
+    updateSettings({ emailBanners: brandedBanners(banners), emailBannersBranded: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banners, settings?.emailBannersBranded]);
   // The banner editor works on its own copy of the list while it's open:
   // updateSettings writes straight to Firestore, so committing per keystroke
   // would be a write per letter. Edits land on blur and on Done — the same
@@ -2440,15 +2454,21 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             {activeBanner && (
               <div
                 className={styles.bannerPreview}
-                style={{ background: activeBanner.color, color: bannerTextColor(activeBanner.color) }}
+                style={{
+                  background: activeBanner.color,
+                  color: bannerTextColor(activeBanner.color),
+                  borderBottomColor: bannerAccentColor(activeBanner.color),
+                }}
                 title="How the banner will look at the top of the email"
               >{activeBanner.label}</div>
             )}
             {showBannerEditor && (
               <div className={styles.bannerEditor}>
                 <p className={styles.bannerEditHint}>
-                  Name each category and give it a colour. The text colour is picked for
-                  you — black or white, whichever reads against the colour you choose.
+                  Name each category and give it a colour — the swatches are the Schneider
+                  palette. The text colour is picked for you (black or white, whichever
+                  reads against the band), and every banner carries the Life Is On green
+                  rule underneath.
                 </p>
                 {bannerDraft.map((b, i) => (
                   <div key={b.id} className={styles.bannerEditRow}>

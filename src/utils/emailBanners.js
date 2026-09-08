@@ -16,35 +16,52 @@
 // rather than a styled <div>. Word honours bgcolor on a table cell; a
 // background-colour on a block element it may quietly drop, which would
 // leave the label sitting on white with no banner at all.
+//
+// The format is Schneider Electric's, matching the branded Excel exports:
+// a solid band in a brand colour with the label in white Nunito Sans, over a
+// thin rule in the Life Is On green. The band colour is the category's — that
+// is what tells two emails apart at a glance — and the green rule is the part
+// every banner shares, so a stack of them reads as one brand rather than as
+// three unrelated coloured bars.
 
 import { escapeHtml } from './draftEmail.js';
+import {
+  SE_GREEN, SE_GREEN_DARK, SE_GRAPHITE, SE_SLATE, SE_MUTED, SE_EMAIL_FONT,
+} from './schneiderBrand.js';
 
-// Seeded on first use with the three categories the composer was built for.
-// They're ordinary editable entries from that point on — renaming or
-// recolouring one, or deleting it outright, is expected.
+// Seeded on first use with the three categories the composer was built for,
+// in brand colours. They're ordinary editable entries from that point on —
+// renaming or recolouring one, or deleting it outright, is expected.
 export const DEFAULT_EMAIL_BANNERS = Object.freeze([
-  Object.freeze({ id: 'energy-market-update', label: 'Energy Market Update', color: '#1D4ED8' }),
-  Object.freeze({ id: 'market-intelligence', label: 'Market Intelligence', color: '#047857' }),
-  Object.freeze({ id: 'compliance-update', label: 'Compliance Update', color: '#B45309' }),
+  Object.freeze({ id: 'energy-market-update', label: 'Energy Market Update', color: SE_GREEN_DARK }),
+  Object.freeze({ id: 'market-intelligence', label: 'Market Intelligence', color: SE_GRAPHITE }),
+  Object.freeze({ id: 'compliance-update', label: 'Compliance Update', color: SE_GREEN }),
 ]);
 
-// The colour a banner falls back to when its own is missing or unreadable —
-// a slate that looks deliberate rather than broken.
-export const DEFAULT_BANNER_COLOR = '#334155';
+// The colour a banner falls back to when its own is missing or unreadable:
+// the brand's own header green, so a fallback still looks deliberate.
+export const DEFAULT_BANNER_COLOR = SE_GREEN_DARK;
 
-// Colours offered as one-click swatches in the banner editor. The user can
-// still type any hex through the colour picker; these are just a starting
-// palette wide enough that neighbouring categories don't blur together.
+// One-click swatches in the banner editor — the brand palette, every value
+// one the branded exports already use. The colour picker beside them still
+// takes any hex; these are the ones that look like Schneider.
 export const BANNER_SWATCHES = Object.freeze([
-  '#1D4ED8', // blue
-  '#047857', // green
-  '#B45309', // amber
-  '#B91C1C', // red
-  '#6D28D9', // violet
-  '#0E7490', // teal
-  '#BE185D', // pink
-  '#334155', // slate
+  SE_GREEN_DARK, // header green — the default band
+  SE_GREEN,      // Life Is On green
+  SE_GRAPHITE,   // graphite
+  SE_SLATE,      // slate
+  SE_MUTED,      // muted grey
 ]);
+
+// What the three seeded categories used to be, before the banners were put
+// into brand format. A user who never touched a colour still has these
+// stored, and the composer swaps them for the brand ones once — see
+// brandedBanners below.
+export const LEGACY_BANNER_COLORS = Object.freeze({
+  'energy-market-update': '#1D4ED8',
+  'market-intelligence': '#047857',
+  'compliance-update': '#B45309',
+});
 
 // "#abc" / "ABCDEF" / "#AABBCC" → "#AABBCC". null for anything else, so a
 // junk value falls back rather than reaching the email as a broken colour.
@@ -110,29 +127,69 @@ export function findBanner(banners, id) {
   return (Array.isArray(banners) ? banners : []).find(b => b && b.id === id) || null;
 }
 
+// The thin rule under the band. It is the Life Is On green on every banner —
+// that shared green is what makes three differently-coloured category bars
+// read as one brand — except on a banner whose band is already that green,
+// where the rule steps down to the header green so the two are still two.
+export function bannerAccentColor(bg) {
+  return (normalizeBannerColor(bg) || DEFAULT_BANNER_COLOR) === SE_GREEN ? SE_GREEN_DARK : SE_GREEN;
+}
+
 // The banner as it goes into the email, above the greeting.
 //
-// A one-cell table so Outlook's Word renderer keeps the colour (see the note
-// at the top of this file), full-width so it reads as a banner rather than a
-// tag, and followed by a <br> for the blank line between it and the greeting
-// — the body's own leading blank lines are stripped before it is sent, so
-// without this the greeting would butt straight up against the bar.
+// A table rather than a <div> so Outlook's Word renderer keeps the colours
+// (see the note at the top of this file), full-width so it reads as a banner
+// rather than a tag, in the same shape as a branded export: a solid band
+// carrying the label, then a 3pt rule in the brand green. The trailing <br>
+// is the blank line between the banner and the greeting — the body's own
+// leading blank lines are stripped before it is sent, so without this the
+// greeting would butt straight up against the bar.
+//
+// The rule's cell needs a zeroed font-size and line-height (plus Word's own
+// mso-line-height-rule) or Word gives it a full line of text height and the
+// hairline becomes a second band.
 export function bannerHtml(banner) {
   if (!banner) return '';
   const label = String(banner.label ?? '').trim();
   if (!label) return '';
   const bg = normalizeBannerColor(banner.color) || DEFAULT_BANNER_COLOR;
   const fg = bannerTextColor(bg);
+  const accent = bannerAccentColor(bg);
   return [
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"',
     ' style="border-collapse:collapse;width:100%;">',
     '<tr>',
-    `<td bgcolor="${bg}" style="background-color:${bg};padding:8pt 12pt;`,
-    'font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;font-weight:bold;',
-    `letter-spacing:0.5pt;text-transform:uppercase;color:${fg};">`,
+    `<td bgcolor="${bg}" style="background-color:${bg};padding:9pt 12pt;`,
+    `font-family:${SE_EMAIL_FONT};font-size:13pt;font-weight:bold;`,
+    `letter-spacing:0.2pt;color:${fg};">`,
     escapeHtml(label),
-    '</td></tr></table><br>',
+    '</td></tr>',
+    '<tr>',
+    `<td bgcolor="${accent}" height="4" style="background-color:${accent};height:3pt;`,
+    'line-height:3pt;mso-line-height-rule:exactly;font-size:0;">&nbsp;</td>',
+    '</tr></table><br>',
   ].join('');
+}
+
+// The user's banners with the three seeded categories moved onto brand
+// colours — but only where the stored colour is still the pre-brand default,
+// so a colour anyone has actually chosen is left alone. The composer applies
+// this once and saves the result; doing it on every read instead would mean a
+// user who deliberately picked the old blue could never make it stick.
+export function brandedBanners(banners) {
+  return (Array.isArray(banners) ? banners : []).map((b) => {
+    const legacy = LEGACY_BANNER_COLORS[b?.id];
+    if (!legacy || normalizeBannerColor(b?.color) !== legacy) return b;
+    const branded = DEFAULT_EMAIL_BANNERS.find(d => d.id === b.id);
+    return branded ? { ...b, color: branded.color } : b;
+  });
+}
+
+// Does this list still carry a pre-brand default colour to move over?
+export function needsBrandColors(banners) {
+  return (Array.isArray(banners) ? banners : []).some(b => (
+    LEGACY_BANNER_COLORS[b?.id] && normalizeBannerColor(b?.color) === LEGACY_BANNER_COLORS[b?.id]
+  ));
 }
 
 // The banner in a plain-text body — the Outlook deeplink and the clipboard's

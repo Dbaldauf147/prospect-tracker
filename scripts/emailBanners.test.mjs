@@ -16,8 +16,10 @@
 import {
   normalizeBanners, normalizeBannerColor, bannerTextColor, bannerHtml,
   bannerPlainText, bannerIdFor, findBanner, DEFAULT_EMAIL_BANNERS,
-  DEFAULT_BANNER_COLOR,
+  DEFAULT_BANNER_COLOR, BANNER_SWATCHES, LEGACY_BANNER_COLORS,
+  bannerAccentColor, brandedBanners, needsBrandColors,
 } from '../src/utils/emailBanners.js';
+import { SE_GREEN, SE_GREEN_DARK, SE_GRAPHITE } from '../src/utils/schneiderBrand.js';
 
 let failures = 0;
 function check(name, cond) {
@@ -78,13 +80,37 @@ eq('a draft finds its banner', findBanner(banners, 'market-intelligence').label,
 eq('a deleted banner reads as none', findBanner(banners, 'gone'), null);
 eq('no banner id is no banner', findBanner(banners, ''), null);
 
+// --- Schneider format -----------------------------------------------------
+// The band is the category's colour; the rule under it is the Life Is On
+// green on every banner, which is what makes three differently-coloured bars
+// read as one brand.
+eq('the rule under a green band', bannerAccentColor(SE_GREEN_DARK), SE_GREEN);
+eq('and under a graphite one', bannerAccentColor(SE_GRAPHITE), SE_GREEN);
+// A band already in that green would otherwise have an invisible rule.
+eq('a Life Is On band steps its rule down', bannerAccentColor(SE_GREEN), SE_GREEN_DARK);
+eq('an unusable band colour still gets a rule', bannerAccentColor('nope'), SE_GREEN);
+
+eq('the seeded categories are brand colours',
+  DEFAULT_EMAIL_BANNERS.map(b => b.color), [SE_GREEN_DARK, SE_GRAPHITE, SE_GREEN]);
+check('every swatch is a brand colour',
+  BANNER_SWATCHES.every(c => normalizeBannerColor(c) === c) && BANNER_SWATCHES.includes(SE_GREEN));
+
 // --- the markup that reaches Outlook --------------------------------------
 
-const html = bannerHtml({ id: 'x', label: 'Energy Market Update', color: '#1D4ED8' });
-check('the colour is a bgcolor attribute Word honours', html.includes('bgcolor="#1D4ED8"'));
-check('and a style, for every other client', html.includes('background-color:#1D4ED8'));
+const html = bannerHtml({ id: 'x', label: 'Energy Market Update', color: SE_GREEN_DARK });
+check('the colour is a bgcolor attribute Word honours', html.includes(`bgcolor="${SE_GREEN_DARK}"`));
+check('and a style, for every other client', html.includes(`background-color:${SE_GREEN_DARK}`));
 check('the label is in there', html.includes('Energy Market Update'));
 check('the text colour is the readable one', html.includes('color:#FFFFFF'));
+check('the label is NOT force-uppercased — brand bands are title case',
+  !html.includes('text-transform:uppercase'));
+check('it is set in the brand face, with Arial to catch everyone else',
+  html.includes("font-family:'Nunito Sans',Nunito,Arial,Helvetica,sans-serif"));
+check('the green rule is a second row', html.includes(`bgcolor="${SE_GREEN}"`));
+// Word gives a table cell a full line of text height unless told otherwise,
+// which would turn the 3pt hairline into a second band.
+check('the rule cell is height-pinned for Word',
+  html.includes('mso-line-height-rule:exactly') && html.includes('font-size:0;'));
 check('it is a full-width table, not a div', /^<table[^>]*width="100%"/.test(html));
 check('it ends with the break before the greeting', html.endsWith('</table><br>'));
 check('no banner, no markup', bannerHtml(null) === '');
@@ -95,6 +121,25 @@ check('an unlabelled banner renders nothing', bannerHtml({ id: 'x', label: '  ',
 const nasty = bannerHtml({ id: 'x', label: 'Q3 <b>Update</b> & More', color: '#111111' });
 check('the label is escaped', nasty.includes('Q3 &lt;b&gt;Update&lt;/b&gt; &amp; More'));
 check('and no raw tag survives it', !nasty.includes('<b>'));
+
+// --- moving existing banners onto the palette -----------------------------
+// A user who has had banners since before the brand format still has the old
+// blue / green / amber stored. Only a colour still sitting on its pre-brand
+// default moves; anything actually chosen is left alone.
+const stale = [
+  { id: 'energy-market-update', label: 'Energy Market Update', color: LEGACY_BANNER_COLORS['energy-market-update'] },
+  { id: 'market-intelligence', label: 'Market Intelligence', color: '#BE185D' },
+  { id: 'mine', label: 'My Own', color: '#123456' },
+];
+check('a stale list is spotted', needsBrandColors(stale));
+eq('only the untouched default moves',
+  brandedBanners(stale).map(b => b.color), [SE_GREEN_DARK, '#BE185D', '#123456']);
+check('a branded list needs nothing', needsBrandColors(brandedBanners(stale)) === false);
+check('and running it twice changes nothing more',
+  JSON.stringify(brandedBanners(brandedBanners(stale))) === JSON.stringify(brandedBanners(stale)));
+check('nothing saved needs nothing', needsBrandColors(undefined) === false);
+eq('labels and ids are untouched by the recolour',
+  brandedBanners(stale).map(b => `${b.id}:${b.label}`), stale.map(b => `${b.id}:${b.label}`));
 
 // --- the plain-text fallback ---------------------------------------------
 
