@@ -815,7 +815,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   }
 
   return (
-    <div style={{ padding: '1.5rem', maxWidth: '1000px' }}>
+    // Wide: the campaign's contact table carries nine columns — sent date,
+    // delivery, status, loads/clicks, who replied and when, event status —
+    // and at the old 1000px cap the last of them fell off the right edge of
+    // a container that clipped rather than scrolled. The cap is what keeps
+    // the search box and the subject line from stretching across an
+    // ultrawide monitor, so it stays, just wide enough for the table.
+    <div style={{ padding: '1.5rem', maxWidth: '1600px' }}>
       <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '1rem' }}>Email Campaign Tracker</h2>
 
       {/* Search */}
@@ -1057,8 +1063,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
           {/* Contact table */}
           {displayResults.contacts && displayResults.contacts.length > 0 && (
-            <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', overflow: 'hidden', maxHeight: '500px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+            /* Scrolls both ways. It used to be `overflow: hidden` with only
+               the vertical axis opened back up, so on a narrow window the
+               Event Status column was cut off with no way to reach it — the
+               columns don't compress below minWidth, they just go past the
+               edge. */
+            <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', maxHeight: '500px', overflowY: 'auto', overflowX: 'auto' }}>
+              <table style={{ width: '100%', minWidth: '1080px', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
                     <SortHeader label="Sent To" sortKey="email" />
