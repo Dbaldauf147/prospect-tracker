@@ -166,7 +166,13 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
             message: form.message,
             lookbackDays: testLookback,
           });
-      setToast(`Sent ${data.deals ?? 0} deal(s) across ${data.companies ?? 0} tracked companies to ${data.recipients ?? 0} recipient(s).`);
+      // `searched` can be lower than `companies`: a test send uses the short
+      // interactive budget, so it covers fewer companies than a scheduled run.
+      const searched = data.searched ?? data.companies ?? 0;
+      const coverage = searched < (data.companies ?? 0)
+        ? `${searched} of ${data.companies} tracked companies`
+        : `${searched} tracked companies`;
+      setToast(`Sent ${data.deals ?? 0} deal(s) across ${coverage} to ${data.recipients ?? 0} recipient(s).`);
     } catch (err) {
       setError(String(err.message || err));
     } finally {

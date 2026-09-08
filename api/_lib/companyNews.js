@@ -12,7 +12,7 @@
 // budget, since a firm's add-ons are the densest source of new accounts.
 
 import { sendEmail } from './mailer.js';
-import { researchBudgetMs } from './researchBudget.js';
+import { companyNewsBudgetMs } from './researchBudget.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -244,32 +244,95 @@ function normalizeDeals(raw, since, until) {
   return out.slice(0, 25);
 }
 
-// Research every tracked company, one after another. Sequential on
-// purpose: the whole run shares one function timeout, and a burst of
-// parallel web-search calls is the fastest way to trip Anthropic's rate
-// limit and lose the entire digest instead of its tail.
-export async function researchAll(companies, since, until) {
-  const deadline = Date.now() + researchBudgetMs();
-  const results = [];
+// Research the tracked companies against one shared deadline.
+//
+// This used to run strictly one at a time, and that is what made the digest
+// useless: a single PE firm's search loop can take most of a minute, so the
+// first company ate the whole budget, the second was aborted mid-flight, and
+// every company after it was reported as "not searched" — the same one or two
+// names every single run, because the list order never changed.
+//
+// So: a small worker pool instead. The cap stays low on purpose — the risk
+// that motivated the sequential version (a burst of parallel web searches
+// tripping Anthropic's rate limit) is real, but it is no longer fatal: a 429
+// comes back through researchCompanyAcquisitions as that one company's error
+// and the rest of the digest still lands.
+const RESEARCH_CONCURRENCY = 4;
 
-  for (const entry of companies) {
-    const remaining = deadline - Date.now();
-    // Below this there isn't time for a search loop to finish; record the
-    // rest as skipped so the email says what it didn't cover.
-    if (remaining < 8000) {
-      results.push({ ...entry, deals: [], error: null, skipped: true });
-      continue;
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), remaining);
-    try {
-      const { deals, error } = await researchCompanyAcquisitions(entry, since, until, { signal: controller.signal });
-      results.push({ ...entry, deals, error, skipped: false });
-    } finally {
-      clearTimeout(timer);
+// No single company may spend more than this, however much budget is left.
+// Without it one slow firm can still consume an entire run.
+const PER_COMPANY_MS = 45_000;
+
+// Below this there isn't time for a search loop to finish, so don't start
+// one — record the company as skipped and let the cursor pick it up next run.
+const MIN_SLICE_MS = 8_000;
+
+export async function researchAll(companies, since, until, {
+  budgetMs = companyNewsBudgetMs(),
+  concurrency = RESEARCH_CONCURRENCY,
+  // Seam for the tests: they need to drive timing without real API calls.
+  research = researchCompanyAcquisitions,
+} = {}) {
+  const deadline = Date.now() + budgetMs;
+  const results = new Array(companies.length);
+  let next = 0;
+
+  // Workers pull indices in order and the deadline only moves one way, so
+  // the companies actually attempted are always a prefix of the list. The
+  // rotation cursor depends on that: it advances by the number attempted.
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= companies.length) return;
+      const entry = companies[i];
+
+      const remaining = deadline - Date.now();
+      if (remaining < MIN_SLICE_MS) {
+        results[i] = { ...entry, deals: [], error: null, skipped: true };
+        continue;
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(remaining, PER_COMPANY_MS));
+      try {
+        const { deals, error } = await research(entry, since, until, { signal: controller.signal });
+        results[i] = { ...entry, deals, error, skipped: false };
+      } catch (err) {
+        // researchCompanyAcquisitions answers with an error rather than
+        // throwing, but a hole in `results` would crash the email builder
+        // and lose the whole digest, so don't rely on that.
+        results[i] = { ...entry, deals: [], error: String(err?.message || err).slice(0, 200), skipped: false };
+      } finally {
+        clearTimeout(timer);
+      }
     }
   }
+
+  const workers = Math.max(1, Math.min(concurrency, companies.length));
+  await Promise.all(Array.from({ length: workers }, worker));
   return results;
+}
+
+// Start the run at `startIndex` and wrap around, so a digest that can only
+// reach part of its list covers a different part next time. Without this the
+// tail of an alphabetical list is never searched at all.
+export function rotateForRun(companies, startIndex) {
+  const n = companies.length;
+  if (n === 0) return [];
+  const raw = Number(startIndex);
+  const start = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) % n : 0;
+  return start === 0 ? companies.slice() : [...companies.slice(start), ...companies.slice(0, start)];
+}
+
+// Where the next run should begin: just past the last company this run
+// actually searched. A run that searched nothing leaves the cursor alone
+// rather than advancing past companies it never looked at.
+export function nextCursor(startIndex, results) {
+  const n = results.length;
+  if (n === 0) return 0;
+  const attempted = results.filter((r) => !r.skipped).length;
+  if (attempted === 0) return Number(startIndex) || 0;
+  return ((Number(startIndex) || 0) + attempted) % n;
 }
 
 // ---- Email ---------------------------------------------------------------
@@ -317,7 +380,7 @@ function companySection(result) {
        </table>`
     : `<div style="color:#94A3B8;font-size:13px;padding:6px 0">
          ${result.skipped
-           ? 'Not searched this run — the digest ran out of time before reaching it.'
+           ? 'Not searched this run — the digest ran out of time before reaching it. It moves to the front of the queue next run.'
            : result.error
              ? `Couldn't be researched: ${escapeHtml(result.error)}`
              : 'No acquisitions announced in this window.'}
@@ -337,35 +400,49 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
   const withDeals = results.filter((r) => r.deals.length > 0);
   const withoutDeals = results.filter((r) => r.deals.length === 0);
   const totalDeals = withDeals.reduce((n, r) => n + r.deals.length, 0);
+  const searchedCount = results.filter((r) => !r.skipped).length;
 
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 18px">${escapeHtml(message)}</p>`
     : '';
 
-  // Companies with nothing to report are collapsed into one line rather
-  // than given a heading each — the point of the email is the deals.
-  const quietList = withoutDeals.length
-    ? `<div style="margin-top:26px;padding-top:14px;border-top:1px solid #E2E8F0">
+  // Companies with nothing to report are collapsed rather than given a
+  // heading each — but "found nothing", "never searched" and "the search
+  // failed" are three different things, and lumping them together is what
+  // hid a digest that was quietly timing out after one company. Each
+  // outcome gets its own line, and a failure prints its reason.
+  const quiet = (label, entries, detail) => (entries.length
+    ? `<div style="margin-top:22px;padding-top:14px;border-top:1px solid #E2E8F0">
          <div style="color:#64748B;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">
-           No acquisitions found (${withoutDeals.length})
+           ${escapeHtml(label)} (${entries.length})
          </div>
          <div style="color:#94A3B8;font-size:13px;line-height:1.6">
-           ${withoutDeals.map((r) => escapeHtml(r.company) + (r.skipped ? ' (not searched)' : r.error ? ' (error)' : '')).join(' · ')}
+           ${entries.map((r) => escapeHtml(r.company) + (detail ? detail(r) : '')).join(' · ')}
          </div>
        </div>`
-    : '';
+    : '');
+
+  const searchedEmpty = withoutDeals.filter((r) => !r.skipped && !r.error);
+  const failed = withoutDeals.filter((r) => !r.skipped && r.error);
+  const notSearched = withoutDeals.filter((r) => r.skipped);
+
+  const quietList = [
+    quiet('No acquisitions found', searchedEmpty),
+    quiet('Search failed', failed, (r) => ` — ${escapeHtml(String(r.error).slice(0, 160))}`),
+    quiet('Not searched this run — first in line next run', notSearched),
+  ].join('');
 
   return `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:0 auto;padding:8px">
       <h2 style="color:#009530;margin:0 0 4px;font-size:20px">Company Acquisition News</h2>
       <div style="color:#64748B;font-size:12px;margin:0 0 18px">
         ${escapeHtml(formatWindow(since, until))} ·
-        ${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} across ${withDeals.length} of ${results.length} tracked ${results.length === 1 ? 'company' : 'companies'}
+        ${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} across ${withDeals.length} of ${searchedCount} searched${searchedCount < results.length ? ` (${results.length} tracked)` : ''}
       </div>
       ${intro}
       ${withDeals.length
         ? withDeals.map(companySection).join('')
-        : '<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions were found for any tracked company in this window.</div>'}
+        : `<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions were found in this window${searchedCount < results.length ? ` among the ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} this run reached` : ''}.</div>`}
       ${quietList}
       <div style="margin-top:26px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
@@ -389,28 +466,36 @@ export async function sendCompanyNewsEmail({ to, subject, html, replyTo }) {
 // the email. Shared by the cron and the "send now" route so both produce
 // exactly the same message. Returns null when there's nothing to send and
 // the caller asked to skip empty runs.
-export async function buildDigest(db, uid, email, { lastSentAt, message, skipWhenEmpty } = {}) {
+export async function buildDigest(db, uid, email, {
+  lastSentAt, message, skipWhenEmpty, startIndex = 0, budgetMs,
+} = {}) {
   const companies = await loadTrackedCompanies(db, uid, email);
   if (companies.length === 0) {
-    return { empty: true, reason: 'no-tracked-companies', companies: 0, deals: 0, html: null };
+    return { empty: true, reason: 'no-tracked-companies', companies: 0, deals: 0, html: null, nextStartIndex: 0 };
   }
 
+  // Search order rotates run to run; the email lists them in that same
+  // order, so the companies this run reached come before the ones it didn't.
+  const ordered = rotateForRun(companies, startIndex);
   const { since, until } = digestWindow(lastSentAt);
-  const results = await researchAll(companies, since, until);
+  const results = await researchAll(ordered, since, until, budgetMs ? { budgetMs } : {});
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
+  const nextStartIndex = nextCursor(startIndex, results);
 
   if (deals === 0 && skipWhenEmpty) {
-    return { empty: true, reason: 'no-deals', companies: companies.length, deals: 0, html: null };
+    return { empty: true, reason: 'no-deals', companies: companies.length, deals: 0, html: null, nextStartIndex };
   }
 
   return {
     empty: false,
     reason: null,
     companies: companies.length,
+    searched: results.filter((r) => !r.skipped).length,
     deals,
     since,
     until,
     results,
+    nextStartIndex,
     html: buildNewsEmailHtml(results, { since, until, message }),
     defaultSubject: newsSubject(results, since, until),
   };
