@@ -62,6 +62,18 @@ const RANK_COLORS = [
   { badge: '#94A3B8', ring: '#E2E8F0', tint: '#FCFCFD' },
 ];
 
+// A step that's caught up drops its rank colour for green — the whole row,
+// not only the pill 130px away on the right. The ladder is read top to
+// bottom to find the first thing still owed, and the rank ramp is what
+// answers "where am I", not "what's left": with the status only in the
+// right-hand column, seven pale blue rows all look alike and the eye has
+// to travel to each pill in turn. Green rows are the ones already dealt
+// with, so what is left stands out by not being green.
+//
+// Deliberately paler than the status pill's own #DCFCE7, so the pill still
+// reads as a chip sitting on the row rather than dissolving into it.
+const CAUGHT_UP_COLORS = { badge: '#16A34A', ring: '#BBF7D0', tint: '#F2FDF5' };
+
 // Fixed widths so the two right-hand cells line up as columns across
 // rows of different heights — and so the header labels sit over them.
 // Wide enough for the longest tab name a step can point at ("Email
@@ -852,9 +864,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           {editing
             ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
             : `The order prospecting work gets done, ranked. Start at the top and work down —
-               each step is warmer than the one below it. The Status column says whether a step
-               is clear: counted steps answer for themselves, the rest you mark caught up for the
-               day — and the first one you haven't shows as outstanding once everything above it
+               each step is warmer than the one below it. A step turns green once it is clear:
+               counted steps answer for themselves, the rest you mark caught up for the day —
+               and the first one you haven't shows as outstanding once everything above it
                is clear.`}
         </div>
       </div>
@@ -881,7 +893,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
         {steps.map((step, i) => {
           const rank = i + 1;
-          const colors = RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
           const isLast = rank === steps.length;
           const row = stateByKey[step.key];
           const tracked = typeof step.workLabel === 'function';
@@ -892,6 +903,13 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           // It reads like a counted step from here: no undo, because there
           // is no mark to undo.
           const autoCleared = row?.auto === true;
+          // Green once the step is clear — but never while the ladder is
+          // being edited: the Status column is hidden there, so a green row
+          // would be a colour with nothing on screen to explain it, on the
+          // one screen where the rows are being dragged around by rank.
+          const colors = !editing && state === 'caught-up'
+            ? CAUGHT_UP_COLORS
+            : RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
           // A hand-marked step is caught up only because it was marked,
           // so the toggle reads its state rather than the map again.
           const marked = !tracked && !autoCleared && state === 'caught-up';
