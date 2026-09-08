@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
 import { countCallInDue } from '../utils/oppsCallIn';
+import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
+import { useSavedCampaigns } from './useSavedCampaigns';
 import { collectTopPcIntros } from '../utils/topPcOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
 import {
@@ -24,8 +26,8 @@ import {
 // the user has no way to tell which is lying. Same reasoning as
 // useProspectingTagDebt, which feeds the other two readouts on that page.
 //
-// Returns { steps, counts, topPcIntros, states, stateByKey, today,
-// caughtUpMap, dueCount }.
+// Returns { steps, counts, autoClear, topPcIntros, campaignsToFinish,
+// states, stateByKey, today, caughtUpMap, dueCount }.
 export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
   // reads them: newest of the local cache and Firestore on mount, then the
@@ -63,6 +65,20 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // than counted, since the page lists these rows under the step.
   const topPcIntros = useMemo(() => collectTopPcIntros(prospects), [prospects]);
 
+  // The saved email campaigns, read here rather than on the Prospecting
+  // page so the page's market-updates row, the rows it prints under it and
+  // the sidebar's dot are one answer — the same reason the counts above
+  // are computed here. `loading` is what keeps an empty list from reading
+  // as "everything has been sent" before the read has landed; a failed
+  // read ends as [], which is a book with no campaigns in it and so leaves
+  // the step to be marked by hand.
+  const { campaigns: savedCampaigns, loading: campaignsLoading } = useSavedCampaigns();
+  const campaigns = campaignsLoading ? null : savedCampaigns;
+  const campaignsToFinish = useMemo(
+    () => (campaigns ? unfinishedCampaigns(campaigns) : null),
+    [campaigns],
+  );
+
   // null (not 0) anywhere the answer hasn't landed: a step with a count
   // still in flight is "unknown", which shows nothing, rather than an
   // unearned "all caught up" that would also let the step below it go red.
@@ -73,19 +89,30 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     'pe-intros': topPcIntros ? topPcIntros.length : null,
   }), [oppsRecords, issues, serviceGaps, topPcIntros]);
 
+  // The steps nothing counts, but that something in the app can still
+  // answer for. "Reach out to contacts with market updates" is the batch a
+  // saved campaign sends, so once every campaign that isn't paused has
+  // finished going out, the step is done without the user confirming what
+  // the data already says. null while the campaigns are still loading.
+  const autoClear = useMemo(() => ({
+    'market-updates': campaignsAllSent(campaigns),
+  }), [campaigns]);
+
   const states = useMemo(
-    () => ladderStates({ steps, counts, caughtUpMap, today }),
-    [steps, counts, caughtUpMap, today],
+    () => ladderStates({ steps, counts, autoClear, caughtUpMap, today }),
+    [steps, counts, autoClear, caughtUpMap, today],
   );
 
   return useMemo(() => ({
     steps,
     counts,
+    autoClear,
     topPcIntros,
+    campaignsToFinish,
     states,
     stateByKey: statesByKey(states),
     today,
     caughtUpMap,
     dueCount: countDueSteps(states),
-  }), [steps, counts, topPcIntros, states, today, caughtUpMap]);
+  }), [steps, counts, autoClear, topPcIntros, campaignsToFinish, states, today, caughtUpMap]);
 }

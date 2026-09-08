@@ -102,6 +102,42 @@ export function campaignOutreachLabel(c) {
 }
 
 /**
+ * Has the market-update outreach already been done, judged by the campaigns
+ * themselves rather than by a tick?
+ *
+ * The Prospecting ladder's market-updates step is hand-marked, which meant
+ * ticking a box the data had already answered: every campaign sitting at
+ * 100% sent and the step still asking to be marked caught up. So when the
+ * campaigns say the sending is finished, the step says so on its own.
+ *
+ * Paused campaigns are left out — a pause is the user having dealt with a
+ * campaign for the next couple of days, so it isn't work owed today (and it
+ * rejoins the list, and this answer, when the pause lifts). Campaigns with
+ * nobody in them are ignored the same way `unfinishedCampaigns` ignores
+ * them: there is no outreach in an empty list either way.
+ *
+ * Returns:
+ *   null   — the campaigns haven't loaded, so nothing is known yet
+ *   true   — there is at least one real campaign and none that isn't paused
+ *            still has mail to go out
+ *   false  — something is still to send, OR there are no campaigns at all:
+ *            an empty account proves nothing about today's outreach, so the
+ *            step falls back to being marked by hand.
+ */
+export function campaignsAllSent(campaigns, nowMs = Date.now()) {
+  if (!Array.isArray(campaigns)) return null;
+  let sendable = 0;
+  for (const c of campaigns) {
+    if (!c || typeof c !== 'object') continue;
+    const { total, remaining } = campaignSendStats(c);
+    if (total <= 0) continue;
+    sendable += 1;
+    if (remaining > 0 && !isCampaignPaused(c, nowMs)) return false;
+  }
+  return sendable > 0;
+}
+
+/**
  * The campaigns that aren't finished sending, as rows to print.
  *
  * A campaign with nobody left to send to is done and drops out — that's

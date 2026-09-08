@@ -113,6 +113,13 @@ export const DEFAULT_STEPS = [
     // it, for the day. Behaviour, like the counts: never stored, always
     // re-attached by key.
     dueWhenReached: true,
+    // Except when the campaigns have already answered: every one of them
+    // that isn't paused finished sending means the outreach went out, and
+    // asking for a tick on top of that is asking the user to confirm what
+    // the page is showing them. See campaignsAllSent — the step clears
+    // itself then, and this is what the Status pill says instead of the
+    // undo hint a hand-marked step carries.
+    clearTitle: 'Every email campaign that isn\'t paused has finished sending — no market update is still going out',
   },
   {
     key: 'renewals',
