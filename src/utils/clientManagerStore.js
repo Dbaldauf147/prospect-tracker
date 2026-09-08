@@ -1,5 +1,6 @@
 // Per-client fields typed directly on the Clients tab — Client Manager
-// name, In Person Meeting flag, and the user's custom Status. Each
+// name, In Person Meeting flag, the user's custom Status, and the service
+// scope the Deal Sizing subtab prices. Each
 // lives in its own localStorage key so a missing field doesn't blow
 // away the others, and each is keyed by the normalized company name so
 // casing / whitespace drift doesn't fragment the data across imports.
@@ -16,6 +17,13 @@ const STATUS_SET_AT_KEY = 'clients-status-set-at';
 const NOTES_KEY = 'clients-notes-map';
 const UNTRACKED_KEY = 'clients-untracked-map';
 const LOUISVILLE_KEY = 'clients-louisville-map';
+// The Deal Sizing subtab's per-client scope: which services are on the table
+// for this client, the counts they price against, and the deal size a
+// percentage-based service takes its cut of. The only value here that isn't a
+// string or a flag — it is an object per client (see clientDealSizing.js for
+// its shape) — which everything below already tolerates: the maps are moved
+// and counted by value, never read into.
+const SCOPE_KEY = 'clients-service-scope-map';
 export const CLIENT_MANAGER_EVENT = 'client-manager-changed';
 export const CLIENT_IN_PERSON_EVENT = 'client-inperson-changed';
 export const CLIENT_STATUS_EVENT = 'client-status-changed';
@@ -23,6 +31,7 @@ export const CLIENT_STATUS_SET_AT_EVENT = 'client-status-set-at-changed';
 export const CLIENT_NOTES_EVENT = 'client-notes-changed';
 export const CLIENT_UNTRACKED_EVENT = 'client-untracked-changed';
 export const CLIENT_LOUISVILLE_EVENT = 'client-louisville-changed';
+export const CLIENT_SCOPE_EVENT = 'client-scope-changed';
 
 function normKey(s) { return String(s || '').trim().toLowerCase(); }
 
@@ -57,6 +66,7 @@ export function loadClientStatusSetAtMap() { return loadMap(STATUS_SET_AT_KEY); 
 export function loadClientNotesMap() { return loadMap(NOTES_KEY); }
 export function loadClientUntrackedMap() { return loadMap(UNTRACKED_KEY); }
 export function loadClientLouisvilleMap() { return loadMap(LOUISVILLE_KEY); }
+export function loadClientScopeMap() { return loadMap(SCOPE_KEY); }
 
 export function setClientManager(company, name) {
   const key = normKey(company);
@@ -75,6 +85,18 @@ export function setClientInPerson(company, checked) {
   if (checked) map[key] = true;
   else delete map[key];
   persistMap(IN_PERSON_KEY, map, CLIENT_IN_PERSON_EVENT);
+}
+
+// Save (or clear) a client's Deal Sizing scope. An empty scope is deleted
+// rather than stored as an empty object, so the map holds only clients the
+// user has actually put a scope against — which is what the subtab counts.
+export function setClientScope(company, scope) {
+  const key = normKey(company);
+  if (!key) return;
+  const map = loadClientScopeMap();
+  if (scope) map[key] = scope;
+  else delete map[key];
+  persistMap(SCOPE_KEY, map, CLIENT_SCOPE_EVENT);
 }
 
 export function setClientLouisville(company, checked) {
@@ -149,6 +171,7 @@ const ALL_CLIENT_MAPS = [
   [NOTES_KEY, CLIENT_NOTES_EVENT],
   [UNTRACKED_KEY, CLIENT_UNTRACKED_EVENT],
   [LOUISVILLE_KEY, CLIENT_LOUISVILLE_EVENT],
+  [SCOPE_KEY, CLIENT_SCOPE_EVENT],
 ];
 
 // Every one of those is mirrored to Firestore. They are the fields typed
@@ -177,7 +200,7 @@ export function countClientFieldRenames(oldName, newName) {
 }
 
 // Move the Client Manager / In Person / Status / Notes / Untracked /
-// Louisville values from `oldName` to `newName` so the typed Clients-tab
+// Louisville / service-scope values from `oldName` to `newName` so the typed Clients-tab
 // data follows a company rename instead of stranding under the old name.
 // Returns the number of field values moved.
 export function renameClientFields(oldName, newName) {
