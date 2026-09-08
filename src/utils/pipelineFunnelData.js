@@ -10,7 +10,7 @@
 //
 // Everything here is pure — the caller passes the already-loaded blobs.
 
-import { parseMoney } from './oppsMetrics.js';
+import { parseDateMs, parseMoney } from './oppsMetrics.js';
 import { isPullThroughOpp } from './pullThrough.js';
 
 // The Opps tab's BFO Opportunity Name lives in the column whose data key is
@@ -129,6 +129,100 @@ export function closeRatesByStage(oppsRecords, nowMs = Date.now()) {
   }
   for (const st of CLOSE_RATE_STAGES) out[st.num] = closeRateTally(buckets[st.num]);
   return out;
+}
+
+// Short month labels for the trend's column heads — "Apr", and the year
+// too whenever the run crosses into a new one, so a six-month window that
+// spans a year boundary can't read as six months of the same year.
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * Close rate by stage, month by month, over a trailing run of whole months.
+ *
+ * The rolling-365-day figure in closeRatesByStage answers "what is our close
+ * rate"; this answers "is it moving". Same signals, same exclusions, same
+ * tally — only the window differs, so a stage's trend and its headline rate
+ * can never be measured two different ways.
+ *
+ * Months are calendar months ending with the one `nowMs` falls in, oldest
+ * first, and an opp lands in the month of its Close Date. A month with no
+ * closed deal in a stage is null rather than 0: no evidence is not a 0%
+ * rate, and drawing it as one would put a cliff in the trend that nothing
+ * in the pipeline did.
+ *
+ * @returns {
+ *   months: [{ key: '2026-04', label: 'Apr', year, month }],
+ *   rows:   [{ key, num, label, short, cells: [tally|null], overall: tally|null }],
+ *   closed: how many closed opps fell in the window at all
+ * }
+ * where each tally is closeRateTally's { sold, notSold, rate, included }.
+ * `rows` carries the four stages high-to-low, matching the Pipeline Metrics
+ * table, and an "All closed" row underneath them — the stage denominators
+ * nest inside each other, so the total is what says whether a stage's move
+ * is a real change or just a change in volume.
+ */
+export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.now() } = {}) {
+  const span = Math.max(1, Math.floor(Number(months) || 0) || 6);
+  const now = new Date(nowMs);
+  const monthCols = [];
+  const colOf = new Map();
+  for (let i = span - 1; i >= 0; i -= 1) {
+    // Day 1 of the month `i` months back. Reading it off a Date built with
+    // an out-of-range month index is what rolls the year over for us.
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const month = d.getMonth();
+    const key = `${year}-${String(month + 1).padStart(2, '0')}`;
+    colOf.set(key, monthCols.length);
+    monthCols.push({ key, label: MONTH_SHORT[month], year, month });
+  }
+  // Only worth labelling the year when the window crosses one.
+  if (monthCols.length > 1 && monthCols[0].year !== monthCols[monthCols.length - 1].year) {
+    for (const c of monthCols) c.label = `${c.label} ’${String(c.year).slice(2)}`;
+  }
+
+  const defs = [
+    ...CLOSE_RATE_STAGES.map(st => ({
+      key: `stage${st.num}`, num: st.num, label: st.label,
+      short: `Stage ${st.num}`, test: st.test,
+    })),
+    // Every closed opp, whatever it reached. Same population as the
+    // metrics table's Total row.
+    { key: 'all', num: null, label: 'All closed opps', short: 'All closed', test: () => true },
+  ];
+  const buckets = defs.map(() => monthCols.map(() => []));
+
+  let closed = 0;
+  for (const r of Array.isArray(oppsRecords) ? oppsRecords : []) {
+    const entry = closedOppEntry(r);
+    if (!entry) continue;
+    // Bucketed off a local-midnight reading of the Close Date, not the raw
+    // Date.parse: a bare ISO date parses as UTC midnight, which is the
+    // previous day west of Greenwich — and on the 1st of a month that is
+    // the previous MONTH, which would move deals between columns.
+    const ms = parseDateMs(entry.closeDate);
+    if (ms === null) continue;
+    const d = new Date(ms);
+    const col = colOf.get(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    if (col === undefined) continue;
+    closed += 1;
+    for (let i = 0; i < defs.length; i += 1) {
+      if (defs[i].test(r)) buckets[i][col].push(entry);
+    }
+  }
+
+  const rows = defs.map((def, i) => {
+    const cells = buckets[i].map(closeRateTally);
+    return {
+      key: def.key, num: def.num, label: def.label, short: def.short,
+      cells,
+      // The whole window as one figure, so a row that moves around can still
+      // be read against where it sits overall.
+      overall: closeRateTally(buckets[i].flat()),
+    };
+  });
+
+  return { months: monthCols, rows, closed };
 }
 
 // One pipeline-metrics stage row flattened to the numbers the funnel draws.

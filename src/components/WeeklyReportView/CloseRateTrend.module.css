@@ -1,0 +1,147 @@
+/* Close rate by stage, month by month — the table under the Weekly
+   Report's pipeline funnel. See CloseRateTrend.jsx for why it's a table
+   with sparklines rather than a five-line chart. */
+
+.wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface, #fff);
+  padding: 0.6rem 0.75rem 0.5rem;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  /* Rates and counts sit in columns and have to line up down the page. */
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 0.3rem 0.4rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Column heads: recessive, so the numbers are the loud thing. */
+.stageHead,
+.monthHead,
+.trendHead,
+.overallHead {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #94a3b8);
+  border-bottom: 1px solid var(--color-border, #e2e8f0);
+}
+
+/* Same specificity as the `.table th` rule above, or the right-align there
+   wins and the two label columns drift off their contents. */
+.table .stageHead,
+.table .trendHead,
+.table .stageCell,
+.table .trendCell {
+  text-align: left;
+}
+
+.overallHead {
+  cursor: help;
+}
+
+.stageCell {
+  text-align: left;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* The stage's colour beside its name, so the sparkline's hue is tied to a
+   label rather than being decoration the reader has to decode. */
+.swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.cell,
+.overallCell {
+  font-size: 0.78rem;
+  color: var(--color-text, #0f172a);
+}
+
+.cellRate {
+  display: block;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+/* The count the rate rests on. Muted and small: it's the qualifier, not
+   the figure — but it is always there, because a rate off three deals and
+   one off thirty read identically without it. */
+.cellCount {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--color-text-muted, #94a3b8);
+  line-height: 1.2;
+}
+
+.cellEmpty,
+.cellEmptyInline {
+  color: var(--color-border, #cbd5e1);
+  font-size: 0.78rem;
+  cursor: help;
+}
+
+.trendCell {
+  padding-left: 0.7rem;
+  padding-right: 0.5rem;
+}
+
+.spark {
+  display: block;
+  overflow: visible;
+}
+
+.sparkEmpty {
+  color: var(--color-border, #cbd5e1);
+  font-size: 0.78rem;
+}
+
+/* The all-closed row is a total, not a fifth stage: ruled off above and set
+   in the muted ink so it reads as the line everything else is measured
+   against. */
+.totalRow > * {
+  border-top: 1px solid var(--color-border, #e2e8f0);
+  padding-top: 0.4rem;
+}
+
+.totalRow .stageCell {
+  color: var(--color-text-secondary, #475569);
+}
+
+/* No closed deals in the window at all. Same shape as the card it replaces
+   so the section doesn't collapse to a bare line of text. */
+.empty {
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface, #fff);
+  padding: 0.75rem 0.9rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--color-text-muted, #64748b);
+}
+
+.note {
+  margin-top: 0.45rem;
+  font-size: 0.66rem;
+  line-height: 1.45;
+  color: var(--color-text-muted, #94a3b8);
+  white-space: normal;
+}

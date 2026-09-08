@@ -19,16 +19,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import styles from './PipelineFunnel.module.css';
-
-// Ordinal blue ramp, earliest stage darkest → latest lightest. Single
-// hue, monotone lightness, and the light end clears the surface at
-// 2.4:1 (validated as an ordinal ramp against a light chart surface).
-const STAGE_FILL = {
-  3: '#104281',
-  4: '#1c5cab',
-  5: '#2a78d6',
-  6: '#6da7ec',
-};
+import { STAGE_FILL, STAGE_FILL_DEFAULT } from './funnelPalette';
 
 // BFO's own stage names, so the callouts read as more than a number.
 const STAGE_NAME = {
@@ -484,7 +475,7 @@ export function PipelineFunnel({ stages = [], outcome = null }) {
           })()}
 
           {geom.segs.map((g) => {
-            const fill = STAGE_FILL[g.stageNum] || '#2a78d6';
+            const fill = STAGE_FILL[g.stageNum] || STAGE_FILL_DEFAULT;
             const band = `M ${g.x0} ${BASE_Y - g.h} L ${g.x1} ${BASE_Y - g.h} L ${g.x1} ${BASE_Y} L ${g.x0} ${BASE_Y} Z`;
             const dim = hover && hover.i !== g.i;
             return (
