@@ -7,6 +7,7 @@ import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
 import { describeExcludedOpens } from '../../utils/emailOpens';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
+import { isCampaignActive } from '../../utils/campaignOutreach';
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
@@ -638,23 +639,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   }
 
   // A saved campaign greys out as "Inactive" once it has had no activity —
-  // neither a save nor a refresh — for 60 days. A campaign with no usable
-  // date stays Active so it never greys out purely for missing a timestamp.
-  function isCampaignActive(c) {
-    const times = [c?.refreshedAt, c?.savedAt]
-      .map(d => (d ? new Date(d).getTime() : 0))
-      .filter(t => Number.isFinite(t) && t > 0);
-    if (!times.length) return true;
-    const last = Math.max(...times);
-    return (Date.now() - last) <= 60 * 24 * 60 * 60 * 1000;
-  }
-
-  // A manual Active/Inactive override always wins over the 60-day auto rule.
-  // `manualActive` is a boolean when the user has set the status by hand, and
-  // undefined when the campaign should follow the automatic activity check.
-  function effectiveActive(c) {
-    return typeof c?.manualActive === 'boolean' ? c.manualActive : isCampaignActive(c);
-  }
+  // neither a save nor a refresh — for 60 days, unless the user has set the
+  // status by hand, which always wins. The rule lives in campaignOutreach
+  // because the Prospecting ladder marks the same campaigns the same way
+  // when it lists the ones still going out; two copies would eventually
+  // call the same campaign Active on one page and Inactive on the other.
+  const effectiveActive = isCampaignActive;
 
   // Flip a saved campaign's Active/Inactive status by hand and persist it.
   // Toggling always writes an explicit boolean, so a campaign the auto rule

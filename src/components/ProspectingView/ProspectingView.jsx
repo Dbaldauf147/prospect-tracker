@@ -18,10 +18,10 @@
 // sidebar dots Prospecting while it stands. See utils/prospectingStatus.js
 // for that rule and for why a manual mark expires overnight.
 //
-// Two steps list their work in place rather than only counting it: the
-// services still short of coverage, and the Top PC of every PE firm that
-// isn't already Qualifying — so the calls to make are on the page rather
-// than a tab away.
+// Three steps list their work in place rather than only counting it: the
+// services still short of coverage, the Top PC of every PE firm that isn't
+// already Qualifying, and the email campaigns that haven't finished going
+// out — so the calls to make are on the page rather than a tab away.
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
@@ -38,6 +38,8 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
+import { unfinishedCampaigns } from '../../utils/campaignOutreach';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 
@@ -343,6 +345,75 @@ function StatusCell({ state, label, title, onToggle, align = 'center' }) {
 // is, and who is left to talk to. It used to sit on the Issues tab, where
 // it read as something broken rather than as the next set of calls.
 const COVERAGE_NAMES_SHOWN = 6;
+// The email campaigns that haven't finished sending, under the
+// market-updates step.
+//
+// "Reach out to contacts with market updates" is exactly what a saved
+// campaign is a batch of, and a campaign sitting at 39% sent is that step
+// half-done: twenty people who were meant to hear from us and haven't.
+// Until this the only place that showed was the Saved Campaigns table two
+// tabs away, so a stall was invisible from the page that ranks the work.
+//
+// Each row reads like the service-coverage rows above it — name, how far
+// it got, how many are left — and opens the Email Campaigns tab, where the
+// unsent recipients can be pushed into a draft.
+function CampaignOutreachList({ rows, onNavigate }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
+          Campaigns still going out:
+        </span>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={onNavigate}
+            style={{
+              padding: 0, border: 0, background: 'none', font: 'inherit',
+              fontSize: '0.68rem', fontWeight: 700, color: '#0A66C2', cursor: 'pointer',
+              textDecoration: 'underline', textDecorationColor: '#BFDBFE', textUnderlineOffset: 2,
+            }}
+          >Open Email Campaigns</button>
+        )}
+      </div>
+      {rows.map((c) => (
+        <div
+          key={`${c.index}-${c.label}`}
+          title={`${c.sent} of ${c.total} sent (${c.pct}%) — ${c.remaining} still to go`
+            + (c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
+          style={{
+            display: 'flex', alignItems: 'baseline', gap: '0.5rem',
+            fontSize: '0.72rem', lineHeight: 1.35,
+            // An inactive campaign is still listed — a parked one that never
+            // finished is exactly what goes quiet — but it doesn't read as
+            // live work.
+            opacity: c.active ? 1 : 0.6,
+          }}
+        >
+          <span style={{
+            fontWeight: 700, color: '#334155', minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{c.label}</span>
+          {/* Same figures the Saved Campaigns table prints, through the same
+              function, so the two pages can't disagree about a percentage.
+              Tabular figures keep the column straight down the list. */}
+          <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+            {c.pct}% sent · {c.remaining} to go
+          </span>
+          {!c.active && (
+            <span style={{
+              flexShrink: 0, padding: '0 6px', borderRadius: 999,
+              background: '#F1F5F9', color: '#64748B',
+              fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase',
+            }}>Inactive</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ServiceGapList({ gaps }) {
   if (!gaps || gaps.length === 0) return null;
   return (
@@ -613,6 +684,13 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // the ladder so the rows here and the count beside them are one list.
   const topPcIntros = ladder?.topPcIntros || null;
   const [showAllTopPcs, setShowAllTopPcs] = useState(false);
+  // The saved email campaigns, for the unfinished ones printed under the
+  // market-updates step. Read through the same hook the Email Tracking tab
+  // uses, so there's one reader of emailCampaigns/{uid} rather than a
+  // fourth copy of the same Firestore call. A failed read leaves the list
+  // empty, which costs the step its sub-list and nothing else.
+  const { campaigns: savedCampaigns } = useSavedCampaigns();
+  const campaignsToFinish = useMemo(() => unfinishedCampaigns(savedCampaigns), [savedCampaigns]);
   // Click-through for that list: id → the record itself, since the page is
   // handed prospects rather than a lookup.
   const prospectById = useMemo(() => {
@@ -816,7 +894,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           // cells sit at the top rather than floating in the middle.
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && topPcIntros?.length)
-            || (step.key === 'market-updates' && tagCoverage?.all?.contacts);
+            || (step.key === 'market-updates' && (tagCoverage?.all?.contacts || campaignsToFinish.length));
           return (
             <div
               key={step.key}
@@ -895,12 +973,21 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                   </div>
                 )}
                 {!editing && step.key === 'market-updates' && (
-                  <TagCoverageBar
-                    coverage={tagCoverage}
-                    onNavigate={onNavigate ? () => onNavigate('contacts') : null}
-                    missing={tagDebt || []}
-                    onOpenContact={openContact}
-                  />
+                  <>
+                    <TagCoverageBar
+                      coverage={tagCoverage}
+                      onNavigate={onNavigate ? () => onNavigate('contacts') : null}
+                      missing={tagDebt || []}
+                      onOpenContact={openContact}
+                    />
+                    {/* Below the tagging bar: that one says how ready the
+                        book is to be written to, this says which writing
+                        has been started and not finished. */}
+                    <CampaignOutreachList
+                      rows={campaignsToFinish}
+                      onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
+                    />
+                  </>
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
                 {!editing && step.key === 'pe-intros' && (
