@@ -6,7 +6,7 @@
 // Lookup save, the paste-and-map modal, and a raw spreadsheet upload —
 // and only the first two control their own column names. So the header
 // matching is what these tests are mostly about.
-import { siteListFacts, formatSqft, toSqft } from '../src/utils/siteListFacts.js';
+import { siteListFacts, siteListScreeningRows, formatSqft, toSqft } from '../src/utils/siteListFacts.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -96,7 +96,10 @@ function eq(actual, expected, name) {
 // --- nothing in, nothing claimed ----------------------------------------
 {
   eq(siteListFacts(null),
-    { sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0, divisions: [], propertyTypes: [] },
+    {
+      sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
+      accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
+    },
     'no list is no facts');
   eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).sqft, null,
     'a list with no size column reports no size');
@@ -159,6 +162,76 @@ function eq(actual, expected, name) {
 
   eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).equipment, null,
     'nothing to count on reports no equipment');
+}
+
+// --- accounts: the bills behind the buildings ----------------------------
+//
+// Same shape as equipment — the per-site figure the analysis wrote, else the
+// property type looked up — because it is the number the Utility Lookup save
+// stamps as a company's Number of Accounts, and the popup's Refresh reads it
+// back off the saved list. The two must agree.
+{
+  const f = siteListFacts({
+    headers: ['Site Name', 'Property Type', 'Est. Utility Accounts'],
+    rows: [
+      { 'Site Name': 'HQ', 'Property Type': 'Office', 'Est. Utility Accounts': 4 },
+      { 'Site Name': 'Depot', 'Property Type': 'Office', 'Est. Utility Accounts': 2.5 },
+    ],
+  });
+  eq(f.accounts, 7, 'a fractional per-site estimate is only rounded in the total');
+  eq(f.accountSites, 2, 'and every row it came from is counted');
+
+  // A list that never went through the Utility Lookup page has no written
+  // estimate, so the property type answers instead.
+  const est = siteListFacts({
+    headers: ['Property Type'],
+    rows: [{ 'Property Type': 'Office' }, { 'Property Type': 'Office' }],
+  });
+  eq(est.accounts != null && est.accounts > 0, true, 'a bare property type still totals');
+
+  // A zero the analysis wrote (Land, Debt — no accounts to estimate) is not
+  // an answer that beats the lookup; it agrees with it.
+  eq(siteListFacts({ headers: ['Property Type'], rows: [{ 'Property Type': 'Land' }] }).accounts, null,
+    'a property type with nothing to estimate reports no accounts rather than zero');
+  eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'HQ' }] }).accounts, null,
+    'nothing to count on reports no accounts');
+  eq(siteListFacts(null).accounts, null, 'and no list at all is not zero accounts');
+}
+
+// --- the list as screening rows -----------------------------------------
+//
+// What the compliance screener is handed when the popup refreshes its
+// figures. The analysis columns are the ones the Utility Lookup page
+// resolved, so where a list carries both they are the ones that count.
+{
+  const rows = siteListScreeningRows({
+    headers: ['Site Name', 'City', 'ST / Prov', 'Country', 'Property Type', 'Size (ft²)'],
+    rows: [{
+      'Site Name': 'HQ', City: 'Seattle', 'ST / Prov': 'WA', Country: 'United States',
+      'Property Type': 'Office', 'Size (ft²)': '60,000',
+    }],
+  });
+  eq(rows, [{
+    id: 0, siteName: 'HQ', city: 'Seattle', state: 'WA', country: 'United States',
+    sqft: 60000, propertyType: 'Office',
+  }], 'the canonical columns map straight onto a screening row');
+
+  // An uploaded list with its own spellings, and no analysis columns at all.
+  eq(siteListScreeningRows({
+    headers: ['Property Name', 'City', 'State', 'SQFT', 'Building Type'],
+    rows: [{ 'Property Name': 'Mill', City: 'Boston', State: 'MA', SQFT: '90000', 'Building Type': 'Warehouse' }],
+  }), [{
+    id: 0, siteName: 'Mill', city: 'Boston', state: 'MA', country: '',
+    sqft: 90000, propertyType: 'Warehouse',
+  }], 'and an upload that kept its own headers still screens');
+
+  // A missing column is a blank, not a crash: the screener treats an
+  // unplaceable site as matching no jurisdiction, which is the truth.
+  eq(siteListScreeningRows({ headers: ['Site Name'], rows: [{ 'Site Name': 'Unknown' }] }), [{
+    id: 0, siteName: 'Unknown', city: '', state: '', country: '', sqft: null, propertyType: '',
+  }], 'a list with nothing to place reads as a row with nothing on it');
+  eq(siteListScreeningRows(null), [], 'no list, no rows');
+  eq(siteListScreeningRows({ headers: ['City'], rows: [] }), [], 'and no rows, no rows');
 }
 
 // --- how a floor area reads ---------------------------------------------

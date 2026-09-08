@@ -14,7 +14,7 @@
 //
 // Pure: one stored list in, plain numbers and counts out.
 
-import { propertyTypeEquipment } from '../data/propertyTypeEstimates.js';
+import { propertyTypeEquipment, propertyTypeAccountTotal } from '../data/propertyTypeEstimates.js';
 
 function findHeader(headers, patterns) {
   for (const pattern of patterns) {
@@ -48,7 +48,8 @@ function toCount(value) {
 /**
  * Sq ft, divisions, property types and equipment across a stored site list.
  *
- *   { sites, sqft, sqftSites, equipment, equipmentSites, divisions, propertyTypes }
+ *   { sites, sqft, sqftSites, equipment, equipmentSites, accounts, accountSites,
+ *     divisions, propertyTypes }
  *
  * `sqft` is null rather than 0 when no row carried a usable size —
  * "nobody has told us the sizes" and "these buildings have no floor
@@ -58,13 +59,18 @@ function toCount(value) {
  * `equipment` follows the same rule, and is the per-site count the
  * analysis wrote where there is one, else the site's property-type
  * estimate — so a list that never went through the Utility Lookup page
- * still totals.
+ * still totals. `accounts` — the utility bills behind those buildings — is
+ * read exactly the same way, and is what the Utility Lookup save has always
+ * counted to set a company's Number of Accounts.
  */
 export function siteListFacts(entry) {
   const headers = (entry?.headers || []).filter(h => typeof h === 'string');
   const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
   if (!rows.length) {
-    return { sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0, divisions: [], propertyTypes: [] };
+    return {
+      sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
+      accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
+    };
   }
 
   const sizeCol = findHeader(headers, [
@@ -86,11 +92,19 @@ export function siteListFacts(entry) {
   const equipmentCol = findHeader(headers, [
     /^est\.?\s*equipment/i, /^equipment\s*count/i, /^equipment$/i,
   ]);
+  // The per-site account estimate, written by the same save and matched the
+  // same way. Accounts are billing relationships rather than buildings, so a
+  // site can carry a fractional one — the total is rounded, not each row.
+  const accountsCol = findHeader(headers, [
+    /^est\.?\s*utility\s*accounts/i, /^utility\s*accounts$/i, /^accounts$/i,
+  ]);
 
   let sqft = 0;
   let sqftSites = 0;
   let equipment = 0;
   let equipmentSites = 0;
+  let accounts = 0;
+  let accountSites = 0;
   const divisions = new Map();
   const propertyTypes = new Map();
   const add = (map, value) => {
@@ -113,6 +127,12 @@ export function siteListFacts(entry) {
     const stated = equipmentCol ? toCount(row[equipmentCol]) : null;
     const n = stated != null ? stated : (typeCol ? propertyTypeEquipment(row[typeCol]) : null);
     if (n != null) { equipment += n; equipmentSites += 1; }
+    // A stated zero falls through to the estimate rather than standing as an
+    // answer: the analysis writes 0 where a property type carries no account
+    // estimate at all (Land, Debt), which is the same thing the lookup says.
+    const statedAccounts = accountsCol ? toCount(row[accountsCol]) : null;
+    const a = statedAccounts ? statedAccounts : (typeCol ? propertyTypeAccountTotal(row[typeCol]) : null);
+    if (a) { accounts += a; accountSites += 1; }
   }
 
   return {
@@ -122,9 +142,59 @@ export function siteListFacts(entry) {
     // Null, not 0, when nothing could be counted — same reasoning as sqft.
     equipment: equipmentSites > 0 ? Math.round(equipment) : null,
     equipmentSites,
+    accounts: accountSites > 0 ? Math.round(accounts) : null,
+    accountSites,
     divisions: [...divisions.values()].sort((a, b) => a.localeCompare(b)),
     propertyTypes: [...propertyTypes.values()].sort((a, b) => a.localeCompare(b)),
   };
+}
+
+/**
+ * The stored list as rows the compliance screener can read.
+ *
+ * screenSite() wants a city, a state/province, a country, a size and a
+ * property type; a stored list has whatever columns its sources had. Same
+ * tolerant matching as the facts above, and the analysis columns win where
+ * both exist — "ST / Prov" and "Country" are the values the Utility Lookup
+ * page resolved, and the screening on that page ran on those.
+ *
+ * Deliberately does NOT screen anything: the ordinance tables behind
+ * complianceMandates run to hundreds of kilobytes, and this module is
+ * imported by the company popup. Callers screen the rows themselves, which
+ * lets the popup load that data only when someone asks for the number.
+ */
+export function siteListScreeningRows(entry) {
+  const headers = (entry?.headers || []).filter(h => typeof h === 'string');
+  const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  if (!rows.length) return [];
+
+  const cityCol = findHeader(headers, [/^city\s*\(analysis/i, /^city$/i, /\bcity\b/i, /^town$/i, /municipality/i]);
+  // "ST / Prov" is what the Utility Lookup save writes; an uploaded column
+  // called State keeps its own name, so both spellings are looked for.
+  const stateCol = findHeader(headers, [
+    /^st\s*\/\s*prov/i, /^state\s*\(analysis/i, /^state$/i, /^province$/i,
+    /state\s*\/\s*prov/i, /\bstate\b/i, /\bprovince\b/i,
+  ]);
+  const countryCol = findHeader(headers, [/^country\s*\(analysis/i, /^country$/i, /\bcountry\b/i]);
+  const sizeCol = findHeader(headers, [
+    /^size\s*\(ft/i, /^size\s*\(sq/i, /^size$/i, /sq\s*\.?\s*ft/i, /square\s*(feet|foot|footage)/i,
+    /\bft\s*²\b/i, /\bft2\b/i, /\b[rg]sf\b/i, /\bsf\b/i, /building\s*(size|area)/i, /gross\s*area/i, /floor\s*area/i,
+  ]);
+  const typeCol = findHeader(headers, [
+    /^property\s*type\s*\(analysis\)$/i, /^property\s*type$/i, /property\s*type/i, /building\s*type/i, /asset\s*type/i,
+  ]);
+  const nameCol = findHeader(headers, [/^site\s*name$/i, /^site$/i, /^property\s*name$/i, /^building\s*name$/i, /^name$/i]);
+
+  const text = (row, col) => (col ? String(row[col] ?? '').trim() : '');
+  return rows.map((row, i) => ({
+    id: i,
+    siteName: text(row, nameCol),
+    city: text(row, cityCol),
+    state: text(row, stateCol),
+    country: text(row, countryCol),
+    sqft: sizeCol ? toSqft(row[sizeCol]) : null,
+    propertyType: text(row, typeCol),
+  }));
 }
 
 /** "4.2M ft²" / "860K ft²" / "12,400 ft²" — a floor area at a glance. */

@@ -60,7 +60,7 @@ import { readSheetSync } from '../../utils/sheetSyncSettings';
 import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetCompanyRename';
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
-import { siteListFacts as computeSiteListFacts, formatSqft } from '../../utils/siteListFacts';
+import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 // Aliased: `setClientManager` is also the name of this modal's own state
 // setter for the resolved value.
@@ -4178,6 +4178,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [indicativeAnalysis, setIndicativeAnalysis] = useState(null);
   const [analysisDownloading, setAnalysisDownloading] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
+  // "Refresh figures": in flight, and what the last run actually changed.
+  const [analysisRefreshing, setAnalysisRefreshing] = useState(false);
+  const [analysisRefreshNote, setAnalysisRefreshNote] = useState('');
   useEffect(() => {
     if (!prospect?.id || isNew) { setIndicativeAnalysis(null); return; }
     const unsub = subscribeIndicativeAnalysisMeta(prospect.id, (data) => setIndicativeAnalysis(data));
@@ -4877,6 +4880,59 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!Number.isFinite(accounts) || accounts <= 0) return null;
     return Math.round(accounts * DATA_DEAL_PER_ACCOUNT_MONTH * 12);
   }, [fields.numberOfAccounts]);
+
+  // Re-read the Scale figures off this company's saved site list.
+  //
+  // Sites, accounts, equipment and sites-with-a-mandate are all stamped here
+  // by the Utility Lookup page's "Save to <company>". They then go stale in
+  // the ordinary way: another region's sites get added to the list, a
+  // property type is corrected, an ordinance changes what a building owes.
+  // Re-saving the whole Master Analysis to pick that up means loading the
+  // portfolio back onto that page, so this reads the same figures off the
+  // saved list instead — the same rules the save itself counts by, so the
+  // two can't come out different.
+  //
+  // The ordinance tables behind the screening are a few hundred kilobytes,
+  // and this popup is already the app's biggest chunk, so they are fetched
+  // on the click rather than carried by every visit.
+  async function refreshAnalysisFigures() {
+    if (analysisRefreshing) return;
+    setAnalysisError('');
+    setAnalysisRefreshNote('');
+    const facts = siteListFacts;
+    if (!facts.sites) {
+      setAnalysisError('No site list saved for this company yet, so there is nothing to read the figures off. Save one from Utility Lookup, or add one below.');
+      return;
+    }
+    setAnalysisRefreshing(true);
+    try {
+      const { screenSites, sitesWithMandate } = await import('../../utils/complianceMandates');
+      const mandated = sitesWithMandate(screenSites(siteListScreeningRows(currentSiteList)));
+      const changes = [];
+      // Only what actually moved is written, and the note names it: a button
+      // that says "done" without saying what it did leaves the user checking
+      // four boxes by hand to find out.
+      const apply = (key, label, value) => {
+        if (value == null) return;
+        const before = Number(fields[key]);
+        if (Number.isFinite(before) && before === value) return;
+        set(key, value);
+        changes.push(`${label} ${Number.isFinite(before) ? `${before.toLocaleString()} → ` : ''}${value.toLocaleString()}`);
+      };
+      apply('numberOfSites', 'Sites', facts.sites);
+      apply('numberOfAccounts', 'Accounts', facts.accounts);
+      apply('equipmentCount', 'Equipment', facts.equipment);
+      apply('sitesWithMandate', 'Sites w/ Mandate', mandated);
+      setAnalysisRefreshNote(changes.length
+        ? `Updated from the ${facts.sites.toLocaleString()}-site list: ${changes.join(' · ')}.`
+        : `Already matches the ${facts.sites.toLocaleString()}-site list.`);
+    } catch (err) {
+      console.error('Refreshing figures from the site list failed:', err);
+      setAnalysisError(err?.message || 'Could not read the figures off the site list.');
+    } finally {
+      setAnalysisRefreshing(false);
+    }
+  }
 
   // Parse an uploaded .xlsx/.xls/.csv into { headers, rows } and stash it
   // under settings.companySiteLists[slug]. Rows are plain header→cell
@@ -6884,7 +6940,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 {analysisError && (
                   <div style={{ fontSize: '0.68rem', color: '#B91C1C', marginTop: '0.2rem' }}>{analysisError}</div>
                 )}
+                {analysisRefreshNote && (
+                  <div style={{ fontSize: '0.68rem', color: '#166534', marginTop: '0.2rem' }}>{analysisRefreshNote}</div>
+                )}
               </div>
+              {/* Re-reads Sites, Accounts, Equipment and Sites w/ Mandate off
+                  the company's saved site list, so the Scale figures can be
+                  brought up to date without loading the portfolio back onto
+                  the Utility Lookup page and re-saving the whole workbook. */}
+              <button
+                type="button"
+                onClick={refreshAnalysisFigures}
+                disabled={analysisRefreshing}
+                title={'Re-read Sites, Accounts, Equipment and Sites w/ Mandate from this company\u2019s saved site list — the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
+                style={{
+                  padding: '0.4rem 0.9rem',
+                  background: '#fff',
+                  color: analysisRefreshing ? '#94A3B8' : '#166534',
+                  border: `1px solid ${analysisRefreshing ? '#CBD5E1' : '#BBF7D0'}`,
+                  borderRadius: 6,
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: analysisRefreshing ? 'wait' : 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >{analysisRefreshing ? 'Refreshing…' : '↻ Refresh figures'}</button>
               <button
                 type="button"
                 onClick={downloadIndicativeAnalysis}
