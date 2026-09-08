@@ -32,7 +32,7 @@
 // service is ticked here with its status for that account already visible —
 // you can see that Bill Pay is already Sold before you size it again.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { ScopeServicesModal } from '../OppsView2/ScopeServicesPicker';
 import { parseMulti } from '../common/columnLinks';
@@ -74,6 +74,288 @@ import {
 } from '../../utils/servicePricing';
 
 const TABLE_ID = 'clients-deal-sizing';
+
+// How many services the picker below will render at once while filtering. A
+// query short enough to match half the catalog doesn't need every hit drawn:
+// the answer is in the first handful, and the rest is scrolling.
+const MAX_MATCHES = 60;
+
+// Does the typed run start a word in the name? "site" starting "Site survey"
+// and "site" inside "Off-site audit" are both matches, but the first is the
+// one the typist meant.
+function startsWord(name, at) {
+  return at === 0 || /[\s(/,-]/.test(name[at - 1]);
+}
+
+// The catalog filtered by what's been typed, best match first.
+//
+// Every whitespace-separated word has to appear somewhere in the service's
+// name or its box, which is what lets "bbs rep" find "BBS reporting" and
+// "compliance bbs" find it from the other direction. Ranking is on the first
+// word alone: a name that opens with it, then one where it starts a later
+// word, then one that merely contains it, and last the services matched only
+// through their box. Ties go alphabetical so the list doesn't reshuffle
+// between two equally good hits.
+function rankServices(options, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return options;
+  const words = q.split(/\s+/).filter(Boolean);
+  const [lead] = words;
+  const out = [];
+  for (const opt of options) {
+    const name = opt.name.toLowerCase();
+    const bucket = opt.bucket.toLowerCase();
+    if (!words.every(w => name.includes(w) || bucket.includes(w))) continue;
+    const at = name.indexOf(lead);
+    const score = at === 0 ? 0 : at > 0 ? (startsWord(name, at) ? 1 : 2) : 3;
+    out.push({ ...opt, score, at });
+  }
+  out.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+  return out;
+}
+
+// The service name with the typed run picked out, so a hit halfway down the
+// list shows why it is a hit.
+function Highlighted({ name, at, length }) {
+  if (at === undefined || at < 0 || !length) return name;
+  return (
+    <>
+      {name.slice(0, at)}
+      <strong style={{ fontWeight: 800, color: '#1D4ED8' }}>{name.slice(at, at + length)}</strong>
+      {name.slice(at + length)}
+    </>
+  );
+}
+
+// Pick one service by typing at it.
+//
+// This was a <select> carrying the whole catalog — 150-odd options behind a
+// native dropdown, grouped by box, and the only way to reach "Utility bill
+// validation" was to scroll to it or to know that typing in a select jumps
+// to what the name starts with. Nobody remembers a service by its first
+// letter; they remember a word out of the middle of it.
+//
+// So: type, and the list narrows. Empty, it still reads as the board does —
+// grouped by box, in the same order the old dropdown listed them — because
+// browsing is the other half of the job and a blank filter shouldn't hide the
+// catalog. Arrow keys and Enter work throughout, so the pick never needs the
+// mouse.
+function ServiceTypeahead({ value, buckets, onPick }) {
+  // The box always shows what is in it — the query while one is being typed,
+  // the picked service once it has been. Holding the two apart (blank the box
+  // on focus, put the name back on blur) reads well right up until a pick
+  // made with Enter leaves the cursor in a box the next keystroke appends to,
+  // which is how "BBS reporting" becomes "BBS reportingzzz".
+  const [query, setQuery] = useState(value || '');
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef(null);
+  const listRef = useRef(null);
+  const inputRef = useRef(null);
+  // Re-sync when the pick changes from outside — an undo, or the bar being
+  // reset. Adjusted during render rather than in an effect so the box never
+  // paints a service that is no longer the one selected.
+  const [seen, setSeen] = useState(value || '');
+  if (value !== seen) {
+    setSeen(value);
+    setQuery(value || '');
+  }
+  // Clicking into a box that already holds a service selects the whole name,
+  // so typing searches instead of appending. Selecting it in onFocus is not
+  // enough on its own: the mouseup that follows drops a caret and throws the
+  // selection away, which is how a click and "zzz" made "Audit partnerzzz".
+  // So the first mouseup after focus is swallowed, and a second click in the
+  // box places a caret normally for anyone who did mean to edit.
+  const claimSelection = useRef(false);
+  // A pick leaves the whole name selected, so the next thing typed starts a
+  // fresh search instead of editing the name that was just chosen.
+  const selectAfterPick = useRef(false);
+  // Whether the box has been typed in since it was opened. A box holding the
+  // service it already picked is one keystroke from being replaced (focus
+  // selects it), so until that keystroke comes the list browses the whole
+  // catalog rather than filtering down to the one row already chosen.
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!selectAfterPick.current) return;
+    selectAfterPick.current = false;
+    inputRef.current?.select();
+  }, [query]);
+
+  // The catalog flat, each service carrying the box it came from.
+  const options = useMemo(
+    () => buckets.flatMap(g => g.services.map(name => ({ name, bucket: g.name }))),
+    [buckets],
+  );
+  const filter = dirty ? query.trim() : '';
+  const matches = useMemo(
+    () => (filter ? rankServices(options, filter).slice(0, MAX_MATCHES) : options),
+    [options, filter],
+  );
+  // Where the group headings go when nothing is typed: the first row of each
+  // box. While filtering there are no headings — the order is relevance, not
+  // category, and a heading would claim otherwise.
+  const headingAt = useMemo(() => {
+    if (filter) return new Map();
+    const firstOfBucket = new Map();
+    matches.forEach((opt, i) => { if (!firstOfBucket.has(opt.bucket)) firstOfBucket.set(opt.bucket, i); });
+    return new Map([...firstOfBucket].map(([bucket, i]) => [i, bucket]));
+  }, [matches, filter]);
+
+  // Close when the click lands anywhere else. Pointer-down rather than click
+  // so a pick in another control doesn't fight with this list closing.
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDown(e) {
+      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  // Keep the highlighted row on screen as the arrows walk past the fold.
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector('[data-active="1"]')?.scrollIntoView({ block: 'nearest' });
+  }, [open, active]);
+
+  function commit(name) {
+    selectAfterPick.current = true;
+    onPick(name);
+    setSeen(name);
+    setQuery(name);
+    setOpen(false);
+    setActive(0);
+    setDirty(false);
+  }
+
+  function onKeyDown(e) {
+    claimSelection.current = false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) { setOpen(true); return; }
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setActive(i => {
+        const next = i + step;
+        if (next < 0) return matches.length - 1;
+        if (next >= matches.length) return 0;
+        return next;
+      });
+    } else if (e.key === 'Enter') {
+      if (!open || !matches.length) return;
+      e.preventDefault();
+      commit(matches[Math.min(active, matches.length - 1)].name);
+    } else if (e.key === 'Escape') {
+      if (!open) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setQuery(value || '');
+      setDirty(false);
+      setOpen(false);
+    } else if (e.key === 'Tab') {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', flex: '1 1 260px', maxWidth: 380 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <input
+          ref={inputRef}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="deal-sizing-service-list"
+          aria-autocomplete="list"
+          value={query}
+          placeholder="Type a service…"
+          onChange={e => {
+            claimSelection.current = false;
+            setQuery(e.target.value); setDirty(true); setActive(0); setOpen(true);
+          }}
+          // Focus selects what's there, so arriving at a box already holding
+          // a service and typing searches rather than edits.
+          onFocus={e => { setOpen(true); setDirty(false); claimSelection.current = true; e.target.select(); }}
+          onMouseUp={e => {
+            if (!claimSelection.current) return;
+            claimSelection.current = false;
+            e.preventDefault();
+          }}
+          onKeyDown={onKeyDown}
+          style={{
+            flex: 1, minWidth: 0, padding: '0.35rem 0.5rem', border: '1px solid #CBD5E1',
+            borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit',
+            fontWeight: value && query === value ? 600 : 400, color: '#0F172A',
+          }}
+        />
+        {(value || query) && (
+          <button
+            type="button"
+            title="Clear the picked service"
+            onClick={() => { setQuery(''); setSeen(''); setDirty(false); setActive(0); onPick(''); inputRef.current?.focus(); }}
+            style={{
+              border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', borderRadius: 6,
+              padding: '0.2rem 0.45rem', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >×</button>
+        )}
+      </div>
+
+      {open && (
+        <div
+          ref={listRef}
+          id="deal-sizing-service-list"
+          role="listbox"
+          style={{
+            position: 'absolute', top: 'calc(100% + 3px)', left: 0, right: 0, zIndex: 40,
+            background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)', maxHeight: 300, overflowY: 'auto',
+          }}
+        >
+          {matches.length === 0 && (
+            <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.76rem', color: '#94A3B8' }}>
+              No service matches &ldquo;{filter}&rdquo;.
+            </div>
+          )}
+          {matches.map((opt, i) => (
+            <div key={`${opt.bucket}:${opt.name}`}>
+              {headingAt.get(i) && (
+                <div style={{
+                  padding: '0.3rem 0.6rem 0.15rem', fontSize: '0.66rem', fontWeight: 700,
+                  color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.03em',
+                }}>{headingAt.get(i)}</div>
+              )}
+              <button
+                type="button"
+                role="option"
+                aria-selected={opt.name === value}
+                data-active={i === active ? '1' : '0'}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => commit(opt.name)}
+                style={{
+                  display: 'flex', width: '100%', alignItems: 'baseline', gap: '0.5rem',
+                  padding: '0.3rem 0.6rem', border: 'none', textAlign: 'left', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: '0.78rem',
+                  background: i === active ? '#EFF6FF' : 'transparent',
+                  color: opt.name === value ? '#1D4ED8' : '#0F172A',
+                  fontWeight: opt.name === value ? 700 : 400,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <Highlighted name={opt.name} at={filter ? opt.at : -1} length={filter.split(/\s+/)[0].length} />
+                </span>
+                {/* The box, on the row rather than over it: while filtering
+                    there are no headings, and "Bill Pay" means one thing
+                    under Payments and another under Reporting. */}
+                {filter && (
+                  <span style={{ fontSize: '0.68rem', color: '#94A3B8', whiteSpace: 'nowrap' }}>{opt.bucket}</span>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Why a scoped client shows no money. One sentence, on every cell it
 // applies to, because a blank figure with no reason on it reads as a bug.
@@ -234,9 +516,11 @@ export function DealSizingView({
   // picker everywhere else, so it cannot be in a deal here either.
   const serviceRows = useMemo(() => pricedServiceRows(settings), [settings]);
   const serviceNames = useMemo(() => serviceRows.map(r => r.name), [serviceRows]);
-  // The same rows grouped by their board box, for the bulk picker's optgroups.
-  // A flat list of 150-odd services is unpickable; grouped, it reads the way
-  // the services board does everywhere else.
+  // The same rows grouped by their board box, for the bulk picker's list. A
+  // flat list of 150-odd services is unpickable; grouped, it reads the way
+  // the services board does everywhere else, and the picker keeps that
+  // grouping for browsing and drops it once a query makes relevance the
+  // better order.
   const serviceBuckets = useMemo(() => {
     const byBucket = new Map();
     for (const row of serviceRows) {
@@ -940,18 +1224,11 @@ export function DealSizingView({
       <div style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.6rem 0.75rem', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Add one service to every client listed</span>
-          <select
+          <ServiceTypeahead
             value={bulkService}
-            onChange={e => { setBulkService(e.target.value); setBulkUndo(null); }}
-            style={{ flex: '1 1 260px', maxWidth: 380, padding: '0.35rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
-          >
-            <option value="">Pick a service…</option>
-            {serviceBuckets.map(group => (
-              <optgroup key={group.name} label={group.name}>
-                {group.services.map(name => <option key={name} value={name}>{name}</option>)}
-              </optgroup>
-            ))}
-          </select>
+            buckets={serviceBuckets}
+            onPick={(name) => { setBulkService(name); setBulkUndo(null); }}
+          />
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.74rem', color: '#475569' }}>
             <input type="checkbox" checked={bulkSkipSold} onChange={e => setBulkSkipSold(e.target.checked)} />
             <span title="A client whose company card says they already buy this is not new business. Sizing it as if it were counts revenue you already have — twice, if it is also under contract.">
