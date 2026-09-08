@@ -41,6 +41,8 @@ import { normClientName } from '../../utils/clientIssues';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
+import { loadOppsFromCache } from '../../utils/oppsCache';
+import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import {
   loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
 } from '../../utils/clientManagerStore';
@@ -518,6 +520,38 @@ export function DealSizingView({
     [allClients, showUntracked, isUntracked],
   );
 
+  // The Opps 2 cache, for the half of the card's statuses that comes from
+  // opportunities rather than from a hand-set dropdown. Refreshed on focus
+  // so a Scope edited on the Opps tab reaches this page without a reload,
+  // matching how every other consumer of these statuses loads them.
+  const [oppsRecords, setOppsRecords] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadOppsFromCache()
+        .then(o => { if (!cancelled) setOppsRecords(o?.records || []); })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
+
+  // What each client's OPPS say about each service: a Sold opp whose Scope
+  // names a service is what makes the company card read Sold for it, and
+  // the Scope token is matched loosely, so a scope of "BBS" lands on "BBS
+  // reporting". Keyed by the client object, so it has to be built from the
+  // same array the rows below map over.
+  //
+  // Without this the page read only the hand-set servicesExplored map and
+  // called a client unexplored whose deal was sold through an opp — which
+  // sized work they had already bought, the exact overstatement the
+  // not-sized rule exists to prevent.
+  const oppStagesByClient = useMemo(
+    () => buildOppStagesByClient(clients, oppsRecords),
+    [clients, oppsRecords],
+  );
+
   // All three key off `settings` as a whole rather than the handful of fields
   // they actually read. Narrowing the deps is what the pricing page does, but
   // it trips the React Compiler's memoization check here, and the work is a
@@ -641,7 +675,7 @@ export function DealSizingView({
   const rows = useMemo(() => clients.map(c => {
     const scope = scopeFor(c.company);
     const estimate = estimateClient({ client: c, scope, serviceRows, pricing, bases });
-    const counts = scopeStatusCounts(c, scope);
+    const counts = scopeStatusCounts(c, scope, oppStagesByClient.get(c));
     const onCard = onCardScope(counts);
     const sizeable = estimate.services.length > 0 && !onCard;
     return {
@@ -672,7 +706,7 @@ export function DealSizingView({
       // chips would be asking for counts that would move nothing.
       warnings: sizeable ? dealSizingWarnings({ estimate, pricing, bases }) : [],
     };
-  }), [clients, scopeFor, serviceRows, pricing, bases, isUntracked]);
+  }), [clients, scopeFor, serviceRows, pricing, bases, isUntracked, oppStagesByClient]);
 
   const visible = useMemo(() => {
     let list = rows;
@@ -702,10 +736,10 @@ export function DealSizingView({
     const clients2 = visible.map(r => r.client);
     const scopeOf = (c) => scopeFor(c.company);
     return {
-      ...planBulkAdd({ clients: clients2, service: bulkService, scopeOf, skipSold: bulkSkipSold }),
+      ...planBulkAdd({ clients: clients2, service: bulkService, scopeOf, skipSold: bulkSkipSold, oppStagesByClient }),
       have: planBulkRemove({ clients: clients2, service: bulkService, scopeOf }),
     };
-  }, [bulkService, bulkSkipSold, visible, scopeFor]);
+  }, [bulkService, bulkSkipSold, visible, scopeFor, oppStagesByClient]);
 
   const addToAll = useCallback(() => {
     if (!bulkPlan?.add.length) return;
@@ -1070,7 +1104,7 @@ export function DealSizingView({
                 borderRadius: 6, padding: '0.45rem 0.6rem', marginBottom: '0.25rem',
               }}>
                 <strong>Not sized.</strong> The company card already has a status against{' '}
-                {scopeStatuses(client, scope).filter(x => x.bucket !== 'none')
+                {scopeStatuses(client, scope, oppStagesByClient.get(client)).filter(x => x.bucket !== 'none')
                   .map(x => `${x.name} (${x.status})`).join(', ')}
                 {' '}&mdash; so this scope isn&rsquo;t new business. The figures below are what it
                 <em> would</em> be worth; none of them is counted in the totals at the top of the page.
@@ -1099,8 +1133,8 @@ export function DealSizingView({
                         <div style={{ display: 'block', fontWeight: 600, color: '#0F172A', whiteSpace: 'normal' }}>
                           {line.name}{' '}
                           <StatusPill
-                            status={exploredStatus(client, line.name)}
-                            title={`The company card says this service is "${exploredStatus(client, line.name)}" for ${company}. That is history, not part of this estimate — but a service they already buy is not new business.`}
+                            status={exploredStatus(client, line.name, oppStagesByClient.get(client))}
+                            title={`The company card says this service is "${exploredStatus(client, line.name, oppStagesByClient.get(client))}" for ${company}. That is history, not part of this estimate — but a service they already buy is not new business.`}
                           />
                         </div>
                         <div style={{ display: 'block', fontSize: '0.7rem', whiteSpace: 'normal', color: line.priced ? '#64748B' : '#B45309' }}>
@@ -1248,7 +1282,7 @@ export function DealSizingView({
         )}
       </div>
     );
-  }, [bases, pricing, patchScope, saveScope]);
+  }, [bases, pricing, patchScope, saveScope, oppStagesByClient]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: '0.9rem 1.25rem 2rem' }}>
