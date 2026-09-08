@@ -35,6 +35,10 @@ const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue
 // The content column. The tab measures 1100px; mail gets a narrower one so
 // the two detail columns still read on a phone.
 const WIDTH = 800;
+// What the funnel picture is drawn at: the column, less the funnel card's
+// padding and borders. The PNG itself is rasterised at roughly twice this,
+// so it stays sharp on a phone and on a high-density screen.
+const IMG_WIDTH = WIDTH - 30;
 
 export const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -215,9 +219,20 @@ const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color
 // chart's ramp, with the stage-by-stage figures beside it and the outcome
 // block that hangs off the funnel's exit arrow underneath — closed, plus
 // what the open pipeline weights to, and the projected total.
-export function funnelHtml(funnel) {
+export function funnelHtml(funnel, image = null) {
   const stages = Array.isArray(funnel?.stages) ? funnel.stages : [];
   if (!stages.length) return '';
+
+  // The chart itself, when the tab managed to rasterise it. It is sized in
+  // a width attribute as well as CSS — Word reads the attribute — and the
+  // alt text is the chart's own screen-reader label, so a client that
+  // hides pictures still says what the picture was. The stage rows below
+  // it stay either way: they are the figures, and they are what a reader
+  // with images off is left with.
+  const picture = image?.src ? `
+      <div style="margin-bottom:10px">
+        <img src="${esc(image.src)}" width="${IMG_WIDTH}" alt="${esc(image.alt || 'Pipeline funnel')}" style="display:block;width:100%;max-width:${IMG_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none">
+      </div>` : '';
 
   // Bars are sized off the formatted amounts the tab already produced —
   // "$1,095,000", "$545K" — because the snapshot carries text, not
@@ -238,19 +253,22 @@ export function funnelHtml(funnel) {
   const td = (v, align = 'left', strong = false) =>
     `<td style="padding:7px 8px 7px 0;text-align:${align};font-family:${FONT};font-size:13px;color:${strong ? INK : INK_SOFT};font-weight:${strong ? 600 : 400};border-bottom:1px solid ${SURFACE_ALT};white-space:nowrap">${esc(v ?? '—')}</td>`;
 
+  // With the chart above them the rows are the figures, plainly; without
+  // it they are also the picture, so each stage keeps a bar sized by
+  // pipeline value in its own colour from the chart's ramp.
   const rows = stages.map((st, i) => {
     const amt = amountOf(st);
     const pct = peak > 0 ? Math.max(4, Math.round((amt / peak) * 100)) : 0;
     const fill = STAGE_FILL[Math.min(i, STAGE_FILL.length - 1)];
-    const bar = pct > 0
-      ? table(`width="100%" style="border-collapse:collapse"`, `<tr><td>${table(
+    const bar = picture || pct <= 0 ? '' : `<td style="padding:7px 8px 7px 0;border-bottom:1px solid ${SURFACE_ALT}">${table(
+      `width="100%" style="border-collapse:collapse"`, `<tr><td>${table(
         `width="${pct}%" bgcolor="${fill}" style="border-collapse:collapse;width:${pct}%;border-radius:2px"`,
         `<tr><td height="12" style="height:12px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>`,
-      )}</td></tr>`)
-      : '';
+      )}</td></tr>`,
+    )}</td>`;
     return `<tr>
         ${td(st.label, 'left', true)}
-        <td style="padding:7px 8px 7px 0;border-bottom:1px solid ${SURFACE_ALT}">${bar}</td>
+        ${bar}
         ${td(st.amount, 'right', true)}
         ${td(Number(st.count) || 0, 'right')}
         ${td(st.life, 'right')}
@@ -258,6 +276,11 @@ export function funnelHtml(funnel) {
       </tr>`;
   }).join('');
 
+  // The outcome block stays in text even under the picture, which draws
+  // its own. It is the projected total — the figure the KPI row no longer
+  // carries — and a reader whose client hides the image would otherwise be
+  // left without it. In the picture it is six pixels tall; here it is
+  // readable.
   const o = funnel.outcome;
   const outRow = (label, value, strong) => `<tr>
         <td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${strong ? INK : MUTED};font-weight:${strong ? 700 : 400}">${esc(label)}</td>
@@ -277,8 +300,9 @@ export function funnelHtml(funnel) {
   return `
     ${cardOpen()}
       ${funnel.caption ? `<div style="margin-bottom:8px;font-family:${FONT};font-size:12px;line-height:1.4;color:${MUTED}">${esc(funnel.caption)}</div>` : ''}
+      ${picture}
       ${table(`width="100%" style="border-collapse:collapse"`, `
-        <tr>${th('Stage')}${th('Pipeline', 'left', '34%')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
+        <tr>${th('Stage')}${picture ? '' : th('Pipeline', 'left', '34%')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
         ${rows}
       `)}
       ${outcome}
@@ -343,7 +367,18 @@ export function freshnessNote(snapshot, now = Date.now()) {
   return { text: `Captured ${when}.`, stale: age > 8 * 24 * 3600 * 1000 };
 }
 
-export function renderWeeklyReportHtml(snapshot, { message = '' } = {}) {
+/**
+ * @param {object} snapshot  what the tab published
+ * @param {object} opts
+ * @param {string} opts.message  the schedule's intro note, if any
+ * @param {string} opts.funnelImageSrc  what the funnel <img> should point
+ *   at. A sent email passes a `cid:` reference to its own attachment,
+ *   since a remote image is blocked by default in Outlook and Gmail; the
+ *   tab's preview passes the data URL straight through. Omit it and the
+ *   email is the stage table alone, which is also what happens when the
+ *   snapshot carries no picture.
+ */
+export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc = '' } = {}) {
   const s = snapshot || {};
   const fresh = freshnessNote(s);
   const cards = Array.isArray(s.kpiCards) ? s.kpiCards : [];
@@ -363,7 +398,10 @@ export function renderWeeklyReportHtml(snapshot, { message = '' } = {}) {
     : `<div style="font-family:${FONT};font-size:13px;color:${MUTED};padding:12px 14px;border:1px dashed ${BORDER};background-color:${SURFACE_ALT};border-radius:6px">No chart data was cached when this snapshot was taken. Open Charts → Pipeline (and paste BFO Activity) to seed the target, pipeline and run rate.</div>`;
 
   const tileRow = tiles.length ? cardRow(tiles.map(tileHtml)) : '';
-  const funnel = funnelHtml(s.funnel);
+  const shot = s.funnelImage;
+  const funnel = funnelHtml(s.funnel, funnelImageSrc && shot
+    ? { ...shot, src: funnelImageSrc }
+    : null);
   const narrative = narrativeHtml(s.narrative);
 
   const changeGroups = [

@@ -29,6 +29,7 @@ import {
 import { buildFunnelStages, closeRatesByStage } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
+import { svgToPngDataUrl } from '../../utils/svgToPng';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -521,6 +522,38 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     };
   }, [funnelReady, funnelStages, funnelOutcome]);
 
+  // ---- The funnel as a picture, for the email ----------------------------
+  // No mail client renders an inline <svg>, so the chart drawn below is
+  // rasterised and travels with the report as an attached PNG. It is
+  // captured from the DOM rather than redrawn from the numbers: a second
+  // drawing of the same funnel is free to disagree with the one on screen.
+  //
+  // The caption comes off the chart too. It names whichever measure the
+  // funnel's own toggle is showing, so a picture of deal counts can't
+  // arrive under a line promising pipeline value.
+  const funnelCardRef = useRef(null);
+  const [funnelImage, setFunnelImage] = useState(null);
+
+  useEffect(() => {
+    if (!funnelReady) { setFunnelImage(null); return undefined; }
+    let cancelled = false;
+    // Late enough that the chart has painted, and coalesced so dragging the
+    // metric toggle doesn't rasterise once per click.
+    const t = setTimeout(async () => {
+      const card = funnelCardRef.current;
+      const svg = card?.querySelector('svg');
+      if (!svg) return;
+      const shot = await svgToPngDataUrl(svg);
+      if (cancelled) return;
+      setFunnelImage(shot ? {
+        ...shot,
+        alt: svg.getAttribute('aria-label') || 'Pipeline funnel',
+        caption: card.querySelector('[class*="caption"]')?.textContent?.trim() || '',
+      } : null);
+    }, 700);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [funnelReady, funnelStages, funnelOutcome]);
+
   // Nothing cached at all — three dashes teach nothing, so say what to open.
   const kpisReady = !!(reviewSnapshot.pipeline || reviewSnapshot.yoy);
   const periodKey = `${mode}:${refDate}`;
@@ -596,7 +629,14 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // emailKpiCards for why the tab's working is left on the tab.
       kpiCards: kpisReady ? emailKpiCards(kpis) : [],
       kpiNote: 'Year to date — not scoped to the week picker',
-      funnel: funnelSummary,
+      funnel: funnelSummary && funnelImage?.caption
+        ? { ...funnelSummary, caption: funnelImage.caption }
+        : funnelSummary,
+      // The chart itself. Absent when it couldn't be captured — the email
+      // still carries the same figures as a table underneath it.
+      funnelImage: funnelSummary && funnelImage
+        ? { src: funnelImage.src, width: funnelImage.width, height: funnelImage.height, alt: funnelImage.alt }
+        : null,
       // `emailsSent.count`, not the raw live count: for a week the HubSpot
       // feed no longer covers, the Activity tab's recording is the only
       // thing that can answer, and the tile on screen reads off it. Mailing
@@ -632,7 +672,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // would describe a different week under this week's heading.
       narrative: narrativeStale ? '' : narrative,
     };
-  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, emailsSent, oppChanges,
+  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, emailsSent, oppChanges,
     goalsProg, weeklyTargets, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
@@ -739,7 +779,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             </span>
           </div>
           {funnelReady ? (
-            <div className={styles.funnelCard}>
+            <div className={styles.funnelCard} ref={funnelCardRef}>
               <PipelineFunnel stages={funnelStages} outcome={funnelOutcome} />
             </div>
           ) : (

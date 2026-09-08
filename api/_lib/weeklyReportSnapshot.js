@@ -58,6 +58,36 @@ function funnelDoc(f) {
   };
 }
 
+// The funnel as a picture: a PNG the tab rasterised off its own chart,
+// carried as a data URL and mailed as an attachment.
+//
+// Bounded hard, and dropped rather than trimmed when it fails a check. The
+// snapshot is rewritten on every visit to the tab and Firestore caps a
+// document at ~1 MB, so an image that has outgrown its budget must not be
+// what pushes the whole report over — and the email has a table of the
+// same figures under it either way. The pattern check is the other half:
+// this string is written into an <img src> and decoded into an email
+// attachment, and only base64 PNG may take either path.
+const PNG_DATA_URL = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+export const MAX_FUNNEL_IMAGE_CHARS = 400_000;
+
+function funnelImageDoc(v) {
+  if (!v || typeof v !== 'object') return null;
+  const src = String(v.src || '');
+  if (src.length > MAX_FUNNEL_IMAGE_CHARS || !PNG_DATA_URL.test(src)) return null;
+  // Checked before clamping: clampInt would round a 0 up to the floor and
+  // call it a size, and an image the email lays out at 0 wide is not one.
+  const w = Number(v.width);
+  const h = Number(v.height);
+  if (!(w >= 1) || !(h >= 1)) return null;
+  return {
+    src,
+    width: clampInt(w, 1, 4000, 0),
+    height: clampInt(h, 1, 4000, 0),
+    alt: str(v.alt, 300) || 'Pipeline funnel',
+  };
+}
+
 export function buildSnapshotDoc(input, auth) {
   const s = input || {};
   const oc = s.oppChanges || {};
@@ -81,6 +111,9 @@ export function buildSnapshotDoc(input, auth) {
     // are the year to date, not the week the rest of the email covers.
     kpiNote: str(s.kpiNote, 120),
     funnel: funnelDoc(s.funnel),
+    // Only alongside the figures it illustrates: an image with no stage
+    // rows behind it is a picture the reader cannot check.
+    funnelImage: s.funnel ? funnelImageDoc(s.funnelImage) : null,
     tiles: (Array.isArray(s.tiles) ? s.tiles : []).slice(0, 8).map(t => ({
       label: str(t?.label, 60),
       value: clampInt(t?.value, 0, 1e9, 0),
