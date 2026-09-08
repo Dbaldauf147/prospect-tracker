@@ -4,9 +4,15 @@
 // them — the opps whose Call In has gone negative, the client renewals
 // the Issues tab already tracks, the Top PCs not yet at Qualifying (see
 // topPcOutreach.js) — and those categorize themselves: zero outstanding
-// items means caught up, anything else is work owed. The rest (market
-// updates, targeted services, cold outreach) have no count anywhere in
-// the app, so the user marks those caught up by hand.
+// items means caught up, anything else is work owed. The rest (contact
+// mapping, market updates, targeted services, cold outreach) have no count
+// anywhere in the app, so the user marks those caught up by hand.
+//
+// One of them can still be answered without a tick: the market-updates
+// step is the batch a saved email campaign sends, so when every campaign
+// that isn't paused has finished going out there is nothing left for the
+// user to confirm. That arrives as `autoClear` (see categorizeStep) rather
+// than as a count, because it says "done" and never "N to do".
 //
 // A manual mark is stamped with the day it was made and only counts on
 // that day. Prospecting is daily work, and a tick that stayed on from
@@ -166,10 +172,20 @@ export function countServiceGaps(gaps) {
 //                  above it is clear, so it is the work owed right now
 // `count` is a number for tracked steps, null while one is still
 // loading, and undefined for steps with nothing to count.
-export function categorizeStep({ count, marked = false } = {}) {
+//
+// `autoClear` is the third answer, for a step that has no count but does
+// have something in the app that can say the work is done: true clears it
+// without a tick, null means that evidence hasn't loaded yet, and
+// undefined (the usual case) means nothing but the user can say. The
+// market-updates step reads it from the campaigns — see the hook. A manual
+// mark still wins over a `null`: a step the user has ticked is caught up
+// whatever else is still loading.
+export function categorizeStep({ count, marked = false, autoClear = undefined } = {}) {
   if (count === null) return 'unknown';
   if (typeof count === 'number' && Number.isFinite(count)) return count > 0 ? 'work' : 'caught-up';
-  return marked ? 'caught-up' : 'open';
+  if (marked || autoClear === true) return 'caught-up';
+  if (autoClear === null) return 'unknown';
+  return 'open';
 }
 
 // --- the ladder as a whole ---------------------------------------------------
@@ -188,7 +204,7 @@ export function categorizeStep({ count, marked = false } = {}) {
 // A step above whose count hasn't landed yet ('unknown') does not count as
 // clear: the ladder stays quiet until it knows, rather than calling a step
 // outstanding on the strength of data that hasn't arrived.
-export function ladderStates({ steps, counts = null, caughtUpMap = null, today = todayISO() } = {}) {
+export function ladderStates({ steps, counts = null, autoClear = null, caughtUpMap = null, today = todayISO() } = {}) {
   const out = [];
   let aboveAllClear = true;
   for (const step of (Array.isArray(steps) ? steps : [])) {
@@ -199,9 +215,16 @@ export function ladderStates({ steps, counts = null, caughtUpMap = null, today =
     // than as an uncounted step the user is expected to tick.
     const count = tracked ? (counts?.[step.key] ?? null) : undefined;
     const marked = isMarkedCaughtUp(caughtUpMap, step.key, today);
-    let state = categorizeStep({ count, marked });
+    // Only for the untracked steps: a count is already a better answer
+    // than anything an auto-clear could add.
+    const auto = tracked ? undefined : (autoClear ? autoClear[step.key] : undefined);
+    let state = categorizeStep({ count, marked, autoClear: auto });
     if (state === 'open' && step.dueWhenReached && aboveAllClear) state = 'due';
-    out.push({ key: step.key, state, count, tracked });
+    // Cleared by the data rather than by a tick — the row says so instead
+    // of offering an undo for a mark that was never made.
+    const row = { key: step.key, state, count, tracked };
+    if (state === 'caught-up' && !marked && auto === true) row.auto = true;
+    out.push(row);
     if (state !== 'caught-up') aboveAllClear = false;
   }
   return out;

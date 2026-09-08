@@ -38,8 +38,6 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
-import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
-import { unfinishedCampaigns } from '../../utils/campaignOutreach';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 
@@ -703,13 +701,12 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // the ladder so the rows here and the count beside them are one list.
   const topPcIntros = ladder?.topPcIntros || null;
   const [showAllTopPcs, setShowAllTopPcs] = useState(false);
-  // The saved email campaigns, for the unfinished ones printed under the
-  // market-updates step. Read through the same hook the Email Tracking tab
-  // uses, so there's one reader of emailCampaigns/{uid} rather than a
-  // fourth copy of the same Firestore call. A failed read leaves the list
-  // empty, which costs the step its sub-list and nothing else.
-  const { campaigns: savedCampaigns } = useSavedCampaigns();
-  const campaignsToFinish = useMemo(() => unfinishedCampaigns(savedCampaigns), [savedCampaigns]);
+  // The email campaigns that haven't finished sending, printed under the
+  // market-updates step. Comes from the ladder for the same reason the
+  // counts do: those rows and that step's Status pill are the same read of
+  // the same campaigns, so the list can't show two still going out beside
+  // a row that says the step is clear. `null` until it has loaded.
+  const campaignsToFinish = ladder?.campaignsToFinish || null;
   // Click-through for that list: id → the record itself, since the page is
   // handed prospects rather than a lookup.
   const prospectById = useMemo(() => {
@@ -895,16 +892,21 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const tracked = typeof step.workLabel === 'function';
           const count = row?.count;
           const state = row?.state || (tracked ? 'unknown' : 'open');
+          // Cleared by what the app already knows rather than by a tick —
+          // the market-updates step, once the campaigns have all gone out.
+          // It reads like a counted step from here: no undo, because there
+          // is no mark to undo.
+          const autoCleared = row?.auto === true;
           // A hand-marked step is caught up only because it was marked,
           // so the toggle reads its state rather than the map again.
-          const marked = !tracked && state === 'caught-up';
+          const marked = !tracked && !autoCleared && state === 'caught-up';
           const label = state === 'work' ? step.workLabel(count)
             : state === 'caught-up' ? 'All caught up'
               : state === 'due' ? 'Outstanding'
                 : 'Mark caught up';
           const title = state === 'work' ? step.workTitle(count)
             : state === 'caught-up'
-              ? (tracked ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
+              ? (tracked || autoCleared ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
               : state === 'due'
                 ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today — the mark clears tomorrow.'
                 : 'Nothing counts this step automatically — click once you\'ve worked it today';
@@ -914,7 +916,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && topPcIntros?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
-            || (step.key === 'market-updates' && campaignsToFinish.length);
+            || (step.key === 'market-updates' && campaignsToFinish?.length);
           return (
             <div
               key={step.key}
@@ -1035,7 +1037,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     label={label}
                     title={title}
                     align={hasList ? 'flex-start' : 'center'}
-                    onToggle={tracked ? null : () => setStepCaughtUp(step.key, !marked, today)}
+                    onToggle={tracked || autoCleared ? null : () => setStepCaughtUp(step.key, !marked, today)}
                   />
                   {onNavigate && (step.view ? (
                     <button

@@ -37,6 +37,14 @@ eq(categorizeStep(), 'open', 'no argument at all reads as an unmarked, uncounted
 // A marked-today flag must not talk over a real count: the data wins.
 eq(categorizeStep({ count: 2, marked: true }), 'work', 'a real count outranks a manual mark');
 
+// An uncounted step the app can still answer for — the market-updates step,
+// once every campaign that isn't paused has finished sending.
+eq(categorizeStep({ autoClear: true }), 'caught-up', 'the data can clear an uncounted step without a tick');
+eq(categorizeStep({ autoClear: false }), 'open', 'and leaves it to be marked by hand when it cannot');
+eq(categorizeStep({ autoClear: null }), 'unknown', 'evidence that has not loaded is not "all caught up"');
+eq(categorizeStep({ autoClear: null, marked: true }), 'caught-up',
+  'but a step the user ticked is caught up whatever is still loading');
+
 // ---- manual marks expire overnight -----------------------------------------
 
 eq(isMarkedCaughtUp({ cold: '2026-08-10' }, 'cold', '2026-08-10'), true, 'a mark made today counts');
@@ -129,8 +137,8 @@ eq(todayISO(new Date(2026, 11, 31, 23, 30)), '2026-12-31', 'late-evening local t
 // work above it sends the user down the ladder too early.
 
 const TODAY = '2026-08-26';
-const ladder = (steps, counts, map) => ladderStates({ steps, counts, caughtUpMap: map, today: TODAY });
-const stateOf = (steps, counts, map, key) => statesByKey(ladder(steps, counts, map))[key]?.state;
+const ladder = (steps, counts, map, autoClear) => ladderStates({ steps, counts, autoClear, caughtUpMap: map, today: TODAY });
+const stateOf = (steps, counts, map, key, autoClear) => statesByKey(ladder(steps, counts, map, autoClear))[key]?.state;
 
 // Built the way the page builds it, so the flags and count functions are
 // the real ones rather than a hand-written stand-in. Contact mapping is
@@ -198,6 +206,42 @@ eq(countDueSteps([]), 0, 'no steps at all means no dot');
 // A tracked step is never talked over by this: its count still decides.
 eq(stateOf(STEPS, { opps: 4 }, { opps: TODAY }, 'opps'), 'work',
   'a real count still outranks a manual mark inside the ladder walk');
+
+// --- the campaigns answering for the market-updates step -------------------
+//
+// The step is the batch a saved campaign sends, so a book whose campaigns
+// have all gone out has done it — asking for a tick on top of that is
+// asking the user to confirm what the page is already showing them.
+// campaignsAllSent works out the boolean (see campaignOutreach.test.mjs);
+// here it arrives as the `autoClear` entry and has to behave like a count
+// of zero, red row and sidebar dot included.
+const SENT = { 'market-updates': true };
+const UNSENT = { 'market-updates': false };
+const LOADING = { 'market-updates': null };
+
+eq(stateOf(STEPS, CLEAR, MAPPED, 'market-updates', SENT), 'caught-up',
+  'every campaign sent clears the step with nothing marked');
+eq(stateOf(STEPS, CLEAR, MAPPED, 'market-updates', UNSENT), 'due',
+  'a campaign still going out leaves it outstanding');
+eq(stateOf(STEPS, CLEAR, MAPPED, 'market-updates', LOADING), 'unknown',
+  'campaigns still loading show nothing rather than an unearned red or green');
+eq(stateOf(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY }, 'market-updates', LOADING), 'caught-up',
+  "a mark made today still clears it while they load");
+eq(statesByKey(ladder(STEPS, CLEAR, MAPPED, SENT))['market-updates'].auto, true,
+  'the row says it cleared itself, so the page can drop the undo it has no mark for');
+eq(statesByKey(ladder(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY }, SENT))['market-updates'].auto, undefined,
+  'a step the user actually marked is not flagged as self-cleared');
+eq(countDueSteps(ladder(STEPS, CLEAR, MAPPED, SENT)), 0,
+  'and no Prospecting dot for work the campaigns say is done');
+eq(countDueSteps(ladder(STEPS, CLEAR, MAPPED, UNSENT)), 1, 'the dot stands while one is unsent');
+eq(countDueSteps(ladder(STEPS, CLEAR, MAPPED, LOADING)), 0, 'and holds while they load');
+// The step below is only reached because the campaigns cleared this one.
+eq(stateOf(STEPS, CLEAR, MAPPED, 'cold', SENT), 'open',
+  'the ladder walks on past a self-cleared step');
+// An auto-clear must never talk over a count, the same way a manual mark
+// cannot: no step has both today, and the rule should not depend on that.
+eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
+  'a real count outranks an auto-clear too');
 
 // --- the dot and the Opps badge, end to end -------------------------------
 //

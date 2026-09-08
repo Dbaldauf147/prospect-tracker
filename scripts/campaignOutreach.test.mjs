@@ -9,7 +9,7 @@
 // one function, so a drift here is a drift there.
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
-  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
+  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignsAllSent,
 } from '../src/utils/campaignOutreach.js';
 
 let passed = 0, failed = 0;
@@ -137,6 +137,41 @@ check('ties break on percentage then name',
     { title: 'Charlie', uniqueRecipients: 2, totalContacts: 4, savedAt: daysAgo(1) },
   ], NOW).map(r => r.label),
   ['Charlie', 'Alpha', 'Bravo']);
+
+// --- has the sending finished? ---------------------------------------
+// What clears the Prospecting ladder's market-updates step without a tick.
+check('one campaign still going out is not finished',
+  campaignsAllSent(saved, NOW), false);
+check('every campaign at 100% is',
+  campaignsAllSent([
+    { title: 'A', uniqueRecipients: 5, totalContacts: 5, savedAt: daysAgo(1) },
+    { title: 'B', uniqueRecipients: 40, totalContacts: 40, savedAt: daysAgo(300) },
+  ], NOW), true);
+// The user asked for the paused ones to be left out — a pause is the
+// campaign already dealt with for the next couple of days.
+check('a paused campaign left half-sent does not hold the step open',
+  campaignsAllSent([
+    { title: 'A', uniqueRecipients: 5, totalContacts: 5, savedAt: daysAgo(1) },
+    { title: 'Parked', uniqueRecipients: 1, totalContacts: 99, pausedUntil: inDays(1) },
+  ], NOW), true);
+check('and it holds it open again the moment the pause lifts',
+  campaignsAllSent([
+    { title: 'A', uniqueRecipients: 5, totalContacts: 5, savedAt: daysAgo(1) },
+    { title: 'Parked', uniqueRecipients: 1, totalContacts: 99, pausedUntil: daysAgo(1) },
+  ], NOW), false);
+// Inactive is not paused: a campaign that went quiet at 1% is still owed.
+check('an inactive campaign still counts as unsent',
+  campaignsAllSent([{ title: 'Parked halfway', uniqueRecipients: 1, totalContacts: 99, savedAt: daysAgo(300), refreshedAt: daysAgo(300) }], NOW),
+  false);
+check('an empty campaign is neither work nor proof',
+  campaignsAllSent([{ title: 'Nobody in it', uniqueRecipients: 0, totalContacts: 0 }], NOW), false);
+// Nothing saved proves nothing about today's outreach, so the step falls
+// back to being marked by hand rather than clearing itself.
+check('no campaigns at all does not clear the step', campaignsAllSent([], NOW), false);
+check('junk rows are skipped here too',
+  campaignsAllSent([null, 'nope', { uniqueRecipients: 3, totalContacts: 3 }], NOW), true);
+check('not loaded yet is not an answer', campaignsAllSent(null, NOW), null);
+check('nor is undefined', campaignsAllSent(undefined, NOW), null);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
