@@ -114,6 +114,7 @@ import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_CO
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
+import { readOppLinks, countOppLinks, linkHref } from '../../utils/oppLinks';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
@@ -5572,10 +5573,18 @@ function followUpWhenLabel(days) {
 // every call's follow-ups into one editable list of boxes, which answers
 // "what do I do now" and loses "which call asked for this" — so the log
 // lives beside it here rather than only two popups away.
+//
+// "Links" is the fourth: the addresses this deal keeps coming back to —
+// the RFP folder, the shared pricing sheet, the customer's sustainability
+// page. They were being pasted into note lines, where they read as text,
+// couldn't be clicked, and pushed the note itself off the row. Appended
+// rather than slotted in beside Notes so the three existing tabs stay
+// where the muscle memory left them.
 const FOLLOW_UP_TABS = [
   { key: 'notes', label: 'Notes' },
   { key: 'calls', label: 'Calls' },
   { key: 'timelines', label: 'Timelines' },
+  { key: 'links', label: 'Links' },
 ];
 const FOLLOW_UP_TAB_KEY = 'follow-up-notes-active-tab';
 
@@ -5650,6 +5659,20 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     updateOppField(opp._id, timelineKey, summarizeTimelines(nextList));
   }
 
+  // Saved links: one { url, label } row each, stored on the opp as `_links`
+  // and written straight back on every edit — same local-list-plus-commit
+  // shape as the timelines, because both are edited as tables.
+  const initialLinks = useMemo(() => readOppLinks(opp), [opp]);
+  const [linkList, setLinkList] = useState(initialLinks);
+
+  function changeLinkList(nextList) {
+    setLinkList(nextList);
+    // Blank rows are the editor's empty form row, not links: they're kept in
+    // local state so the row stays on screen while it's being typed into, and
+    // dropped on the way to the record so an opp never stores a row of ''s.
+    updateOppField(opp._id, '_links', nextList.filter(r => (r?.url || '').trim() || (r?.label || '').trim()));
+  }
+
   // Notes rows: one { note, waitingOn } per line, flattened back to the
   // 'Next Steps' text and its parallel _nextStepsWaiting array on commit.
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
@@ -5682,6 +5705,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     notes: rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim()).length,
     timelines: timelineList.filter(t => (t?.type || '').trim() || (t?.value || '').trim()
       || (t?.kickoff || '').trim() || (t?.leadTime || '').trim()).length,
+    links: countOppLinks(linkList),
   };
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
@@ -5931,6 +5955,8 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
             // stored call record, transcripts included, and most opens of
             // this popup are someone typing a note.
             <CallNextStepsLog oppId={opp._id} />
+          ) : tab === 'links' ? (
+            <OppLinksEditor list={linkList} onChangeList={changeLinkList} />
           ) : (
             // No Most Recent Call banner: the Calls tab is the whole call
             // history, newest first, so a summary of its top entry above
@@ -9082,6 +9108,129 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
               : `Show ${hiddenCount} hidden timeline${hiddenCount === 1 ? '' : 's'}`}
           </button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// The "Links" tab of the Follow Up Notes popup: the addresses this deal
+// keeps coming back to — the RFP folder, the shared pricing sheet, the
+// customer's sustainability page.
+//
+// Presentational only, like TimelinesEditor: the parent owns the `list`
+// (rows of { url, label }) and writes each change back to the opp. A row is
+// a name and an address; both are optional while it's being typed, so
+// nothing here refuses a half-filled row.
+//
+// Only http(s) addresses become clickable — linkHref refuses everything
+// else, so a `javascript:` URL pasted into the box stays inert text. When a
+// row holds something that can't be opened, the tab says so beside it
+// rather than silently rendering a dead link.
+function OppLinksEditor({ list, onChangeList }) {
+  const stored = Array.isArray(list) ? list : [];
+  // An empty tab opens with one row ready to type into — this tab is only
+  // ever opened to add a link. The blank row is display-only; the parent
+  // drops empty rows on the way to the record.
+  const rows = stored.length > 0 ? stored : [{ url: '', label: '' }];
+
+  const updateRow = (idx, key, value) =>
+    onChangeList(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+  const addRow = () => onChangeList([...rows, { url: '', label: '' }]);
+  const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
+
+  const cellInput = {
+    width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
+    border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem',
+    fontFamily: 'inherit', background: '#fff', color: '#334155',
+  };
+  const th = {
+    textAlign: 'left', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
+  };
+  const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, width: '30%' }}>Name</th>
+            <th style={th}>Link</th>
+            <th style={{ ...th, width: 1 }} aria-hidden="true" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => {
+            const url = String(row?.url ?? '');
+            const href = linkHref(url);
+            return (
+              <tr key={idx}>
+                <td style={td}>
+                  <input
+                    type="text"
+                    value={String(row?.label ?? '')}
+                    onChange={(e) => updateRow(idx, 'label', e.target.value)}
+                    placeholder="e.g. RFP folder"
+                    style={cellInput}
+                  />
+                </td>
+                <td style={td}>
+                  <input
+                    type="text"
+                    value={url}
+                    onChange={(e) => updateRow(idx, 'url', e.target.value)}
+                    placeholder="Paste a link (https://…)"
+                    style={cellInput}
+                  />
+                  {/* Only ever one of these: the row can be opened, or it
+                      says why not. A url typed into the name column, or a
+                      scheme we won't hand the browser, would otherwise look
+                      saved and do nothing when clicked. The link doesn't
+                      repeat the address — that's in the box right above it. */}
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={href}
+                      style={{
+                        display: 'inline-block', marginTop: 3, fontSize: '0.7rem',
+                        color: '#2563eb', textDecoration: 'underline',
+                      }}
+                    >Open ↗</a>
+                  ) : url.trim() ? (
+                    <div style={{ marginTop: 3, fontSize: '0.7rem', color: '#94A3B8' }}>
+                      Saved, but not a web address this can open.
+                    </div>
+                  ) : null}
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => deleteRow(idx)}
+                    aria-label="Delete link"
+                    title="Delete link"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                    }}
+                  >×</button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div>
+        <button
+          type="button"
+          onClick={addRow}
+          style={{
+            padding: '0.3rem 0.65rem', border: '1px solid #BFDBFE', borderRadius: 4,
+            background: '#EFF6FF', color: '#1E40AF', fontSize: '0.72rem', fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >+ Add link</button>
       </div>
     </div>
   );
