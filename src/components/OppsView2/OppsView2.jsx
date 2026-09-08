@@ -39,6 +39,7 @@ import {
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
+import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
@@ -9800,9 +9801,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // there, so there's nothing to undo.
   const [followUpNotes, setFollowUpNotes] = useState(null);
   // Imperative sort trigger handed to the DataTable. Bumping it re-ranks
-  // the table by Call In ascending — fired once the Follow Up status
-  // popup is dismissed so the re-scheduled opp lands in its new
-  // soonest-first position.
+  // the table by Call In so an opp whose callback date moved lands in its
+  // new soonest-first position instead of sitting where it was — which,
+  // since triage runs top-down, is what made a just-handled opp look
+  // stuck on the top row. Fired from every route that can change a row's
+  // Call In: the Follow Up status popup closing, a Follow Up written
+  // without that prompt, a Call In override cleared or restored, an undo
+  // of either, a mass edit, and a remote change syncing in. The DataTable
+  // ignores it while the user is sorted by some other column.
   const [callInSortSignal, setCallInSortSignal] = useState(null);
   const requestCallInSort = useCallback(() => {
     setCallInSortSignal({ key: 'Call In', direction: 'asc', nonce: Date.now() });
@@ -10442,7 +10448,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         }
         if (!json) return;
         const remote = JSON.parse(json);
+        // Checked against the pre-merge copy: a Follow Up re-dated on
+        // another device has to re-rank here too, or the row sits where
+        // this browser last put it.
+        const reordered = remoteChangesCallInOrder(dataRef.current?.records, remote?.records);
         setData(local => mergeOpps2Datasets(local, remote));
+        if (reordered) requestCallInSort();
       } catch (err) {
         console.error('opps2: real-time sync failed to apply remote update', err);
       }
@@ -10710,6 +10721,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
   const [undoStack, setUndoStack] = useState([]);
+  // Live copy so the undo handler can read the entry it's about to pop
+  // without doing that read inside a state updater — React runs those
+  // twice under StrictMode, and the Call In re-rank below is a side
+  // effect that has no business firing twice.
+  const undoStackRef = useRef(undoStack);
+  undoStackRef.current = undoStack;
   const pushUndoEntry = useCallback((entry) => {
     if (!entry || !entry.fields?.length) return;
     setUndoStack(prev => {
@@ -10719,6 +10736,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, []);
   const undoLastChange = useCallback(() => {
+    // Undoing a Follow Up / Call In edit puts the row's callback date
+    // back, so its place in Call In order goes back with it.
+    const pending = undoStackRef.current[undoStackRef.current.length - 1];
+    if (pending?.fields?.some(f => f.field === 'Follow Up' || f.field === 'Call In')) {
+      requestCallInSort();
+    }
     setUndoStack(prev => {
       if (!prev.length) return prev;
       const entry = prev[prev.length - 1];
@@ -10739,7 +10762,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       });
       return prev.slice(0, -1);
     });
-  }, []);
+  }, [requestCallInSort]);
 
   // Configurable per-type clear schedules (✓ / ✗ / any), stored on user
   // settings so they apply on every browser the tracker is open in. The
@@ -10944,6 +10967,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // reformat of the same day doesn't trigger the prompt.
     const followUpChanged = !!row && field === 'Follow Up'
       && (toISODate(row[field]) || '') !== (toISODate(value) || '');
+    // A per-opp Call In override (cleared to the blank sentinel, or typed
+    // over) moves the row just as much as a new Follow Up does.
+    const callInChanged = !!row && field === 'Call In'
+      && String(row[field] ?? '') !== String(value ?? '');
     // When the user enters a Close Date, mirror its year + month into the
     // "Close Year" / "Close Month" columns so the Opp details stay in
     // sync without manual entry. A cleared date clears them; an
@@ -11179,7 +11206,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         },
       });
     }
-  }, [pushUndoEntry, openStagePrompt]);
+    // Put the row back in Call In order now that its callback date moved.
+    // Not on the prompt route above — that popup's close does the re-rank
+    // instead, once the user has finished picking the new Status, so the
+    // row doesn't move while they're still answering for it.
+    if ((followUpChanged && opts?.skipFollowUpPrompt) || callInChanged) {
+      requestCallInSort();
+    }
+  }, [pushUndoEntry, openStagePrompt, requestCallInSort]);
 
   // Restore the Follow Up date (and its sibling Call In) to the snapshot
   // taken before the edit that opened the Follow Up Notes popup. Writes the
@@ -11271,7 +11305,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         }),
       };
     });
-  }, [pushUndoEntry]);
+    // Restoring the live Call In compute (the "+ add" affordance) gives the
+    // row a callback date again — and so a new place in the order.
+    if (field === 'Call In') requestCallInSort();
+  }, [pushUndoEntry, requestCallInSort]);
 
   const deleteOpp = useCallback((id) => {
     // Nothing to delete: the queue is cancelled from Scheduled Opps.
@@ -11363,7 +11400,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         }),
       };
     });
-  }, []);
+    // A bulk re-date moves every row it touched, same as the single-row
+    // path — and there's no per-row popup on this route to do it after.
+    if (field === 'Follow Up' || field === 'Call In') requestCallInSort();
+  }, [requestCallInSort]);
 
   const deleteManyOpps = useCallback((ids) => {
     const idSet = ids instanceof Set ? ids : new Set(ids);

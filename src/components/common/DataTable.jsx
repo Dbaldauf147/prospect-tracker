@@ -6,6 +6,7 @@ import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar, pickLegacyBucket,
   orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
+import { resolveSortSignal } from '../../utils/tableSortSignal';
 
 const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
 const COL_VISIBLE_PREFIX = 'prospect-col-visible-';
@@ -751,15 +752,18 @@ export function DataTable({
   // through the same path as a header click, including the
   // freeze-snapshot capture for `freezeSortOrder` columns. Ignored when
   // an external sort controls the table.
+  //
+  // `resolveSortSignal` decides whether the signal applies at all — it is
+  // a correction to an ordering already on screen, so a user sorted by
+  // some other column is left alone. See that helper for the full rule.
   const lastSortNonce = useRef(sortSignal?.nonce);
   useEffect(() => {
     if (externalSort || externalSortConfig) return;
     const nonce = sortSignal?.nonce;
     if (nonce == null || nonce === lastSortNonce.current) return;
     lastSortNonce.current = nonce;
-    if (sortSignal.key) {
-      applySort(sortSignal.key, sortSignal.direction === 'desc' ? 'desc' : 'asc');
-    }
+    const next = resolveSortSignal(internalSort, sortSignal);
+    if (next) applySort(next.key, next.direction);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortSignal?.nonce]);
 
