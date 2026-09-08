@@ -82,11 +82,13 @@ import {
   estimateConsumption,
   propertyTypeAccounts,
   propertyTypeAccountTotal,
+  propertyTypeEquipment,
   propertyTypeIntensity,
   varianceVsEstimate,
   KWH_PER_DTH,
   CONSUMPTION_ESTIMATES,
   ACCOUNT_ESTIMATES,
+  EQUIPMENT_ESTIMATES,
   PROPERTY_TYPE_OPTIONS,
   PROPERTY_TYPE_EXCLUDED,
   PROPERTY_TYPE_EXCLUDED_LABEL,
@@ -2684,6 +2686,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
   }, [rows]);
 
+  // The same roll-up for equipment: how much kit the loaded portfolio
+  // carries, estimated per site from its property type.
+  //
+  // Deliberately estimate-only, with no hand-entered counterpart. A bill
+  // count is something a company can state — it is on their invoices — and
+  // that is why accounts can be typed over. Nobody has an asset count to
+  // hand before someone has walked the buildings, so a typed total here
+  // would be a second guess wearing the clothes of a fact.
+  const equipmentStats = useMemo(() => {
+    let total = 0;
+    let sites = 0;
+    let unknown = 0;
+    const byType = new Map();
+    for (const r of rows) {
+      const est = propertyTypeEquipment(r.__propertyType__);
+      if (est == null) { unknown += 1; continue; }
+      total += est;
+      sites += 1;
+      const name = r.__propertyType__;
+      const prev = byType.get(name) || { name, sites: 0, equipment: 0 };
+      prev.sites += 1;
+      prev.equipment += est;
+      byType.set(name, prev);
+    }
+    return {
+      total: Math.round(total),
+      sites,
+      unknown,
+      byType: [...byType.values()].sort((a, b) => b.equipment - a.equipment),
+    };
+  }, [rows]);
+
   // A hand-entered total, for the portfolio the page is working on.
   //
   // The per-property-type estimate is a model, and a model is no use against
@@ -3798,6 +3832,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               return total == null ? '' : total;
             },
             getSortValue: (row) => propertyTypeAccountTotal(row.__propertyType__) ?? -1,
+          },
+          {
+            // The connected assets in the building — the unit an
+            // equipment-facing service is scoped in, the way accounts are
+            // the unit a data deal is priced in. Same source as every other
+            // estimate on this table: the site's property type.
+            key: 'estEquipment',
+            label: 'Est. Equipment',
+            defaultWidth: 130,
+            render: (row) => {
+              const canonical = row.__propertyType__;
+              if (!canonical) return dash;
+              const n = propertyTypeEquipment(canonical);
+              if (n == null) return dash;
+              return (
+                <span
+                  style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+                  title={`${n.toLocaleString()} piece${n === 1 ? '' : 's'} of equipment estimated for a ${canonical} site`}
+                >{fmtInt(n)}</span>
+              );
+            },
+            exportValue: (row) => {
+              const n = propertyTypeEquipment(row.__propertyType__);
+              return n == null ? '' : n;
+            },
+            getSortValue: (row) => propertyTypeEquipment(row.__propertyType__) ?? -1,
           },
         ];
       })(),
@@ -5094,6 +5154,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // back off the saved list the same way its site count is — by
     // counting the list, not the one upload that happened to be open.
     ['Est. Utility Accounts', r => round(propertyTypeAccountTotal(r.__propertyType__), 2)],
+    // Equipment expected at the site, from its property type. Written per
+    // site for the same reason the account estimate is: a company's total
+    // has to be readable off the saved list itself, not off whichever
+    // upload happened to be open when it was saved.
+    ['Est. Equipment', r => propertyTypeEquipment(r.__propertyType__)],
   ];
 
   // Which of those figures were MODELED rather than measured, for one
@@ -10657,6 +10722,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // subtabs' Owned / All-sites toggle asks.
       { label: 'Owned / Leased', get: (s) => s.ownership, width: 15 },
       { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
+      // Equipment expected in the building, from its property type. Sits
+      // with the building attributes rather than the energy columns: it
+      // describes what is installed, not what it consumes.
+      { label: 'Est. Equipment', get: (s) => s.equipment, numFmt: '#,##0', width: 14, estimated: () => true },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
@@ -10893,6 +10962,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // the upload's raw value wasn't recognized, surface it as-is
           // (the Flags column already calls out the unrecognized case).
           propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
+          // Null rather than 0 for a type that didn't resolve, so the cell
+          // stays empty instead of claiming an empty building.
+          equipment: propertyTypeEquipment(r.__propertyType__),
           // Canonical Owned / Leased where the upload's value could be
           // placed. Where it couldn't, the raw string travels as-is
           // rather than the cell going blank: "Owned/Leased" or "TBD" is
@@ -11309,6 +11381,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           gasKwh: cons?.gasKwh ?? null,
           totalKwh: cons?.totalKwh ?? null,
           accounts: accounts || null,
+          equipment: propertyTypeEquipment(canonicalType),
         };
       })
       .filter(Boolean);
@@ -12708,13 +12781,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       blank();
 
       // ---- Section 2: Account-count methodology ----
-      sectionBanner('2. Utility Account Number Estimates');
-      paragraph('Per-site utility-account counts (Water / Steam / Gas / Electric / Waste) are looked up by property type from a reference table. "Multiple" is treated as 3 for roll-up totals; "0 – 1" ranges as 0.5. "N/A" cells contribute 0 to totals so they do not skew portfolio sums. The displayed cell preserves the original label ("Multiple", "0 – 1", "N/A") rather than substituting the numeric placeholder.');
+      sectionBanner('2. Utility Account and Equipment Estimates');
+      paragraph('Per-site utility-account counts (Water / Steam / Gas / Electric / Waste) are looked up by property type from a reference table. "Multiple" is treated as 3 for roll-up totals; "0 – 1" ranges as 0.5. "N/A" cells contribute 0 to totals so they do not skew portfolio sums. The displayed cell preserves the original label ("Multiple", "0 – 1", "N/A") rather than substituting the numeric placeholder. The last column is the equipment a typical site of that type carries — the connected assets in the building rather than the bills it sends — looked up from the same property type and applied per site, unscaled by square footage. Land and Debt carry no building and so no equipment.');
       blank();
-      headerRow(['Property Type', 'Water', 'Steam', 'Gas', 'Electric', 'Waste', '']);
+      headerRow(['Property Type', 'Water', 'Steam', 'Gas', 'Electric', 'Waste', 'Equipment']);
       const accountRows = Object.entries(ACCOUNT_ESTIMATES);
       accountRows.forEach(([name, v]) => {
-        dataRow([name, v.water?.label || '', v.steam?.label || '', v.gas?.label || '', v.electric?.label || '', v.waste?.label || '', '']);
+        dataRow(
+          [name, v.water?.label || '', v.steam?.label || '', v.gas?.label || '', v.electric?.label || '', v.waste?.label || '', EQUIPMENT_ESTIMATES[name] ?? ''],
+          [null, null, null, null, null, null, '#,##0'],
+        );
       });
 
       blank();
@@ -12809,7 +12885,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         blank();
         blank();
         sectionBanner('5. Property Type Estimates: Per Site');
-        paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided) and expected utility-account counts. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
+        paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided), expected utility-account counts, and the equipment the property type implies. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
         blank();
         const ptCols = [
           { label: 'Site Name',                     get: (s) => s.siteName },
@@ -12822,6 +12898,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           { label: 'Est. Annual Gas (Dth)',         get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
           { label: 'Est. Annual Gas (kWh equiv)',   get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
           { label: 'Est. Total Energy (kWh equiv)', get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
+          // Totals with the other Est. columns (the Total row sums any
+          // numeric column whose label starts "Est."), which is where the
+          // portfolio's equipment count lands in the workbook.
+          { label: 'Est. Equipment', get: (s) => s.equipment ?? '', numFmt: '#,##0' },
           { label: 'Water Accounts',    get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
           { label: 'Steam Accounts',    get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
           { label: 'Gas Accounts',      get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
@@ -14683,6 +14763,35 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 </>
               );
             })()}
+            {/* Equipment — the third unit this page is read in. Sites are
+                what a portfolio has, accounts are what it is billed on, and
+                this is what is actually in the buildings: the figure an
+                equipment-facing service is scoped against. Estimate only,
+                per property type; there is no typed counterpart because
+                nobody has an asset count before someone has walked the
+                sites. */}
+            {rows.length > 0 && equipmentStats.total > 0 && (
+              <span
+                title={[
+                  `${equipmentStats.total.toLocaleString()} pieces of equipment estimated across ${equipmentStats.sites.toLocaleString()} site${equipmentStats.sites === 1 ? '' : 's'}, from each site\u2019s property type.`,
+                  equipmentStats.unknown > 0
+                    ? `Not counted: ${equipmentStats.unknown.toLocaleString()} site${equipmentStats.unknown === 1 ? '' : 's'} whose property type isn\u2019t mapped to one of the reference types.`
+                    : '',
+                  equipmentStats.byType.length
+                    ? `Biggest contributors:\n${equipmentStats.byType.slice(0, 6).map(t => `  \u2022 ${t.name}: ${t.equipment.toLocaleString()} across ${t.sites} site${t.sites === 1 ? '' : 's'}`).join('\n')}`
+                    : '',
+                  'Per-site counts are on the Est. Equipment column, and on every site of the saved Master Analysis.',
+                ].filter(Boolean).join('\n\n')}
+              >
+                {' \u00b7 Est. equipment '}
+                <strong style={{ color: '#0F766E' }}>{equipmentStats.total.toLocaleString()}</strong>
+                {equipmentStats.unknown > 0 && (
+                  <span style={{ color: '#B45309' }}>
+                    {' '}({equipmentStats.unknown.toLocaleString()} site{equipmentStats.unknown === 1 ? '' : 's'} unmapped)
+                  </span>
+                )}
+              </span>
+            )}
             {/* Sites an N/A property-type mapping leaves without a modelled
                 usage figure. They're counted in the headline and carried
                 through every export; this says which ones are contributing

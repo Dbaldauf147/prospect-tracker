@@ -105,6 +105,62 @@ export const ACCOUNT_ESTIMATES = {
   'Debt':                                { water: NUM(0),    steam: NUM(0),   gas: NUM(0),            electric: NUM(0),            waste: NUM(0) },
 };
 
+// Equipment expected at a typical site of each property type — the
+// connected assets a building carries: HVAC units, boilers, chillers,
+// pumps, lighting zones, meters, controllers and the rest.
+//
+// Where the other two tables answer "what does this site consume" and
+// "how many bills does it send", this one answers "how much kit is in
+// it", which is the unit an equipment-facing service is scoped and
+// priced in. A 750-asset university campus and a 4-asset non-climate
+// self-storage unit are the same one site until this table is applied.
+//
+// One number per type rather than a per-commodity breakdown: the count
+// is a portfolio-sizing figure, and a breakdown would imply a precision
+// a single representative building doesn't have. Numbers come straight
+// from the user's reference table, in its own order (heaviest consumers
+// first), so the two can be read side by side.
+//
+// Land and Debt carry 0 — there is no building, so there is no
+// equipment. That is a real zero, not a missing answer, and it is what
+// keeps a land parcel from inflating a portfolio's count.
+export const EQUIPMENT_ESTIMATES = {
+  'University / College Campus':         750,
+  'Industrial (Heavy Manufacturing)':    120,
+  'Data Center':                         200,
+  'Hospital / Healthcare':               350,
+  'Office - High-Rise':                   85,
+  'Shopping Mall / Retail Center':       180,
+  'Multifamily High-Rise':               330,
+  'Hotel / Lodging':                     290,
+  'Industrial (Light Manufacturing)':     45,
+  'Industrial - Other':                   25,
+  'Mixed Use':                            70,
+  'Laboratory / R&D':                     70,
+  'Office - Mid-Rise':                    40,
+  'Multifamily Mid-Rise':                160,
+  'Industrial Flex / R&D':                22,
+  'Medical Office':                       28,
+  'Refrigerated Warehouse':               55,
+  'School (K-12)':                        45,
+  'Senior Housing':                      140,
+  'Retail - Neighborhood Retail':         30,
+  'BTR Residential':                     310,
+  'Retail - High Street':                  7,
+  'Office - Small (Low-Rise)':            14,
+  'Retail - Other':                       11,
+  'Non-Refrigerated Warehouse':           28,
+  'Multifamily Low-Rise':                170,
+  'Restaurant (Full-Service)':            14,
+  'Self-Storage (Climate Controlled)':    12,
+  'Office Occupier':                       5,
+  'Retail - Outparcel':                    5,
+  'Restaurant (Quick-Service)':           10,
+  'Self-Storage (Non-Climate Controlled)':  4,
+  'Land':                                  0,
+  'Debt':                                  0,
+};
+
 // Sorted list of canonical labels — handy for the property-type
 // dropdown on the template / mapping UI later.
 export const PROPERTY_TYPE_OPTIONS = Object.keys(CONSUMPTION_ESTIMATES);
@@ -283,6 +339,17 @@ export function propertyTypeAccountTotal(rawType) {
   if (!acc) return null;
   return ['electric', 'gas', 'water', 'waste', 'steam']
     .reduce((sum, k) => sum + (Number(acc[k]?.count) || 0), 0);
+}
+
+// How much equipment one site of this property type is expected to
+// carry. Null for a type that doesn't resolve, so a caller can tell "no
+// estimate" from Land's genuine 0 — the difference between a site that
+// isn't being counted and one that counts for nothing.
+export function propertyTypeEquipment(rawType) {
+  const name = normalizePropertyType(rawType);
+  if (!name) return null;
+  const n = EQUIPMENT_ESTIMATES[name];
+  return Number.isFinite(n) ? n : null;
 }
 
 // Estimate a site's annual electric / gas usage from its property
