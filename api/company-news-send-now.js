@@ -48,8 +48,9 @@ async function handler(req, res, auth) {
   // otherwise the schedule's real anchor so the preview matches what the
   // next scheduled send would actually contain.
   const days = Number(lookbackDays);
-  const lastSentAt = Number.isFinite(days) && days > 0
-    ? Date.now() - Math.min(days, 60) * DAY_MS
+  const explicitDays = Number.isFinite(days) && days > 0 ? Math.min(days, 60) : null;
+  const lastSentAt = explicitDays !== null
+    ? Date.now() - explicitDays * DAY_MS
     : schedule?.lastSentAt;
 
   try {
@@ -67,6 +68,11 @@ async function handler(req, res, auth) {
       // rather than the cron's much longer one. It covers fewer companies
       // than a scheduled run will.
       budgetMs: researchBudgetMs(),
+      // A typed lookback is taken literally: the digest's own minimum would
+      // silently widen "last 3 days" to two weeks, which is not what the
+      // number in the box says. Without one, the schedule's real minimum
+      // applies so the preview matches the next scheduled send.
+      minLookbackDays: explicitDays ?? undefined,
     });
 
     if (digest.empty) {
