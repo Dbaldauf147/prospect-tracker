@@ -53,6 +53,11 @@ const ACTIONS_COL_WIDTH = 36;
 const MIN_COL_WIDTH = 60;
 
 // Column prefs live per user, under one key each.
+// Whether the stats block above the contact table is collapsed. Kept per
+// user so a roster somebody works through row by row stays scrolled to the
+// table rather than to the numbers they've already read.
+const DETAILS_COLLAPSED_LS = 'email-campaign:details-collapsed';
+
 const COLS_LS = {
   hidden: 'email-campaign:contact-cols-hidden',
   removed: 'email-campaign:contact-cols-removed',
@@ -116,6 +121,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [colRemoved, setColRemoved] = useState(() => new Set(readCols('removed', [])));
   const [colOrder, setColOrder] = useState(() => readCols('order', []));
   const [colWidths, setColWidths] = useState(() => readCols('widths', {}));
+  // Collapses the summary cards (and the tracking nudge under them) so the
+  // contact table starts higher up the page.
+  const [detailsCollapsed, setDetailsCollapsed] = useState(() => {
+    try { return userLsGet(DETAILS_COLLAPSED_LS) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { userLsSet(DETAILS_COLLAPSED_LS, detailsCollapsed ? '1' : '0'); } catch { /* a full or blocked localStorage just means the choice doesn't persist */ }
+  }, [detailsCollapsed]);
   useEffect(() => { writeCols('hidden', [...colHidden]); }, [colHidden]);
   useEffect(() => { writeCols('starred', [...colStarred]); }, [colStarred]);
   useEffect(() => { writeCols('removed', [...colRemoved]); }, [colRemoved]);
@@ -1347,9 +1360,49 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       {/* Results */}
       {displayResults && (
         <div>
+          {/* Collapse the numbers away. The campaign's own work happens in
+              the contact table below, and on a long roster the cards push it
+              off the first screenful; the headline figures come back inline
+              here while they're hidden so nothing has to be reopened to read
+              them. The choice sticks per user. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
+            <button
+              onClick={() => setDetailsCollapsed(v => !v)}
+              aria-expanded={!detailsCollapsed}
+              title={detailsCollapsed ? 'Show the campaign summary cards' : 'Hide the campaign summary cards and start the contact table higher up'}
+              style={{
+                padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: '0.6rem' }}>{detailsCollapsed ? '▶' : '▼'}</span>
+              {detailsCollapsed ? 'Show details' : 'Hide details'}
+            </button>
+            {detailsCollapsed && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                <strong style={{ color: 'var(--color-text)' }}>{displayResults.sent}</strong> sent
+                <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                <strong style={{ color: '#10B981' }}>{displayResults.uniqueRepliers}</strong> replies
+                <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                <strong style={{ color: '#7C3AED' }}>{displayResults.responseRate}%</strong> response
+                <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                <strong style={{ color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</strong> contacts
+                {trackingStats.tracked > 0 && (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                    <strong style={{ color: '#0EA5E9' }}>{trackingStats.clicked}</strong> clicked
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+
           {/* Summary cards */}
           {/* auto-fit so the Opened / Clicked tiles flow in alongside the
               original four instead of forcing a ragged second row. */}
+          {!detailsCollapsed && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
             <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid var(--color-accent)' }}>
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Emails Sent</div>
@@ -1387,8 +1440,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               </div>
             )}
           </div>
+          )}
           {/* Nudge when nothing in this campaign was sent with tracking on. */}
-          {trackingStats.tracked === 0 && !trackingError && (
+          {!detailsCollapsed && trackingStats.tracked === 0 && !trackingError && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
               No tracking for {displaySubjects.length > 1 ? 'these subjects' : 'this subject'}. Tracking is added when you generate the drafts from{' '}
               <strong>Draft Emails</strong> with “Track clicks &amp; delivery” checked.
