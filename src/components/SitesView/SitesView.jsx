@@ -50,7 +50,7 @@ import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx
 import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
 import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
 import CorporateCompliance from './CorporateCompliance';
-import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization } from '../../utils/complianceMandates';
+import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization, sitesWithMandate } from '../../utils/complianceMandates';
 import {
   JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd, pickThresholdRevenue,
@@ -5499,12 +5499,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const accountCount = manualAccounts != null
         ? manualAccounts
         : Math.max(loadedAccounts, siteList.accounts || 0);
+      // How many of those sites owe a benchmarking, audit or performance
+      // obligation — the "Sites with a mandate" tile on the Building
+      // Compliance subtab, from the same screening this workbook exports, so
+      // the popup can never disagree with the analysis it was saved from.
+      // Screened over the subtab's ownership scope for the same reason the
+      // tile is: leased buildings are the owner's obligation, and a figure
+      // that counted them would be a different number from the one on screen.
+      const mandateSites = sitesWithMandate(screenSites(complianceScopedSites, { ordinances }));
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
             indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
             ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
             ...(accountCount > 0 ? { numberOfAccounts: accountCount } : {}),
+            // Written even at zero, unlike the two above: "none of these
+            // sites is mandated" is a screening result, and leaving the
+            // field on a stale number from a previous analysis would be
+            // worse than saying nothing.
+            sitesWithMandate: mandateSites,
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
@@ -5514,7 +5527,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const accountCountNote = accountCount > 0
         ? ` Number of Accounts set to ${accountCount.toLocaleString()}${manualAccounts != null ? ' (the total entered on this page)' : ''}.`
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${siteList.note}` });
+      // Said out loud like the other two, zero included: a company screened
+      // and found clear is a result worth reading on the way past.
+      const mandateNote = ` Sites with a Mandate set to ${mandateSites.toLocaleString()}.`;
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${mandateNote}${siteList.note}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
@@ -10372,7 +10388,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const complianceResults = screenSites(complianceScopedSites, { ordinances });
         const cMatched = complianceResults.filter(r => r.matched);
         const cJurisdictions = new Set(cMatched.map(r => r.govId)).size;
-        const cWithMandate = complianceResults.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
+        const cWithMandate = sitesWithMandate(complianceResults);
         const cGrandPenalty = CATEGORIES.reduce((sum, c) => sum + totalPenalty(complianceResults, c), 0);
         const cSiteCount = complianceResults.length;
 

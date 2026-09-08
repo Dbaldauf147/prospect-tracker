@@ -509,6 +509,18 @@ export function totalEligible(results, category) {
   return results.reduce((n, r) => n + (isEligible(r, category) ? 1 : 0), 0);
 }
 
+// How many sites carry at least one mandate — the "Sites with a mandate" KPI.
+//
+// Counted per SITE, not per obligation: a building that owes benchmarking,
+// an audit and a performance standard is one site with a mandate, not three.
+// That is the number the screening dashboard tiles, the compliance report and
+// the Master Analysis workbook all print, and the one stamped on a company
+// when its analysis is saved — so it is defined once here rather than as the
+// same filter written out in four places.
+export function sitesWithMandate(results) {
+  return (results || []).reduce((n, r) => n + (CATEGORIES.some(c => isEligible(r, c)) ? 1 : 0), 0);
+}
+
 // Eligible-site count per compliance deadline (for the timeline charts).
 export function deadlinesByDate(results, category) {
   const m = new Map();

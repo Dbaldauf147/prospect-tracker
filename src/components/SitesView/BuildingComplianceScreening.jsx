@@ -11,7 +11,7 @@ import { WHOLE_BUILDING_META } from '../../data/wholeBuildingUtilitiesMeta.js';
 import {
   screenSites, lookupGovId, getMandates,
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  totalEligible, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
+  totalEligible, sitesWithMandate, eligibilityByOrdinance, totalPenalty, penaltyByOrdinance, sitesCompanyLabel,
   bpsPrioritization, penaltyBasis, auditRequirements, auditRequirementsLabel, categoryColumns,
   deadlinesWithRecurrence, sitesForDeadline, utilityFeedEligibility, utilityFeedSites,
 } from '../../utils/complianceMandates';
@@ -1146,10 +1146,7 @@ export function BuildingComplianceScreening({
   const results = useMemo(() => screenSites(sites, { ordinances }), [sites, ordinances]);
   const bpsRows = useMemo(() => bpsPrioritization(results, ordinances), [results, ordinances]);
   const matchedCount = useMemo(() => results.filter(r => r.matched).length, [results]);
-  const anyEligibleCount = useMemo(
-    () => results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length,
-    [results],
-  );
+  const anyEligibleCount = useMemo(() => sitesWithMandate(results), [results]);
   // Fixed for the life of the mount, so the countdowns and the "today" marker
   // can't shift under a re-render mid-session.
   const todayTime = useMemo(() => utcToday(), []);

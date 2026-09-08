@@ -2,7 +2,7 @@
 // Run:  node scripts/complianceMandates.test.mjs
 import {
   lookupGovId, getMandates, screenSite, screenSites, countryOutsideNorthAmerica,
-  classifyPropertyType, eligibilityByOrdinance, totalEligible,
+  classifyPropertyType, eligibilityByOrdinance, totalEligible, sitesWithMandate,
   deadlinesByDate, penaltyByOrdinance, utilityFeedEligibility,
   buildComplianceRoadmap, auditRequirements, auditRequirementsLabel, categoryColumns,
   deadlinesWithRecurrence, sitesForDeadline, CATEGORIES,
@@ -369,6 +369,22 @@ eq(classifyPropertyType('Office'), 'nonresidential', 'classify nonresidential');
   ok(penaltyByOrdinance(res, 'bbs').some(x => x.government === 'Seattle' && x.penalty === 8000), 'penalty Seattle 2x4000=8000');
   const feeds = utilityFeedEligibility(res, 'electric');
   ok(feeds.rows.some(x => x.state === 'Washington' && /Puget/.test(x.utility) && x.count === 2), 'utility feed PSE=2');
+
+  // The "Sites with a mandate" figure — the KPI tile, the report, the
+  // workbook and the company popup all print this one. Counted per SITE: the
+  // two Seattle buildings each owe benchmarking, an audit AND a performance
+  // standard, and are still two sites rather than six obligations.
+  eq(sitesWithMandate(res), 3, 'sitesWithMandate counts every site carrying an obligation');
+  ok(sitesWithMandate(res) < CATEGORIES.reduce((n, c) => n + totalEligible(res, c), 0),
+    'and comes in under the sum of the per-category counts, which counts a site once per mandate');
+  eq(sitesWithMandate(screenSites([{ id: 9, city: 'Nowhere', state: 'ZZ', sqft: 60000, propertyType: 'Office' }])), 0,
+    'a site no jurisdiction matches carries no mandate');
+  // Screened, matched, but under the threshold: matching a jurisdiction is
+  // not the same as owing it something, and the tile counts the second.
+  eq(sitesWithMandate(screenSites([{ id: 10, city: 'Seattle', state: 'WA', sqft: 500, propertyType: 'Office' }])), 0,
+    'a matched site too small for any of its ordinances is not counted');
+  eq(sitesWithMandate([]), 0, 'no sites, no mandates');
+  eq(sitesWithMandate(null), 0, 'and nothing screened yet is zero rather than a throw');
 }
 
 // --- roadmap: cumulative sites + fines over time ---------------------------
