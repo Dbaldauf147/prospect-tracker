@@ -303,12 +303,28 @@ export function rollUpDealSizing(estimates) {
 /**
  * The company card's status for one service, or '' when it says nothing.
  *
+ * The card reads TWO sources, and so must this. A hand-set value in
+ * servicesExplored is an explicit override and wins; failing that, the card
+ * shows the status implied by an opportunity whose Scope names the service —
+ * and that is how most statuses actually get there. A Sold opp scoped "BBS"
+ * is what makes the card say Sold for "BBS reporting", because the Scope
+ * token is fuzzily matched against the catalogue (see
+ * serviceCoverage.buildOppStagesByClient, whose per-client map `oppStages`
+ * is). Reading only the manual map, as this used to, reported such a client
+ * as unexplored and let the page size work they had already bought.
+ *
  * '-' is the card's own way of writing "no status", so it reads as unexplored
  * rather than as a status called "-".
+ *
+ * @param oppStages  Map<serviceName, stage> for THIS client, or null when the
+ *                   caller has no opps loaded — then only the manual map is
+ *                   read, exactly as before.
  */
-export function exploredStatus(client, name) {
+export function exploredStatus(client, name, oppStages = null) {
   const raw = String((client?.servicesExplored || {})[name] ?? '').trim();
-  return raw && raw !== '-' ? raw : '';
+  if (raw && raw !== '-') return raw;
+  const fromOpp = String(oppStages?.get(name) ?? '').trim();
+  return fromOpp && fromOpp !== '-' ? fromOpp : '';
 }
 
 /**
@@ -318,9 +334,9 @@ export function exploredStatus(client, name) {
  *          outcome ('sold' | 'inProgress' | 'notSold' | 'na' | 'none') the
  *          rest of the app already groups statuses into.
  */
-export function scopeStatuses(client, scope) {
+export function scopeStatuses(client, scope, oppStages = null) {
   return normalizeClientScope(scope).services.map(name => {
-    const status = exploredStatus(client, name);
+    const status = exploredStatus(client, name, oppStages);
     return { name, status, bucket: serviceStatusBucket(status) };
   });
 }
@@ -329,9 +345,9 @@ export function scopeStatuses(client, scope) {
  * The scope's statuses counted by bucket, for a cell that has to say
  * "2 sold, 1 in flight" without the reader opening the row.
  */
-export function scopeStatusCounts(client, scope) {
+export function scopeStatusCounts(client, scope, oppStages = null) {
   const counts = { sold: 0, inProgress: 0, notSold: 0, na: 0, none: 0 };
-  for (const { bucket } of scopeStatuses(client, scope)) counts[bucket] += 1;
+  for (const { bucket } of scopeStatuses(client, scope, oppStages)) counts[bucket] += 1;
   return counts;
 }
 
@@ -382,16 +398,21 @@ export function onCardScope(counts) {
  * @param service   the service name to add
  * @param scopeOf   (client) => that client's stored scope
  * @param skipSold  leave the clients who already buy it out of the add
+ * @param oppStagesByClient  Map<client, Map<serviceName, stage>> from
+ *                  serviceCoverage.buildOppStagesByClient, so "already buys
+ *                  it" counts a client sold through an opp's Scope and not
+ *                  only one with a hand-set status. Omit and only the manual
+ *                  map is read.
  * @returns { add, scoped, sold } — arrays of clients, in the order given
  */
-export function planBulkAdd({ clients = [], service, scopeOf, skipSold = false }) {
+export function planBulkAdd({ clients = [], service, scopeOf, skipSold = false, oppStagesByClient = null }) {
   const name = String(service || '').trim();
   const plan = { add: [], scoped: [], sold: [] };
   if (!name) return plan;
   for (const client of clients) {
     const scope = normalizeClientScope(scopeOf?.(client));
     if (scope.services.includes(name)) { plan.scoped.push(client); continue; }
-    if (serviceStatusBucket(exploredStatus(client, name)) === 'sold') {
+    if (serviceStatusBucket(exploredStatus(client, name, oppStagesByClient?.get(client))) === 'sold') {
       plan.sold.push(client);
       // A target unless the user has asked for them to be left out. They are
       // reported as buyers either way, so the bar can say what including them
