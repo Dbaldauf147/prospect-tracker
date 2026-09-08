@@ -367,3 +367,61 @@ export function headlineKpis(snapshot) {
     },
   };
 }
+
+// The headline KPIs as the *email* carries them.
+//
+// The tab prints every figure with its own arithmetic underneath — the pace
+// gap, the coverage division, the two halves of the projection — because the
+// tab is where a number that looks wrong gets traced. An inbox is not: the
+// same lines read there as a wall of figures in front of the two numbers
+// anyone actually opens the mail for. So the email keeps those two, each
+// with only the line that gives it a scale, and drops the projected
+// year-end card altogether — the funnel further down the email already ends
+// on the same projection, and printing it twice invited the two to be
+// compared rather than read.
+//
+// Dollars lead the progress card: the money sold is the thing being
+// reported, and the percentage is a way of reading it, so it follows.
+//
+// The lines that say *why* a figure is missing stay, on both cards. A blank
+// card is a claim about the cache, not about the pipeline, and an emailed
+// em dash with nothing under it can't be acted on.
+const emailDollars = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '—');
+
+export function emailKpiCards(kpis) {
+  const p = kpis?.progressToTarget || {};
+  const c = kpis?.coverageRatio || {};
+
+  const progressLines = [];
+  if (p.target == null) {
+    progressLines.push('Set an annual target on Charts → Pipeline.');
+  } else if (p.soldYTD == null) {
+    progressLines.push(`Target ${emailDollars(p.target)} · open Opps 2 so this year’s closes are cached.`);
+  } else if (p.pct != null) {
+    progressLines.push(`${p.pct.toFixed(1)}% sold of the ${emailDollars(p.target)} target`);
+  }
+
+  const coverageLines = [];
+  if (c.actual == null) {
+    coverageLines.push(c.target == null
+      ? 'Set an annual target on Charts → Pipeline.'
+      : 'Paste BFO Activity so open pipeline can be measured.');
+  }
+
+  return [
+    {
+      label: 'Progress to target',
+      value: p.soldYTD == null ? '—' : emailDollars(p.soldYTD),
+      status: p.status ?? null,
+      chip: p.status ? (p.status === 'ahead' ? 'Ahead of pace' : 'Behind pace') : null,
+      lines: progressLines,
+    },
+    {
+      label: 'Coverage ratio',
+      value: c.actual == null ? '—' : `${c.actual.toFixed(2)}×`,
+      status: c.status ?? null,
+      chip: c.status ? (c.status === 'ahead' ? 'At goal' : 'Below goal') : null,
+      lines: coverageLines,
+    },
+  ];
+}

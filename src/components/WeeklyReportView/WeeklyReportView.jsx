@@ -20,7 +20,7 @@ import {
   computeActivity, computeOppChanges, computeGoalsProgress,
   serializeReport, pipelineSnapshotLines,
 } from '../../utils/weeklyReport';
-import { buildReviewSnapshot, headlineKpis } from '../../utils/weeklyReview';
+import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../utils/weeklyReview';
 import { loadProgressWeeks } from '../../utils/weeklyReviewStore';
 import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import {
@@ -591,7 +591,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       periodLabel: label,
       periodStart: bounds.start,
       periodEnd: bounds.end,
-      kpiCards: kpisReady ? kpiCards.map(c => ({ label: c.label, value: c.value, status: c.status, chip: c.chip, lines: c.lines })) : [],
+      // Not the tab's own cards: the email leads with the dollars sold and
+      // carries only the line under each figure that gives it a scale. See
+      // emailKpiCards for why the tab's working is left on the tab.
+      kpiCards: kpisReady ? emailKpiCards(kpis) : [],
       kpiNote: 'Year to date — not scoped to the week picker',
       funnel: funnelSummary,
       // `emailsSent.count`, not the raw live count: for a week the HubSpot
@@ -629,7 +632,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // would describe a different week under this week's heading.
       narrative: narrativeStale ? '' : narrative,
     };
-  }, [mode, label, bounds, kpisReady, kpiCards, funnelSummary, emailsSent, oppChanges,
+  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, emailsSent, oppChanges,
     goalsProg, weeklyTargets, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
