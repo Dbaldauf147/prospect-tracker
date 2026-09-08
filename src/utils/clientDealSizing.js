@@ -369,18 +369,22 @@ export function onCardScope(counts) {
  *   add     — nothing on the card, not in scope. The real target.
  *   scoped  — already in this client's scope. Adding again is a no-op, and
  *             counting them in "added 44" would overstate what happened.
- *   sold    — the card says the client already buys it. Sizing it as new
- *             business double-counts revenue you already have, which is the
- *             specific way a bulk add over a whole book goes quietly wrong.
- *             Skippable, and skipped by default.
+ *   sold    — the card says the client already buys it. Reported either way,
+ *             because "31 of your 44 already buy this" is the most useful
+ *             thing a bulk add can tell you. INCLUDED by default: the card
+ *             having ruled on a scope is what stops it being sized (see
+ *             onCardScope), so a buyer added here contributes a status to
+ *             the page and nothing to the totals — and a client who is
+ *             simply absent from the book tells you nothing at all. Skipping
+ *             them is still one tick away.
  *
  * @param clients   the client records
  * @param service   the service name to add
  * @param scopeOf   (client) => that client's stored scope
- * @param skipSold  leave the clients who already buy it alone
+ * @param skipSold  leave the clients who already buy it out of the add
  * @returns { add, scoped, sold } — arrays of clients, in the order given
  */
-export function planBulkAdd({ clients = [], service, scopeOf, skipSold = true }) {
+export function planBulkAdd({ clients = [], service, scopeOf, skipSold = false }) {
   const name = String(service || '').trim();
   const plan = { add: [], scoped: [], sold: [] };
   if (!name) return plan;
@@ -389,8 +393,9 @@ export function planBulkAdd({ clients = [], service, scopeOf, skipSold = true })
     if (scope.services.includes(name)) { plan.scoped.push(client); continue; }
     if (serviceStatusBucket(exploredStatus(client, name)) === 'sold') {
       plan.sold.push(client);
-      // Still a target when the user has asked for it — sizing a renewal is a
-      // real thing to want, it just isn't the default.
+      // A target unless the user has asked for them to be left out. They are
+      // reported as buyers either way, so the bar can say what including them
+      // means: a row that carries the status and no money.
       if (!skipSold) plan.add.push(client);
       continue;
     }

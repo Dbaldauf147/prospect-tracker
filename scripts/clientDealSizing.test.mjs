@@ -320,30 +320,46 @@ const scopeOf = (c) => bookScopes[c.company] || emptyClientScope();
 const names = (list) => list.map(c => c.company);
 
 const plan = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf });
-check('bulk: only the clients who would actually change are targeted',
-  names(plan.add), ['Fresh', 'Quoting', 'Lost']);
+check('bulk: every client the pick would change is targeted, buyers included',
+  names(plan.add), ['Fresh', 'Buyer', 'Quoting', 'Lost']);
 check('bulk: a client who already has it in scope is reported, not re-added',
   names(plan.scoped), ['Scoped']);
-// The one that matters. "Sold" is the only status that means the client is
-// already paying for it; Quoting and Not Sold are both still open questions
-// and belong in the add.
-check('bulk: a client who already BUYS it is held back by default',
+// "Sold" is the only status that means the client is already paying for it;
+// Quoting and Not Sold are both still open questions. Reported either way,
+// because that count is the thing worth knowing before a bulk add — but no
+// longer held back, since a scope the card has ruled on is not sized and so
+// a buyer on the page costs the totals nothing.
+check('bulk: a client who already BUYS it is reported as one',
   names(plan.sold), ['Buyer']);
 
-check('bulk: and can be included deliberately — a renewal is a real thing to size',
-  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: false }).add),
-  ['Fresh', 'Buyer', 'Quoting', 'Lost']);
-// Included or not, the client is still reported as one who buys it, so the
-// bar can say the figures are a renewal rather than new business.
-check('bulk: including them does not stop them being reported as buyers',
-  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: false }).sold),
+check('bulk: and can be left out deliberately',
+  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: true }).add),
+  ['Fresh', 'Quoting', 'Lost']);
+// Skipped or not, the client is still reported as one who buys it, so the bar
+// can say how much of the book already has it.
+check('bulk: skipping them does not stop them being reported as buyers',
+  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: true }).sold),
   ['Buyer']);
 
-check('bulk: every client is accounted for exactly once',
+// `add` and `scoped` are the partition: every client either gets the service
+// or already had it. `sold` is a label over the top of that — a buyer is in
+// `add` too when they are being included — so it is counted separately.
+check('bulk: every client either gets it or already had it',
   (() => {
     const p = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf });
-    return p.add.length + p.scoped.length + p.sold.length;
+    return p.add.length + p.scoped.length;
   })(), BOOK.length);
+check('bulk: an included buyer is in the add as well as reported as a buyer',
+  (() => {
+    const p = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf });
+    return p.sold.every(c => p.add.includes(c));
+  })(), true);
+check('bulk: and skipped, the two lists no longer overlap',
+  (() => {
+    const p = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: true });
+    return p.add.length + p.scoped.length + p.sold.length === BOOK.length
+      && p.sold.every(c => !p.add.includes(c));
+  })(), true);
 
 check('bulk: no service picked, nothing planned',
   planBulkAdd({ clients: BOOK, service: '', scopeOf }), { add: [], scoped: [], sold: [] });
