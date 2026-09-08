@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  PRICING_BASES, formatMoney, formatMoneyRange, formatRate, formatSetupSummary, parseMoney,
+  PRICING_BASES, formatMoney, formatSetupSummary, parseMoney,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
 
@@ -282,20 +282,6 @@ export function ServicePricingModal({
   const hasBasis = !!row.basis;
   const unitNoun = row._unitLabel ? row._unitLabel.toLowerCase() : 'units';
 
-  // The rates as a sentence — "$450 to $600 per site", "3% of the deal" —
-  // which is the form the number is argued in, and the one a bare cell
-  // never shows. Every line the service is charged on, not just the
-  // headline one: a fee built out of three of them is misdescribed by any
-  // one of them on its own.
-  const rateSentence = (row._breakdown || []).map((part) => {
-    const spread = part.rateHigh !== null && part.rateHigh > part.rate
-      ? `${formatRate({ basis: part.basis, rate: part.rate }, bases)} to ${formatRate({ basis: part.basis, rate: part.rateHigh }, bases)}`
-      : formatRate({ basis: part.basis, rate: part.rate }, bases);
-    if (part.kind === 'unit') return `${spread} per ${part.unitLabel.toLowerCase().replace(/s$/, '')}`;
-    if (part.kind === 'percent') return `${spread} of the deal`;
-    return `${spread} ${part.basisLabel.toLowerCase()}`;
-  }).join(', plus ');
-
   return createPortal(
     <div className={styles.detailOverlay} onClick={onClose} role="presentation">
       <div
@@ -394,47 +380,6 @@ export function ServicePricingModal({
             onSaveLine={onSaveLine}
             onEditSetup={onEditSetup}
           />
-
-          <div className={styles.pricingModalSectionTitle}>What it comes to on this deal</div>
-          <div className={styles.detailGrid}>
-            {/* Read-only, and the reason is the whole panel: a fee typed
-                here outranks every rate above it, so a service priced
-                $625 per site quietly became $550 flat for every client on
-                the Deal Sizing page. The figure is now always the one the
-                rates work out to. A fee still typed into the table's own
-                column is shown as that — and said so, so it can be found
-                and cleared. */}
-            <ReadOnlyField
-              label="Estimated year 1 fee"
-              hint={row._typed
-                ? 'A fee typed into the Est. Year 1 Fee column on the table, which outranks the rates above. Clear it there to price off them again.'
-                : row.fee === null
-                  ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Set a basis and a rate above.`
-                  : `Worked out from the rate${row._note ? ` — ${row._note.toLowerCase()}` : ''}.`}
-            >
-              {row.fee === null
-                ? <span className={styles.serviceMutedCell}>-</span>
-                : formatMoneyRange(row.fee, row.feeHigh)}
-            </ReadOnlyField>
-
-            <ReadOnlyField
-              label="Est. deal value"
-              hint={row.value === null
-                ? 'Nothing to work it out from yet.'
-                : 'The fee across the service’s term, with the setup fee in year one.'}
-            >
-              {row.value === null
-                ? <span className={styles.serviceMutedCell}>-</span>
-                : formatMoneyRange(row.value, row.valueHigh)}
-            </ReadOnlyField>
-
-            <ReadOnlyField
-              label="Rate in words"
-              hint={rateSentence ? 'How this fee is arrived at.' : 'Set a basis and a rate to see it.'}
-            >
-              {rateSentence || <span className={styles.serviceMutedCell}>-</span>}
-            </ReadOnlyField>
-          </div>
 
           <div className={styles.pricingModalSectionTitle}>Pricing notes</div>
           {/* A textarea rather than the table's one-line cell: the note is the
