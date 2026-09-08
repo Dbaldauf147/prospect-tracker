@@ -243,6 +243,42 @@ eq(stateOf(STEPS, CLEAR, MAPPED, 'cold', SENT), 'open',
 eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
   'a real count outranks an auto-clear too');
 
+// --- the tag rosters answering for the contact-mapping step ----------------
+//
+// The same shape one step up. That step asks for the tag questions the Tagged
+// row printed under it counts, so with Key, Client and Key Prospect all at
+// 100% there is nothing left for it to ask — tagsAllMapped works the answer
+// out (see rosterTagDebt.test.mjs) and it arrives here the same way the
+// campaigns do. What is worth guarding here is the pair: mapping clearing
+// itself has to hand the red down to the campaigns step exactly as a tick
+// does, or the ladder stalls on a green row.
+{
+  const TAGGED = { 'contact-mapping': true };
+  const UNTAGGED = { 'contact-mapping': false };
+  const TAGS_LOADING = { 'contact-mapping': null };
+
+  eq(stateOf(STEPS, CLEAR, {}, 'contact-mapping', TAGGED), 'caught-up',
+    'fully mapped rosters clear the mapping step with nothing marked');
+  eq(stateOf(STEPS, CLEAR, {}, 'contact-mapping', UNTAGGED), 'due',
+    'a roster still short of 100% leaves it outstanding');
+  eq(stateOf(STEPS, CLEAR, {}, 'contact-mapping', TAGS_LOADING), 'unknown',
+    'coverage still loading shows nothing rather than an unearned red or green');
+  eq(statesByKey(ladder(STEPS, CLEAR, {}, TAGGED))['contact-mapping'].auto, true,
+    'the row says it cleared itself');
+  eq(statesByKey(ladder(STEPS, CLEAR, MAPPED, TAGGED))['contact-mapping'].auto, undefined,
+    'a mapping step the user actually marked is not flagged as self-cleared');
+
+  // The point of the pair: the ladder has to keep walking.
+  eq(stateOf(STEPS, CLEAR, {}, 'market-updates', TAGGED), 'due',
+    'the campaigns step takes the red once the tags answer for the step above it');
+  eq(countDueSteps(ladder(STEPS, CLEAR, {}, TAGGED)), 1,
+    'so the sidebar still shows one dot, now for that step');
+  eq(countDueSteps(ladder(STEPS, CLEAR, {}, { ...TAGGED, 'market-updates': true })), 0,
+    'and none once both steps have answered for themselves');
+  eq(countDueSteps(ladder(STEPS, CLEAR, {}, TAGS_LOADING)), 0,
+    'nothing is owed while the coverage is still loading');
+}
+
 // --- the dot and the Opps badge, end to end -------------------------------
 //
 // The walk above was always right; what broke was the number fed into it.

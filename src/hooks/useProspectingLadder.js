@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
 import { countCallInDue } from '../utils/oppsCallIn';
 import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
+import { tagsAllMapped } from '../utils/contactRosters';
 import { useSavedCampaigns } from './useSavedCampaigns';
 import { collectTopPcIntros } from '../utils/topPcOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
@@ -28,7 +29,7 @@ import {
 //
 // Returns { steps, counts, autoClear, topPcIntros, campaignsToFinish,
 // states, stateByKey, today, caughtUpMap, dueCount }.
-export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null } = {}) {
+export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
   // reads them: newest of the local cache and Firestore on mount, then the
   // cache on focus / after any Opps 2 save / on a timer, since Call In is
@@ -93,10 +94,14 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // answer for. "Reach out to contacts with market updates" is the batch a
   // saved campaign sends, so once every campaign that isn't paused has
   // finished going out, the step is done without the user confirming what
-  // the data already says. null while the campaigns are still loading.
+  // the data already says. "Map and tag your contacts" is answered the same
+  // way by the Tagged row printed under it: Key, Client and Key Prospect all
+  // at 100% means there are no tag questions left for it to ask about. Both
+  // are null while their evidence is still loading.
   const autoClear = useMemo(() => ({
+    'contact-mapping': tagsAllMapped(tagCoverage),
     'market-updates': campaignsAllSent(campaigns),
-  }), [campaigns]);
+  }), [tagCoverage, campaigns]);
 
   const states = useMemo(
     () => ladderStates({ steps, counts, autoClear, caughtUpMap, today }),
