@@ -4859,7 +4859,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // slugify in migrateCompanyData so renames carry the list along.
   const siteListSlug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
   const currentSiteList = (settings.companySiteLists || {})[siteListSlug] || null;
-  // Sq ft, divisions and property types across that list — the three
+  // Sq ft, divisions, property types and equipment across that list — the
   // things a portfolio is read by, summarised above the table so they
   // don't have to be counted out of it by eye.
   const siteListFacts = useMemo(() => computeSiteListFacts(currentSiteList), [currentSiteList]);
@@ -8594,6 +8594,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     {siteListFacts.propertyTypes.length > 0 && (
                       <span title={siteListFacts.propertyTypes.join('\n')}>
                         {' · '}{siteListFacts.propertyTypes.length} {siteListFacts.propertyTypes.length === 1 ? 'property type' : 'property types'}
+                      </span>
+                    )}
+                    {/* What is installed across the portfolio, estimated per
+                        site from its property type (or read off the count the
+                        Utility Lookup save wrote against each site). The unit
+                        an equipment-facing service is scoped in — a company
+                        with 158 sites and one with 158 university campuses
+                        are the same line without it. */}
+                    {siteListFacts.equipment != null && (
+                      <span
+                        title={siteListFacts.equipmentSites === currentSiteList.rows.length
+                          ? `${siteListFacts.equipment.toLocaleString()} pieces of equipment estimated across all ${siteListFacts.equipmentSites} sites, from each site’s property type.`
+                          : `${siteListFacts.equipment.toLocaleString()} pieces of equipment estimated across the ${siteListFacts.equipmentSites} of ${currentSiteList.rows.length} sites whose property type resolves to one of the reference types.`}
+                      >
+                        {' · '}{siteListFacts.equipment.toLocaleString()} est. equipment
+                        {siteListFacts.equipmentSites < currentSiteList.rows.length && ' (partial)'}
                       </span>
                     )}
                   </span>

@@ -2,10 +2,10 @@
 //
 // The list is a table of whatever columns the source had, so the popup
 // can show it but can't say anything ABOUT it without reading the
-// columns back out. These are the three facts a portfolio gets read by —
-// how much building there is, which operating companies own it, and what
-// kind of buildings they are — summarised for the header line above the
-// table.
+// columns back out. These are the facts a portfolio gets read by — how
+// much building there is, which operating companies own it, what kind of
+// buildings they are, and how much equipment is in them — summarised for
+// the header line above the table.
 //
 // Headers are matched tolerantly because a list is built from several
 // sources: the Utility Lookup save writes "Size (ft²)", the paste modal
@@ -13,6 +13,8 @@
 // came with ("SQFT", "Building Area", "GSF").
 //
 // Pure: one stored list in, plain numbers and counts out.
+
+import { propertyTypeEquipment } from '../data/propertyTypeEstimates.js';
 
 function findHeader(headers, patterns) {
   for (const pattern of patterns) {
@@ -32,21 +34,38 @@ export function toSqft(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+// An equipment cell as a count. Unlike a size, zero is a real answer here
+// — Land and Debt carry no building and so no equipment — so only a cell
+// with no digits in it is "no answer".
+function toCount(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  const raw = String(value ?? '').trim();
+  if (!raw || !/\d/.test(raw)) return null;
+  const n = Number(raw.replace(/[^0-9.\-eE]/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 /**
- * Sq ft, divisions and property types across a stored site list.
+ * Sq ft, divisions, property types and equipment across a stored site list.
  *
- *   { sites, sqft, sqftSites, divisions, propertyTypes }
+ *   { sites, sqft, sqftSites, equipment, equipmentSites, divisions, propertyTypes }
  *
  * `sqft` is null rather than 0 when no row carried a usable size —
  * "nobody has told us the sizes" and "these buildings have no floor
  * area" are different statements, and only one of them is possible.
  * `sqftSites` says how many rows the total is actually built from, so a
  * portfolio that sized 3 of its 158 buildings can't read as complete.
+ * `equipment` follows the same rule, and is the per-site count the
+ * analysis wrote where there is one, else the site's property-type
+ * estimate — so a list that never went through the Utility Lookup page
+ * still totals.
  */
 export function siteListFacts(entry) {
   const headers = (entry?.headers || []).filter(h => typeof h === 'string');
   const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
-  if (!rows.length) return { sites: 0, sqft: null, sqftSites: 0, divisions: [], propertyTypes: [] };
+  if (!rows.length) {
+    return { sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0, divisions: [], propertyTypes: [] };
+  }
 
   const sizeCol = findHeader(headers, [
     /^size\s*\(ft/i, /^size\s*\(sq/i, /^size$/i, /sq\s*\.?\s*ft/i, /square\s*(feet|foot|footage)/i,
@@ -61,9 +80,17 @@ export function siteListFacts(entry) {
   const divisionCol = findHeader(headers, [
     /^division$/i, /\bdivision\b/i, /^business\s*unit$/i, /business\s*unit/i, /^subsidiary$/i, /operating\s*(company|unit)/i,
   ]);
+  // The per-site equipment count the Utility Lookup save writes. Matched on
+  // a prefix because a colliding uploaded column pushes the analysis one to
+  // "Est. Equipment (analysis)".
+  const equipmentCol = findHeader(headers, [
+    /^est\.?\s*equipment/i, /^equipment\s*count/i, /^equipment$/i,
+  ]);
 
   let sqft = 0;
   let sqftSites = 0;
+  let equipment = 0;
+  let equipmentSites = 0;
   const divisions = new Map();
   const propertyTypes = new Map();
   const add = (map, value) => {
@@ -80,12 +107,21 @@ export function siteListFacts(entry) {
     }
     if (divisionCol) add(divisions, row[divisionCol]);
     if (typeCol) add(propertyTypes, row[typeCol]);
+    // A count the analysis already wrote for this site wins; otherwise the
+    // site's property type is looked up here, so a list assembled from an
+    // upload that never went through the Utility Lookup page still totals.
+    const stated = equipmentCol ? toCount(row[equipmentCol]) : null;
+    const n = stated != null ? stated : (typeCol ? propertyTypeEquipment(row[typeCol]) : null);
+    if (n != null) { equipment += n; equipmentSites += 1; }
   }
 
   return {
     sites: rows.length,
     sqft: sqftSites > 0 ? Math.round(sqft) : null,
     sqftSites,
+    // Null, not 0, when nothing could be counted — same reasoning as sqft.
+    equipment: equipmentSites > 0 ? Math.round(equipment) : null,
+    equipmentSites,
     divisions: [...divisions.values()].sort((a, b) => a.localeCompare(b)),
     propertyTypes: [...propertyTypes.values()].sort((a, b) => a.localeCompare(b)),
   };

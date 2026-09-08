@@ -17,6 +17,7 @@ import {
   isRowEmpty,
 } from './masterSiteFields';
 import { MASTER_SITE_LIST_KEY, UTILITY_SITES_KEY } from './siteListRename';
+import { propertyTypeEquipment } from '../../data/propertyTypeEstimates';
 import styles from './MasterSiteListView.module.css';
 
 // Master Site List lives in its own IDB list (mirrored to Firestore by
@@ -31,20 +32,22 @@ const SHOW_FILTERS_LS_KEY = 'master-site-list:show-filters';
 const ALL = '__all__';
 
 // Every togglable/resizable column, in display order. The eight editable
-// fields plus the two derived (read-only) Utility Lookup columns. The "#"
-// row-number and delete columns are fixed and not part of this list.
+// fields plus the derived (read-only) ones: ISO, the two Utility Lookup
+// columns, and the equipment estimate the site's Subsector implies. The
+// "#" row-number and delete columns are fixed and not part of this list.
 const COLUMNS = [
   ...MASTER_FIELDS.map(f => ({ key: f.key, label: f.label, kind: 'field' })),
   { key: 'iso', label: 'ISO / RTO', kind: 'iso', title: 'Wholesale electricity market (ISO/RTO) resolved from the ZIP via EPA eGRID subregions. A badge flags when the ZIP straddles markets (seam) or the subregion is ambiguous (verify).' },
   { key: '__utility__', label: 'Indicative Utility', kind: 'utility', title: 'Indicative electric utility pulled from the Utility Lookup zip table' },
   { key: '__status__', label: 'Status', kind: 'status', title: 'Regulated vs Deregulated, derived from the indicative utility' },
+  { key: '__equipment__', label: 'Est. Equipment', kind: 'equipment', title: "Equipment estimated for this site from its Subsector — the property type the reference table keys on. Blank when the Subsector doesn't resolve to one of those types." },
 ];
 
 // Sensible starting widths (px) per column; anything missing uses 140.
 const DEFAULT_WIDTHS = {
   company: 180, propertyName: 180, subsector: 130, country: 120,
   address: 220, city: 130, state: 90, zip: 90,
-  iso: 130, __utility__: 200, __status__: 120,
+  iso: 130, __utility__: 200, __status__: 120, __equipment__: 120,
 };
 
 // Badge colours for the low-confidence ISO cases.
@@ -57,8 +60,8 @@ function withIso(row) {
 }
 
 // Display/sortable/filterable text for a column on a given row. Field
-// columns read straight off the row; the three derived columns mirror
-// what their cells render so sorting and filtering match the eye.
+// columns read straight off the row; the derived columns mirror what
+// their cells render so sorting and filtering match the eye.
 function isoText(row) {
   const info = row.iso_confidence ? { iso: row.iso ?? null } : lookupIsoForZip(row.zip);
   if (!info.iso) return '';
@@ -68,6 +71,10 @@ function cellText(key, row, look) {
   if (key === 'iso') return isoText(row);
   if (key === '__utility__') return look.utility || '';
   if (key === '__status__') return look.status || '';
+  if (key === '__equipment__') {
+    const n = propertyTypeEquipment(row.subsector);
+    return n == null ? '' : String(n);
+  }
   return String(row[key] || '');
 }
 
@@ -831,6 +838,8 @@ export function MasterSiteListView({ prospects = [] }) {
       const look = lookupUtilityForZip(zipMap, r.zip);
       o['Indicative Utility'] = look.utility || '';
       o['Regulated/Deregulated'] = look.status || '';
+      const equipment = propertyTypeEquipment(r.subsector);
+      o['Est. Equipment'] = equipment == null ? '' : equipment;
       return o;
     });
     if (!data.length) { alert('No rows to export.'); return; }
@@ -1076,6 +1085,29 @@ export function MasterSiteListView({ prospects = [] }) {
                       return (
                         <td key={c.key} className={styles.derived}>
                           {look.utility || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
+                        </td>
+                      );
+                    }
+                    if (c.kind === 'equipment') {
+                      // Estimated from the Subsector, which is where a
+                      // property type lands on this page (the importer maps
+                      // "Property Type" / "Asset Type" onto it). Read-only,
+                      // like the other derived columns: correcting the
+                      // number means correcting the Subsector.
+                      const n = propertyTypeEquipment(r.subsector);
+                      return (
+                        <td
+                          key={c.key}
+                          className={styles.derived}
+                          title={n == null
+                            ? (String(r.subsector || '').trim()
+                              ? `"${r.subsector}" doesn’t resolve to one of the reference property types, so no equipment is estimated for this site.`
+                              : 'Set a Subsector (the property type) to estimate this site’s equipment.')
+                            : `${n.toLocaleString()} piece${n === 1 ? '' : 's'} of equipment estimated for a ${r.subsector} site`}
+                        >
+                          {n == null
+                            ? <span style={{ color: 'var(--color-text-muted)' }}>-</span>
+                            : n.toLocaleString()}
                         </td>
                       );
                     }

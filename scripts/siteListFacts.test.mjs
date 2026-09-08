@@ -95,11 +95,70 @@ function eq(actual, expected, name) {
 
 // --- nothing in, nothing claimed ----------------------------------------
 {
-  eq(siteListFacts(null), { sites: 0, sqft: null, sqftSites: 0, divisions: [], propertyTypes: [] }, 'no list is no facts');
+  eq(siteListFacts(null),
+    { sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0, divisions: [], propertyTypes: [] },
+    'no list is no facts');
   eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).sqft, null,
     'a list with no size column reports no size');
   eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).divisions, [],
     'and no divisions');
+}
+
+// --- equipment, off the count or off the property type ------------------
+{
+  // No equipment column: the property type is what the count comes from,
+  // which is the case for every list that predates the Est. Equipment
+  // field or came in as a plain spreadsheet.
+  const fromTypes = siteListFacts({
+    headers: ['Site Name', 'Property Type'],
+    rows: [
+      { 'Site Name': 'A', 'Property Type': 'Data Center' },          // 200
+      { 'Site Name': 'B', 'Property Type': 'Non-Refrigerated Warehouse' }, // 28
+      { 'Site Name': 'C', 'Property Type': 'Hotel / Lodging' },      // 290
+    ],
+  });
+  eq(fromTypes.equipment, 518, 'equipment totals off the property types');
+  eq(fromTypes.equipmentSites, 3, 'and says how many sites it counted');
+
+  // A type nobody can resolve contributes nothing and is left out of the
+  // site count behind the total, so a partial answer can't read as whole.
+  const partial = siteListFacts({
+    headers: ['Site Name', 'Property Type'],
+    rows: [
+      { 'Site Name': 'A', 'Property Type': 'Data Center' },
+      { 'Site Name': 'B', 'Property Type': 'Cell tower' },
+    ],
+  });
+  eq(partial.equipment, 200, 'an unresolvable type adds nothing');
+  eq(partial.equipmentSites, 1, 'and is not counted as a site behind the total');
+
+  // The written count wins over the lookup — it is what the analysis
+  // resolved for that site, including a corrected property type.
+  const stated = siteListFacts({
+    headers: ['Site Name', 'Property Type', 'Est. Equipment'],
+    rows: [
+      { 'Site Name': 'A', 'Property Type': 'Data Center', 'Est. Equipment': 40 },
+      { 'Site Name': 'B', 'Property Type': 'Data Center', 'Est. Equipment': '' },
+    ],
+  });
+  eq(stated.equipment, 240, 'a written count wins, a blank one falls back to the type');
+
+  // A collision renames the analysis column; the prefix still matches.
+  eq(siteListFacts({
+    headers: ['Site Name', 'Est. Equipment (analysis)'],
+    rows: [{ 'Site Name': 'A', 'Est. Equipment (analysis)': '1,200' }],
+  }).equipment, 1200, 'the (analysis) suffix and thousands separators are handled');
+
+  // Land carries a real zero — a counted site with nothing in it.
+  const land = siteListFacts({
+    headers: ['Site Name', 'Property Type'],
+    rows: [{ 'Site Name': 'A', 'Property Type': 'Land' }],
+  });
+  eq(land.equipment, 0, 'land counts as zero equipment');
+  eq(land.equipmentSites, 1, 'and is a site the total was built from');
+
+  eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).equipment, null,
+    'nothing to count on reports no equipment');
 }
 
 // --- how a floor area reads ---------------------------------------------
