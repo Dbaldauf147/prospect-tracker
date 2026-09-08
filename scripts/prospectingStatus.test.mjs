@@ -133,36 +133,51 @@ const ladder = (steps, counts, map) => ladderStates({ steps, counts, caughtUpMap
 const stateOf = (steps, counts, map, key) => statesByKey(ladder(steps, counts, map))[key]?.state;
 
 // Built the way the page builds it, so the flags and count functions are
-// the real ones rather than a hand-written stand-in.
+// the real ones rather than a hand-written stand-in. Contact mapping is
+// listed explicitly: readSteps would insert it above market-updates
+// anyway (it was split out of that step), and a fixture that pretends
+// otherwise would be testing a ladder nobody has.
 const STEPS = readSteps({ prospectingSteps: [
-  { key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'cold' },
+  { key: 'opps' }, { key: 'renewals' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'cold' },
 ] });
 const CLEAR = { opps: 0, renewals: 0 };
+// Mapping sits above the campaigns and is flagged the same way, so it is
+// the one that goes red first; marking it is what hands the red down.
+const MAPPED = { 'contact-mapping': TODAY };
 
-eq(stateOf(STEPS, CLEAR, {}, 'market-updates'), 'due',
-  'with every step above it clear, the market-updates step is outstanding');
-eq(stateOf(STEPS, { opps: 2, renewals: 0 }, {}, 'market-updates'), 'open',
+eq(stateOf(STEPS, CLEAR, {}, 'contact-mapping'), 'due',
+  'with every step above it clear, the contact-mapping step is outstanding');
+eq(stateOf(STEPS, CLEAR, {}, 'market-updates'), 'open',
+  'the campaigns step waits its turn behind mapping rather than going red beside it');
+eq(stateOf(STEPS, CLEAR, MAPPED, 'market-updates'), 'due',
+  'and takes the red once mapping is marked');
+eq(stateOf(STEPS, { opps: 2, renewals: 0 }, MAPPED, 'market-updates'), 'open',
   'overdue opps above it keep the step waiting its turn, not red');
-eq(stateOf(STEPS, { opps: 0, renewals: 3 }, {}, 'market-updates'), 'open',
+eq(stateOf(STEPS, { opps: 0, renewals: 3 }, MAPPED, 'market-updates'), 'open',
   'renewals still to work keep it waiting too');
-eq(stateOf(STEPS, { opps: 0, renewals: null }, {}, 'market-updates'), 'open',
+eq(stateOf(STEPS, { opps: 0, renewals: null }, MAPPED, 'market-updates'), 'open',
   'a count still loading above it is not "clear" — no red on data that has not arrived');
-eq(stateOf(STEPS, {}, {}, 'market-updates'), 'open',
+eq(stateOf(STEPS, {}, MAPPED, 'market-updates'), 'open',
   'no counts handed over at all leaves every tracked step unknown, so nothing goes red');
-eq(stateOf(STEPS, CLEAR, { 'market-updates': TODAY }, 'market-updates'), 'caught-up',
+eq(stateOf(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY }, 'market-updates'), 'caught-up',
   'marking it caught up today clears it');
-eq(stateOf(STEPS, CLEAR, { 'market-updates': '2026-08-25' }, 'market-updates'), 'due',
+eq(stateOf(STEPS, CLEAR, { ...MAPPED, 'market-updates': '2026-08-25' }, 'market-updates'), 'due',
   "yesterday's mark does not hold it down today");
 
 // Only a step flagged in the playbook does this. Cold outreach is
 // hand-marked too, but it stays grey rather than adding a second red row
 // the moment the market-updates step is ticked.
-eq(stateOf(STEPS, CLEAR, { 'market-updates': TODAY }, 'cold'), 'open',
+eq(stateOf(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY }, 'cold'), 'open',
   'an unflagged hand-marked step below it stays open, not outstanding');
 
 // The dot on the sidebar counts exactly the red-because-reached rows.
 eq(countDueSteps(ladder(STEPS, CLEAR, {})), 1, 'one dot while the step stands');
-eq(countDueSteps(ladder(STEPS, CLEAR, { 'market-updates': TODAY })), 0, 'no dot once it is marked');
+// Two flagged steps in a row, and still one dot: only the topmost
+// unresolved one is owed, which is the point of walking the ladder.
+eq(countDueSteps(ladder(STEPS, CLEAR, MAPPED)), 1,
+  'still one dot with mapping marked — the campaigns step has it now');
+eq(countDueSteps(ladder(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY })), 0,
+  'no dot once both are marked');
 eq(countDueSteps(ladder(STEPS, { opps: 1, renewals: 0 }, {})), 0,
   'no dot while there is still warmer work above it');
 eq(countDueSteps([]), 0, 'no steps at all means no dot');
@@ -170,8 +185,11 @@ eq(countDueSteps([]), 0, 'no steps at all means no dot');
 // Order is the user's, so the rule follows the ladder rather than the
 // shipped positions: moved to the top, the step is owed straight away.
 {
+  // Mapping is listed below it on purpose: left out, readSteps would put
+  // it back above (the split), and this case is about the step the user
+  // dragged to the top.
   const moved = readSteps({ prospectingSteps: [
-    { key: 'market-updates' }, { key: 'opps' }, { key: 'renewals' },
+    { key: 'market-updates' }, { key: 'opps' }, { key: 'renewals' }, { key: 'contact-mapping' },
   ] });
   eq(stateOf(moved, { opps: 5, renewals: 5 }, {}, 'market-updates'), 'due',
     'at the top of the ladder it is outstanding whatever sits below it');

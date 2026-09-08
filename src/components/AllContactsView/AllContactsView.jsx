@@ -208,7 +208,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // view. Each category is counted independently and the total is the
   // de-duped union across all four.
   //
-  // The Prospecting tab prints the same coverage under its market-updates
+  // The Prospecting tab prints the same coverage under its contact-mapping
   // step, off this same function — the two read one number, not two.
   const coverage = useMemo(
     () => rosterTagCoverage({

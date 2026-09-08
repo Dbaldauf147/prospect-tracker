@@ -93,20 +93,51 @@ const asIs = serializeSteps(DEFAULT_STEPS);
 check('an unedited ladder stores keys only', JSON.stringify(asIs[0]), JSON.stringify({ key: 'opps' }));
 check('every step is still listed', asIs.length, DEFAULT_STEPS.length);
 
-const edited = serializeSteps([{ ...DEFAULT_STEPS[0], title: 'Mine' }, DEFAULT_STEPS[5]]);
+// Looked up by key, not by index: a step inserted into the shipped ladder
+// (the market-updates split added one) must not silently retarget these.
+const stepByKey = (key) => DEFAULT_STEPS.find(s => s.key === key);
+const edited = serializeSteps([{ ...stepByKey('opps'), title: 'Mine' }, stepByKey('cold')]);
 checkDeep('an edited title is stored', edited[0], { key: 'opps', title: 'Mine' });
 checkDeep('an unedited neighbour is not', edited[1], { key: 'cold' });
 
 // Round trip: what comes back out is what went in.
 const roundTrip = readSteps(withSteps(serializeSteps([
-  { ...DEFAULT_STEPS[5] },
-  { ...DEFAULT_STEPS[0], detail: 'my own words' },
+  { ...stepByKey('cold') },
+  { ...stepByKey('opps'), detail: 'my own words' },
   { key: 'ps_new', title: 'Added step', detail: '', view: 'pe' },
 ])));
 checkDeep('order round-trips', keys(roundTrip), ['cold', 'opps', 'ps_new']);
 check('edited detail round-trips', byKey(roundTrip, 'opps').detail, 'my own words');
 check('the count survives the round trip', typeof byKey(roundTrip, 'opps').workLabel, 'function');
 check('the added step round-trips', byKey(roundTrip, 'ps_new').viewLabel, 'PE Portfolio');
+
+// --- the market-updates split --------------------------------------------
+// Tagging the book and writing to it were one step; they are two now. A
+// stored ladder IS the ladder, so a default it doesn't carry is one the
+// user deleted and stays deleted — except this one, which they never had
+// the chance to delete. It goes back exactly where its work used to be
+// shown: immediately above the step it was split out of.
+checkDeep('the shipped ladder maps before it writes',
+  keys(DEFAULT_STEPS).slice(0, 3), ['opps', 'contact-mapping', 'market-updates']);
+check('the campaigns step opens the campaigns tab',
+  stepByKey('market-updates').view, 'campaigns');
+check('both halves go red once the ladder reaches them',
+  !!stepByKey('contact-mapping').dueWhenReached && !!stepByKey('market-updates').dueWhenReached, true);
+
+const preSplit = readSteps(withSteps([{ key: 'opps' }, { key: 'market-updates' }, { key: 'cold' }]));
+checkDeep('a ladder stored before the split gains the mapping step',
+  keys(preSplit), ['opps', 'contact-mapping', 'market-updates', 'cold']);
+check('and it arrives whole, not as a bare key',
+  byKey(preSplit, 'contact-mapping').title, stepByKey('contact-mapping').title);
+check('an edit to the step it split from is untouched',
+  readSteps(withSteps([{ key: 'market-updates', title: 'Mine' }]))
+    .find(s => s.key === 'market-updates').title, 'Mine');
+checkDeep('a ladder that already has both is left alone',
+  keys(readSteps(withSteps([{ key: 'contact-mapping' }, { key: 'market-updates' }]))),
+  ['contact-mapping', 'market-updates']);
+checkDeep('a ladder with neither gets neither: that step was deleted',
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'cold']);
+checkDeep('an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
 
 // --- moving --------------------------------------------------------------
 const three = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];

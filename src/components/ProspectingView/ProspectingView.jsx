@@ -66,8 +66,11 @@ const RANK_COLORS = [
 
 // Fixed widths so the two right-hand cells line up as columns across
 // rows of different heights — and so the header labels sit over them.
+// Wide enough for the longest tab name a step can point at ("Email
+// Campaigns →", which the market-updates step opens): at 128 its arrow sat
+// on top of the button's own border.
 const STATUS_COL = 132;
-const ACTION_COL = 128;
+const ACTION_COL = 144;
 
 const STATUS_STYLES = {
   'caught-up': { background: '#DCFCE7', border: '#BBF7D0', color: '#166534' },
@@ -78,7 +81,7 @@ const STATUS_STYLES = {
   open: { background: '#fff', border: '#CBD5E1', color: '#64748B' },
 };
 
-// The tag-review coverage, roster by roster, under the market-updates step.
+// The tag-review coverage, roster by roster, under the contact-mapping step.
 // A market update is only worth sending to someone you've placed, so how
 // far the tagging has actually been worked through is the readiness check
 // for this step — and it's the one number that says which slice of the book
@@ -910,7 +913,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           // cells sit at the top rather than floating in the middle.
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && topPcIntros?.length)
-            || (step.key === 'market-updates' && (tagCoverage?.all?.contacts || campaignsToFinish.length));
+            || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
+            || (step.key === 'market-updates' && campaignsToFinish.length);
           return (
             <div
               key={step.key}
@@ -988,22 +992,23 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     {step.detail}
                   </div>
                 )}
+                {/* How ready the book is to be written to. It used to sit
+                    above the campaigns under one step; they are two
+                    different jobs, so they are two steps now. */}
+                {!editing && step.key === 'contact-mapping' && (
+                  <TagCoverageBar
+                    coverage={tagCoverage}
+                    onNavigate={onNavigate ? () => onNavigate('contacts') : null}
+                    missing={tagDebt || []}
+                    onOpenContact={openContact}
+                  />
+                )}
+                {/* And which writing has been started and not finished. */}
                 {!editing && step.key === 'market-updates' && (
-                  <>
-                    <TagCoverageBar
-                      coverage={tagCoverage}
-                      onNavigate={onNavigate ? () => onNavigate('contacts') : null}
-                      missing={tagDebt || []}
-                      onOpenContact={openContact}
-                    />
-                    {/* Below the tagging bar: that one says how ready the
-                        book is to be written to, this says which writing
-                        has been started and not finished. */}
-                    <CampaignOutreachList
-                      rows={campaignsToFinish}
-                      onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
-                    />
-                  </>
+                  <CampaignOutreachList
+                    rows={campaignsToFinish}
+                    onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
+                  />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
                 {!editing && step.key === 'pe-intros' && (
