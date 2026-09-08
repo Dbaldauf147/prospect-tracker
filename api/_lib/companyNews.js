@@ -18,9 +18,19 @@ import { companyNewsBudgetMs } from './researchBudget.js';
 // checkbox on the company popup (ProspectModal).
 export const NEWS_FLAG = 'trackAcquisitionNews';
 
-// How far back the very first digest looks when a schedule has never
-// sent. After that the window starts at the previous successful send.
-const FIRST_RUN_LOOKBACK_DAYS = 7;
+// How far back the very first digest looks when a schedule has never sent.
+const FIRST_RUN_LOOKBACK_DAYS = 14;
+
+// Every window reaches back at least this far, even when the last send was
+// more recent. A deal has to be *findable by web search* to make the digest,
+// and indexing lags announcements by days — a window that ended where the
+// last one started meant a deal indexed late was never seen by any digest,
+// because no window ever covered it twice.
+//
+// The cost is overlap: a weekly schedule re-reports deals the previous
+// digest already carried. That is the intended trade — a repeat is obvious
+// to the reader, a permanently missed deal is not.
+const MIN_LOOKBACK_DAYS = 14;
 
 // Never let a window grow unbounded — a schedule paused for months would
 // otherwise ask for a year of history in one search.
@@ -67,15 +77,26 @@ export async function loadTrackedCompanies(db, uid, email) {
 }
 
 // ---- The digest window --------------------------------------------------
-// Starts at the schedule's last successful send so a skipped or failed
-// week is picked up by the next one rather than silently dropped.
-export function digestWindow(lastSentAt, now = Date.now()) {
-  const maxMs = MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
-  const firstRunMs = FIRST_RUN_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+// Starts at the schedule's last successful send so a skipped or failed week
+// is picked up by the next one rather than silently dropped — then widened
+// to MIN_LOOKBACK_DAYS so late-indexed deals still get a chance, and capped
+// at MAX_LOOKBACK_DAYS so a long-paused schedule can't ask for a year.
+//
+// `minLookbackDays` is an override for a test send, where the user typed an
+// exact number of days and should get exactly that.
+export function digestWindow(lastSentAt, now = Date.now(), { minLookbackDays } = {}) {
+  const day = 24 * 60 * 60 * 1000;
+  const maxMs = MAX_LOOKBACK_DAYS * day;
+  const rawMin = Number(minLookbackDays);
+  const minMs = (Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : MIN_LOOKBACK_DAYS) * day;
+  const firstRunMs = FIRST_RUN_LOOKBACK_DAYS * day;
+
   const last = Number(lastSentAt);
-  const since = Number.isFinite(last) && last > 0
-    ? Math.max(last, now - maxMs)
-    : now - firstRunMs;
+  if (!Number.isFinite(last) || last <= 0) return { since: now - firstRunMs, until: now };
+
+  // Clamp the anchor into [now - max, now - min]: never shorter than the
+  // minimum, never longer than the maximum, and honouring the anchor between.
+  const since = Math.min(Math.max(last, now - maxMs), now - minMs);
   return { since, until: now };
 }
 
@@ -467,7 +488,7 @@ export async function sendCompanyNewsEmail({ to, subject, html, replyTo }) {
 // exactly the same message. Returns null when there's nothing to send and
 // the caller asked to skip empty runs.
 export async function buildDigest(db, uid, email, {
-  lastSentAt, message, skipWhenEmpty, startIndex = 0, budgetMs,
+  lastSentAt, message, skipWhenEmpty, startIndex = 0, budgetMs, minLookbackDays,
 } = {}) {
   const companies = await loadTrackedCompanies(db, uid, email);
   if (companies.length === 0) {
@@ -477,7 +498,7 @@ export async function buildDigest(db, uid, email, {
   // Search order rotates run to run; the email lists them in that same
   // order, so the companies this run reached come before the ones it didn't.
   const ordered = rotateForRun(companies, startIndex);
-  const { since, until } = digestWindow(lastSentAt);
+  const { since, until } = digestWindow(lastSentAt, Date.now(), { minLookbackDays });
   const results = await researchAll(ordered, since, until, budgetMs ? { budgetMs } : {});
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);

@@ -18,6 +18,7 @@ import {
   rotateForRun,
   nextCursor,
   buildNewsEmailHtml,
+  digestWindow,
 } from '../api/_lib/companyNews.js';
 
 let passed = 0, failed = 0;
@@ -136,6 +137,36 @@ const stubResearch = (ms, deals = () => []) => (entry, since, until, { signal } 
     cursor = nextCursor(cursor, results);
   }
   eq([...seen].sort(), all.map((f) => f.company), 'rotation: three partial runs cover the whole list');
+}
+
+// ---- The digest window ---------------------------------------------------
+// A deal only lands if web search has indexed it, and indexing lags the
+// announcement by days. A window that started exactly where the last one
+// ended meant a late-indexed deal fell between two digests and was never
+// seen by either — so every window now reaches back at least 14 days, and
+// consecutive digests deliberately overlap.
+{
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.parse('2026-09-08T00:00:00Z');
+  const days = (w) => Math.round((w.until - w.since) / DAY);
+
+  eq(days(digestWindow(null, now)), 14, 'window: a first run looks back 14 days');
+  eq(days(digestWindow(0, now)), 14, 'window: a never-sent schedule looks back 14 days');
+  eq(days(digestWindow(now - 7 * DAY, now)), 14, 'window: a weekly schedule is widened to 14 days');
+  eq(days(digestWindow(now - 1 * DAY, now)), 14, 'window: a daily schedule is widened to 14 days');
+  eq(days(digestWindow(now - 30 * DAY, now)), 30, 'window: a longer gap keeps its own anchor');
+  eq(days(digestWindow(now - 365 * DAY, now)), 60, 'window: a long-paused schedule is still capped at 60 days');
+  eq(digestWindow(now - 7 * DAY, now).until, now, 'window: always ends now');
+
+  // Consecutive weekly runs must overlap — that overlap is the whole point.
+  const first = digestWindow(now - 7 * DAY, now);
+  const second = digestWindow(now, now + 7 * DAY);
+  ok(second.since < first.until, 'window: consecutive weekly digests overlap rather than abut');
+
+  // A typed test lookback is taken literally, not widened.
+  eq(days(digestWindow(now - 3 * DAY, now, { minLookbackDays: 3 })), 3, 'window: an explicit 3-day test lookback stays 3 days');
+  eq(days(digestWindow(now - 7 * DAY, now, { minLookbackDays: 0 })), 7, 'window: a zero minimum honours the anchor exactly');
+  eq(days(digestWindow(now - 7 * DAY, now, { minLookbackDays: NaN })), 14, 'window: a junk minimum falls back to the default');
 }
 
 // ---- Email copy ----------------------------------------------------------
