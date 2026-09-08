@@ -19,59 +19,6 @@ import styles from './DropdownsView.module.css';
 // edit here and an edit there are the same edit; there is no Save button and
 // nothing to lose by closing the panel.
 
-// A number field. Held as text while it's being typed so a half-typed figure
-// doesn't re-price the deal on every keystroke, committed on blur / Enter,
-// reverted on Escape, and only written when the value actually changed —
-// opening the panel and closing it can't blank a rate.
-function NumField({ label, value, prefix, placeholder, step = '1', hint, disabled, title, onCommit }) {
-  const initial = value === null || value === undefined ? '' : String(value);
-  const [draft, setDraft] = useState(initial);
-  const [seen, setSeen] = useState(initial);
-  // Re-sync when the stored figure changes under us — the same service
-  // reopened after an edit, or a save from another device. Adjusted during
-  // render rather than in an effect so the box never paints a stale figure.
-  if (initial !== seen) {
-    setSeen(initial);
-    setDraft(initial);
-  }
-
-  function commit() {
-    const typed = draft.trim();
-    if (typed === initial) return;
-    if (typed === '') { onCommit(''); return; }
-    const n = parseMoney(typed);
-    // Not a number: put back what's stored rather than clearing it.
-    if (n === null || n < 0) { setDraft(initial); return; }
-    onCommit(n);
-  }
-
-  return (
-    <label className={styles.detailField} title={title}>
-      <span className={styles.detailLabel}>{label}</span>
-      <div className={styles.detailWeeksRow}>
-        {prefix && <span className={styles.detailUnit}>{prefix}</span>}
-        <input
-          type="number"
-          min="0"
-          step={step}
-          inputMode="decimal"
-          className={styles.detailInput}
-          value={draft}
-          placeholder={placeholder}
-          disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-            else if (e.key === 'Escape') { e.preventDefault(); setDraft(initial); e.currentTarget.blur(); }
-          }}
-        />
-      </div>
-      {hint && <span className={styles.pricingModalHint}>{hint}</span>}
-    </label>
-  );
-}
-
 // A read-only figure, shown in the same shape as the fields around it so the
 // panel reads as one form rather than a form with facts scattered through it.
 function ReadOnlyField({ label, children, hint, title }) {
@@ -302,7 +249,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
 
       <div className={styles.pricingModalHint}>
         {typed
-          ? 'A fee is typed in below, and it wins: the lines above are kept but not charged. Clear it to price off these rates again.'
+          ? 'A fee is typed into the Est. Year 1 Fee column on the table, and it wins: the lines above are kept but not charged. Clear it there to price off these rates again.'
           : 'The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1 columns are what that comes to on the scenario open behind this panel. The Total row adds dollars, not rates: its recurring figure is the annual this service bills across every line.'}
       </div>
     </>
@@ -318,7 +265,6 @@ export function ServicePricingModal({
   escapeCloses = true,
   onSaveField,
   onSaveLine,
-  onSetUnits,
   onToggleScope,
   onEditSetup,
   onClose,
@@ -402,31 +348,42 @@ export function ServicePricingModal({
               </span>
             </label>
 
-            <NumField
-              label="Minimum fee"
-              value={row.minFee}
-              prefix="$"
-              step="100"
-              onCommit={(v) => onSaveField('minFee', v)}
-              hint="The floor: once the service is in scope the fee never comes out below this."
-            />
+            {/* A minimum fee is a floor that quietly overrides the rates
+                above, so it is shown when one is set and hidden when there
+                isn't — an empty box invites a figure nobody meant to add.
+                The Min Fee column on the table is where it is set. */}
+            {row.minFee !== null && row.minFee !== undefined && row.minFee !== '' && (
+              <ReadOnlyField
+                label="Minimum fee"
+                hint="A floor set on the rate card: once the service is in scope the fee never comes out below this. Change it in the Min Fee column on the table."
+              >
+                {formatMoney(row.minFee)}
+              </ReadOnlyField>
+            )}
 
-            <NumField
+            {/* The count the per-unit rate multiplies. Read-only: the number
+                belongs to the account being priced, and a figure typed over
+                it here prices the service against something the estimate
+                behind this panel isn't. It still says where it came from,
+                because the Year 1 column is meaningless without it. */}
+            <ReadOnlyField
               label={row._unitLabel ? `Units (${unitNoun})` : 'Units'}
-              value={row.units}
-              placeholder={row._unitLabel || ''}
-              disabled={!row._unit}
-              onCommit={(v) => onSetUnits(v)}
               hint={!row._unit
                 ? (hasBasis
                   ? `${row.basisLabel} isn’t priced per unit, so there’s nothing to count.`
                   : 'Pick a per-unit basis first.')
-                : row._unitsOwn
-                  ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unitNoun}, whatever the shared count says. Clear it to go back to that count.`
-                  : row._unitsTyped
-                    ? 'A standing figure on the rate card. Type here to charge this estimate on its own number instead.'
-                    : `From the ${row._unitLabel} box in the estimator. Type a figure to charge this service on its own number of ${unitNoun}.`}
-            />
+                : row.units === null
+                  ? `No ${unitNoun} to price against — put a figure in the ${row._unitLabel || 'units'} box in the estimator.`
+                  : row._unitsOwn
+                    ? 'Set against this service for this estimate, whatever the shared count says. Clear it in the Units column on the table.'
+                    : row._unitsTyped
+                      ? 'A standing figure on the rate card, in the Units column on the table.'
+                      : `From the ${row._unitLabel} box in the estimator.`}
+            >
+              {!row._unit || row.units === null
+                ? <span className={styles.serviceMutedCell}>-</span>
+                : `${row.units.toLocaleString('en-US')} ${unitNoun}`}
+            </ReadOnlyField>
 
           </div>
 
@@ -440,19 +397,25 @@ export function ServicePricingModal({
 
           <div className={styles.pricingModalSectionTitle}>What it comes to on this deal</div>
           <div className={styles.detailGrid}>
-            <NumField
+            {/* Read-only, and the reason is the whole panel: a fee typed
+                here outranks every rate above it, so a service priced
+                $625 per site quietly became $550 flat for every client on
+                the Deal Sizing page. The figure is now always the one the
+                rates work out to. A fee still typed into the table's own
+                column is shown as that — and said so, so it can be found
+                and cleared. */}
+            <ReadOnlyField
               label="Estimated year 1 fee"
-              value={row.fee}
-              prefix="$"
-              placeholder="Not priced yet"
-              step="100"
-              onCommit={(v) => onSaveField('avgFee', v)}
               hint={row._typed
-                ? 'Typed in: this is the fee, whatever the basis works out to. Clear it to price off the rates again.'
+                ? 'A fee typed into the Est. Year 1 Fee column on the table, which outranks the rates above. Clear it there to price off them again.'
                 : row.fee === null
-                  ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type a fee here, or set a basis and rate above.`
-                  : `Worked out from the rate${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Type over it to quote a figure outright.`}
-            />
+                  ? `Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Set a basis and a rate above.`
+                  : `Worked out from the rate${row._note ? ` — ${row._note.toLowerCase()}` : ''}.`}
+            >
+              {row.fee === null
+                ? <span className={styles.serviceMutedCell}>-</span>
+                : formatMoneyRange(row.fee, row.feeHigh)}
+            </ReadOnlyField>
 
             <ReadOnlyField
               label="Est. deal value"

@@ -1249,7 +1249,6 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             escapeCloses={!setupFor}
             onSaveField={(field, value) => savePricingField(row.name, field, value)}
             onSaveLine={(basisKey, patch) => savePricingLine(row.name, basisKey, patch)}
-            onSetUnits={(value) => setServiceUnits(row.name, value)}
             onToggleScope={() => toggleScope(row.name)}
             onEditSetup={() => setSetupFor(row.name)}
             onClose={() => setPricingPanelFor(null)}
