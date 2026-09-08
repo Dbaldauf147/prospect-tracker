@@ -1,3 +1,5 @@
+import { LiveValue, LiveValueProvider } from '../common/LiveValue';
+import { closeRateRows } from '../common/liveValueBreakdown';
 import { STAGE_FILL, STAGE_FILL_DEFAULT } from '../PipelineView/funnelPalette';
 import styles from './CloseRateTrend.module.css';
 
@@ -15,6 +17,13 @@ import styles from './CloseRateTrend.module.css';
 // for both. And five series over six points is past the count where lines
 // stay tellable apart; the honest form is small multiples, one single-series
 // sparkline per row, which is what the Trend column holds.
+//
+// Every rate in the grid is hoverable, the same way the Pipeline metrics
+// table's close rates are and through the same component: the panel names
+// the formula, the sold / not-sold split and the deals themselves, and a
+// click pins it so the list can be scrolled or exported. A rate here is
+// three or four deals as often as not, and "which ones" is the first
+// question anybody asks of a number that moved.
 
 const PLOT_W = 88;
 const PLOT_H = 34;
@@ -103,26 +112,65 @@ function Sparkline({ cells, months, color, label }) {
   );
 }
 
+/**
+ * What one figure in this grid is made of, as the hover panel reads it.
+ *
+ * The same shape the Pipeline metrics table hands its close-rate cells (see
+ * components/common/LiveValue): the arithmetic, its two inputs, and the
+ * closed opps themselves, newest first. `window` is the phrase that says
+ * WHICH deals — "closed in Apr", "closed in the last 365 days" — because
+ * the three columns that use this differ in nothing else.
+ */
+function closeRateBreakdown({ tally, row, windowLabel, windowPhrase }) {
+  const total = tally.sold + tally.notSold;
+  return {
+    title: `${row.short}: Close Rate — ${windowLabel}`,
+    value: `${pct(tally.rate)}  (${tally.sold}/${total})`,
+    formula: row.signal
+      ? `Sold ÷ (Sold + Not Sold), over opps ${windowPhrase} that reached this stage (signal: ${row.signal}) with a Scope without "pull through".`
+      : `Sold ÷ (Sold + Not Sold), over every opp ${windowPhrase}, whatever stage it reached, with a Scope without "pull through".`,
+    inputs: [
+      { label: 'Sold', value: tally.sold },
+      { label: 'Not Sold', value: tally.notSold },
+      { label: 'Close rate', value: pct(tally.rate) },
+    ],
+    rows: closeRateRows(tally.included, `Opps ${windowPhrase} (newest close first)`),
+    note: 'Auto-fed from the Opps tab. Re-paste the Opps tab to refresh.',
+    // Names the export file after this table rather than the pipeline
+    // dashboard the panel came from.
+    filePrefix: 'close-rate',
+  };
+}
+
 /** One month's cell: the rate, with the count it rests on underneath. */
-function RateCell({ cell, stageLabel, monthLabel }) {
+function RateCell({ cell, row, month }) {
   if (cell === null) {
     return (
-      <td className={styles.cellEmpty} title={`${stageLabel}: nothing closed in ${monthLabel}. No evidence isn’t a 0% rate, so this is blank rather than zero.`}>
+      <td className={styles.cellEmpty} title={`${row.short}: nothing closed in ${month.label}. No evidence isn’t a 0% rate, so this is blank rather than zero.`}>
         —
       </td>
     );
   }
   const total = cell.sold + cell.notSold;
   return (
-    <td
-      className={styles.cell}
-      title={`${stageLabel}, ${monthLabel}: ${cell.sold} sold and ${cell.notSold} not sold of ${total} closed — ${pct(cell.rate)}.`}
-    >
-      <span className={styles.cellRate}>{pct(cell.rate)}</span>
-      {/* The denominator, always. A close rate off three deals and one off
-          thirty look identical without it, and only one of them is worth
-          reacting to in a weekly report. */}
-      <span className={styles.cellCount}>{cell.sold}/{total}</span>
+    <td className={styles.cell}>
+      <LiveValue
+        id={`crt-${row.key}-${month.key}`}
+        className={styles.cellLive}
+        title={`${row.short}, ${month.label}: ${cell.sold} sold and ${cell.notSold} not sold of ${total} closed — ${pct(cell.rate)}.`}
+        breakdown={closeRateBreakdown({
+          tally: cell,
+          row,
+          windowLabel: month.label,
+          windowPhrase: `closed in ${month.label}`,
+        })}
+      >
+        <span className={styles.cellRate}>{pct(cell.rate)}</span>
+        {/* The denominator, always. A close rate off three deals and one off
+            thirty look identical without it, and only one of them is worth
+            reacting to in a weekly report. */}
+        <span className={styles.cellCount}>{cell.sold}/{total}</span>
+      </LiveValue>
     </td>
   );
 }
@@ -135,7 +183,7 @@ function RateCell({ cell, stageLabel, monthLabel }) {
  * and two copies of this markup is how they'd end up formatting the same
  * number two ways.
  */
-function TotalCell({ tally, title, strong, better, betterBy }) {
+function TotalCell({ tally, row, id, title, windowLabel, windowPhrase, strong, better, betterBy }) {
   if (tally === null) {
     return <td className={styles.overallCell}><span className={styles.cellEmptyInline}>—</span></td>;
   }
@@ -145,18 +193,20 @@ function TotalCell({ tally, title, strong, better, betterBy }) {
     better ? styles.cellBetter : '',
   ].filter(Boolean).join(' ');
   return (
-    <td
-      className={cls}
-      title={better
-        ? `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}, ${betterBy} points above the rolling year. The recent months are running ahead of it.`
-        : `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}
-    >
+    <td className={cls}>
       {/* An inset chip rather than a fill on the cell itself: green cells
           stack down this column, and edge-to-edge backgrounds on adjacent
           rows merge into one tall block that reads as a single highlighted
           region. The chip leaves a gap in the surface colour between them,
           and keeps the row rules on the cell where they belong. */}
-      <span className={better ? styles.betterChip : undefined}>
+      <LiveValue
+        id={id}
+        className={better ? styles.betterChip : styles.cellLive}
+        title={better
+          ? `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}, ${betterBy} points above the rolling year. The recent months are running ahead of it.`
+          : `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}
+        breakdown={closeRateBreakdown({ tally, row, windowLabel, windowPhrase })}
+      >
         <span className={styles.cellRate}>
           {/* The arrow, not just the green. A status colour on its own is
               unreadable to anyone who can't separate it from the ink beside
@@ -166,7 +216,7 @@ function TotalCell({ tally, title, strong, better, betterBy }) {
         </span>
         <span className={styles.cellCount}>{tally.sold}/{total}</span>
         {better && <span className={styles.srOnly}> — ahead of the rolling year</span>}
-      </span>
+      </LiveValue>
     </td>
   );
 }
@@ -201,7 +251,10 @@ export function CloseRateTrend({ trend }) {
   }
 
   return (
-    <div className={styles.wrap}>
+    // The table's own box doubles as the region the breakdown panels belong
+    // to, so a click anywhere in it unpins one — the same gesture as on the
+    // Pipeline tab, because it is the same component.
+    <LiveValueProvider className={styles.wrap}>
       <table className={styles.table}>
         <thead>
           <tr>
@@ -242,26 +295,29 @@ export function CloseRateTrend({ trend }) {
                   {row.label}
                 </th>
                 {row.cells.map((cell, i) => (
-                  <RateCell
-                    key={months[i].key}
-                    cell={cell}
-                    stageLabel={row.short}
-                    monthLabel={months[i].label}
-                  />
+                  <RateCell key={months[i].key} cell={cell} row={row} month={months[i]} />
                 ))}
                 <td className={styles.trendCell}>
                   <Sparkline cells={row.cells} months={months} color={color} label={row.short} />
                 </td>
                 <TotalCell
                   tally={row.overall}
+                  row={row}
+                  id={`crt-${row.key}-overall`}
                   better={ahead !== null}
                   betterBy={ahead}
                   title={`${row.short}, across the ${months.length} months shown:`}
+                  windowLabel={`the ${months.length} months shown`}
+                  windowPhrase={`closed in the ${months.length} months shown`}
                 />
                 <TotalCell
                   tally={row.rolling12}
+                  row={row}
+                  id={`crt-${row.key}-rolling12`}
                   strong
                   title={`${row.short}, rolling 365 days:`}
+                  windowLabel="rolling 365 days"
+                  windowPhrase="closed in the last 365 days"
                 />
               </tr>
             );
@@ -276,8 +332,10 @@ export function CloseRateTrend({ trend }) {
         shown; <strong>12 mo</strong> is a rolling 365 days, the same window the funnel above uses, so it
         reaches back past the first column. A <strong>6 mo</strong> figure in green with a ▲ is
         running above the rolling year — the recent months are better than the run rate behind them.
+        Hover any rate for the deals behind it; click to pin that panel open, then
+        <strong> ⬇ Excel</strong> to take the full list away.
       </div>
-    </div>
+    </LiveValueProvider>
   );
 }
 

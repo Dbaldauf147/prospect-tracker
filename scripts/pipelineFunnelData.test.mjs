@@ -8,7 +8,7 @@
 // cells otherwise, Pipeline Goal derived rather than read, and the close
 // rate that the weighted projection multiplies through.
 import {
-  buildFunnelStages, closeRatesByStage, closedOppEntry, closeRateTally,
+  buildFunnelStages, closeRateTrendByStage, closeRatesByStage, closedOppEntry, closeRateTally,
 } from '../src/utils/pipelineFunnelData.js';
 
 let passed = 0, failed = 0;
@@ -149,6 +149,33 @@ const closed = (stage, days, over = {}) => ({
   eq(closeRatesByStage([closed('Quoted', 10)], NOW)[3], null, 'an open opp is not a closed one');
   eq(closedOppEntry({ Stage: 'Sold', 'Close Date': 'not a date' }), null, 'an unparseable close date is dropped');
   eq(closeRateTally([]), null, 'an empty bucket is null, not a 0% rate');
+}
+
+// ---- closeRateTrendByStage --------------------------------------------------
+// Every figure in the Weekly Report's trend table is hoverable, and the panel
+// behind it names the population it counted and lists the deals. Both come off
+// the row: `signal` says what made an opp count toward that stage, and every
+// tally carries the opps themselves. A row that lost either would leave the
+// panel asserting a rate with nothing to check it against.
+{
+  const trend = closeRateTrendByStage([
+    closed('Sold', 10),
+    closed('Not Sold', 20),
+  ], { months: 6, nowMs: NOW });
+
+  const stage5 = trend.rows.find(r => r.num === 5);
+  eq(stage5.signal, 'a Quoted On date', 'a stage row carries the signal that defined it');
+  eq(trend.rows.find(r => r.num === null).signal, null,
+    'and the all-closed row has none — it counts every closed opp');
+
+  // The current month's cell, and both aggregate columns: each is a tally
+  // with the deals behind it, which is what the hover panel lists.
+  const thisMonth = stage5.cells[stage5.cells.length - 1];
+  eq([thisMonth.sold, thisMonth.notSold], [1, 1], 'the month cell tallies both results');
+  eq(thisMonth.included.length, 2, 'and carries the opps behind it');
+  eq(stage5.overall.included.length, 2, 'so does the months-shown total');
+  eq(stage5.rolling12.included.length, 2, 'and the rolling year');
+  eq(thisMonth.included[0].account, 'Acme', 'the deals are the ones that closed');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

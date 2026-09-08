@@ -4,7 +4,6 @@
 // the layout persists across reloads.
 
 import { Component, createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import styles from './PipelineView.module.css';
 import { PipelineFunnel } from './PipelineFunnel';
 import { dbGet, dbDelete } from '../../utils/db';
@@ -16,7 +15,8 @@ import {
 } from '../../utils/pipelineFunnelData';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { isPullThroughOpp } from '../../utils/pullThrough';
-import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
+import { LiveValue, LiveValueProvider } from '../common/LiveValue';
+import { closeRateRows, fmtShortDate, mapRows } from '../common/liveValueBreakdown';
 import { loadDealsList } from '../../utils/dealsStore';
 import { fmtDate } from '../../utils/dealsFormat';
 import { loadDealClientMap } from '../../utils/dealClientMap';
@@ -546,68 +546,12 @@ function compareClass(actual, goal, dir = 'higher-better') {
 }
 
 // ---------------------------------------------------------------------------
-// Hover / pin "what goes into this number" breakdowns.
+// The "% not Quoted" breakdown rows. The hover/pin panel itself, and the
+// close-rate row list both pages share, live in components/common/LiveValue
+// — this one is the Pipeline dashboard's own.
 //
-// Mirrors the YOY page's hover-with-pin behaviour, adapted for the table:
-// every live (auto-computed) cell is wrapped in <LiveValue>. Hovering a cell
-// pops out a panel showing the formula, inputs and the exact rows that fed
-// the number; clicking the cell pins that panel open so it survives mouse-out
-// (click it again, click the ✕, or click elsewhere on the page to dismiss).
-// ---------------------------------------------------------------------------
-const CalcContext = createContext(null);
-
-// Short date like 6/22/26 for the breakdown row lists.
-function fmtShortDate(s) {
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return s || '';
-  return new Date(t).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-}
-
-// Map a full source array into breakdown rows: the capped display slice
-// (`data` + a `more` overflow count so a busy stage can't render thousands
-// of <tr>) plus the full uncapped set (`allData`) so the "Export to Excel"
-// button can write every contributing row, not just the ~50 shown.
-function mapRows(source, mapFn, opts = {}) {
-  const { max = 50, exportMapFn = null, exportColumns = null, exportSource = null } = opts;
-  const arr = source || [];
-  const all = arr.map(mapFn);
-  const out = { data: all.slice(0, max), more: Math.max(0, all.length - max), allData: all };
-  // The Excel export can carry extra columns (e.g. Scope) the compact
-  // on-screen panel omits, and can draw from a separately filtered row set
-  // (via exportSource) — supplied here so the two stay decoupled.
-  if (exportMapFn) out.exportData = (exportSource || arr).map(exportMapFn);
-  if (exportColumns) out.exportColumns = exportColumns;
-  return out;
-}
-
-// Build a breakdown row list from a close-rate `included` opp array.
-function closeRateRows(included, head) {
-  return {
-    head,
-    columns: ['Result', 'Account', 'Close', 'Amount'],
-    aligns: ['', '', '', 'num'],
-    ...mapRows(included, o => [
-      o.stage,
-      o.account || '(no account)',
-      fmtShortDate(o.closeDate),
-      o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '-',
-    ], {
-      exportColumns: ['Result', 'Account', 'BFO Opportunity Name', 'Scope', 'Close', 'Amount'],
-      exportMapFn: o => [
-        o.stage,
-        o.account || '(no account)',
-        o.bfoName || '',
-        o.scope || '',
-        fmtShortDate(o.closeDate),
-        o.amount > 0 ? fmtMoney(Math.round(o.amount)) : '-',
-      ],
-    }),
-  };
-}
-
-// Build a breakdown row list from a "% not Quoted" closed-deal array. Each
-// row shows whether the deal was quoted and how many days it logged in the
-// Quoted / Agreement Sent stages, so the popover doubles as an audit of
+// Each row shows whether the deal was quoted and how many days it logged in
+// the Quoted / Agreement Sent stages, so the popover doubles as an audit of
 // which closed deals fell on each side of the ratio.
 function notQuotedRows(deals, head) {
   return {
@@ -639,188 +583,6 @@ function notQuotedRows(deals, head) {
       ],
     }),
   };
-}
-
-// Export a live-value breakdown to a one-sheet .xlsx: the metric's value,
-// formula and inputs up top, then the FULL (uncapped) contributing rows —
-// so a pinned panel can be dropped into Excel for deeper analysis.
-async function exportBreakdown(data) {
-  try {
-  const mod = await import('xlsx');
-  const XLSX = mod.utils ? mod : (mod.default || mod);
-  const aoa = [];
-  if (data.title) aoa.push([data.title]);
-  if (data.value != null && data.value !== '') aoa.push(['Value', data.value]);
-  if (data.formula) aoa.push(['Formula', data.formula]);
-  if (Array.isArray(data.inputs)) for (const it of data.inputs) aoa.push([it.label, it.value]);
-  const rows = data.rows;
-  if (rows && Array.isArray(rows.exportColumns || rows.columns)) {
-    aoa.push([]);
-    if (rows.head) aoa.push([rows.head]);
-    aoa.push(rows.exportColumns || rows.columns);
-    for (const r of (rows.exportData || rows.allData || rows.data || [])) aoa.push(r);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Breakdown');
-  const slug = String(data.title || 'live-value')
-    .replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'live-value';
-  const stamp = new Date().toISOString().slice(0, 10);
-  sanitizeSheetJsWorkbook(wb);
-  XLSX.writeFile(wb, `pipeline-${slug}-${stamp}.xlsx`);
-  } catch (err) {
-    console.error('Pipeline breakdown export failed', err);
-    if (typeof window !== 'undefined') window.alert('Sorry: the Excel export failed to generate.');
-  }
-}
-
-// Wraps a live value: handles hover-to-preview and click-to-pin. Falls back
-// to a plain span (with native title) when rendered outside a CalcContext.
-function LiveValue({ id, breakdown, className, style, title, children }) {
-  const ctx = useContext(CalcContext);
-  if (!ctx) {
-    return <span className={className} style={style} title={title}>{children}</span>;
-  }
-  const data = { id, ...breakdown };
-  const isPinned = ctx.pinnedId === id;
-  return (
-    <span
-      className={`${className || ''} ${styles.liveValue} ${isPinned ? styles.liveValuePinned : ''}`.trim()}
-      style={style}
-      onMouseEnter={(e) => ctx.enter(data, e.currentTarget.getBoundingClientRect())}
-      onMouseLeave={() => ctx.leave(id)}
-      onClick={(e) => { e.stopPropagation(); ctx.toggle(data, e.currentTarget.getBoundingClientRect()); }}
-    >
-      {children}
-    </span>
-  );
-}
-
-// The floating panel itself. Portaled to <body> and positioned next to the
-// anchored cell (below it, or above when there's no room below), clamped to
-// the viewport. Stays put once pinned.
-function CalcPopover({ data, anchor, pinned, onClose, onKeepOpen, onLeave }) {
-  const W = 360;
-  const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-  let left = anchor.left;
-  if (left + W > vw - 8) left = vw - 8 - W;
-  if (left < 8) left = 8;
-  const spaceBelow = vh - anchor.bottom - 12;
-  const spaceAbove = anchor.top - 12;
-  const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
-  const style = placeAbove
-    ? { left, bottom: vh - anchor.top + 6, maxHeight: Math.max(160, spaceAbove) }
-    : { left, top: anchor.bottom + 6, maxHeight: Math.max(160, spaceBelow) };
-  return createPortal(
-    <div
-      className={styles.calcPanel}
-      style={{ width: W, ...style }}
-      onClick={(e) => e.stopPropagation()}
-      onMouseEnter={onKeepOpen}
-      onMouseLeave={onLeave}
-    >
-      <CalcContent data={data} pinned={pinned} onClose={onClose} />
-    </div>,
-    document.body,
-  );
-}
-
-function CalcContent({ data, pinned, onClose }) {
-  const rows = data.rows;
-  const aligns = rows?.aligns || [];
-  return (
-    <>
-      <div className={styles.calcHead}>
-        <span className={styles.calcTitle}>{data.title}</span>
-        <div className={styles.calcHeadActions}>
-          {data.rows && Array.isArray(data.rows.columns) && (
-            <button
-              type="button"
-              className={styles.calcExportBtn}
-              onClick={() => exportBreakdown(data)}
-              title="Export the full breakdown to Excel for further analysis"
-            >⬇ Excel</button>
-          )}
-          {pinned ? (
-            <button type="button" className={styles.calcPinBtn} onClick={onClose} title="Unpin this panel">📌 Pinned ✕</button>
-          ) : (
-            <span className={styles.calcBadge} title="Recomputed live: not a stored value. Click to pin.">∑ live</span>
-          )}
-        </div>
-      </div>
-      {data.value != null && data.value !== '' ? <div className={styles.calcValue}>{data.value}</div> : null}
-      {data.formula ? <div className={styles.calcFormula}>{data.formula}</div> : null}
-      {Array.isArray(data.inputs) && data.inputs.length > 0 ? (
-        <div className={styles.calcInputs}>
-          {data.inputs.map((it, i) => (
-            <div key={i} className={styles.calcInputRow}>
-              <span className={styles.calcInputLabel}>{it.label}</span>
-              <span className={styles.calcInputVal}>{it.value}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {rows && rows.data && rows.data.length > 0 ? (
-        <div className={styles.calcRows}>
-          {rows.head ? <div className={styles.calcRowsHead}>{rows.head}</div> : null}
-          <table className={styles.calcTable}>
-            <thead>
-              <tr>{rows.columns.map((c, i) => <th key={i} className={aligns[i] === 'num' ? styles.calcNum : undefined}>{c}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows.data.map((row, ri) => (
-                <tr key={ri}>
-                  {row.map((cell, ci) => <td key={ci} className={aligns[ci] === 'num' ? styles.calcNum : undefined}>{cell}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.more > 0 ? <div className={styles.calcMore}>…and {rows.more} more</div> : null}
-        </div>
-      ) : null}
-      {data.note ? <div className={styles.calcSource}>{data.note}</div> : null}
-    </>
-  );
-}
-
-// Owns the hover/pin state and renders the single active popover. Hover has a
-// short close delay so the cursor can travel into the panel (to scroll a long
-// row list) without it vanishing.
-function useCalc() {
-  const [hover, setHover] = useState(null);   // { data, anchor }
-  const [pinned, setPinned] = useState(null); // { data, anchor }
-  const hideTimer = useRef(null);
-  const clearTimer = () => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } };
-  const ctx = useMemo(() => ({
-    pinnedId: pinned?.data.id ?? null,
-    enter: (data, anchor) => { clearTimer(); setHover({ data, anchor }); },
-    leave: (id) => {
-      clearTimer();
-      hideTimer.current = setTimeout(() => setHover(h => (h && h.data.id === id ? null : h)), 160);
-    },
-    keepOpen: () => clearTimer(),
-    closeHover: () => { clearTimer(); setHover(null); },
-    toggle: (data, anchor) => {
-      clearTimer();
-      setHover(null);
-      setPinned(p => (p && p.data.id === data.id ? null : { data, anchor }));
-    },
-    unpin: () => setPinned(null),
-  }), [pinned]);
-  const active = pinned || hover;
-  const popover = active ? (
-    <CalcPopover
-      key={(active.data.id || '') + (pinned ? '-pin' : '-hover')}
-      data={active.data}
-      anchor={active.anchor}
-      pinned={!!pinned}
-      onClose={() => { setPinned(null); setHover(null); }}
-      onKeepOpen={ctx.keepOpen}
-      onLeave={() => { if (!pinned) ctx.closeHover(); }}
-    />
-  ) : null;
-  return { ctx, popover, pinned, unpin: () => setPinned(null) };
 }
 
 // "Service Exploration Coverage" — a table of services (one row each) showing
@@ -1097,8 +859,6 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const [hubspotContacts, setHubspotContacts] = useState([]);
   const [exporting, setExporting] = useState(''); // '' | 'multi' | 'single' — which Excel export is building
   const [strategicRows, setStrategicRows] = useState([]);
-  // Hover/pin "what goes into this number" breakdown panels.
-  const { ctx: calcCtx, popover: calcPopover, pinned: calcPinned, unpin: calcUnpin } = useCalc();
 
   useEffect(() => {
     let cancelled = false;
@@ -1827,13 +1587,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   }
 
   return (
-    <CalcContext.Provider value={calcCtx}>
     <LabelCtx.Provider value={labelCtx}>
-    <div
-      className={styles.wrapper}
-      onClick={() => { if (calcPinned) calcUnpin(); }}
-    >
-      {calcPopover}
+    {/* The page's own box, and the region whose live values pop their
+        breakdown panels — a click anywhere in it unpins one. */}
+    <LiveValueProvider className={styles.wrapper}>
       <div className={styles.header} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
         <div>
           <h1 className={styles.title}>Pipeline</h1>
@@ -2736,9 +2493,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </div>
         </div>
       </div>
-    </div>
+    </LiveValueProvider>
     </LabelCtx.Provider>
-    </CalcContext.Provider>
   );
 }
 

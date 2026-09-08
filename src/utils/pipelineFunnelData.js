@@ -152,7 +152,7 @@ const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
  *
  * @returns {
  *   months: [{ key: '2026-04', label: 'Apr', year, month }],
- *   rows:   [{ key, num, label, short, cells: [tally|null],
+ *   rows:   [{ key, num, label, short, signal, cells: [tally|null],
  *             overall: tally|null, rolling12: tally|null }],
  *   closed:        how many closed opps fell in the months shown
  *   closedRolling: how many fell in the trailing 365 days
@@ -192,11 +192,14 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
   const defs = [
     ...CLOSE_RATE_STAGES.map(st => ({
       key: `stage${st.num}`, num: st.num, label: st.label,
-      short: `Stage ${st.num}`, test: st.test,
+      // What made an opp count as having reached this stage, carried along
+      // so a breakdown of one of these figures can say what it counted —
+      // "46%" means nothing without the population behind it.
+      short: `Stage ${st.num}`, signal: st.signal, test: st.test,
     })),
     // Every closed opp, whatever it reached. Same population as the
-    // metrics table's Total row.
-    { key: 'all', num: null, label: 'All closed opps', short: 'All closed', test: () => true },
+    // metrics table's Total row, so it has no stage signal of its own.
+    { key: 'all', num: null, label: 'All closed opps', short: 'All closed', signal: null, test: () => true },
   ];
   const buckets = defs.map(() => monthCols.map(() => []));
   // The rolling-365-day bucket, run alongside the month grid rather than
@@ -236,6 +239,7 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     const cells = buckets[i].map(closeRateTally);
     return {
       key: def.key, num: def.num, label: def.label, short: def.short,
+      signal: def.signal,
       cells,
       // The months shown as one figure, so a row that moves around can
       // still be read against where it sits across them.
