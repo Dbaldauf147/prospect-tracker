@@ -25,6 +25,10 @@ import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
 import { autoAddListFor, collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
+import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
+import { useCoverageServices } from '../../hooks/useCoverageServices';
+import { CoverageMark } from '../common/CoverageMark';
+import { coverageRowStyle } from '../../utils/coverageMark';
 
 // Same palette the company card's services board uses, so a service reads
 // the same colour in both places.
@@ -145,6 +149,10 @@ export function ScopeServicesModal({
 }) {
   const [query, setQuery] = useState('');
   const [quickPick, setQuickPick] = useState('');
+  // The services the Pipeline page is watching coverage on. Picking Scope is
+  // a decision about which services to push, and these are the ones being
+  // measured — so the board says which is which.
+  const trackedServices = useCoverageServices();
 
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
@@ -511,6 +519,7 @@ export function ScopeServicesModal({
                       // names it again: back in play. The tick's green still
                       // wins the row, since that is this board's job.
                       const retry = isTryingAgain(manual, auto);
+                      const tracked = isCoverageTracked(trackedServices, item);
                       return (
                         <div
                           key={item}
@@ -522,6 +531,9 @@ export function ScopeServicesModal({
                             flexWrap: 'wrap',
                             padding: '0.12rem 0.35rem',
                             background: checked ? '#DCFCE7' : retry ? TRYING_AGAIN_COLORS.bg : 'transparent',
+                            // The coverage rail goes on last so it survives
+                            // whatever background the status above put down.
+                            ...(tracked ? coverageRowStyle : null),
                           }}
                         >
                           {/* The label covers only the tick and the name —
@@ -540,6 +552,7 @@ export function ScopeServicesModal({
                               onChange={() => toggle(item)}
                               style={{ margin: 0, flex: '0 0 auto' }}
                             />
+                            {tracked && <CoverageMark />}
                             <span style={{
                               flex: 1, minWidth: 0, fontSize: '0.68rem',
                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
