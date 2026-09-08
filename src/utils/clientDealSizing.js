@@ -28,6 +28,7 @@ import {
   parseMoney,
   pricingFor,
 } from './servicePricing.js';
+import { serviceStatusBucket } from './serviceStatusColors.js';
 
 // Units a client record answers on its own, and the field that answers each.
 // Only two: these are the counts the company card actually collects. Every
@@ -196,4 +197,131 @@ export function rollUpDealSizing(estimates) {
   }
   totals.ranged = totals.year1High > totals.year1 || totals.contractValueHigh > totals.contractValue;
   return totals;
+}
+
+// ---------------------------------------------------------------------------
+// What the company already knows about a service
+// ---------------------------------------------------------------------------
+//
+// A scope is a what-if. The company card's Services Explored grid is history:
+// what has actually been sold, quoted, or ruled out for that account. Sizing a
+// deal without that in view is how you end up presenting a client a number
+// that is mostly work they already buy from you.
+//
+// The two are kept apart in storage — a Deal Sizing pick never writes a status
+// — but they belong together on screen, so these read the card and report what
+// it says about the services in a scope.
+
+/**
+ * The company card's status for one service, or '' when it says nothing.
+ *
+ * '-' is the card's own way of writing "no status", so it reads as unexplored
+ * rather than as a status called "-".
+ */
+export function exploredStatus(client, name) {
+  const raw = String((client?.servicesExplored || {})[name] ?? '').trim();
+  return raw && raw !== '-' ? raw : '';
+}
+
+/**
+ * Every service in a client's scope with what the card says about it.
+ *
+ * @returns [{ name, status, bucket }] in scope order — bucket is the coarse
+ *          outcome ('sold' | 'inProgress' | 'notSold' | 'na' | 'none') the
+ *          rest of the app already groups statuses into.
+ */
+export function scopeStatuses(client, scope) {
+  return normalizeClientScope(scope).services.map(name => {
+    const status = exploredStatus(client, name);
+    return { name, status, bucket: serviceStatusBucket(status) };
+  });
+}
+
+/**
+ * The scope's statuses counted by bucket, for a cell that has to say
+ * "2 sold, 1 in flight" without the reader opening the row.
+ */
+export function scopeStatusCounts(client, scope) {
+  const counts = { sold: 0, inProgress: 0, notSold: 0, na: 0, none: 0 };
+  for (const { bucket } of scopeStatuses(client, scope)) counts[bucket] += 1;
+  return counts;
+}
+
+// ---------------------------------------------------------------------------
+// Putting one service in front of the whole book
+// ---------------------------------------------------------------------------
+
+/**
+ * What adding one service to every client would actually do.
+ *
+ * Worked out and shown BEFORE anything is written, because this is the one
+ * action on the page that touches every client at once and there is no way to
+ * eyeball 44 rows to see what it did. The three groups are the three answers
+ * that matter:
+ *
+ *   add     — nothing on the card, not in scope. The real target.
+ *   scoped  — already in this client's scope. Adding again is a no-op, and
+ *             counting them in "added 44" would overstate what happened.
+ *   sold    — the card says the client already buys it. Sizing it as new
+ *             business double-counts revenue you already have, which is the
+ *             specific way a bulk add over a whole book goes quietly wrong.
+ *             Skippable, and skipped by default.
+ *
+ * @param clients   the client records
+ * @param service   the service name to add
+ * @param scopeOf   (client) => that client's stored scope
+ * @param skipSold  leave the clients who already buy it alone
+ * @returns { add, scoped, sold } — arrays of clients, in the order given
+ */
+export function planBulkAdd({ clients = [], service, scopeOf, skipSold = true }) {
+  const name = String(service || '').trim();
+  const plan = { add: [], scoped: [], sold: [] };
+  if (!name) return plan;
+  for (const client of clients) {
+    const scope = normalizeClientScope(scopeOf?.(client));
+    if (scope.services.includes(name)) { plan.scoped.push(client); continue; }
+    if (serviceStatusBucket(exploredStatus(client, name)) === 'sold') {
+      plan.sold.push(client);
+      // Still a target when the user has asked for it — sizing a renewal is a
+      // real thing to want, it just isn't the default.
+      if (!skipSold) plan.add.push(client);
+      continue;
+    }
+    plan.add.push(client);
+  }
+  return plan;
+}
+
+/**
+ * Which clients currently carry a service, for the matching bulk remove.
+ *
+ * A bulk add with no way back is a trap on a book this size, so removing is
+ * the same shape: worked out first, reported as a count, and applied to
+ * exactly the clients that have it.
+ */
+export function planBulkRemove({ clients = [], service, scopeOf }) {
+  const name = String(service || '').trim();
+  if (!name) return [];
+  return clients.filter(c => normalizeClientScope(scopeOf?.(c)).services.includes(name));
+}
+
+/** A scope with one service added, keeping everything else as it was. */
+export function withService(scope, name) {
+  const next = normalizeClientScope(scope);
+  if (!next.services.includes(name)) next.services = [...next.services, name];
+  return next;
+}
+
+/**
+ * A scope with one service removed — its per-service unit count going with it,
+ * so re-adding the service later doesn't silently inherit a count typed for a
+ * rollout that was abandoned.
+ */
+export function withoutService(scope, name) {
+  const next = normalizeClientScope(scope);
+  next.services = next.services.filter(s => s !== name);
+  const units = { ...next.serviceUnits };
+  delete units[name];
+  next.serviceUnits = units;
+  return next;
 }

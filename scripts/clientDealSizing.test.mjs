@@ -16,11 +16,24 @@
 //      outlives any given service name. A name that has since been renamed
 //      or retired must be REPORTED, not skipped: skipping it means a scope
 //      of four services quietly prices like three and nothing says why.
-//   3. What "nothing" means. A client with no services picked is not a
+//   3. Putting one service in front of the whole book. This is the only
+//      action on the page that writes to every client at once, and there is
+//      no way to eyeball forty rows to see what it did — so what it will do
+//      has to be exactly what it does, and a client who already BUYS the
+//      service has to be tellable from one who simply hasn't been offered it.
+//      Sizing work a client already pays for as new business is how a book
+//      quietly doubles.
+//   4. What "nothing" means. A client with no services picked is not a
 //      client worth $0 — it is a client nobody has sized. The roll-up counts
 //      those apart so an untouched book doesn't read as a worthless one.
 import {
   clientCounts,
+  exploredStatus,
+  planBulkAdd,
+  planBulkRemove,
+  scopeStatusCounts,
+  withService,
+  withoutService,
   emptyClientScope,
   estimateClient,
   missingCounts,
@@ -212,6 +225,102 @@ const ranged = rollUpDealSizing([
 ]);
 check('roll-up: a ranged rate carries through to the book',
   [ranged.year1, ranged.year1High, ranged.ranged], [45000, 60000, true]);
+
+// ---- what the company card already says ---------------------------------
+//
+// A scope is a what-if; the card is history. They are stored apart and shown
+// together, so reading the card correctly is what stops the page proposing
+// work the client already buys.
+
+const CARD = {
+  company: 'Prologis',
+  numberOfSites: 6176,
+  servicesExplored: { 'Bill pay': 'Sold', Retrofit: 'Quoting', Levy: 'Not Sold', 'Meter audit': '-' },
+};
+
+check('card: a status is read off the company record',
+  exploredStatus(CARD, 'Bill pay'), 'Sold');
+// The card writes "no status" as a dash. Reporting that as a status called
+// "-" would put a meaningless chip on the row.
+check('card: a dash means unexplored, not a status called "-"',
+  exploredStatus(CARD, 'Meter audit'), '');
+check('card: a service the card has never heard of is unexplored',
+  exploredStatus(CARD, 'Unpriced'), '');
+check('card: no record at all is not an error', exploredStatus(null, 'Bill pay'), '');
+
+check('card: a scope\'s statuses roll up by outcome',
+  scopeStatusCounts(CARD, { services: ['Bill pay', 'Retrofit', 'Levy', 'Meter audit'] }),
+  { sold: 1, inProgress: 1, notSold: 1, na: 0, none: 1 });
+check('card: an empty scope rolls up to nothing',
+  scopeStatusCounts(CARD, emptyClientScope()),
+  { sold: 0, inProgress: 0, notSold: 0, na: 0, none: 0 });
+
+// ---- adding one service to the whole book -------------------------------
+
+const BOOK = [
+  { company: 'Fresh', servicesExplored: {} },                          // new ground
+  { company: 'Scoped', servicesExplored: {} },                         // already picked
+  { company: 'Buyer', servicesExplored: { 'Bill pay': 'Sold' } },      // already buys it
+  { company: 'Quoting', servicesExplored: { 'Bill pay': 'Quoting' } }, // in flight, not sold
+  { company: 'Lost', servicesExplored: { 'Bill pay': 'Not Sold' } },   // said no before
+];
+const bookScopes = { Scoped: { services: ['Bill pay'] } };
+const scopeOf = (c) => bookScopes[c.company] || emptyClientScope();
+const names = (list) => list.map(c => c.company);
+
+const plan = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf });
+check('bulk: only the clients who would actually change are targeted',
+  names(plan.add), ['Fresh', 'Quoting', 'Lost']);
+check('bulk: a client who already has it in scope is reported, not re-added',
+  names(plan.scoped), ['Scoped']);
+// The one that matters. "Sold" is the only status that means the client is
+// already paying for it; Quoting and Not Sold are both still open questions
+// and belong in the add.
+check('bulk: a client who already BUYS it is held back by default',
+  names(plan.sold), ['Buyer']);
+
+check('bulk: and can be included deliberately — a renewal is a real thing to size',
+  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: false }).add),
+  ['Fresh', 'Buyer', 'Quoting', 'Lost']);
+// Included or not, the client is still reported as one who buys it, so the
+// bar can say the figures are a renewal rather than new business.
+check('bulk: including them does not stop them being reported as buyers',
+  names(planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf, skipSold: false }).sold),
+  ['Buyer']);
+
+check('bulk: every client is accounted for exactly once',
+  (() => {
+    const p = planBulkAdd({ clients: BOOK, service: 'Bill pay', scopeOf });
+    return p.add.length + p.scoped.length + p.sold.length;
+  })(), BOOK.length);
+
+check('bulk: no service picked, nothing planned',
+  planBulkAdd({ clients: BOOK, service: '', scopeOf }), { add: [], scoped: [], sold: [] });
+check('bulk: an empty book plans nothing',
+  planBulkAdd({ clients: [], service: 'Bill pay', scopeOf }).add, []);
+
+// Removing is the way back out of a bulk add, so it has to find exactly the
+// clients that carry the service — no more.
+check('bulk: remove targets only the clients that have it',
+  names(planBulkRemove({ clients: BOOK, service: 'Bill pay', scopeOf })), ['Scoped']);
+check('bulk: remove with nothing picked targets nobody',
+  planBulkRemove({ clients: BOOK, service: '', scopeOf }), []);
+
+// ---- editing one scope --------------------------------------------------
+
+check('edit: adding a service keeps the rest of the scope',
+  withService({ services: ['A'], counts: { sites: 10 } }, 'B'),
+  { services: ['A', 'B'], counts: { sites: 10 }, serviceUnits: {}, dealSize: '' });
+check('edit: adding one that is already there changes nothing',
+  withService({ services: ['A'] }, 'A').services, ['A']);
+// The per-service count goes with the service. Leaving it behind means
+// re-adding the service later silently inherits a count typed for a rollout
+// that was abandoned — a wrong number with nothing on screen explaining it.
+check('edit: removing a service takes its unit count with it',
+  withoutService({ services: ['A', 'B'], serviceUnits: { A: 400, B: 12 } }, 'A'),
+  { services: ['B'], counts: {}, serviceUnits: { B: 12 }, dealSize: '' });
+check('edit: removing one that was never there changes nothing',
+  withoutService({ services: ['A'] }, 'Z').services, ['A']);
 
 console.log(failures === 0 ? '\nAll deal-sizing tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
