@@ -176,7 +176,9 @@
 .bannerChipOn { border-color: transparent; }
 .bannerChipNone { background: #F1F5F9; color: var(--color-text); border-color: var(--color-text-muted); }
 .bannerDot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-.bannerPreview { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 2px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+/* Matches the band the email carries: brand type, no letter-spaced caps, and
+   the Life Is On green rule under it (drawn as a bottom border). */
+.bannerPreview { margin-top: 0.5rem; padding: 0.55rem 0.8rem; font-family: 'Nunito Sans', Nunito, Arial, Helvetica, sans-serif; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.01em; border-bottom: 3px solid #3DCD58; }
 .bannerEditBtn { padding: 0.25rem 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); font-size: 0.72rem; font-weight: 500; cursor: pointer; font-family: inherit; color: var(--color-text-secondary); }
 .bannerEditor { margin-top: 0.5rem; padding: 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; background: #FAFAFA; display: flex; flex-direction: column; gap: 0.4rem; }
 .bannerEditHint { font-size: 0.72rem; color: var(--color-text-muted); margin: 0 0 0.1rem; line-height: 1.4; }
