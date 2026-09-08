@@ -26,9 +26,10 @@ import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesS
 import {
   loadWeeklyActivityLog, weeklyActivityEntry, liveCacheCovers, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
-import { buildFunnelStages, closeRatesByStage } from '../../utils/pipelineFunnelData';
+import { buildFunnelStages, closeRateTrendByStage, closeRatesByStage } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
+import { CloseRateTrend } from './CloseRateTrend';
 import { svgToPngDataUrl } from '../../utils/svgToPng';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
@@ -378,6 +379,13 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // Its outcome block reads the KPI row's own sold-YTD and target rather
   // than the dashboard's hand-entered Closed YTD, so the "Closed YTD" it
   // draws is the figure printed in the card directly above it.
+  // ---- Close rate trend --------------------------------------------------
+  // The funnel above draws one close rate per stage on a rolling 365 days,
+  // which says where the rates stand and nothing about whether they are
+  // moving. Same signals and same exclusions, cut into the last six
+  // calendar months, so the report can show a direction.
+  const closeRateTrend = useMemo(() => closeRateTrendByStage(oppsRecords, { months: 6 }), [oppsRecords]);
+
   const funnelStages = useMemo(() => buildFunnelStages({
     stages: Array.isArray(pipeline?.stages) ? pipeline.stages : [],
     bfoMetrics: bfoStageMetrics(bfo),
@@ -787,6 +795,19 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
               No stage volumes cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the funnel has stage actuals to draw.
             </div>
           )}
+        </section>
+
+        {/* Directly under the funnel, because it is the funnel's close-rate
+            column with the time axis put back: the funnel says where each
+            stage stands, this says which way it is going. */}
+        <section className={styles.funnelSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Close rate trend</h2>
+            <span className={styles.kpiHeadNote}>
+              Last 6 months, by the stage each closed deal reached
+            </span>
+          </div>
+          <CloseRateTrend trend={closeRateTrend} />
         </section>
 
         {/* Emails sent and New opps are the two the week is steered by, so they
