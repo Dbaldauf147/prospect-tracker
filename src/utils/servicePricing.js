@@ -50,6 +50,22 @@
 //            the site count without anyone retyping it). Optional and
 //            empty by default, so a service without one prices exactly as
 //            it did before setup fees existed.
+//   lines  — the EXTRA recurring lines the service is priced on, beyond the
+//            one `basis`/`rate`/`rateHigh` already state. Each is
+//            { basis, rate, rateHigh }, at most one per basis, and none of
+//            them repeats the primary basis. A service is very often priced
+//            on more than one thing at once — a per-site fee plus a cut of
+//            the deal, a retrofit plus the annual that keeps it running —
+//            and before this the rate card could only hold the first of
+//            them. Optional and empty by default: a service priced on one
+//            basis stores nothing here and prices exactly as it always did.
+//
+//            The FIRST line is kept in `basis`/`rate`/`rateHigh` rather
+//            than in this array so that every reader that predates it — the
+//            rate card's Pricing Basis and rate columns, a saved analysis,
+//            the deal-sizing roll-up — still finds a service's headline
+//            price where it has always been. Clearing it promotes the next
+//            line into its place; see writePricingLines.
 //   notes  — free text, for the assumptions a number can't carry
 //
 // Stored under settings.servicePricing so it syncs across devices with the
@@ -77,6 +93,14 @@ const KIND_KEYS = new Set(BASIS_KINDS.map(k => k.kind));
 // basis someone added prices exactly like one that shipped.
 export const PRICING_BASES = [
   { key: 'flat',        label: 'Flat fee',       kind: 'flat',    unit: null,       unitLabel: null },
+  // A flat figure that recurs every year whatever the service's Type says.
+  //
+  // Flat fee already covers "one number": on a recurring service that number
+  // is the annual, and on a project it's the job. What it can't say is
+  // "$180k for the retrofit AND $12k a year to keep it running" — which is
+  // one service, priced on two lines, and the reason `recurs` exists. A
+  // basis carrying it always bills annually and always runs for the term.
+  { key: 'recurring_annual', label: 'Recurring annual', kind: 'flat', unit: null, unitLabel: null, recurs: true },
   { key: 'per_site',    label: 'Per site',       kind: 'unit',    unit: 'sites',    unitLabel: 'Sites' },
   { key: 'per_account', label: 'Per account',    kind: 'unit',    unit: 'accounts', unitLabel: 'Accounts' },
   { key: 'per_meter',   label: 'Per meter',      kind: 'unit',    unit: 'meters',   unitLabel: 'Meters' },
@@ -100,8 +124,8 @@ export const PRICING_BASES = [
 // they never chose to leave out, and without this the only way to see a new
 // default would be Reset to defaults, which throws their own bases away.
 // See pricingBasesTopUp.
-export const PRICING_BASES_VERSION = 2;
-const BASIS_ADDED_IN = { per_project: 2, per_equipment: 2 };
+export const PRICING_BASES_VERSION = 3;
+const BASIS_ADDED_IN = { per_project: 2, per_equipment: 2, recurring_annual: 3 };
 
 // A key out of a label: lowercase, words joined by underscores, and a
 // numeric suffix when that key is already taken. Keys are what the saved
@@ -140,7 +164,11 @@ export function normalizePricingBases(raw) {
     const unitLabel = kind === 'unit' ? String(item?.unitLabel || '').trim() : '';
     if (kind === 'unit' && (!unit || !unitLabel)) continue;
     seen.add(key);
-    out.push({ key, label, kind, unit: unit || null, unitLabel: unitLabel || null });
+    // `recurs` is a property of the basis, not of the service, so it has to
+    // survive a round-trip through the user's saved list — otherwise a
+    // Recurring annual line would stop recurring the moment someone opened
+    // the bases editor.
+    out.push({ key, label, kind, unit: unit || null, unitLabel: unitLabel || null, recurs: !!item?.recurs });
   }
   return out.length > 0 ? out : null;
 }
@@ -217,9 +245,15 @@ export const PROJECT_UNIT = 'projects';
  * fallen out of scope.
  */
 export function projectServiceLines(lines, bases = PRICING_BASES) {
-  return (lines || []).filter(
-    line => basisFor(line?.entry?.basis, bases)?.unit === PROJECT_UNIT,
-  );
+  return (lines || []).filter((line) => {
+    // Any line of the service, not only its headline one: a retrofit
+    // charged per project alongside an annual is still project work, and
+    // the panel that asks how many of them there are has to ask about it.
+    if (line?.breakdown?.length) {
+      return line.breakdown.some(part => basisFor(part.basis, bases)?.unit === PROJECT_UNIT);
+    }
+    return basisFor(line?.entry?.basis, bases)?.unit === PROJECT_UNIT;
+  });
 }
 
 // How many services are priced on each basis, keyed by basis key. What the
@@ -227,10 +261,14 @@ export function projectServiceLines(lines, bases = PRICING_BASES) {
 // it takes their pricing with it.
 export function basisUsage(pricing) {
   const counts = new Map();
+  const bump = (key) => { if (key) counts.set(key, (counts.get(key) || 0) + 1); };
   for (const row of Object.values(pricing || {})) {
-    const key = String(row?.basis || '');
-    if (!key) continue;
-    counts.set(key, (counts.get(key) || 0) + 1);
+    bump(String(row?.basis || ''));
+    // An extra line is pricing behind a basis exactly as the primary one
+    // is, so deleting that basis would take it with it. Counting only the
+    // primary would let the editor say "used by no services" about a basis
+    // three services are charging on.
+    for (const line of Array.isArray(row?.lines) ? row.lines : []) bump(String(line?.basis || ''));
   }
   return counts;
 }
@@ -412,16 +450,130 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     units: parseMoney(row?.units),
     avgFee: parseMoney(row?.avgFee),
     setup: normalizeSetup(row?.setup, bases),
+    lines: normalizePricingLines(row?.lines, bases, basis ? basis.key : ''),
     notes: String(row?.notes || ''),
   };
+}
+
+/**
+ * The extra lines, cleaned up: an unknown basis, a missing rate, a repeat of
+ * a basis already on the list and a repeat of the PRIMARY basis all drop
+ * out. One line per basis is the whole rule — the fee breakdown is a grid
+ * with one row per basis, so two lines on the same one would have nowhere
+ * to show and no way to be told apart.
+ */
+export function normalizePricingLines(raw, bases = PRICING_BASES, primaryKey = '') {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set(primaryKey ? [primaryKey] : []);
+  for (const item of raw) {
+    const basis = basisFor(item?.basis, bases);
+    if (!basis || seen.has(basis.key)) continue;
+    const rate = parseMoney(item?.rate);
+    if (rate === null) continue;
+    seen.add(basis.key);
+    out.push({ basis: basis.key, rate, rateHigh: parseMoney(item?.rateHigh) });
+  }
+  return out;
+}
+
+/**
+ * Every recurring line a service carries, primary first — the shape the fee
+ * breakdown reads and the estimate prices. A primary basis with no rate
+ * behind it is left out: it prices nothing, and the estimate says "No rate
+ * set" about it instead.
+ */
+export function pricingLines(entry) {
+  const out = [];
+  const rate = parseMoney(entry?.rate);
+  if (entry?.basis && rate !== null) {
+    out.push({ basis: entry.basis, rate, rateHigh: parseMoney(entry?.rateHigh) });
+  }
+  for (const line of entry?.lines || []) {
+    out.push({ basis: line.basis, rate: parseMoney(line.rate), rateHigh: parseMoney(line.rateHigh) });
+  }
+  return out;
+}
+
+/**
+ * Write an ordered list of recurring lines back onto a stored row.
+ *
+ * The first line becomes the row's `basis`/`rate`/`rateHigh` — its headline
+ * price, where every reader that predates multi-line pricing looks — and the
+ * rest go to `lines`. An empty list clears all three, leaving `avgFee`,
+ * `setup` and `notes` alone: those don't belong to a basis.
+ *
+ * `units` is the count the service charges its OWN basis on, so it follows
+ * that basis and no other. When the promotion changes what the primary
+ * counts — clearing a per-site line under a per-meter one — the figure is
+ * dropped rather than silently re-read as 40 meters, which is a different
+ * claim about the deal than the one anybody made.
+ */
+function writePricingLines(row, lines, bases = PRICING_BASES) {
+  const next = { ...row };
+  const wasUnit = basisFor(next.basis, bases)?.unit || null;
+  const [first, ...rest] = lines;
+  if (!first) {
+    delete next.basis; delete next.rate; delete next.rateHigh; delete next.lines; delete next.units;
+  } else {
+    next.basis = first.basis;
+    next.rate = first.rate;
+    if (first.rateHigh === null || first.rateHigh === undefined) delete next.rateHigh;
+    else next.rateHigh = first.rateHigh;
+    if (rest.length === 0) delete next.lines;
+    else next.lines = rest.map(l => (l.rateHigh === null || l.rateHigh === undefined
+      ? { basis: l.basis, rate: l.rate }
+      : { basis: l.basis, rate: l.rate, rateHigh: l.rateHigh }));
+  }
+  const nowUnit = basisFor(next.basis, bases)?.unit || null;
+  if (wasUnit !== nowUnit) delete next.units;
+  return next;
+}
+
+/**
+ * Set one row of the fee breakdown: the low and/or high rate charged on one
+ * basis. `patch` is { rate?, rateHigh? }, where '' or null clears.
+ *
+ * Clearing a line's low rate removes the line outright — a high end with no
+ * low end is half a range, and a basis with no rate on it is not a line the
+ * service is priced on. Everything else about the service (its floor, its
+ * setup fee, a typed fee, the notes) is untouched.
+ */
+export function setPricingLine(pricing, name, basisKey, patch, bases = PRICING_BASES) {
+  const basis = basisFor(basisKey, bases);
+  if (!basis) return pricing;
+  const next = { ...pricing };
+  const row = { ...(next[name] || {}) };
+  const lines = pricingLines(pricingFor(next, name, bases));
+  const at = lines.findIndex(l => l.basis === basis.key);
+  const current = at === -1 ? { basis: basis.key, rate: null, rateHigh: null } : lines[at];
+
+  const read = (v) => (v === '' || v === null || v === undefined ? null : parseMoney(v));
+  const rate = 'rate' in patch ? read(patch.rate) : current.rate;
+  const rateHigh = 'rateHigh' in patch ? read(patch.rateHigh) : current.rateHigh;
+
+  let out;
+  if (rate === null || rate < 0) out = lines.filter((_, i) => i !== at);
+  else {
+    const line = { basis: basis.key, rate, rateHigh: rateHigh !== null && rateHigh >= 0 ? rateHigh : null };
+    // A basis that wasn't priced yet joins the end of the list rather than
+    // the front: filling in a second line shouldn't quietly demote the
+    // price the service already led with.
+    out = at === -1 ? [...lines, line] : lines.map((l, i) => (i === at ? line : l));
+  }
+
+  const written = writePricingLines(row, out, bases);
+  if (Object.keys(written).length === 0) delete next[name];
+  else next[name] = written;
+  return next;
 }
 
 // Write one field of one service's entry. An empty value clears the field,
 // and an entry with nothing left in it is deleted outright rather than left
 // behind as an empty object. Returns the next map for updateSettings.
-export function setPricingField(pricing, name, field, value) {
+export function setPricingField(pricing, name, field, value, bases = PRICING_BASES) {
   const next = { ...pricing };
-  const row = { ...(next[name] || {}) };
+  let row = { ...(next[name] || {}) };
   const blank = value == null || value === '';
   if (blank) delete row[field];
   else row[field] = (field === 'basis' || field === 'notes') ? value : parseMoney(value);
@@ -430,7 +582,19 @@ export function setPricingField(pricing, name, field, value) {
   // stranded "$450 per nothing". A typed fee is not one of them — it
   // stands on its own, and a service priced only that way would otherwise
   // lose its price the moment someone cleared a basis it never had.
-  if (field === 'basis' && blank) { delete row.rate; delete row.rateHigh; delete row.minFee; delete row.units; }
+  if (field === 'basis' && blank) { delete row.rate; delete row.rateHigh; delete row.minFee; }
+  // Changing the headline basis has to keep the line list coherent: it must
+  // not end up naming a basis an extra line already covers, and clearing it
+  // on a service priced on several lines has to promote one of them rather
+  // than strand real money behind a blank basis cell.
+  if (field === 'basis') {
+    const primaryRate = parseMoney(row.rate);
+    const primary = blank || primaryRate === null
+      ? []
+      : [{ basis: value, rate: primaryRate, rateHigh: parseMoney(row.rateHigh) }];
+    const extras = normalizePricingLines(row.lines, bases, blank ? '' : value);
+    row = writePricingLines(row, [...primary, ...extras], bases);
+  }
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
@@ -467,15 +631,25 @@ export function isRecurring(meta) {
 // `counts` maps a unit ('sites', 'meters', …) to a number; `dealSize` is the
 // figure percentage-based services take their cut of. Returns:
 //   priced   — is there enough on the rate card to work a fee out at all
-//   fee      — the fee itself: annual for a recurring service, the whole job
-//              for a project. null when unpriced. The bottom of the range
-//              when the service carries one, which is what it has always
-//              been for a service that doesn't.
+//   fee      — what the service bills in its FIRST year, setup aside: its
+//              annual on a recurring service, the job on a project, and the
+//              two added together on one priced on both. null when unpriced.
+//              The bottom of the range when the service carries one, which
+//              is what it has always been for a service that doesn't.
 //   feeHigh  — the top of it. Equal to `fee` unless a high rate is set, so
 //              a caller can add the two ends up without asking whether this
 //              particular service happens to have a range.
-//   value    — fee across the contract (fee × years when recurring)
+//   recurringFee / recurringFeeHigh — the slice of `fee` that bills again
+//              every year, and so runs for the term.
+//   oneOffFee / oneOffFeeHigh — the slice that bills once. The two add up
+//              to `fee`, and a caller that keeps recurring and one-time
+//              money apart adds these rather than reading `recurring`: a
+//              service can now carry both at once.
+//   value    — fee across the contract: the recurring slice times the term,
+//              plus the one-off slice once
 //   valueHigh— the same for the top of the range
+//   breakdown— one entry per priced line, in the order the rate card holds
+//              them, so the fee can be shown as the sum it is
 //   note     — why a priced service still came out at nothing, when it did
 export function estimateService({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const est = estimateRecurring({ entry, meta, counts, dealSize, bases });
@@ -492,33 +666,55 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
   // put on the deal, and reporting it as unpriced would hide real money
   // behind "no rate set".
   if (!est.priced && setup > 0) {
-    return { ...est, priced: true, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, setup, setupOnly: true };
+    return {
+      ...est, priced: true, fee: 0, feeHigh: 0, value: 0, valueHigh: 0,
+      recurringFee: 0, recurringFeeHigh: 0, oneOffFee: 0, oneOffFeeHigh: 0,
+      setup, setupOnly: true,
+    };
   }
   return { ...est, setup, setupOnly: false };
 }
 
+// Whether one line bills again next year. A basis carrying `recurs` always
+// does — that is what Recurring annual is for, and it holds on a project
+// service too. Everything else follows the service's own Type, exactly as
+// the whole service used to.
+function lineRecurs(basis, recurring) {
+  return basis?.recurs ? true : recurring;
+}
+
 function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const basis = basisFor(entry?.basis, bases);
-  const rate = parseMoney(entry?.rate);
-  const rateHigh = parseMoney(entry?.rateHigh);
   const minFee = parseMoney(entry?.minFee);
   const avgFee = parseMoney(entry?.avgFee);
   // Units typed against this row beat the shared count — see the entry
   // notes at the top of the file.
   const ownUnits = parseMoney(entry?.units);
   const recurring = isRecurring(meta);
-  const years = recurring ? contractYears(meta) : 1;
+  // The term the contract runs for. Read off the service's Years whatever
+  // its Type says, because a project can now carry a Recurring annual line
+  // and that line runs for the term even though the job doesn't. One-off
+  // money is never multiplied by it, so a project with no recurring line
+  // values exactly as it did when this was pinned to 1.
+  const years = contractYears(meta);
   const base = {
     priced: false, fee: null, feeHigh: null, value: null, valueHigh: null, recurring, years,
+    recurringFee: 0, recurringFeeHigh: 0, oneOffFee: 0, oneOffFeeHigh: 0,
     unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
+    // Every unit whose count this service reads out of the estimator's
+    // shared boxes, so the estimator knows which boxes to put up. A line
+    // charged on a count typed against the service isn't one of them.
+    unitsNeeded: [],
+    breakdown: [],
     // Filled in by estimateService, which wraps this — kept in the shape so
     // a caller reading a line never has to check whether the field is there.
     setup: 0, setupOnly: false,
   };
 
-  // A fee typed into the Year 1 Fee column is the answer, whatever the basis
-  // would have made of the counts — and it's one figure, not a range: the
-  // person typing it is stating the fee, not the spread it might land in.
+  // A fee typed into the Year 1 Fee column is the answer, whatever the rate
+  // card would have made of the counts — and it's one figure, not a range:
+  // the person typing it is stating the fee, not the spread it might land
+  // in. It outranks every line in the breakdown, not just the first.
   //
   // It prices ONE of whatever the service is: one rollout, one retrofit. A
   // deal carrying three of them says so against the row, and it's three
@@ -539,55 +735,123 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     return {
       ...base, priced: true, typed: true,
       units: ownUnits, unitsTyped: ownUnits !== null,
-      fee, feeHigh: fee, value: fee * years, valueHigh: fee * years,
+      fee, feeHigh: fee,
+      recurringFee: recurring ? fee : 0, recurringFeeHigh: recurring ? fee : 0,
+      oneOffFee: recurring ? 0 : fee, oneOffFeeHigh: recurring ? 0 : fee,
+      value: recurring ? fee * years : fee,
+      valueHigh: recurring ? fee * years : fee,
     };
   }
 
-  if (!basis) return { ...base, note: 'No pricing basis set' };
-  if (rate === null) return { ...base, note: 'No rate set' };
-
-  // A high rate typed below the low one is a typo, not an inverted range,
-  // so the pair is read low-to-high rather than rendered backwards.
-  const lo = rateHigh === null ? rate : Math.min(rate, rateHigh);
-  const hi = rateHigh === null ? rate : Math.max(rate, rateHigh);
-
-  const nothing = (note, extra) => ({ ...base, priced: true, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note, ...extra });
-
-  let units = null;
-  let unitsTyped = false;
-  let deal = 0;
-  if (basis.kind === 'unit') {
-    unitsTyped = ownUnits !== null;
-    units = unitsTyped ? ownUnits : (parseMoney(counts?.[basis.unit]) ?? 0);
-    if (units <= 0) {
-      return nothing(
-        unitsTyped ? `Set to no ${basis.unitLabel.toLowerCase()}` : `No ${basis.unitLabel.toLowerCase()} entered`,
-        { units: 0, unitsTyped },
-      );
-    }
-  } else if (basis.kind === 'percent') {
-    deal = parseMoney(dealSize) ?? 0;
-    if (deal <= 0) return nothing('No deal size entered');
+  const lines = pricingLines(entry);
+  if (lines.length === 0) {
+    return { ...base, note: basis ? 'No rate set' : 'No pricing basis set' };
   }
 
-  // Both ends run the same arithmetic, floor included — the minimum is what
-  // the service costs to run at all, so it holds up the bottom of a range
-  // the same way it holds up a single fee, and a range whose ends are both
-  // under it is simply the floor.
-  const feeAt = (r) => {
-    let fee;
-    if (basis.kind === 'unit') fee = r * units;
-    else if (basis.kind === 'percent') fee = deal * (r / 100);
-    else fee = r;
-    return minFee !== null && fee < minFee ? minFee : fee;
+  // The count the service was told to charge its own basis on follows that
+  // unit wherever it turns up, exactly as a setup component sharing it does
+  // — so a service sold at 40 of 819 sites charges 40 on every per-site
+  // line it carries, not only the headline one.
+  const ownUnit = basis?.unit || null;
+
+  const breakdown = [];
+  const unitsNeeded = new Set();
+  let recurLo = 0; let recurHi = 0;
+  let onceLo = 0; let onceHi = 0;
+  // A line that priced to nothing for a reason — no count entered, no deal
+  // size — says why. When every line came out that way the service as a
+  // whole says the first reason, which is the message a single-line service
+  // has always given.
+  let allNothing = true;
+  let firstNote = '';
+
+  for (const line of lines) {
+    const lineBasis = basisFor(line.basis, bases);
+    if (!lineBasis || line.rate === null) continue;
+    // A high rate typed below the low one is a typo, not an inverted range,
+    // so the pair is read low-to-high rather than rendered backwards.
+    const lo = line.rateHigh === null ? line.rate : Math.min(line.rate, line.rateHigh);
+    const hi = line.rateHigh === null ? line.rate : Math.max(line.rate, line.rateHigh);
+
+    let units = null;
+    let unitsTyped = false;
+    let deal = 0;
+    let note = '';
+    if (lineBasis.kind === 'unit') {
+      unitsTyped = ownUnits !== null && lineBasis.unit === ownUnit;
+      units = unitsTyped ? ownUnits : (parseMoney(counts?.[lineBasis.unit]) ?? 0);
+      if (!unitsTyped) unitsNeeded.add(lineBasis.unit);
+      if (units <= 0) {
+        note = unitsTyped
+          ? `Set to no ${lineBasis.unitLabel.toLowerCase()}`
+          : `No ${lineBasis.unitLabel.toLowerCase()} entered`;
+      }
+    } else if (lineBasis.kind === 'percent') {
+      deal = parseMoney(dealSize) ?? 0;
+      if (deal <= 0) note = 'No deal size entered';
+    }
+
+    const feeAt = (r) => {
+      if (note) return 0;
+      if (lineBasis.kind === 'unit') return r * units;
+      if (lineBasis.kind === 'percent') return deal * (r / 100);
+      return r;
+    };
+    const feeLo = feeAt(lo);
+    const feeHi = feeAt(hi);
+    if (!note) allNothing = false;
+    else if (!firstNote) firstNote = note;
+
+    const recurs = lineRecurs(lineBasis, recurring);
+    if (recurs) { recurLo += feeLo; recurHi += feeHi; }
+    else { onceLo += feeLo; onceHi += feeHi; }
+
+    breakdown.push({
+      basis: lineBasis.key, basisLabel: lineBasis.label, kind: lineBasis.kind,
+      unit: lineBasis.unit || null, unitLabel: lineBasis.unitLabel || '',
+      rate: line.rate, rateHigh: line.rateHigh,
+      units, unitsTyped, recurs, fee: feeLo, feeHigh: feeHi, note,
+    });
+  }
+
+  if (breakdown.length === 0) {
+    return { ...base, note: basis ? 'No rate set' : 'No pricing basis set' };
+  }
+
+  // The primary line's count is what the Units column and the saved
+  // analysis have always reported, so it stays the one the estimate names.
+  const head = breakdown.find(b => b.basis === basis?.key) || breakdown[0];
+
+  const shape = {
+    ...base, priced: true,
+    unit: head.unit, units: head.units, unitsTyped: head.unitsTyped,
+    unitsNeeded: [...unitsNeeded], breakdown,
   };
-  const fee = feeAt(lo);
-  const feeHigh = feeAt(hi);
+
+  // Every line came to nothing: report the first reason and don't let the
+  // floor invent money for work nobody counted, exactly as a single unit-
+  // priced service with no count has always behaved.
+  if (allNothing) {
+    return { ...shape, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note: firstNote };
+  }
+
+  // The floor is what the SERVICE costs to run at all, so it holds up the
+  // total of its lines rather than each one — and it holds up both ends of
+  // a range the same way, so a spread that sits entirely under the minimum
+  // is simply the minimum. The top-up lands in whichever half of the bill
+  // the service's own Type says it belongs to.
+  const topUp = (total) => (minFee !== null && total < minFee ? minFee - total : 0);
+  const upLo = topUp(recurLo + onceLo);
+  const upHi = topUp(recurHi + onceHi);
+  if (recurring) { recurLo += upLo; recurHi += upHi; } else { onceLo += upLo; onceHi += upHi; }
 
   return {
-    ...base, priced: true,
-    fee, feeHigh, value: fee * years, valueHigh: feeHigh * years,
-    units, unitsTyped,
+    ...shape,
+    recurringFee: recurLo, recurringFeeHigh: recurHi,
+    oneOffFee: onceLo, oneOffFeeHigh: onceHi,
+    fee: recurLo + onceLo, feeHigh: recurHi + onceHi,
+    value: recurLo * years + onceLo, valueHigh: recurHi * years + onceHi,
+    note: firstNote,
   };
 }
 
@@ -602,14 +866,45 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
 // whose own `note` says that instead.
 export function feeBasisLabel(line, bases = PRICING_BASES) {
   if (line?.typed) return line.units > 1 ? `Est. Fee × ${line.units}` : 'Est. Fee';
-  const basis = basisFor(line?.entry?.basis, bases);
-  if (!basis) return '';
-  if (basis.kind === 'unit') {
-    const unit = basis.unitLabel.toLowerCase().replace(/s$/, '');
-    return `${formatRate(line.entry, bases)} per ${unit}${line.units ? ` \u00d7 ${line.units}` : ''}`;
+  // The breakdown when the estimate carried one, and the single basis on
+  // the entry when the caller handed over something that predates it — a
+  // saved analysis line, say, which is an entry and a fee and nothing else.
+  const parts = line?.breakdown?.length ? line.breakdown : legacyParts(line, bases);
+  if (parts.length === 0) return '';
+  // A flat line says only its name when it's the whole price — the fee is
+  // sitting right beside it, so "Flat fee" is the useful half. Alongside
+  // other lines it has to carry its amount too, or "Flat fee + Recurring
+  // annual" describes a total nobody can take apart.
+  const many = parts.length > 1;
+  // Two lines read out in full; past that the phrase runs longer than the
+  // row it sits under, so the rest are counted rather than listed and the
+  // fee breakdown in the pricing panel carries the detail.
+  if (parts.length <= 2) return parts.map(p => partPhrase(p, many)).join(' + ');
+  return `${partPhrase(parts[0], many)} + ${parts.length - 1} more lines`;
+}
+
+// One line of a breakdown as a phrase: "$450 per site × 819", "3% of deal
+// size", "Recurring annual".
+function partPhrase(part, withAmount = false) {
+  const rate = formatRate(
+    { basis: 'x', rate: part.rate, rateHigh: part.rateHigh },
+    [{ key: 'x', kind: part.kind }],
+  );
+  if (part.kind === 'unit') {
+    const unit = String(part.unitLabel || 'unit').toLowerCase().replace(/s$/, '');
+    return `${rate} per ${unit}${part.units ? ` × ${part.units}` : ''}`;
   }
-  if (basis.kind === 'percent') return `${formatRate(line.entry, bases)} of deal size`;
-  return basis.label;
+  if (part.kind === 'percent') return `${rate} of deal size`;
+  return withAmount ? `${part.basisLabel} ${rate}` : part.basisLabel;
+}
+
+function legacyParts(line, bases) {
+  const basis = basisFor(line?.entry?.basis, bases);
+  if (!basis) return [];
+  return [{
+    kind: basis.kind, unitLabel: basis.unitLabel, basisLabel: basis.label,
+    rate: line.entry.rate, rateHigh: line.entry.rateHigh, units: line.units,
+  }];
 }
 
 // Roll a set of services up into a deal estimate.
@@ -655,16 +950,17 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     // typed against the row, if there is one, but never by the shared one —
     // so asking for a shared figure would be asking for a number that
     // changes nothing.
-    if (est.unit && !est.unitsTyped && !est.typed) unitsUsed.add(est.unit);
+    if (!est.typed) for (const unit of est.unitsNeeded || []) unitsUsed.add(unit);
     if (!est.priced) { unpriced.push(row.name); }
     else {
-      if (est.recurring) {
-        recurringAnnual += est.fee; contractValue += est.value;
-        recurringAnnualHigh += est.feeHigh; contractValueHigh += est.valueHigh;
-      } else {
-        oneTime += est.fee; contractValue += est.value;
-        oneTimeHigh += est.feeHigh; contractValueHigh += est.valueHigh;
-      }
+      // Recurring and one-time money are split by the LINE, not by the
+      // service: a retrofit that carries an annual alongside it is both, and
+      // bucketing the whole service by its Type would file half of it under
+      // the wrong heading. A service priced on one line lands where it
+      // always did, because one of the two halves is then zero.
+      recurringAnnual += est.recurringFee; recurringAnnualHigh += est.recurringFeeHigh;
+      oneTime += est.oneOffFee; oneTimeHigh += est.oneOffFeeHigh;
+      contractValue += est.value; contractValueHigh += est.valueHigh;
       // Setup is one-time whatever the service is, so it lands in the
       // one-time total on both sides of a recurring service's range and is
       // billed once into the contract value — never multiplied by the term

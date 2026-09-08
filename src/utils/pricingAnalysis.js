@@ -74,6 +74,26 @@ export function buildPricingAnalysis({
     // below. Recorded per line because a first year that runs ahead of the
     // annual fee has a reason, and the reason is on the row.
     setup: num(line.setup) ?? 0,
+    // Every basis the service was charged on, when it was charged on more
+    // than one. The columns above report the headline line, which is all
+    // there ever was to report before a service could carry several — so a
+    // deal priced on a per-site fee AND a cut of the deal would otherwise
+    // be recorded as the per-site half and nothing else.
+    parts: (line.breakdown || []).map(part => ({
+      basis: str(part.basis),
+      basisLabel: str(part.basisLabel),
+      kind: str(part.kind),
+      unit: str(part.unit || ''),
+      unitLabel: str(part.unitLabel || ''),
+      rate: num(part.rate),
+      rateHigh: num(part.rateHigh),
+      units: num(part.units),
+      unitsTyped: !!part.unitsTyped,
+      recurs: !!part.recurs,
+      fee: num(part.fee),
+      feeHigh: num(part.feeHigh) ?? num(part.fee),
+      note: str(part.note),
+    })),
     note: str(line.note),
     };
   });
@@ -145,6 +165,24 @@ export function normalizePricingAnalysis(raw) {
       // An analysis saved before setup fees existed carries none, which is
       // what it was: nothing.
       setup: num(l.setup) ?? 0,
+      // An analysis saved before a service could be priced on several bases
+      // carries none of these, which is what it was: one line, already
+      // spelled out in the columns above.
+      parts: (Array.isArray(l.parts) ? l.parts : []).map(part => ({
+        basis: str(part.basis),
+        basisLabel: str(part.basisLabel),
+        kind: str(part.kind),
+        unit: str(part.unit),
+        unitLabel: str(part.unitLabel),
+        rate: num(part.rate),
+        rateHigh: num(part.rateHigh),
+        units: num(part.units),
+        unitsTyped: !!part.unitsTyped,
+        recurs: !!part.recurs,
+        fee: num(part.fee),
+        feeHigh: num(part.feeHigh) ?? num(part.fee),
+        note: str(part.note),
+      })),
       note: str(l.note),
     }));
   if (lines.length === 0) return null;
@@ -174,6 +212,12 @@ export function lineBasisText(line) {
   // carried several says so — otherwise "Typed fee" against $15,000 on a
   // $5,000 service reads as an arithmetic error.
   if (line.typed) return line.units > 1 ? `Typed fee × ${line.units.toLocaleString('en-US')}` : 'Typed fee';
+  // Priced on several bases at once: the columns can only carry the first,
+  // so the phrase says how many there were rather than describing one line
+  // as though it were the whole fee.
+  if (line.parts && line.parts.length > 1) {
+    return `${line.parts.length} lines · ${line.parts.map(p => p.basisLabel).filter(Boolean).join(' + ')}`;
+  }
   if (!line.basisLabel) return '';
   if (line.rate === null) return line.basisLabel;
   const one = (n) => (line.kind === 'percent' ? `${n}%` : `$${n.toLocaleString('en-US')}`);

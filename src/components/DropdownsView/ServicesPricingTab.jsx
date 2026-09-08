@@ -28,6 +28,7 @@ import {
   pricingBasesTopUp,
   PRICING_BASES_VERSION,
   setPricingField,
+  setPricingLine,
   setPricingSetup,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
@@ -319,7 +320,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   const dealSize = scenario?.dealSize ?? '';
 
   function savePricingField(name, field, value) {
-    updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value) });
+    updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value, bases) });
+  }
+
+  // One row of the fee breakdown: the low and/or high rate this service is
+  // charged on one basis. The first one filled in becomes the service's
+  // headline basis, which is what the rate card's own columns show.
+  function savePricingLine(name, basisKey, patch) {
+    updateSettings?.({ servicePricing: setPricingLine(pricing, name, basisKey, patch, bases) });
   }
 
   // The service whose pricing panel is open, by name. Null when nothing is
@@ -589,6 +597,13 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         // columns already carry, so the cell can't disagree with them.
         setup: entry.setup,
         _setupFee: est?.setup ?? 0,
+        // Every basis this service is charged on and what each comes to, so
+        // the pricing panel can show the fee as the sum of its lines rather
+        // than as one number with a single basis behind it.
+        _breakdown: est?.breakdown || [],
+        _recurringFee: est?.priced ? est.recurringFee : null,
+        _recurringFeeHigh: est?.priced ? est.recurringFeeHigh : null,
+        _extraLines: entry.lines.length,
         notes: entry.notes,
         // Typed against the row when there is one, otherwise whatever the
         // estimator's count works out to — the estimate already prefers the
@@ -673,7 +688,24 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           ),
         };
       case 'basisLabel':
-        return { ...base, render: (row) => <BasisCell value={row.basis} bases={bases} onCommit={(v) => savePricingField(row.name, 'basis', v)} /> };
+        return {
+          ...base,
+          render: (row) => (
+            <div className={styles.pricingBasisCell}>
+              <BasisCell value={row.basis} bases={bases} onCommit={(v) => savePricingField(row.name, 'basis', v)} />
+              {/* A service priced on several bases shows the headline one in
+                  this column and its rate in the two beside it — so without
+                  this the Year 1 fee reads as arithmetic nobody can follow.
+                  The count is the cue; the panel behind the ⤢ has the rows. */}
+              {row._extraLines > 0 && (
+                <span
+                  className={styles.pricingBasisMore}
+                  title={`Priced on ${row._extraLines + 1} lines: ${row._breakdown.map(p => p.basisLabel).join(', ')}. The rate columns show the first. Open the service to see the breakdown.`}
+                >{`+${row._extraLines}`}</span>
+              )}
+            </div>
+          ),
+        };
       case 'rate':
         return {
           ...base,
@@ -1216,6 +1248,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             // both panels would close on the one key press.
             escapeCloses={!setupFor}
             onSaveField={(field, value) => savePricingField(row.name, field, value)}
+            onSaveLine={(basisKey, patch) => savePricingLine(row.name, basisKey, patch)}
             onSetUnits={(value) => setServiceUnits(row.name, value)}
             onToggleScope={() => toggleScope(row.name)}
             onEditSetup={() => setSetupFor(row.name)}

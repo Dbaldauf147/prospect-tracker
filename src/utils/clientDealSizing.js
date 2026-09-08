@@ -27,6 +27,7 @@ import {
   estimateScope,
   parseMoney,
   pricingFor,
+  pricingLines,
 } from './servicePricing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 
@@ -158,11 +159,19 @@ export function missingCounts(estimate, bases = PRICING_BASES) {
   return out;
 }
 
-/** Does this scope price anything off the deal size box? */
+/**
+ * Does this scope price anything off the deal size box?
+ *
+ * Every line a service is charged on, not just its headline one: a service
+ * whose second line is a cut of the deal needs the box as much as one whose
+ * first line is, and without it the box never appears and that line prices
+ * to nothing.
+ */
 export function needsDealSize({ services = [], pricing, bases = PRICING_BASES }) {
   for (const name of services) {
-    const basis = basisFor(pricingFor(pricing, name, bases)?.basis, bases);
-    if (basis?.kind === 'percent') return true;
+    for (const line of pricingLines(pricingFor(pricing, name, bases))) {
+      if (basisFor(line.basis, bases)?.kind === 'percent') return true;
+    }
   }
   return false;
 }
