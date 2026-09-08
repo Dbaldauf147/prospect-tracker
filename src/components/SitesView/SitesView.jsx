@@ -51,6 +51,10 @@ import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
 import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization, sitesWithMandate } from '../../utils/complianceMandates';
+// The same reading of a saved site list the company popup renders under
+// "Site List", so the equipment total stamped on the prospect below and the
+// figure printed there are one number rather than two implementations of it.
+import { siteListFacts } from '../../utils/siteListFacts';
 import {
   JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd, pickThresholdRevenue,
@@ -5311,8 +5315,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // couldn't be written).
   async function saveSitesAsCompanySiteList(company) {
     const slug = companySlug(company);
-    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0 };
-    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0 };
+    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0, equipment: 0 };
+    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0, equipment: 0 };
     // Firestore rejects Dates / nested objects in these row maps, and the
     // popup's own upload path normalizes the same way.
     const safeCell = (v) => {
@@ -5398,6 +5402,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           : ' Site list not updated: too many sites to store for one company.',
         total: existingRows.length,
         accounts: siteListAccountTotal({ headers: existingHeaders, rows: existingRows }),
+        equipment: siteListFacts({ headers: existingHeaders, rows: existingRows }).equipment || 0,
       };
     }
     try {
@@ -5417,10 +5422,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${kept}`,
         total: merged.rows.length,
         accounts: siteListAccountTotal(merged),
+        // Read off the merged list, not the loaded page: a company whose
+        // sites arrived as three uploads owns all of them.
+        equipment: siteListFacts(merged).equipment || 0,
       };
     } catch (e) {
       console.warn('Could not save company site list:', e);
-      return { note: ' Site list could not be updated.', total: 0, accounts: 0 };
+      return { note: ' Site list could not be updated.', total: 0, accounts: 0, equipment: 0 };
     }
   }
 
@@ -5507,12 +5515,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // tile is: leased buildings are the owner's obligation, and a figure
       // that counted them would be a different number from the one on screen.
       const mandateSites = sitesWithMandate(screenSites(complianceScopedSites, { ordinances }));
+      // What is installed across those sites — chillers, boilers, EV
+      // chargers — estimated per site from its property type, the same
+      // figure this page prints as "Est. equipment". It had nowhere to go
+      // until now: the popup's Equipment box stayed empty next to a Sites
+      // count the same save had just filled in, and every per-equipment
+      // service on the rate card prices against that box.
+      //
+      // Off allRows, never the filtered `rows` behind equipmentStats: a
+      // division picked on screen must not shrink the portfolio total
+      // written to the company. Max'd with the company's whole site list
+      // for the reason Number of Sites is — the page holds one file at a
+      // time, and the list may already hold sites this upload doesn't.
+      //
+      // Only written when something resolved. Zero here means no property
+      // type was recognized, which is "unknown", not "no equipment" — and
+      // stamping it would wipe a real number someone typed in the popup.
+      const loadedEquipment = Math.round(
+        allRows.reduce((sum, r) => sum + (propertyTypeEquipment(r.__propertyType__) || 0), 0),
+      );
+      const equipmentTotal = Math.max(loadedEquipment, siteList.equipment || 0);
       if (updateProspect) {
         try {
           updateProspect(prospect.id, {
             indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
             ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
             ...(accountCount > 0 ? { numberOfAccounts: accountCount } : {}),
+            ...(equipmentTotal > 0 ? { equipmentCount: equipmentTotal } : {}),
             // Written even at zero, unlike the two above: "none of these
             // sites is mandated" is a screening result, and leaving the
             // field on a stale number from a previous analysis would be
@@ -5530,7 +5559,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Said out loud like the other two, zero included: a company screened
       // and found clear is a result worth reading on the way past.
       const mandateNote = ` Sites with a Mandate set to ${mandateSites.toLocaleString()}.`;
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${mandateNote}${siteList.note}` });
+      const equipmentNote = equipmentTotal > 0
+        ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
+        : '';
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
