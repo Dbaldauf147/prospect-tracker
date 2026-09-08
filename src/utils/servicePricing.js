@@ -404,6 +404,35 @@ export function unitNoun(unitLabel) {
   return /^[A-Z][a-z]+$/.test(singular) ? singular.toLowerCase() : singular;
 }
 
+// How a service is charged, in words: "$625 to $825 per site", "3% of the
+// deal", "$45,000 flat fee, plus $12,000 recurring annual".
+//
+// Every line the service is priced on, not just the headline one — a fee
+// built out of three bases is misdescribed by any one of them alone. This is
+// the rate card as a sentence, which is the form the number is argued in and
+// the one a bare rate column never shows.
+//
+// Independent of any estimate: it says what the service costs per unit, not
+// what it comes to for one client. Returns '' for a service with no rate
+// behind it, which callers render as "no rate set" rather than as a price.
+export function rateSentence(entry, bases = PRICING_BASES) {
+  const parts = [];
+  for (const line of pricingLines(entry)) {
+    const basis = basisFor(line.basis, bases);
+    if (!basis) continue;
+    const low = formatRate({ basis: line.basis, rate: line.rate }, bases);
+    if (!low) continue;
+    const high = line.rateHigh !== null && line.rateHigh > line.rate
+      ? formatRate({ basis: line.basis, rate: line.rateHigh }, bases)
+      : '';
+    const spread = high ? `${low} to ${high}` : low;
+    if (basis.kind === 'unit') parts.push(`${spread} per ${unitNoun(basis.unitLabel || basis.unit)}`);
+    else if (basis.kind === 'percent') parts.push(`${spread} of the deal`);
+    else parts.push(`${spread} ${basis.label.toLowerCase()}`);
+  }
+  return parts.join(', plus ');
+}
+
 // The setup fee as it reads on the rate card, before any count is applied:
 // "$5,000 + $150/site". The per-unit half stays a rate rather than a total
 // because that is what was agreed — the total moves with the deal, the rate

@@ -67,10 +67,13 @@ import {
   clearServices,
 } from '../../utils/clientDealSizing';
 import {
+  basisFor,
   feeBasisLabel,
   formatMoney,
   formatMoneyRange,
   getServicePricing,
+  pricingFor,
+  rateSentence,
   resolvePricingBases,
 } from '../../utils/servicePricing';
 
@@ -1087,6 +1090,10 @@ export function DealSizingView({
                 <thead>
                   <tr style={{ color: '#64748B', textAlign: 'left' }}>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem 0', minWidth: 220 }}>Service</th>
+                    <th
+                      style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 170 }}
+                      title="What this service is charged on, and at what rate, from Dropdowns › Services Pricing. It is the rate card itself — the same figure for every client — while the money to its right is what that rate comes to for this one."
+                    >Pricing basis</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 110 }} title="Overrides the count this service would otherwise price against — for a rollout that covers part of the portfolio. On a row whose fee was typed on the rate card it is how many of them the deal carries, each at that fee, and blank means one.">Units</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 190, textAlign: 'right' }}>Year 1 fee</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0 0.35rem', minWidth: 190, textAlign: 'right' }}>Deal value</th>
@@ -1107,6 +1114,46 @@ export function DealSizingView({
                           {line.priced ? (line.note || feeBasisLabel(line, bases)) : (line.note || 'No rate set')}
                           {line.priced && line.recurring ? ` · ${line.years} yr${line.years === 1 ? '' : 's'}` : ''}
                         </div>
+                      </td>
+                      {/* The rate card behind the figures. Without it a row
+                          reading "Est. Fee · 3 yrs" and $550 said nothing
+                          about what the service is actually charged on — and
+                          a typed Est. Fee outranking a per-site rate is
+                          exactly the case worth being able to see from here. */}
+                      <td style={{ ...cellReset, padding: '0.35rem 0.4rem', verticalAlign: 'top' }}>
+                        {(() => {
+                          const entry = pricingFor(pricing, line.name, bases);
+                          const sentence = rateSentence(entry, bases);
+                          const basis = basisFor(entry.basis, bases);
+                          if (!sentence && !basis) {
+                            return (
+                              <span style={{ color: '#B45309', fontSize: '0.72rem', whiteSpace: 'normal', display: 'block' }}
+                                title={`No pricing basis is set for ${line.name} on Dropdowns › Services Pricing, so nothing here can price it.`}
+                              >No basis set</span>
+                            );
+                          }
+                          return (
+                            <span style={{ display: 'block', whiteSpace: 'normal' }}>
+                              <span style={{ display: 'block', color: '#0F172A', fontSize: '0.74rem' }}>
+                                {sentence || <span style={{ color: '#B45309' }}>{basis.label} — no rate set</span>}
+                              </span>
+                              {entry.minFee ? (
+                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#64748B' }}
+                                  title="A floor on the rate card: once this service is in scope its fee never comes out below this."
+                                >min {formatMoney(entry.minFee)}</span>
+                              ) : null}
+                              {/* The one case where the basis beside a figure
+                                  is not what produced it. Said here rather
+                                  than left to be inferred from two numbers
+                                  that don't divide into each other. */}
+                              {line.typed && (
+                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#B45309' }}
+                                  title={`A fee typed into the Est. Year 1 Fee column on Services Pricing outranks the rate above, so ${line.name} is charged that fee here whatever the basis works out to.`}
+                                >not charged — typed fee wins</span>
+                              )}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem', verticalAlign: 'top' }}>
                         {line.unit ? (
