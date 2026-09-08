@@ -38,6 +38,7 @@ import { ScopeServicesModal } from '../OppsView2/ScopeServicesPicker';
 import { parseMulti } from '../common/columnLinks';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { normClientName } from '../../utils/clientIssues';
+import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
   loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
@@ -163,6 +164,12 @@ export function DealSizingView({
   const [bulkService, setBulkService] = useState('');
   const [bulkSkipSold, setBulkSkipSold] = useState(true);
   const [bulkUndo, setBulkUndo] = useState(null);
+  // A client the Clients tab ticks "Don't Track" isn't being worked at all,
+  // so pricing one inflates the book with money nobody is going after. They
+  // come out by default — the same call the rosters, the issues list and
+  // service coverage already make — but the tick is a working decision that
+  // gets taken back, so they stay one checkbox away rather than gone.
+  const [showUntracked, setShowUntracked] = useState(false);
 
   // The map is written through the same mirrored store the Clients tab's
   // other per-client fields use, so a scope set in one window (or on another
@@ -181,12 +188,29 @@ export function DealSizingView({
   // CDM matches and Status is Client — rather than taking that tab's filtered
   // list, so the "include old clients" toggle over there can't quietly change
   // what is being sized here.
-  const clients = useMemo(() => (
+  const allClients = useMemo(() => (
     prospects
       .filter(p => matchesCdm(p.cdm, cdmName))
       .filter(p => String(p?.status || '').trim().toLowerCase() === 'client')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects, cdmName]);
+
+  // "Don't Track" lives on the Clients tab, in its own map keyed by company
+  // name — read here through the shared hook so a tick made on that tab (or
+  // in another window) drops the client out of these totals without a reload.
+  const { clientUntrackedMap } = useClientFlagMaps();
+  const isUntracked = useCallback(
+    (client) => !!clientUntrackedMap[normClientName(client?.company)],
+    [clientUntrackedMap],
+  );
+  const untrackedCount = useMemo(
+    () => allClients.filter(isUntracked).length,
+    [allClients, isUntracked],
+  );
+  const clients = useMemo(
+    () => (showUntracked ? allClients : allClients.filter(c => !isUntracked(c))),
+    [allClients, showUntracked, isUntracked],
+  );
 
   // All three key off `settings` as a whole rather than the handful of fields
   // they actually read. Narrowing the deps is what the pricing page does, but
@@ -295,6 +319,7 @@ export function DealSizingView({
       id: c.id != null ? String(c.id) : `name:${normClientName(c.company)}`,
       company: c.company || '',
       client: c,
+      untracked: isUntracked(c),
       scope,
       estimate,
       serviceCount: estimate.services.length,
@@ -315,7 +340,7 @@ export function DealSizingView({
         ...(estimate.missing.length ? [`${estimate.missing.length} not in catalog`] : []),
       ],
     };
-  }), [clients, scopeFor, serviceRows, pricing, bases]);
+  }), [clients, scopeFor, serviceRows, pricing, bases, isUntracked]);
 
   const visible = useMemo(() => {
     let list = rows;
@@ -381,16 +406,30 @@ export function DealSizingView({
     {
       key: 'company', label: 'Company', defaultWidth: 240,
       render: (row) => (
-        <button
-          type="button"
-          onClick={e => { e.stopPropagation(); onSelectProspect?.(row.client); }}
-          disabled={!onSelectProspect}
-          style={{
-            background: 'none', border: 'none', padding: 0, textAlign: 'left',
-            color: '#1D4ED8', fontWeight: 600, fontFamily: 'inherit', fontSize: 'inherit',
-            textDecoration: 'underline', cursor: onSelectProspect ? 'pointer' : 'default',
-          }}
-        >{row.company || '-'}</button>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onSelectProspect?.(row.client); }}
+            disabled={!onSelectProspect}
+            style={{
+              background: 'none', border: 'none', padding: 0, textAlign: 'left',
+              color: '#1D4ED8', fontWeight: 600, fontFamily: 'inherit', fontSize: 'inherit',
+              textDecoration: 'underline', cursor: onSelectProspect ? 'pointer' : 'default',
+            }}
+          >{row.company || '-'}</button>
+          {/* Only ever on screen when the Don't Track clients have been
+              switched back on, so the row says why it is here and the
+              totals above can be read as including it. */}
+          {row.untracked && (
+            <span
+              title={"The Clients tab marks this client Don't Track. It is only listed because \u201cShow Don't Track clients\u201d is ticked, and its figures are in the totals above."}
+              style={{
+                fontSize: '0.66rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999,
+                background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA', whiteSpace: 'nowrap',
+              }}
+            >Don&rsquo;t Track</span>
+          )}
+        </span>
       ),
     },
     {
@@ -757,7 +796,8 @@ export function DealSizingView({
         figure here. This is a sizing exercise, not a forecast: nothing here knows whether the client wants the service.
         Scopes are saved per client and never write to the company record&rsquo;s Services Explored &mdash; but what that
         record already says is shown beside them, on the row and against each service, so you can see what a client
-        already buys before you size it again.
+        already buys before you size it again. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
+        left out, here as everywhere else &mdash; nobody is working them, so their money does not belong in these totals.
       </div>
 
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
@@ -878,7 +918,22 @@ export function DealSizingView({
           <input type="checkbox" checked={onlyScoped} onChange={e => setOnlyScoped(e.target.checked)} />
           Only clients with a scope
         </label>
-        <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>{visible.length} of {rows.length} clients</span>
+        {untrackedCount > 0 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.76rem', color: '#475569' }}>
+            <input type="checkbox" checked={showUntracked} onChange={e => setShowUntracked(e.target.checked)} />
+            <span title={`${untrackedCount} client${untrackedCount === 1 ? ' is' : 's are'} ticked Don't Track on the Clients tab. They are left out of this page and its totals — tick this to size them anyway.`}>
+              Show Don&rsquo;t Track clients <span style={{ color: '#94A3B8' }}>({untrackedCount})</span>
+            </span>
+          </label>
+        )}
+        <span style={{ fontSize: '0.74rem', color: '#94A3B8' }}>
+          {visible.length} of {rows.length} clients
+          {!showUntracked && untrackedCount > 0 && (
+            <span title="Ticked Don't Track on the Clients tab, so they are not sized here.">
+              {' '}· {untrackedCount} Don&rsquo;t Track left out
+            </span>
+          )}
+        </span>
       </div>
 
       <DataTable
@@ -894,7 +949,9 @@ export function DealSizingView({
         settings={settings}
         updateSettings={updateSettings}
         emptyMessage={rows.length === 0
-          ? 'No clients found for your CDM. The Clients subtab shows the same list.'
+          ? (untrackedCount > 0
+            ? `No clients found for your CDM beyond the ${untrackedCount} ticked Don't Track. Tick "Show Don't Track clients" to size them anyway.`
+            : 'No clients found for your CDM. The Clients subtab shows the same list.')
           : 'No clients match this filter.'}
       />
 
