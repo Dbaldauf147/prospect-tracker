@@ -152,14 +152,22 @@ const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
  *
  * @returns {
  *   months: [{ key: '2026-04', label: 'Apr', year, month }],
- *   rows:   [{ key, num, label, short, cells: [tally|null], overall: tally|null }],
- *   closed: how many closed opps fell in the window at all
+ *   rows:   [{ key, num, label, short, cells: [tally|null],
+ *             overall: tally|null, rolling12: tally|null }],
+ *   closed:        how many closed opps fell in the months shown
+ *   closedRolling: how many fell in the trailing 365 days
  * }
  * where each tally is closeRateTally's { sold, notSold, rate, included }.
  * `rows` carries the four stages high-to-low, matching the Pipeline Metrics
  * table, and an "All closed" row underneath them — the stage denominators
  * nest inside each other, so the total is what says whether a stage's move
  * is a real change or just a change in volume.
+ *
+ * `overall` adds up the months shown; `rolling12` is the trailing 365 days,
+ * the same window closeRatesByStage uses — so the twelve-month figure here
+ * is the one the funnel above already draws, and the two can be read
+ * against each other. It reaches back further than the months on show, so
+ * a row can carry a twelve-month rate with barely a month filled in.
  */
 export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.now() } = {}) {
   const span = Math.max(1, Math.floor(Number(months) || 0) || 6);
@@ -191,8 +199,17 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     { key: 'all', num: null, label: 'All closed opps', short: 'All closed', test: () => true },
   ];
   const buckets = defs.map(() => monthCols.map(() => []));
+  // The rolling-365-day bucket, run alongside the month grid rather than
+  // derived from it: the twelve-month figure has to be the SAME number the
+  // funnel and Pipeline Metrics print, and that one is a trailing 365 days
+  // with no upper bound — see closeRatesByStage, whose window this copies
+  // exactly, raw `ts` and all. Adding twelve calendar months here instead
+  // would give the app two different "12-month close rates".
+  const rolling = defs.map(() => []);
+  const rollingCutoff = nowMs - 365 * 86400000;
 
   let closed = 0;
+  let closedRolling = 0;
   for (const r of Array.isArray(oppsRecords) ? oppsRecords : []) {
     const entry = closedOppEntry(r);
     if (!entry) continue;
@@ -204,10 +221,14 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     if (ms === null) continue;
     const d = new Date(ms);
     const col = colOf.get(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-    if (col === undefined) continue;
-    closed += 1;
+    const inRolling = entry.ts >= rollingCutoff;
+    if (col === undefined && !inRolling) continue;
+    if (col !== undefined) closed += 1;
+    if (inRolling) closedRolling += 1;
     for (let i = 0; i < defs.length; i += 1) {
-      if (defs[i].test(r)) buckets[i][col].push(entry);
+      if (!defs[i].test(r)) continue;
+      if (col !== undefined) buckets[i][col].push(entry);
+      if (inRolling) rolling[i].push(entry);
     }
   }
 
@@ -216,13 +237,16 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     return {
       key: def.key, num: def.num, label: def.label, short: def.short,
       cells,
-      // The whole window as one figure, so a row that moves around can still
-      // be read against where it sits overall.
+      // The months shown as one figure, so a row that moves around can
+      // still be read against where it sits across them.
       overall: closeRateTally(buckets[i].flat()),
+      // And the year behind them, which is what says whether the recent
+      // months are a change or just the usual noise.
+      rolling12: closeRateTally(rolling[i]),
     };
   });
 
-  return { months: monthCols, rows, closed };
+  return { months: monthCols, rows, closed, closedRolling };
 }
 
 // One pipeline-metrics stage row flattened to the numbers the funnel draws.

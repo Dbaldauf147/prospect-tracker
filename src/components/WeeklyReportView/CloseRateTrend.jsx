@@ -127,12 +127,36 @@ function RateCell({ cell, stageLabel, monthLabel }) {
   );
 }
 
+/**
+ * One of the two aggregate columns at the right: a rate with the count
+ * under it, or a dash.
+ *
+ * Shared by both because they are the same figure over different windows,
+ * and two copies of this markup is how they'd end up formatting the same
+ * number two ways.
+ */
+function TotalCell({ tally, title, strong }) {
+  if (tally === null) {
+    return <td className={styles.overallCell}><span className={styles.cellEmptyInline}>—</span></td>;
+  }
+  const total = tally.sold + tally.notSold;
+  return (
+    <td className={strong ? styles.rollingCell : styles.overallCell} title={`${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}>
+      <span className={styles.cellRate}>{pct(tally.rate)}</span>
+      <span className={styles.cellCount}>{tally.sold}/{total}</span>
+    </td>
+  );
+}
+
 export function CloseRateTrend({ trend }) {
-  const { months, rows, closed } = trend;
-  if (!closed) {
+  const { months, rows, closed, closedRolling } = trend;
+  // Nothing in the months shown AND nothing in the trailing year: only then
+  // is there no table. A book that closed nothing since the spring still has
+  // a 12-month rate worth printing, and the grid says so with dashes.
+  if (!closed && !closedRolling) {
     return (
       <div className={styles.empty}>
-        No deals closed in the last {months.length} months, or the Opps cache is empty.
+        No deals closed in the last 12 months, or the Opps cache is empty.
         Open <strong>Opps</strong> so this year’s closes are cached and the trend can be drawn.
       </div>
     );
@@ -148,8 +172,16 @@ export function CloseRateTrend({ trend }) {
               <th key={m.key} className={styles.monthHead} scope="col">{m.label}</th>
             ))}
             <th className={styles.trendHead} scope="col">Trend</th>
-            <th className={styles.overallHead} scope="col" title="Every month in the window taken together, which is the figure each month should be read against.">
+            <th className={styles.overallHead} scope="col" title={`The ${months.length} months shown, added together.`}>
               {months.length} mo
+            </th>
+            {/* The trailing year — the same rolling-365-day figure the funnel
+                above draws and Pipeline Metrics prints, so the row ends on a
+                number that can be checked against both. It reaches back
+                further than the columns to its left, which is the point: it
+                is what the recent months are a departure from. */}
+            <th className={styles.rollingHead} scope="col" title="A rolling 365 days to today — the same window the pipeline funnel and Pipeline Metrics use for Close Rate, so this figure matches theirs. Reaches further back than the months on the left.">
+              12 mo
             </th>
           </tr>
         </thead>
@@ -176,18 +208,15 @@ export function CloseRateTrend({ trend }) {
                 <td className={styles.trendCell}>
                   <Sparkline cells={row.cells} months={months} color={color} label={row.short} />
                 </td>
-                <td className={styles.overallCell}>
-                  {row.overall === null
-                    ? <span className={styles.cellEmptyInline}>—</span>
-                    : (
-                      <span title={`${row.short}: ${row.overall.sold} sold of ${row.overall.sold + row.overall.notSold} closed across the whole window.`}>
-                        <span className={styles.cellRate}>{pct(row.overall.rate)}</span>
-                        <span className={styles.cellCount}>
-                          {row.overall.sold}/{row.overall.sold + row.overall.notSold}
-                        </span>
-                      </span>
-                    )}
-                </td>
+                <TotalCell
+                  tally={row.overall}
+                  title={`${row.short}, across the ${months.length} months shown:`}
+                />
+                <TotalCell
+                  tally={row.rolling12}
+                  strong
+                  title={`${row.short}, rolling 365 days:`}
+                />
               </tr>
             );
           })}
@@ -197,7 +226,9 @@ export function CloseRateTrend({ trend }) {
         A deal counts toward every stage it reached, so Stage 3&rsquo;s denominator is the widest and
         Stage 6&rsquo;s the narrowest, and the rates aren&rsquo;t meant to add up. Pull-through opps are
         left out. Each month is the deals whose <strong>Close Date</strong> falls in it; a month a
-        stage closed nothing is blank, not 0%.
+        stage closed nothing is blank, not 0%. <strong>{months.length} mo</strong> adds up the months
+        shown; <strong>12 mo</strong> is a rolling 365 days, the same window the funnel above uses, so it
+        reaches back past the first column.
       </div>
     </div>
   );
