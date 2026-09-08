@@ -382,6 +382,17 @@ export function planBulkRemove({ clients = [], service, scopeOf }) {
   return clients.filter(c => normalizeClientScope(scopeOf?.(c)).services.includes(name));
 }
 
+/**
+ * Which clients have any services picked at all, for "clear all services".
+ *
+ * The same shape as the two plans above and for the same reason: the button
+ * says how many rows it is about to empty before it empties them, and a
+ * client with nothing picked isn't counted as something being cleared.
+ */
+export function planClearServices({ clients = [], scopeOf }) {
+  return clients.filter(c => normalizeClientScope(scopeOf?.(c)).services.length > 0);
+}
+
 /** A scope with one service added, keeping everything else as it was. */
 export function withService(scope, name) {
   const next = normalizeClientScope(scope);
@@ -400,5 +411,23 @@ export function withoutService(scope, name) {
   const units = { ...next.serviceUnits };
   delete units[name];
   next.serviceUnits = units;
+  return next;
+}
+
+/**
+ * A scope with every service selection taken off — the per-service unit
+ * counts going with them, exactly as withoutService takes one service's
+ * count with it.
+ *
+ * What stays is what wasn't a service pick: the client-level counts (sites,
+ * meters, invoices) and any typed deal size. Those were answered about the
+ * client rather than about a service, so re-picking services shouldn't mean
+ * typing them again — and a scope left holding only those is still "nobody
+ * has sized this client", which scopeIsEmpty already reports.
+ */
+export function clearServices(scope) {
+  const next = normalizeClientScope(scope);
+  next.services = [];
+  next.serviceUnits = {};
   return next;
 }

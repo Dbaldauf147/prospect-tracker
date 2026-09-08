@@ -55,11 +55,13 @@ import {
   normalizeClientScope,
   planBulkAdd,
   planBulkRemove,
+  planClearServices,
   rollUpDealSizing,
   scopeIsEmpty,
   scopeStatusCounts,
   withService,
   withoutService,
+  clearServices,
 } from '../../utils/clientDealSizing';
 import {
   feeBasisLabel,
@@ -385,6 +387,32 @@ export function DealSizingView({
       `Removed ${bulkService} from ${bulkPlan.have.length} client${bulkPlan.have.length === 1 ? '' : 's'}.`,
     );
   }, [bulkPlan, bulkService, scopeFor, applyScopes]);
+
+  // Start the whole book over: every service picked against every client
+  // listed, taken off in one write. Independent of the service picker above —
+  // it is about what has already been picked, not about a service being put
+  // in front of the book — so it reads the listed clients directly.
+  const clearPlan = useMemo(
+    () => planClearServices({ clients: visible.map(r => r.client), scopeOf: (c) => scopeFor(c.company) }),
+    [visible, scopeFor],
+  );
+
+  const clearAllServices = useCallback(() => {
+    const n = clearPlan.length;
+    if (!n) return;
+    // Undo covers the misfire, but this is the one control that can empty the
+    // whole page in a click and the rows it clears scroll off screen — so it
+    // asks first, and says what it is keeping.
+    const ok = window.confirm(
+      `Clear the services picked for ${n} client${n === 1 ? '' : 's'}?\n\n`
+      + 'Typed counts and deal sizes stay. This can be undone.',
+    );
+    if (!ok) return;
+    applyScopes(
+      clearPlan.map(c => [c.company, clearServices(scopeFor(c.company))]),
+      `Cleared the services on ${n} client${n === 1 ? '' : 's'}.`,
+    );
+  }, [clearPlan, scopeFor, applyScopes]);
 
   const toggleRow = useCallback((id) => {
     setExpandedIds(prev => {
@@ -847,9 +875,10 @@ export function DealSizingView({
         )}
       </div>
 
-      {/* One service across the whole book. This is the only control on the
-          page that writes to every client at once, so it says what it will do
-          before it does it, and what it did afterwards — with a way back. */}
+      {/* The book-wide edits: one service put in front of every client listed,
+          and the way to start over. These are the only controls on the page
+          that write to every client at once, so they say what they will do
+          before they do it, and what they did afterwards — with a way back. */}
       <div style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.6rem 0.75rem', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Add one service to every client listed</span>
@@ -890,6 +919,24 @@ export function DealSizingView({
               style={{ padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', border: '1px solid #FECACA', background: '#fff', color: '#B91C1C', cursor: 'pointer' }}
             >Remove from {bulkPlan.have.length}</button>
           )}
+          {/* Pushed to the far end: it belongs to the bar — it writes to the
+              whole book — but not to the service picked in it. */}
+          <button
+            type="button"
+            onClick={clearAllServices}
+            disabled={!clearPlan.length}
+            title={clearPlan.length
+              ? `Take every service off the ${clearPlan.length} listed client${clearPlan.length === 1 ? '' : 's'} that has any picked, and start the sizing over. Typed counts and deal sizes stay, and it can be undone.`
+              : 'No client listed has any services picked'}
+            style={{
+              marginLeft: 'auto',
+              padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              border: '1px solid ' + (clearPlan.length ? '#FECACA' : '#E2E8F0'),
+              background: clearPlan.length ? '#fff' : '#F8FAFC',
+              color: clearPlan.length ? '#B91C1C' : '#94A3B8',
+              cursor: clearPlan.length ? 'pointer' : 'default',
+            }}
+          >Clear all services{clearPlan.length ? ` (${clearPlan.length})` : ''}</button>
         </div>
 
         {/* The breakdown. Every client the pick would NOT change is accounted
