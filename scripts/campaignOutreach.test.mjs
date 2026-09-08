@@ -95,13 +95,21 @@ const saved = [
   { title: 'Nobody in it', uniqueRecipients: 0, totalContacts: 0, savedAt: daysAgo(2) },
   { title: 'Parked halfway', uniqueRecipients: 1, totalContacts: 99, savedAt: daysAgo(300), refreshedAt: daysAgo(300) },
 ];
-check('only the unfinished ones, worst gap first, inactive last',
+check('every campaign under 100% sent, worst gap first, inactive last',
   unfinishedCampaigns(saved, NOW).map(r => [r.label, r.pct, r.remaining, r.active]),
   [
     ['Data Center Impact Outlook', 39.4, 20, true],
     ['Mexico Electric Power Cost Increase', 74.1, 7, true],
+    // Saved and never sent to anyone: 0% is under 100%, so it is listed
+    // rather than quietly dropped for having nobody on it yet. No countable
+    // sends left, so it sits at the foot of the active ones.
+    ['Nobody in it', 0, 0, true],
     ['Parked halfway', 1, 98, false],
   ]);
+check('a campaign with no list yet carries the totals that say so',
+  unfinishedCampaigns(saved, NOW).filter(r => r.label === 'Nobody in it')
+    .map(r => [r.sent, r.total, r.remaining, r.pct]),
+  [[0, 0, 0, 0]]);
 // Pausing the campaign that led the list drops it to the bottom — below even
 // the inactive one, because it is the campaign already dealt with — and it
 // climbs back on its own when the pause lifts.
@@ -110,18 +118,19 @@ check('a paused campaign sorts last and says so',
   unfinishedCampaigns(withPause, NOW).map(r => [r.label, r.status]),
   [
     ['Mexico Electric Power Cost Increase', 'active'],
+    ['Nobody in it', 'active'],
     ['Parked halfway', 'inactive'],
     ['Data Center Impact Outlook', 'paused'],
   ]);
 check('the row carries when it comes back',
-  unfinishedCampaigns(withPause, NOW)[2].pausedUntil, inDays(2));
+  unfinishedCampaigns(withPause, NOW)[3].pausedUntil, inDays(2));
 check('a lapsed pause leaves no trace on the row',
   unfinishedCampaigns(saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: daysAgo(1) } : c)), NOW)[0],
   { ...unfinishedCampaigns(saved, NOW)[0] });
 check('and it leads the list again',
   unfinishedCampaigns(withPause, NOW + 3 * 24 * 60 * 60 * 1000).map(r => r.status)[0], 'active');
 check('rows carry their place in the saved list',
-  unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 4]);
+  unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 3, 4]);
 check('everything sent', unfinishedCampaigns([{ uniqueRecipients: 5, totalContacts: 5 }], NOW), []);
 check('nothing saved', unfinishedCampaigns(undefined, NOW), []);
 // One junk entry must not take the real campaigns with it.
@@ -163,8 +172,22 @@ check('and it holds it open again the moment the pause lifts',
 check('an inactive campaign still counts as unsent',
   campaignsAllSent([{ title: 'Parked halfway', uniqueRecipients: 1, totalContacts: 99, savedAt: daysAgo(300), refreshedAt: daysAgo(300) }], NOW),
   false);
-check('an empty campaign is neither work nor proof',
+// A campaign nobody has been added to is listed under the step as work, so
+// it has to hold the step open too — otherwise the ladder says "all caught
+// up" over a list of campaigns still to send.
+check('an empty campaign is work, so it holds the step open',
   campaignsAllSent([{ title: 'Nobody in it', uniqueRecipients: 0, totalContacts: 0 }], NOW), false);
+check('and it holds it open beside a campaign that did finish',
+  campaignsAllSent([
+    { title: 'Data Center Impact Outlook', uniqueRecipients: 27, totalContacts: 27, savedAt: daysAgo(8) },
+    { title: 'Boston Meetup', uniqueRecipients: 0, totalContacts: 0, savedAt: daysAgo(1) },
+  ], NOW), false);
+// Pausing it is still the way to park it, same as any other campaign.
+check('unless it has been paused',
+  campaignsAllSent([
+    { title: 'Data Center Impact Outlook', uniqueRecipients: 27, totalContacts: 27, savedAt: daysAgo(8) },
+    { title: 'Boston Meetup', uniqueRecipients: 0, totalContacts: 0, pausedUntil: inDays(1) },
+  ], NOW), true);
 // Nothing saved proves nothing about today's outreach, so the step falls
 // back to being marked by hand rather than clearing itself.
 check('no campaigns at all does not clear the step', campaignsAllSent([], NOW), false);

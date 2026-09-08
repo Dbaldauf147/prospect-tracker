@@ -372,7 +372,7 @@ function CampaignOutreachList({ rows, onNavigate }) {
     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
-          Campaigns still going out:
+          Campaigns under 100% sent:
         </span>
         {onNavigate && (
           <button
@@ -389,7 +389,9 @@ function CampaignOutreachList({ rows, onNavigate }) {
       {rows.map((c) => (
         <div
           key={`${c.index}-${c.label}`}
-          title={`${c.sent} of ${c.total} sent (${c.pct}%) — ${c.remaining} still to go`
+          title={(c.total > 0
+            ? `${c.sent} of ${c.total} sent (${c.pct}%) — ${c.remaining} still to go`
+            : 'Saved with nobody on it yet — 0% sent. Open the campaign to build its list')
             + (c.status === 'paused'
               ? ` · Paused until ${fmtPauseDate(c.pausedUntil)}, then back on this list on its own`
               : c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
@@ -408,9 +410,12 @@ function CampaignOutreachList({ rows, onNavigate }) {
           }}>{c.label}</span>
           {/* Same figures the Saved Campaigns table prints, through the same
               function, so the two pages can't disagree about a percentage.
-              Tabular figures keep the column straight down the list. */}
+              Tabular figures keep the column straight down the list. A
+              campaign with no list yet says so instead of printing "0 to
+              go", which would read as nothing left to do on the one row
+              where everything is. */}
           <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-            {c.pct}% sent · {c.remaining} to go
+            {c.total > 0 ? `${c.pct}% sent · ${c.remaining} to go` : '0% sent · no contacts yet'}
           </span>
           {c.status === 'paused' ? (
             <span style={{

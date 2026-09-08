@@ -102,6 +102,19 @@ export function campaignOutreachLabel(c) {
 }
 
 /**
+ * Is this campaign's sending finished — 100% of its list sent to?
+ *
+ * One rule, so the ladder's list and the step's status can't disagree about
+ * what "done" is. A campaign with nobody in it is *not* finished: it was
+ * saved to be sent and 0% has gone out, which is the campaign at its least
+ * done rather than its most.
+ */
+export function isCampaignFullySent(c) {
+  const { total, remaining } = campaignSendStats(c);
+  return total > 0 && remaining <= 0;
+}
+
+/**
  * Has the market-update outreach already been done, judged by the campaigns
  * themselves rather than by a tick?
  *
@@ -112,9 +125,11 @@ export function campaignOutreachLabel(c) {
  *
  * Paused campaigns are left out — a pause is the user having dealt with a
  * campaign for the next couple of days, so it isn't work owed today (and it
- * rejoins the list, and this answer, when the pause lifts). Campaigns with
- * nobody in them are ignored the same way `unfinishedCampaigns` ignores
- * them: there is no outreach in an empty list either way.
+ * rejoins the list, and this answer, when the pause lifts). Everything else
+ * short of 100% holds the step open, including a campaign with nobody in it
+ * yet: it is listed under the step as work to finish, so it has to hold the
+ * status open too — a step reading "all caught up" above a list of campaigns
+ * still to send is the one thing this function exists to prevent.
  *
  * Returns:
  *   null   — the campaigns haven't loaded, so nothing is known yet
@@ -126,27 +141,30 @@ export function campaignOutreachLabel(c) {
  */
 export function campaignsAllSent(campaigns, nowMs = Date.now()) {
   if (!Array.isArray(campaigns)) return null;
-  let sendable = 0;
+  let real = 0;
   for (const c of campaigns) {
     if (!c || typeof c !== 'object') continue;
-    const { total, remaining } = campaignSendStats(c);
-    if (total <= 0) continue;
-    sendable += 1;
-    if (remaining > 0 && !isCampaignPaused(c, nowMs)) return false;
+    real += 1;
+    if (!isCampaignFullySent(c) && !isCampaignPaused(c, nowMs)) return false;
   }
-  return sendable > 0;
+  return real > 0;
 }
 
 /**
  * The campaigns that aren't finished sending, as rows to print.
  *
- * A campaign with nobody left to send to is done and drops out — that's
- * the "100%" line. So does one with no contacts at all: there is no
- * outreach to finish, and a row reading "0% · 0 to go" is noise.
+ * Every campaign under 100% sent is listed. A campaign with nobody left to
+ * send to is done and drops out — that's the "100%" line — and nothing else
+ * does, including a campaign saved with no contacts on it yet: 0% sent is a
+ * campaign written and never sent, which is exactly the kind that goes
+ * quiet. Its row says "no contacts yet" rather than counting a send that
+ * hasn't been set up (see `total` on the row).
  *
  * Ordered by what's left to do: the campaign owing the most sends leads,
  * ties broken by the lower percentage and then by name so the list is
- * stable between renders. Inactive campaigns sort below the active ones and
+ * stable between renders. A campaign with no list yet owes no countable
+ * sends, so it sits at the bottom of its group — there is nothing to send
+ * until someone is on it. Inactive campaigns sort below the active ones and
  * paused ones below those — all three are still listed, because a parked
  * campaign that never finished is exactly the thing that goes quiet and gets
  * forgotten, but a campaign deliberately paused until a date is the one the
@@ -162,7 +180,7 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
   (Array.isArray(campaigns) ? campaigns : []).forEach((c, index) => {
     if (!c || typeof c !== 'object') return;
     const stats = campaignSendStats(c);
-    if (stats.total <= 0 || stats.remaining <= 0) return;
+    if (isCampaignFullySent(c)) return;
     rows.push({
       index,
       label: campaignOutreachLabel(c),
