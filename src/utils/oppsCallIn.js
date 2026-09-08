@@ -121,3 +121,30 @@ export function sortByCallInAsc(records) {
   tagged.sort((a, b) => (a.key - b.key) || (a.i - b.i));
   return tagged.map(x => x.r);
 }
+
+// True when a remote copy of the dataset would change where any row belongs
+// in Call In order — a Follow Up re-dated on another device, a Call In
+// override cleared there, or a row this browser has never seen. Compares the
+// *resolved* Call In rather than the raw fields, so a reformat of the same
+// date doesn't read as a move.
+//
+// Opps 2 uses it to decide whether an incoming real-time sync should re-rank
+// the table. Without it a row re-dated elsewhere keeps the place this browser
+// last gave it, which — since triage runs top-down — is how an opp ends up
+// looking stuck on the top row.
+export function remoteChangesCallInOrder(localRecords, remoteRecords) {
+  if (!Array.isArray(remoteRecords) || remoteRecords.length === 0) return false;
+  const localById = new Map();
+  for (const r of (Array.isArray(localRecords) ? localRecords : [])) {
+    if (r && r._id != null) localById.set(String(r._id), r);
+  }
+  for (const r of remoteRecords) {
+    if (!r || r._id == null) continue;
+    const local = localById.get(String(r._id));
+    // A row that arrived from elsewhere has no place in this browser's
+    // order yet, so it needs one.
+    if (!local) return true;
+    if (resolveCallIn(local) !== resolveCallIn(r)) return true;
+  }
+  return false;
+}
