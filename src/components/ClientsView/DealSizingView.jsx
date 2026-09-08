@@ -40,17 +40,24 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { normClientName } from '../../utils/clientIssues';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
-  loadClientScopeMap, setClientScope, CLIENT_SCOPE_EVENT,
+  loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
 } from '../../utils/clientManagerStore';
+import { serviceStatusColor, serviceBucket } from '../../utils/serviceStatusColors';
 import {
   CLIENT_COUNT_FIELDS,
   emptyClientScope,
   estimateClient,
+  exploredStatus,
   missingCounts,
   needsDealSize,
   normalizeClientScope,
+  planBulkAdd,
+  planBulkRemove,
   rollUpDealSizing,
   scopeIsEmpty,
+  scopeStatusCounts,
+  withService,
+  withoutService,
 } from '../../utils/clientDealSizing';
 import {
   feeBasisLabel,
@@ -117,6 +124,24 @@ function CountInput({ value, placeholder, onCommit, width = 96 }) {
 const panelReset = { display: 'block', width: '100%', maxWidth: '100%', whiteSpace: 'normal', overflow: 'visible' };
 const cellReset = { maxWidth: 'none', overflow: 'visible', textOverflow: 'clip' };
 
+// What the company card says about a service, as a chip. Same palette the
+// card's own Services Explored grid and the Opps Scope picker use, so a
+// service reads the same colour wherever it is shown.
+function StatusPill({ status, title }) {
+  if (!status) return null;
+  const { bg, color } = serviceStatusColor(status);
+  return (
+    <span
+      title={title}
+      style={{
+        display: 'inline-block', fontSize: '0.66rem', fontWeight: 700, whiteSpace: 'nowrap',
+        padding: '0.05rem 0.4rem', borderRadius: 999,
+        background: bg || '#F1F5F9', color: color || '#475569',
+      }}
+    >{status}</span>
+  );
+}
+
 const tile = {
   flex: '1 1 150px', minWidth: 140, background: '#fff', border: '1px solid #E2E8F0',
   borderRadius: 10, padding: '0.55rem 0.75rem',
@@ -132,6 +157,12 @@ export function DealSizingView({
   const [picking, setPicking] = useState(null); // the client whose board is open
   const [query, setQuery] = useState('');
   const [onlyScoped, setOnlyScoped] = useState(false);
+  // The bulk bar: which service to put in front of the book, whether to leave
+  // the clients who already buy it alone, and what the last bulk edit changed
+  // so it can be put back.
+  const [bulkService, setBulkService] = useState('');
+  const [bulkSkipSold, setBulkSkipSold] = useState(true);
+  const [bulkUndo, setBulkUndo] = useState(null);
 
   // The map is written through the same mirrored store the Clients tab's
   // other per-client fields use, so a scope set in one window (or on another
@@ -168,6 +199,19 @@ export function DealSizingView({
   // picker everywhere else, so it cannot be in a deal here either.
   const serviceRows = useMemo(() => pricedServiceRows(settings), [settings]);
   const serviceNames = useMemo(() => serviceRows.map(r => r.name), [serviceRows]);
+  // The same rows grouped by their board box, for the bulk picker's optgroups.
+  // A flat list of 150-odd services is unpickable; grouped, it reads the way
+  // the services board does everywhere else.
+  const serviceBuckets = useMemo(() => {
+    const byBucket = new Map();
+    for (const row of serviceRows) {
+      if (!byBucket.has(row.bucket)) byBucket.set(row.bucket, []);
+      byBucket.get(row.bucket).push(row.name);
+    }
+    return [...byBucket.entries()]
+      .map(([name, services]) => ({ name, services }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [serviceRows]);
 
   const scopeFor = useCallback(
     (company) => normalizeClientScope(scopeMap[normClientName(company)]) || emptyClientScope(),
@@ -192,6 +236,51 @@ export function DealSizingView({
     });
   }, []);
 
+  // Apply an edit to many clients as one write, and keep what was there
+  // before so it can be undone. A bulk add touches every client on screen and
+  // there is no way to eyeball forty rows to see what it did, so "undo" is
+  // part of the feature rather than a nicety.
+  const applyScopes = useCallback((entries, message) => {
+    if (!entries.length) return;
+    const previous = entries.map(([company]) => {
+      const key = normClientName(company);
+      const before = scopeMap[key];
+      return [company, before ? normalizeClientScope(before) : null];
+    });
+    const stored = entries.map(([company, scope]) => {
+      const normalized = normalizeClientScope(scope);
+      return [company, scopeIsEmpty(normalized) ? null : normalized];
+    });
+    setClientScopes(stored);
+    setScopeMap(prev => {
+      const copy = { ...prev };
+      for (const [company, scope] of stored) {
+        const key = normClientName(company);
+        if (!key) continue;
+        if (scope) copy[key] = scope;
+        else delete copy[key];
+      }
+      return copy;
+    });
+    setBulkUndo({ entries: previous, message });
+  }, [scopeMap]);
+
+  const undoBulk = useCallback(() => {
+    if (!bulkUndo) return;
+    setClientScopes(bulkUndo.entries);
+    setScopeMap(prev => {
+      const copy = { ...prev };
+      for (const [company, scope] of bulkUndo.entries) {
+        const key = normClientName(company);
+        if (!key) continue;
+        if (scope) copy[key] = scope;
+        else delete copy[key];
+      }
+      return copy;
+    });
+    setBulkUndo(null);
+  }, [bulkUndo]);
+
   const patchScope = useCallback((company, patch) => {
     const current = normalizeClientScope(scopeMap[normClientName(company)]);
     saveScope(company, { ...current, ...patch });
@@ -209,6 +298,11 @@ export function DealSizingView({
       scope,
       estimate,
       serviceCount: estimate.services.length,
+      // What the company card already says about the services in this scope.
+      // Sizing a client for work they demonstrably already buy is the quiet
+      // way this page overstates a book, so the count is on the row rather
+      // than one expand away.
+      statusCounts: scopeStatusCounts(c, scope),
       year1: estimate.services.length ? estimate.year1Total : null,
       contractValue: estimate.services.length ? estimate.contractValue : null,
       recurringAnnual: estimate.services.length ? estimate.recurringAnnual : null,
@@ -239,6 +333,35 @@ export function DealSizingView({
   // Totals over what's on screen, so narrowing to one bucket of clients
   // re-totals to that bucket rather than always reporting the whole book.
   const totals = useMemo(() => rollUpDealSizing(visible.map(r => r.estimate)), [visible]);
+
+  // What the bulk bar would do, worked out from the clients actually listed
+  // below it. Recomputed as the pick changes so the button can say what it is
+  // about to do rather than reporting it afterwards.
+  const bulkPlan = useMemo(() => {
+    if (!bulkService) return null;
+    const clients2 = visible.map(r => r.client);
+    const scopeOf = (c) => scopeFor(c.company);
+    return {
+      ...planBulkAdd({ clients: clients2, service: bulkService, scopeOf, skipSold: bulkSkipSold }),
+      have: planBulkRemove({ clients: clients2, service: bulkService, scopeOf }),
+    };
+  }, [bulkService, bulkSkipSold, visible, scopeFor]);
+
+  const addToAll = useCallback(() => {
+    if (!bulkPlan?.add.length) return;
+    applyScopes(
+      bulkPlan.add.map(c => [c.company, withService(scopeFor(c.company), bulkService)]),
+      `Added ${bulkService} to ${bulkPlan.add.length} client${bulkPlan.add.length === 1 ? '' : 's'}.`,
+    );
+  }, [bulkPlan, bulkService, scopeFor, applyScopes]);
+
+  const removeFromAll = useCallback(() => {
+    if (!bulkPlan?.have.length) return;
+    applyScopes(
+      bulkPlan.have.map(c => [c.company, withoutService(scopeFor(c.company), bulkService)]),
+      `Removed ${bulkService} from ${bulkPlan.have.length} client${bulkPlan.have.length === 1 ? '' : 's'}.`,
+    );
+  }, [bulkPlan, bulkService, scopeFor, applyScopes]);
 
   const toggleRow = useCallback((id) => {
     setExpandedIds(prev => {
@@ -319,6 +442,62 @@ export function DealSizingView({
                     border: `1px solid ${typed ? '#BFDBFE' : '#E2E8F0'}`,
                   }}
                 >{n.toLocaleString()} {label.toLowerCase()}</span>
+              );
+            })}
+          </span>
+        );
+      },
+    },
+    {
+      // History against the what-if. A scope is a proposal; the company card
+      // is the record of what has actually been sold, quoted or ruled out.
+      // Shown side by side because a large number next to "3 sold" means
+      // something very different from the same number next to nothing.
+      key: 'explored', label: 'On the card', defaultWidth: 210,
+      getSortValue: (row) => row.statusCounts.sold,
+      getFilterValue: (row) => {
+        if (!row.serviceCount) return '';
+        const parts = [];
+        if (row.statusCounts.sold) parts.push('Sold');
+        if (row.statusCounts.inProgress) parts.push('In progress');
+        if (row.statusCounts.notSold) parts.push('Not sold');
+        return parts.length ? parts.join(', ') : 'Not explored';
+      },
+      exportValue: (row) => {
+        if (!row.serviceCount) return '';
+        const c = row.statusCounts;
+        return [
+          c.sold ? `${c.sold} sold` : '',
+          c.inProgress ? `${c.inProgress} in progress` : '',
+          c.notSold ? `${c.notSold} not sold` : '',
+          c.none ? `${c.none} not explored` : '',
+        ].filter(Boolean).join(', ');
+      },
+      render: (row) => {
+        if (!row.serviceCount) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        const counts = row.statusCounts;
+        const chips = [
+          ['sold', counts.sold, 'already buy this — sizing it as new business counts revenue you already have'],
+          ['inProgress', counts.inProgress, 'are already in flight for this client'],
+          ['notSold', counts.notSold, 'have been put to this client and turned down'],
+        ].filter(([, n]) => n > 0);
+        if (!chips.length) {
+          return <span style={{ fontSize: '0.7rem', color: '#94A3B8' }} title="None of the services in this scope has a status on the company card — all new ground.">Not explored</span>;
+        }
+        return (
+          <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {chips.map(([key, n, why]) => {
+              const bucket = serviceBucket(key);
+              return (
+                <span
+                  key={key}
+                  title={`${n} of the ${row.serviceCount} service${row.serviceCount === 1 ? '' : 's'} in this scope ${why}. Expand the row to see which.`}
+                  style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999,
+                    whiteSpace: 'nowrap', background: bucket?.bg, color: bucket?.color,
+                    border: '1px solid #E2E8F0',
+                  }}
+                >{n} {bucket?.label.toLowerCase()}</span>
               );
             })}
           </span>
@@ -430,7 +609,13 @@ export function DealSizingView({
                   {estimate.lines.map(line => (
                     <tr key={line.name} style={{ borderTop: '1px solid #E2E8F0' }}>
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem 0.35rem 0', verticalAlign: 'top' }}>
-                        <div style={{ display: 'block', fontWeight: 600, color: '#0F172A', whiteSpace: 'normal' }}>{line.name}</div>
+                        <div style={{ display: 'block', fontWeight: 600, color: '#0F172A', whiteSpace: 'normal' }}>
+                          {line.name}{' '}
+                          <StatusPill
+                            status={exploredStatus(client, line.name)}
+                            title={`The company card says this service is "${exploredStatus(client, line.name)}" for ${company}. That is history, not part of this estimate — but a service they already buy is not new business.`}
+                          />
+                        </div>
                         <div style={{ display: 'block', fontSize: '0.7rem', whiteSpace: 'normal', color: line.priced ? '#64748B' : '#B45309' }}>
                           {line.priced ? (line.note || feeBasisLabel(line, bases)) : (line.note || 'No rate set')}
                           {line.priced && line.recurring ? ` · ${line.years} yr${line.years === 1 ? '' : 's'}` : ''}
@@ -570,8 +755,9 @@ export function DealSizingView({
         Pick services against a client and the estimate builds itself from that client&rsquo;s own Sites and Accounts —
         no re-keying. Rates come from <strong>Dropdowns › Services Pricing</strong>, so a rate edited there moves every
         figure here. This is a sizing exercise, not a forecast: nothing here knows whether the client wants the service.
-        Scopes are saved per client and are kept away from the company record&rsquo;s Services Explored, which is history
-        rather than what-if.
+        Scopes are saved per client and never write to the company record&rsquo;s Services Explored &mdash; but what that
+        record already says is shown beside them, on the row and against each service, so you can see what a client
+        already buys before you size it again.
       </div>
 
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
@@ -595,6 +781,88 @@ export function DealSizingView({
           <div style={{ ...tile, borderColor: '#FDE68A', background: '#FFFBEB' }} title="Services picked against a client that have no rate on the pricing page. They contribute nothing to the totals — price them and these figures go up.">
             <div style={{ ...tileNum, color: '#92400E' }}>{totals.unpriced}</div>
             <div style={{ ...tileLabel, color: '#92400E' }}>Unpriced picks</div>
+          </div>
+        )}
+      </div>
+
+      {/* One service across the whole book. This is the only control on the
+          page that writes to every client at once, so it says what it will do
+          before it does it, and what it did afterwards — with a way back. */}
+      <div style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.6rem 0.75rem', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Add one service to every client listed</span>
+          <select
+            value={bulkService}
+            onChange={e => { setBulkService(e.target.value); setBulkUndo(null); }}
+            style={{ flex: '1 1 260px', maxWidth: 380, padding: '0.35rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+          >
+            <option value="">Pick a service…</option>
+            {serviceBuckets.map(group => (
+              <optgroup key={group.name} label={group.name}>
+                {group.services.map(name => <option key={name} value={name}>{name}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.74rem', color: '#475569' }}>
+            <input type="checkbox" checked={bulkSkipSold} onChange={e => setBulkSkipSold(e.target.checked)} />
+            <span title="A client whose company card says they already buy this is not new business. Sizing it as if it were counts revenue you already have — twice, if it is also under contract.">
+              Skip clients who already buy it
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={addToAll}
+            disabled={!bulkPlan?.add.length}
+            style={{
+              padding: '0.35rem 0.8rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
+              border: '1px solid ' + (bulkPlan?.add.length ? '#1D4ED8' : '#CBD5E1'),
+              background: bulkPlan?.add.length ? '#1D4ED8' : '#F8FAFC',
+              color: bulkPlan?.add.length ? '#fff' : '#94A3B8',
+              cursor: bulkPlan?.add.length ? 'pointer' : 'default',
+            }}
+          >{bulkPlan?.add.length ? `Add to ${bulkPlan.add.length} client${bulkPlan.add.length === 1 ? '' : 's'}` : 'Add to all'}</button>
+          {bulkPlan?.have.length > 0 && (
+            <button
+              type="button"
+              onClick={removeFromAll}
+              style={{ padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', border: '1px solid #FECACA', background: '#fff', color: '#B91C1C', cursor: 'pointer' }}
+            >Remove from {bulkPlan.have.length}</button>
+          )}
+        </div>
+
+        {/* The breakdown. Every client the pick would NOT change is accounted
+            for by name of reason, so "Add to 31" out of 44 listed is never a
+            number the reader has to explain to themselves. */}
+        {bulkPlan && (
+          <div style={{ fontSize: '0.73rem', color: '#64748B', marginTop: '0.45rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <span><strong style={{ color: '#0F172A' }}>{bulkPlan.add.length}</strong> will get it</span>
+            {bulkPlan.scoped.length > 0 && (
+              <span title="Already in this client's scope — adding it again changes nothing.">
+                <strong style={{ color: '#334155' }}>{bulkPlan.scoped.length}</strong> already scoped
+              </span>
+            )}
+            {bulkPlan.sold.length > 0 && (
+              <span title={bulkSkipSold
+                ? 'The company card says these clients already buy it, so they are being left out. Untick the box to size them anyway — a renewal is a real thing to want.'
+                : 'The company card says these clients already buy it, and they are being included. Their figures are a renewal, not new business.'}>
+                <strong style={{ color: bulkSkipSold ? '#166534' : '#B45309' }}>{bulkPlan.sold.length}</strong>
+                {bulkSkipSold ? ' already buy it — skipped' : ' already buy it — included'}
+              </span>
+            )}
+            {bulkPlan.add.length === 0 && (
+              <span style={{ color: '#94A3B8' }}>Nothing to do for the clients listed below.</span>
+            )}
+          </div>
+        )}
+
+        {bulkUndo && (
+          <div style={{ fontSize: '0.73rem', color: '#166534', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '0.35rem 0.55rem', marginTop: '0.45rem', display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>{bulkUndo.message}</span>
+            <button
+              type="button"
+              onClick={undoBulk}
+              style={{ background: 'none', border: 'none', padding: 0, color: '#1D4ED8', fontWeight: 700, fontFamily: 'inherit', fontSize: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+            >Undo</button>
           </div>
         )}
       </div>

@@ -99,6 +99,28 @@ export function setClientScope(company, scope) {
   persistMap(SCOPE_KEY, map, CLIENT_SCOPE_EVENT);
 }
 
+// Save a scope against several clients at once, in one read/write of the map.
+//
+// The Deal Sizing subtab puts one service in front of the whole book, which is
+// forty-odd writes. Doing them through setClientScope would re-read, re-write
+// and re-broadcast the map once per client — forty renders of a forty-row
+// table — and would leave the map half-updated if one throw stopped it
+// partway. Applied as one edit, it either happens or it doesn't.
+//
+// @param entries [company, scope] pairs. A null scope clears that client.
+export function setClientScopes(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!list.length) return;
+  const map = loadClientScopeMap();
+  for (const [company, scope] of list) {
+    const key = normKey(company);
+    if (!key) continue;
+    if (scope) map[key] = scope;
+    else delete map[key];
+  }
+  persistMap(SCOPE_KEY, map, CLIENT_SCOPE_EVENT);
+}
+
 export function setClientLouisville(company, checked) {
   const key = normKey(company);
   if (!key) return;
