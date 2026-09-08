@@ -97,6 +97,15 @@
   line-height: 1.15;
 }
 
+/* The rate and its count as one hoverable figure. The breakdown panel is
+   raised from this span, so it — not the cell — has to be the box the two
+   lines sit in: anchored to the cell, the panel would hang off a padded,
+   right-aligned block wider than the number it explains. */
+.cellLive {
+  display: inline-block;
+  text-align: right;
+}
+
 /* The count the rate rests on. Muted and small: it's the qualifier, not
    the figure — but it is always there, because a rate off three deals and
    one off thirty read identically without it. */
