@@ -29,6 +29,24 @@ export function coverageServicesOf(pipeline) {
   return Array.isArray(list) ? list.filter(s => typeof s === 'string' && s) : [];
 }
 
+// The tracked services as a lookup, keyed the way every other service
+// comparison in the app is keyed — trimmed and lowercased. The coverage table
+// stores canonical service names (the same strings the service boards list),
+// so a name match is the right join; matching on anything looser would mark a
+// service tracked because it shares a word with one that is.
+export function coverageTrackedSet(pipelineOrList) {
+  const list = Array.isArray(pipelineOrList)
+    ? pipelineOrList
+    : coverageServicesOf(pipelineOrList);
+  return new Set(list.map(s => String(s).trim().toLowerCase()).filter(Boolean));
+}
+
+/** Is this service one of the tracked coverage services? */
+export function isCoverageTracked(trackedSet, name) {
+  const key = String(name ?? '').trim().toLowerCase();
+  return !!key && !!trackedSet?.has?.(key);
+}
+
 export function notifyPipelineDashboardChanged() {
   try { window.dispatchEvent(new Event(PIPELINE_DASHBOARD_EVENT)); } catch { /* non-browser */ }
 }

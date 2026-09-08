@@ -24,6 +24,10 @@ import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { getServiceCategories, buildServiceBoard, moveServiceToBucket, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
+import { coverageRowStyle } from '../../utils/coverageMark';
+import { useCoverageServices } from '../../hooks/useCoverageServices';
+import { CoverageMark } from '../common/CoverageMark';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -5176,6 +5180,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [settings, solutionServiceNames],
   );
 
+  // The services the Pipeline page is watching coverage on. This board is
+  // where a client's coverage is actually moved, so it says which rows the
+  // percentage on that page is counting.
+  const trackedServices = useCoverageServices();
+
   // Map service items to their opp stage (priority: Sold > active stages > Not Sold)
   const scopeMatchedServices = useMemo(() => {
     const stagePriority = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
@@ -8314,6 +8323,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const isNoteOpen = expandedServiceNote === noteKey;
                             const smeVal = (fields.serviceSMEs || {})[item] || '';
                             const isSMEOpen = expandedServiceSME === item;
+                            const tracked = isCoverageTracked(trackedServices, item);
                             return (
                               <div key={item}>
                                 <div
@@ -8330,6 +8340,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     // dormant, so it keeps full weight even
                                     // when the saved status was N/A.
                                     opacity: !retry && effectiveStatus === 'N/A' ? 0.5 : 1,
+                                    // Coverage owns the left edge, status owns
+                                    // the fill, so a tracked service reads as
+                                    // tracked whatever status it carries.
+                                    ...(tracked ? coverageRowStyle : null),
                                   }}
                                 >
                                   <span
@@ -8337,6 +8351,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     style={{ fontSize: '0.6rem', cursor: 'pointer', color: hasNote ? '#F59E0B' : '#CBD5E1', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
                                     title={hasNote ? noteVal : 'Add note'}
                                   >{hasNote ? '\u270E' : '\u270E'}</span>
+                                  {tracked && <CoverageMark title={item} />}
                                   <span style={{ flex: 1, minWidth: '3.5rem', fontSize: '0.68rem', color: retry ? TRYING_AGAIN_COLORS.color : (colors.color || 'var(--color-text)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                     {getDisplayName(item)}
                                   </span>
