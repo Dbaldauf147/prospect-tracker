@@ -39,6 +39,7 @@ import { parseMulti } from '../common/columnLinks';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { normClientName } from '../../utils/clientIssues';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
+import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
   loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
@@ -239,6 +240,24 @@ export function DealSizingView({
       .map(([name, services]) => ({ name, services }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [serviceRows]);
+
+  // Which of these clients already have a Master Analysis saved against them
+  // — the workbook the Utility Lookup page writes with "Save to <company>" —
+  // and when. It is the answer to "is this number built on their real
+  // portfolio or on a count someone typed", which is the first thing asked of
+  // any figure on this page. Same hook and same cache the PE Overview column
+  // reads, so the two tables can't disagree about who has one.
+  //
+  // The column reads it through this rather than through a field on the row:
+  // the hook hands back a fresh Map on every render, and a row built from one
+  // would re-price every client on every keystroke in the search box. The
+  // estimates are the expensive part of this page, so they stay keyed to what
+  // actually changes them.
+  const savedAnalyses = useSavedAnalyses(clients);
+  const analysisFor = useCallback(
+    (row) => (row?.client?.id != null ? savedAnalyses.get(row.client.id) || null : null),
+    [savedAnalyses],
+  );
 
   const scopeFor = useCallback(
     (company) => normalizeClientScope(scopeMap[normClientName(company)]) || emptyClientScope(),
@@ -585,6 +604,52 @@ export function DealSizingView({
       },
     },
     {
+      // Whether there is a Master Analysis behind this client — the workbook
+      // the Utility Lookup page saves with "Save to <company>" — and when it
+      // was written. It sits next to the company card because it answers the
+      // same kind of question: a six-figure estimate priced off a real site
+      // list, mapped utility by utility, is a different claim from one priced
+      // off a site count nobody has opened. Sorts newest first, so "which of
+      // these have been worked properly, and how recently" is one click.
+      key: 'masterAnalysis', label: 'Master Analysis', defaultWidth: 152,
+      // Milliseconds, so newest-saved leads and the clients with nothing saved
+      // fall to the bottom together. An analysis with no timestamp still beats
+      // no analysis at all.
+      getSortValue: (row) => {
+        const meta = analysisFor(row);
+        if (!meta) return 0;
+        return meta.savedAt ? new Date(meta.savedAt).getTime() || 1 : 1;
+      },
+      getFilterValue: (row) => (analysisFor(row) ? 'Saved master analysis' : 'No master analysis'),
+      exportValue: (row) => {
+        const meta = analysisFor(row);
+        if (!meta) return '';
+        return meta.savedAt ? new Date(meta.savedAt).toLocaleDateString() : 'Saved';
+      },
+      render: (row) => {
+        const meta = analysisFor(row);
+        if (!meta) {
+          return (
+            <span
+              title="No Master Analysis saved against this client yet. Build one on the Utility Lookup page and save it to the company — the site counts this estimate runs on come from that work."
+              style={{ color: '#CBD5E1', fontSize: '0.72rem' }}
+            >-</span>
+          );
+        }
+        return (
+          <span
+            title={[
+              `${row.company} has a Master Analysis saved${meta.savedAt ? ` on ${new Date(meta.savedAt).toLocaleString()}` : ''}.`,
+              meta.fileName || '',
+              meta.sizeBytes ? `${(meta.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
+              'Download it from this company\'s popup, or pull it back onto the Utility Lookup page with Import Analysis.',
+            ].filter(Boolean).join('\n')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#166534' }}
+          >✓ {formatAnalysisDate(meta.savedAt)}</span>
+        );
+      },
+    },
+    {
       // Wide enough for a range on an eight-figure portfolio: these hold
       // "$12,345,678 – $16,543,210" once a service is quoted on two rates, and
       // a clipped figure is a wrong figure. Measured rather than guessed — the
@@ -651,7 +716,7 @@ export function DealSizingView({
           )
       ),
     },
-  ], [expandedIds, onSelectProspect, bases]);
+  ], [expandedIds, onSelectProspect, bases, analysisFor]);
 
   const renderExpansion = useCallback((row) => {
     const { estimate, scope, client, company } = row;
