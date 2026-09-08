@@ -7321,7 +7321,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label} title="How many pieces of equipment — chillers, boilers, EV chargers — are in scope. Priced against by any per-equipment service.">Equipment</label>
+              <label
+                className={styles.label}
+                title="How many pieces of equipment — chillers, boilers, EV chargers — are in scope. Priced against by any per-equipment service. Filled in from the Utility Lookup page's per-site estimate when a Master Analysis is saved against the company, and typed over here if you know better."
+              >Equipment</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
             </div>
 
