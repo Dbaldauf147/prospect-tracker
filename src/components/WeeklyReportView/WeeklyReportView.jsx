@@ -26,7 +26,9 @@ import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesS
 import {
   loadWeeklyActivityLog, weeklyActivityEntry, liveCacheCovers, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
-import { buildFunnelStages, closeRateTrendByStage, closeRatesByStage } from '../../utils/pipelineFunnelData';
+import {
+  buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
+} from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
 import { CloseRateTrend } from './CloseRateTrend';
@@ -385,6 +387,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // moving. Same signals and same exclusions, cut into the last six
   // calendar months, so the report can show a direction.
   const closeRateTrend = useMemo(() => closeRateTrendByStage(oppsRecords, { months: 6 }), [oppsRecords]);
+  // The same table reduced to the strings an email can carry — no
+  // sparklines, no hover panels, and the figures formatted here off the
+  // numbers on screen rather than re-derived server-side.
+  const closeRateTrendSummary = useMemo(() => emailCloseRateTrend(closeRateTrend), [closeRateTrend]);
 
   const funnelStages = useMemo(() => buildFunnelStages({
     stages: Array.isArray(pipeline?.stages) ? pipeline.stages : [],
@@ -645,6 +651,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       funnelImage: funnelSummary && funnelImage
         ? { src: funnelImage.src, width: funnelImage.width, height: funnelImage.height, alt: funnelImage.alt }
         : null,
+      // The close-rate trend, straight under the funnel as it is on the tab.
+      // Independent of the funnel: it reads the Opps cache alone, so a
+      // report with no stage volumes cached still carries the trend.
+      closeRateTrend: closeRateTrendSummary,
       // `emailsSent.count`, not the raw live count: for a week the HubSpot
       // feed no longer covers, the Activity tab's recording is the only
       // thing that can answer, and the tile on screen reads off it. Mailing
@@ -680,8 +690,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // would describe a different week under this week's heading.
       narrative: narrativeStale ? '' : narrative,
     };
-  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, emailsSent, oppChanges,
-    goalsProg, weeklyTargets, narrative, narrativeStale]);
+  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
+    emailsSent, oppChanges, goalsProg, weeklyTargets, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

@@ -41,6 +41,23 @@ const snapshot = {
     stages: [{ label: 'Stage 3', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
     outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K' },
   },
+  closeRateTrend: {
+    months: ['Apr', 'May', 'Jun'],
+    rows: [
+      {
+        label: 'Stage 5: Prepare & Bid', stage: 5,
+        cells: [{ rate: '17%', count: '1/6' }, null, { rate: '100%', count: '2/2' }],
+        overall: { rate: '44%', count: '7/16', ahead: 25 },
+        rolling12: { rate: '19%', count: '9/47' },
+      },
+      {
+        label: 'All closed opps', stage: null,
+        cells: [{ rate: '8%', count: '1/13' }, null, { rate: '13%', count: '2/15' }],
+        overall: { rate: '10%', count: '7/68', ahead: null },
+        rolling12: { rate: '5%', count: '9/176' },
+      },
+    ],
+  },
   tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue' }],
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'] },
   goals: { active: ['#1 Close Berkshire'] },
@@ -87,6 +104,23 @@ check('a progress bar is a bgcolor cell sized both ways',
   /width="54%" bgcolor="#3B82F6"[^>]*width:54%/.test(html), true);
 check('a funnel bar uses the chart’s own stage colour',
   html.includes('bgcolor="#104281"'), true);
+
+// ---- The close rate trend -------------------------------------------------
+// The grid under the funnel. Its two colour cues are the stage swatch beside
+// each row's name and the green behind a six-month figure running ahead of
+// its rolling year — both of which have to be cells with a bgcolor, since a
+// coloured span is padding Word drops and a background shorthand is the
+// broken-image placeholder.
+check('a trend row’s swatch is a bgcolor cell, sized in both places',
+  /<td width="8" bgcolor="#2a78d6"[^>]*width:8px/.test(html), true);
+check('the total row sits outside the stage ramp',
+  html.includes('bgcolor="#64748B"'), true);
+check('the "ahead of the year" green is its own cell inside the column',
+  /<td bgcolor="#DCFCE7"/.test(html), true);
+// The arrow is what carries the cue where the colour doesn't — a client that
+// strips backgrounds, a reader who can't separate the green from the ink.
+check('and it ships with the arrow, not the colour alone',
+  html.includes('&#9650; 44%'), true);
 
 // ---- The funnel picture ---------------------------------------------------
 // The one image in the report, and it is never fetched from anywhere: a

@@ -253,6 +253,83 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
   return { months: monthCols, rows, closed, closedRolling };
 }
 
+// A close rate as the app prints it, everywhere it is printed. Rounded to
+// whole points, because that is the precision every reader of this figure
+// has ever been given.
+export const closeRatePct = (n) => `${Math.round((Number(n) || 0) * 100)}%`;
+
+/**
+ * Is a window's close rate running ahead of the trailing year's, and by how
+ * many points? Null when it isn't ahead.
+ *
+ * Compared on the ROUNDED figures, the ones actually printed. Two cells
+ * both reading 46% must not have one of them flagged because the numbers
+ * behind them differ in the first decimal — a cue the reader can't check
+ * against what's on the page is worse than no cue.
+ *
+ * Shared by the on-screen trend table and the emailed one so the green ▲
+ * appears on exactly the same rows in both.
+ */
+export function aheadOfRollingYear(overall, rolling12) {
+  if (!overall || !rolling12) return null;
+  const six = Math.round(overall.rate * 100);
+  const year = Math.round(rolling12.rate * 100);
+  return six > year ? six - year : null;
+}
+
+/**
+ * The close-rate trend flattened to the strings an email can carry.
+ *
+ * The tab draws this as a grid with a sparkline per row and a hover panel
+ * behind every figure; an email gets neither — no mail client renders an
+ * inline <svg>, and there is nothing to hover in an inbox. What travels is
+ * the rate and the count under it, already formatted, plus the flag that
+ * says a row's recent months are running ahead of its rolling year. The
+ * formatting happens here, on the same numbers the screen used, for the
+ * same reason the KPI cards and the funnel rows are formatted client-side:
+ * a second copy of the arithmetic on the server is free to disagree with
+ * what the reader saw on the tab.
+ *
+ * The Trend sparkline has no email equivalent and is simply dropped — the
+ * month columns are the trend, read left to right.
+ *
+ * @param {object} trend  closeRateTrendByStage's return value
+ * @returns {{ months: string[], rows: Array }|null} null when there is
+ *   nothing to draw, which is what keeps an empty heading out of the email.
+ */
+export function emailCloseRateTrend(trend) {
+  const monthCols = Array.isArray(trend?.months) ? trend.months : [];
+  const rows = Array.isArray(trend?.rows) ? trend.rows : [];
+  // The tab's own empty test: nothing in the months shown AND nothing in
+  // the trailing year. A book that closed nothing since the spring still
+  // has a 12-month rate worth mailing.
+  if (!monthCols.length || !rows.length || (!trend.closed && !trend.closedRolling)) return null;
+
+  const cell = (t) => (t
+    ? { rate: closeRatePct(t.rate), count: `${t.sold}/${t.sold + t.notSold}` }
+    : null);
+
+  return {
+    months: monthCols.map(m => String(m.label || '')),
+    rows: rows.map((row) => {
+      const overall = cell(row.overall);
+      const ahead = aheadOfRollingYear(row.overall, row.rolling12);
+      return {
+        label: row.label,
+        // The stage number, so the email can paint the row's swatch from
+        // the funnel's own ramp rather than being handed a colour.
+        stage: Number.isFinite(row.num) ? row.num : null,
+        cells: monthCols.map((_, i) => cell(row.cells?.[i] ?? null)),
+        // Points above the rolling year, or null when the row isn't ahead.
+        // Only the good direction is marked: a close rate below its own
+        // year average is normal noise, not a fault to flag.
+        overall: overall ? { ...overall, ahead } : null,
+        rolling12: cell(row.rolling12),
+      };
+    }),
+  };
+}
+
 // One pipeline-metrics stage row flattened to the numbers the funnel draws.
 //
 // Actuals are the live BFO figures when the BFO Activity tab has been
