@@ -16,6 +16,7 @@
 // These assertions are what stands between that and a Monday-morning send.
 
 import { renderWeeklyReportHtml } from '../api/_lib/weeklyReportEmailHtml.js';
+import { funnelAttachment } from '../api/_lib/weeklyReportEmail.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -24,7 +25,9 @@ function check(label, actual, expected) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `\n      got:  ${actual}\n      want: ${expected}`}`);
 }
 
-const html = renderWeeklyReportHtml({
+const PNG = `data:image/png;base64,${'iVBORw0KGgo='.repeat(4)}`;
+
+const snapshot = {
   capturedAt: Date.parse('2026-09-07T05:02:00Z'),
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
@@ -41,8 +44,11 @@ const html = renderWeeklyReportHtml({
   tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue' }],
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'] },
   goals: { active: ['#1 Close Berkshire'] },
+  funnelImage: { src: PNG, width: 1600, height: 349, alt: 'Pipeline funnel: bands by stage' },
   narrative: '## Summary\nTwo new opps landed.',
-}, { message: 'Read the funnel first.' });
+};
+
+const html = renderWeeklyReportHtml(snapshot, { message: 'Read the funnel first.' });
 
 // Word ignores max-width, so the content column has to be a real fixed-width
 // table inside an mso conditional. Without it the report is as wide as the
@@ -76,12 +82,52 @@ check('every table is a presentation table with no spacing',
   true);
 
 // Bars are drawn as table cells with a bgcolor — never as a coloured div
-// alone, and never as an image, which Outlook blocks by default.
-check('the report loads no images at all', /<img\b/.test(html), false);
+// alone, and never as a picture, which a client can refuse to load.
 check('a progress bar is a bgcolor cell sized both ways',
   /width="54%" bgcolor="#3B82F6"[^>]*width:54%/.test(html), true);
 check('a funnel bar uses the chart’s own stage colour',
   html.includes('bgcolor="#104281"'), true);
+
+// ---- The funnel picture ---------------------------------------------------
+// The one image in the report, and it is never fetched from anywhere: a
+// sent message points it at its own attachment, and the tab's preview at
+// the data URL in the snapshot. A remote image would be blocked by default
+// in both Outlook and Gmail, which is the whole reason for the attachment.
+check('no picture asked for → no img at all', /<img\b/.test(html), false);
+check('no picture → the stage rows keep their bars',
+  html.includes('bgcolor="#104281"'), true);
+
+const withPicture = renderWeeklyReportHtml(snapshot, { funnelImageSrc: 'cid:funnel@x' });
+check('the funnel img points at the attachment',
+  /<img src="cid:funnel@x" width="770"/.test(withPicture), true);
+check('the img is sized in CSS as well, for everything that is not Word',
+  /max-width:770px;height:auto/.test(withPicture), true);
+check('the img carries the chart’s own screen-reader label',
+  withPicture.includes('alt="Pipeline funnel: bands by stage"'), true);
+check('it is still the only image', (withPicture.match(/<img\b/g) || []).length, 1);
+check('nothing is loaded over the network', /src="https?:/.test(withPicture), false);
+
+// The picture draws the bands, so the rows beside it are figures, not a
+// second chart. The outcome block stays in text either way: it is the
+// projected total, and a reader whose client hides the picture needs it.
+check('a drawn funnel drops the duplicate bar column',
+  withPicture.includes('bgcolor="#104281"'), false);
+check('a drawn funnel keeps the stage figures', withPicture.includes('$402,000'), true);
+check('the projected total is readable text under the picture',
+  withPicture.includes('= projected total') && withPicture.includes('$833K'), true);
+
+// The bytes the message carries. Only base64 PNG makes it this far — the
+// snapshot builder rejects anything else — and the mailer turns it back
+// into an attachment rather than leaving a data: URL in the markup, which
+// most clients strip.
+{
+  const att = funnelAttachment(snapshot);
+  check('the picture becomes a cid attachment', att.cid, 'weekly-report-funnel@prospect-tracker');
+  check('it is attached as a PNG', att.contentType, 'image/png');
+  check('it is decoded, not left as a data URL', Buffer.isBuffer(att.content), true);
+  check('no picture in the snapshot → nothing to attach',
+    funnelAttachment({ ...snapshot, funnelImage: null }), null);
+}
 
 // Percentage column widths are set as attributes as well as CSS: Word reads
 // the attribute and ignores the declaration.

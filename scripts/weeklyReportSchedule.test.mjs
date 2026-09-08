@@ -251,6 +251,35 @@ check('the tile provenance note survives', built.tiles[0].sub, 'recorded Sep 3')
 check('the funnel survives', built.funnel.stages[0].count, 3);
 check('the goals survive', [built.goals.created.length, built.goals.active.length], [1, 1]);
 check('a snapshot with no funnel stores none', buildSnapshotDoc({ funnel: { stages: [] } }, {}).funnel, null);
+
+// ---- the funnel picture ---------------------------------------------------
+// The tab rasterises its own chart and publishes the PNG, because no mail
+// client renders an inline <svg>. What arrives here is a string that will
+// be written into an <img src> and decoded into an attachment, so it is
+// checked rather than trusted, and dropped rather than trimmed: the image
+// must never be what pushes a snapshot past Firestore's 1 MB document cap,
+// and the email carries the same figures as a table underneath it.
+{
+  const funnel = { stages: [{ label: 'Stage 3', count: 1, amount: '$1' }] };
+  const png = `data:image/png;base64,${'iVBORw0KGgo='.repeat(4)}`;
+  const shot = (funnelImage) => buildSnapshotDoc({ funnel, funnelImage }, {}).funnelImage;
+
+  check('a PNG data URL is kept', shot({ src: png, width: 1600, height: 349 })?.src, png);
+  check('its pixel size is kept', shot({ src: png, width: 1600, height: 349 })?.width, 1600);
+  check('the alt text defaults rather than going empty',
+    shot({ src: png, width: 10, height: 10 })?.alt, 'Pipeline funnel');
+  check('an SVG data URL is refused',
+    shot({ src: 'data:image/svg+xml;base64,AAAA', width: 10, height: 10 }), null);
+  check('a remote URL is refused',
+    shot({ src: 'https://example.com/chart.png', width: 10, height: 10 }), null);
+  check('something that only looks like base64 is refused',
+    shot({ src: 'data:image/png;base64,<script>', width: 10, height: 10 }), null);
+  check('an oversized picture is dropped, not truncated',
+    shot({ src: `data:image/png;base64,${'A'.repeat(400_001)}`, width: 10, height: 10 }), null);
+  check('a picture with no size is refused', shot({ src: png, width: 0, height: 0 }), null);
+  check('a picture with no funnel behind it is refused',
+    buildSnapshotDoc({ funnelImage: { src: png, width: 10, height: 10 } }, {}).funnelImage, null);
+}
 check('funnel text is bounded',
   buildSnapshotDoc({ funnel: { caption: 'x'.repeat(500), stages: [{ label: 'y'.repeat(200) }] } }, {})
     .funnel.stages[0].label.length, 80);

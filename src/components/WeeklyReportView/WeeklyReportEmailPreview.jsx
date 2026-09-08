@@ -35,7 +35,12 @@ export function WeeklyReportEmailPreview({
     // Through the server's builder first, so the preview inherits the same
     // caps (25 changes listed, 12 active goals, …) the email is subject to.
     const doc = buildSnapshotDoc(snapshot, { uid, email: '' });
-    return renderWeeklyReportHtml(doc, { message });
+    // A sent message points the funnel <img> at its own attachment; here
+    // there is no message to attach to, so the picture is rendered from
+    // the data URL the snapshot already carries. Same markup either way,
+    // and a snapshot with no picture previews without one, exactly as it
+    // would arrive.
+    return renderWeeklyReportHtml(doc, { message, funnelImageSrc: doc.funnelImage?.src || '' });
   }, [open, snapshot, message, uid]);
 
   // Grow the frame to its content, so the preview scrolls with the modal
