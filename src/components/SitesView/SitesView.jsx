@@ -5278,34 +5278,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return { ok: true, shared: false, error: result.error };
   }, [personalOrdinanceOverrides, updateSettingsPath]);
 
-  // Total expected utility accounts across a saved site list. Rows this
-  // page writes carry the per-site estimate in their analysis column;
-  // rows that predate it — or came from a plain upload on the company
-  // popup — fall back to the property-type lookup, so a list assembled
-  // over several uploads still totals correctly. Headers are matched by
-  // prefix because a colliding uploaded column pushes the analysis one to
-  // "<label> (analysis)".
-  function siteListAccountTotal({ headers = [], rows = [] } = {}) {
-    const isHeader = (h, label) => typeof h === 'string' && h.startsWith(label);
-    const acctHeaders = headers.filter(h => isHeader(h, 'Est. Utility Accounts'));
-    const typeHeaders = headers.filter(h => isHeader(h, 'Property Type'));
-    let total = 0;
-    for (const row of rows) {
-      if (!row || typeof row !== 'object') continue;
-      let stated = null;
-      for (const h of acctHeaders) {
-        const n = Number(row[h]);
-        if (Number.isFinite(n) && n > 0) { stated = n; break; }
-      }
-      if (stated != null) { total += stated; continue; }
-      for (const h of typeHeaders) {
-        const est = propertyTypeAccountTotal(row[h]);
-        if (est) { total += est; break; }
-      }
-    }
-    return Math.round(total);
-  }
-
   // Mirror the currently-loaded sites into settings.companySiteLists under
   // the company's slug, matching the shape the company popup writes
   // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
@@ -5401,7 +5373,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many to store for one company, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
           : ' Site list not updated: too many sites to store for one company.',
         total: existingRows.length,
-        accounts: siteListAccountTotal({ headers: existingHeaders, rows: existingRows }),
+        accounts: siteListFacts({ headers: existingHeaders, rows: existingRows }).accounts || 0,
         equipment: siteListFacts({ headers: existingHeaders, rows: existingRows }).equipment || 0,
       };
     }
@@ -5421,7 +5393,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return {
         note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${kept}`,
         total: merged.rows.length,
-        accounts: siteListAccountTotal(merged),
+        accounts: siteListFacts(merged).accounts || 0,
         // Read off the merged list, not the loaded page: a company whose
         // sites arrived as three uploads owns all of them.
         equipment: siteListFacts(merged).equipment || 0,
