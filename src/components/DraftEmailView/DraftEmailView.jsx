@@ -2492,7 +2492,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               onChange={e => { setTrackEmails(e.target.checked); updateSettings({ trackEmails: e.target.checked }); }}
               style={{ width: 16, height: 16, cursor: 'pointer' }}
             />
-            <span>Track image loads &amp; clicks <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
+            <span>Track clicks &amp; delivery <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
           </label>
 
           <div className={styles.actions}>

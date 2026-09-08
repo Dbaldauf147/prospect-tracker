@@ -8,6 +8,17 @@
 // incoming message to scan it, and each fetch hits our redirector and looked
 // exactly like a person deciding to click.
 //
+// Two more ways to produce a click without a person were added after image
+// loads were dropped from the page and the click became the number carrying
+// its weight: a link followed while proof-reading the Outlook DRAFT (the
+// rewritten links work before the mail is sent, so this used to count as the
+// recipient clicking), and a gateway that presents an ordinary browser
+// user-agent but sweeps every link in the message at once. Both are asserted
+// at the bottom of this file, along with the line the sweep rule will not
+// cross: a message with ONE link can never produce a sweep verdict, because a
+// single-link sweep is indistinguishable from a person clicking the only
+// thing there is to click.
+//
 // Two asymmetries with the image-load filter are deliberate and asserted here.
 //
 //   1. Repeat clicks are NOT collapsed, where repeat loads are. Two loads from
@@ -23,7 +34,9 @@ import {
   describeExcludedClicks,
   screeningEvidence,
   scannerName,
+  CLICK_SWEEP_MS,
 } from '../src/utils/emailClicks.js';
+import { isSelfSend } from '../src/utils/selfSends.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -34,6 +47,7 @@ function check(label, actual, expected) {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
 const MIMECAST = 'Mimecast link scanner/2.0';
+const PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15';
 const SAFELINKS = 'Mozilla/5.0 (compatible; SafeLinks)';
 const t = (n) => new Date(2026, 2, 2, 9, n).toISOString();
 const click = (min, ua, url = 'https://example.com/savings') => ({ at: t(min), ua, url });
@@ -79,7 +93,7 @@ check('no argument behaves the same', countClicks().count, 0);
 
 check('the exclusion note names the gateway when we know it',
   describeExcludedClicks(mixed, 'Mimecast'),
-  '1 of 3 clicks not counted: a security scanner (Mimecast) followed the links before the recipient saw them.');
+  '1 of 3 clicks not counted: 1 followed by a security scanner (Mimecast).');
 check('and stays quiet when nothing was excluded',
   describeExcludedClicks(countClicks({ clickCount: 1, clicks: [click(0, UA)] })), '');
 
@@ -109,6 +123,137 @@ check('an ordinary send reports no screening',
   { screened: false, scanner: '' });
 check('nothing at all does not throw',
   screeningEvidence(null, null), { screened: false, scanner: '' });
+
+// ---- the pre-send gate ---------------------------------------------------
+//
+// Same three-way meaning countOpens() uses, and the difference between the
+// three is the whole point: "send time unknown" and "known not sent" are not
+// the same question, and answering them the same way is how a draft preview
+// ends up counted as a prospect's click.
+
+const SENT = new Date(2026, 2, 2, 9, 30).getTime();
+const fromSend = (mins) => new Date(SENT + mins * 60000).toISOString();
+const verdicts = (summary) => summary.events.map(e => e.verdict);
+
+const proofRead = {
+  clickCount: 2,
+  clicks: [
+    { url: 'https://example.com/book', ua: UA, at: fromSend(-30) },  // proof-reading
+    { url: 'https://example.com/book', ua: UA, at: fromSend(120) },  // the recipient
+  ],
+};
+
+check('gate: with a send time, a click before it is a draft preview',
+  verdicts(countClicks(proofRead, { sentAt: SENT })), ['pre-send', 'counted']);
+check('gate: only the click after the send is counted',
+  countClicks(proofRead, { sentAt: SENT }).count, 1);
+check('gate: with no send time known, nothing is gated',
+  verdicts(countClicks(proofRead)), ['counted', 'counted']);
+check('gate: known NOT sent means every click is a preview',
+  verdicts(countClicks(proofRead, { sentAt: null })), ['pre-send', 'pre-send']);
+
+// The send time comes from HubSpot and the click time from our own server, so
+// they agree to the minute at best. A click a moment "before" the send is the
+// recipient's, not a preview.
+check('gate: the clock grace keeps a click at the moment of sending',
+  verdicts(countClicks(
+    { clickCount: 1, clicks: [{ url: 'https://example.com/a', ua: UA, at: fromSend(-1) }] },
+    { sentAt: SENT },
+  )), ['counted']);
+
+check('gate: a draft preview is named as one in the tooltip',
+  /proof-reading/.test(describeExcludedClicks(countClicks(proofRead, { sentAt: SENT }))), true);
+
+// ---- gateways that don't announce themselves -----------------------------
+//
+// The shape is the evidence: one client, several distinct links, all inside a
+// minute. No user-agent test would ever catch this one.
+
+const sweepDoc = {
+  clickCount: 3,
+  clicks: [
+    { url: 'https://example.com/a', ua: UA, ip: '10.0.0.1', at: fromSend(1) },
+    { url: 'https://example.com/b', ua: UA, ip: '10.0.0.1', at: fromSend(1.1) },
+    { url: 'https://example.com/c', ua: UA, ip: '10.0.0.1', at: fromSend(1.2) },
+  ],
+};
+check('sweep: one client following every link at once is a machine',
+  verdicts(countClicks(sweepDoc)), ['sweep', 'sweep', 'sweep']);
+check('sweep: none of it survives into the count', countClicks(sweepDoc).count, 0);
+check('sweep: it is described by what it was',
+  /sweep/.test(describeExcludedClicks(countClicks(sweepDoc))), true);
+
+check('sweep: the same links spread over hours are a person reading',
+  verdicts(countClicks({
+    clickCount: 3,
+    clicks: [
+      { url: 'https://example.com/a', ua: UA, ip: '10.0.0.1', at: fromSend(60) },
+      { url: 'https://example.com/b', ua: UA, ip: '10.0.0.1', at: fromSend(180) },
+      { url: 'https://example.com/c', ua: UA, ip: '10.0.0.1', at: fromSend(300) },
+    ],
+  })), ['counted', 'counted', 'counted']);
+
+check('sweep: two different people clicking at once are not one sweep',
+  verdicts(countClicks({
+    clickCount: 2,
+    clicks: [
+      { url: 'https://example.com/a', ua: UA, ip: '10.0.0.1', at: fromSend(1) },
+      { url: 'https://example.com/b', ua: PHONE, ip: '10.0.0.2', at: fromSend(1.1) },
+    ],
+  })), ['counted', 'counted']);
+
+// The line this rule will not cross. A one-link email — which is what
+// signature-only outreach is — cannot produce a sweep, however fast the clicks
+// arrive, because there is no second destination to prove a machine walked the
+// message. Crossing it would throw away real clicks on the only call to action
+// the email has.
+check('sweep: one link clicked twice in a second is still not a sweep',
+  verdicts(countClicks({
+    clickCount: 2,
+    clicks: [
+      { url: 'https://example.com/book', ua: UA, ip: '10.0.0.1', at: fromSend(1) },
+      { url: 'https://example.com/book', ua: UA, ip: '10.0.0.1', at: fromSend(1.01) },
+    ],
+  })), ['counted', 'counted']);
+
+// Proximity is the only evidence a sweep has, so events we cannot place in
+// time are unknown, not close together.
+check('sweep: events with no timestamp are never swept',
+  verdicts(countClicks({
+    clickCount: 2,
+    clicks: [{ url: 'https://example.com/a', ua: UA }, { url: 'https://example.com/b', ua: UA }],
+  })), ['counted', 'counted']);
+
+check('sweep: a gap past the window splits the cluster',
+  verdicts(countClicks({
+    clickCount: 2,
+    clicks: [
+      { url: 'https://example.com/a', ua: UA, ip: '10.0.0.1', at: new Date(SENT + 60000).toISOString() },
+      { url: 'https://example.com/b', ua: UA, ip: '10.0.0.1', at: new Date(SENT + 60000 + CLICK_SWEEP_MS + 1000).toISOString() },
+    ],
+  })), ['counted', 'counted']);
+
+// A sweep is the same fact as a named scanner, caught by shape instead of by
+// name — so it has to raise the same flag, or the one case the user-agent list
+// cannot see would also be the one case the row never mentions.
+check('sweep: an unnamed sweep is evidence of a gateway',
+  screeningEvidence(countClicks(sweepDoc), opens([])), { screened: true, scanner: '' });
+
+// ---- tests the sender addressed to themselves ----------------------------
+//
+// The composer keeps the user's own address in the To line on purpose, so
+// these accumulate — and every click on one is the sender's own.
+
+check('self: a send to the address that sent it is a test',
+  isSelfSend({ to: 'daniel.baldauf@se.com', ownerEmail: 'daniel.baldauf@se.com' }), true);
+check('self: casing and a display name do not hide it',
+  isSelfSend({ to: 'Dan Baldauf <Daniel.Baldauf@SE.com>', ownerEmail: 'daniel.baldauf@se.com' }), true);
+check('self: a prospect is not a test',
+  isSelfSend({ to: 'prospect@acme.com', ownerEmail: 'daniel.baldauf@se.com' }), false);
+check('self: a doc written before ownerEmail was stored falls back to the signed-in user',
+  isSelfSend({ to: 'daniel.baldauf@se.com' }, 'daniel.baldauf@se.com'), true);
+check('self: with no owner to compare against, nothing is a test',
+  isSelfSend({ to: 'daniel.baldauf@se.com' }), false);
 
 console.log(failures === 0 ? '\nAll click-filter tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

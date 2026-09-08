@@ -13,7 +13,7 @@
 // but its clickCount stays exact, so on a heavily-clicked send the per-link
 // numbers cannot add up to the total. That gap is reported rather than
 // hidden, otherwise the breakdown quietly contradicts the tile above it.
-import { shortLinkLabel, linksForRow, clicksByLink } from '../src/utils/emailLinks.js';
+import { shortLinkLabel, linkLabel, isSchedulingLink, linksForRow, clicksByLink } from '../src/utils/emailLinks.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -85,10 +85,9 @@ const capped = clicksByLink([
 check('roll-up: clicks past the stored event cap are reported, not dropped',
   [capped.totalClicks, capped.links[0].clicks, capped.unattributed], [120, 1, 119]);
 
-check('roll-up: an empty set is empty, not an error',
-  clicksByLink([]), { links: [], totalClicks: 0, unattributed: 0 });
-check('roll-up: no argument behaves the same',
-  clicksByLink(), { links: [], totalClicks: 0, unattributed: 0 });
+const EMPTY = { links: [], totalClicks: 0, unattributed: 0, schedulingClicks: 0, schedulingRecipients: 0 };
+check('roll-up: an empty set is empty, not an error', clicksByLink([]), EMPTY);
+check('roll-up: no argument behaves the same', clicksByLink(), EMPTY);
 // A click event with no url (shouldn't happen — the redirector only logs a
 // resolved destination — but a malformed doc must not invent a blank link).
 check('roll-up: an event with no url is skipped',
@@ -111,6 +110,62 @@ check('row: a scanner click is left out of the per-row links',
     { url: 'https://example.com/savings', ua: UA },
     { url: 'https://example.com/legal', ua: SCANNER },
   ] }).map(l => l.label), ['example.com/savings']);
+
+// ---- scheduling links ----------------------------------------------------
+//
+// The booking link is the one destination that means something on its own, so
+// it has to be recognised by provider rather than by the opaque segment the
+// provider puts at the end of the URL. The trap worth testing is the opposite
+// direction: outlook.office.com serves ordinary mail links too, and a tracking
+// parameter that happens to say "calendly" must not promote a link into the
+// one place on the page that claims intent.
+
+check('scheduling: an Outlook Bookings link is a booking page',
+  isSchedulingLink('https://outlook.office.com/bookwithme/user/abc123@se.com/meetingtype/XYZ?anonymous'), true);
+check('scheduling: Calendly is a booking page', isSchedulingLink('https://calendly.com/dan/30min'), true);
+check('scheduling: HubSpot meetings is a booking page',
+  isSchedulingLink('https://meetings.hubspot.com/dan-baldauf'), true);
+check('scheduling: an ordinary Outlook link is not',
+  isSchedulingLink('https://outlook.office.com/mail/deeplink/compose'), false);
+check('scheduling: a tracking parameter cannot promote a link',
+  isSchedulingLink('https://example.com/report?utm_source=calendly.com'), false);
+check('scheduling: nothing in, false out', isSchedulingLink(''), false);
+
+check('scheduling: a booking link is labelled by what it is, not its URL tail',
+  linkLabel('https://outlook.office.com/bookwithme/user/abc123@se.com/meetingtype/SVRwCe7HMUGxuT6WGxi68g2'),
+  'Booking page');
+check('scheduling: every other link keeps its ordinary label',
+  linkLabel('https://example.com/reports/indicative-savings'), 'example.com/indicative savings');
+
+// The booking subtotal is counted apart from the rest, because "two people
+// opened your calendar" is the sentence worth reading — and a click on it is
+// still not a booking, which is why it is reported as its own number rather
+// than folded into a success rate.
+const booking = clicksByLink([
+  { to: 'a@example.com', clickCount: 2, clicks: [
+    { url: 'https://calendly.com/dan/30min', ua: UA },
+    { url: 'https://example.com/savings', ua: UA },
+  ] },
+  { to: 'b@example.com', clickCount: 1, clicks: [{ url: 'https://calendly.com/dan/30min', ua: UA }] },
+]);
+check('scheduling: booking clicks and the people behind them are subtotalled',
+  [booking.schedulingClicks, booking.schedulingRecipients], [2, 2]);
+check('scheduling: a set with no booking link subtotals to zero',
+  [clicksByLink([{ to: 'a@example.com', clickCount: 1, clicks: [{ url: 'https://example.com/x', ua: UA }] }]).schedulingClicks], [0]);
+check('scheduling: the per-row list flags which link was the booking page',
+  linksForRow({ clickCount: 1, clicks: [{ url: 'https://calendly.com/dan/30min', ua: UA }] })
+    .map(l => [l.label, l.scheduling]),
+  [['Booking page', true]]);
+
+// The caller owns the click summary, because only the caller knows the send
+// time the pre-send gate needs. A passed summary must win over a recomputed
+// one, or the breakdown would quietly disagree with the tiles above it.
+check('roll-up: a caller-supplied summary is used instead of recounting',
+  clicksByLink([{
+    row: { to: 'a@example.com', clickCount: 9, clicks: [{ url: 'https://example.com/x', ua: UA }] },
+    summary: { count: 1, events: [{ event: { url: 'https://example.com/gated', ua: UA }, verdict: 'counted' }] },
+  }]).links.map(l => [l.label, l.clicks]),
+  [['example.com/gated', 1]]);
 
 console.log(failures === 0 ? '\nAll email-link tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

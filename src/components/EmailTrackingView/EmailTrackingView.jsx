@@ -1,32 +1,43 @@
 // Email Tracking — a sub-tab of Draft Emails, sitting next to the composer
 // and the campaign report that produce the rows it shows. Every email sent
-// with tracking on (open pixel + rewritten links, injected when the draft
-// was created) and the opens/clicks recorded against it. Reads the
-// server-written `emailTracking` collection live; the client never writes here.
+// with tracking on, and what came back from it. Reads the server-written
+// `emailTracking` collection live; the client never writes here.
 //
 // Each send is attributed to a saved email campaign by subject, so the
 // dashboard can be narrowed to one campaign and the tiles then read as that
 // campaign's engagement. The campaign name is a link across to
 // the Email Campaigns tab.
 //
-// A deliberate note on accuracy sits at the top of the table: opens are
-// a directional signal (Apple Mail Privacy Protection pre-fetches the
-// pixel, Gmail proxies it, Outlook blocks images by default), while
-// clicks are a hard signal. Same limitations HubSpot has.
+// TWO THINGS ARE MEASURED HERE, and image loads are deliberately not one of
+// them any more. The tracking pixel still rides along in every send and still
+// does the one job it is good at — proving the mail arrived, which is what the
+// Delivery column reads — but it was shown as a metric for a long time and it
+// never earned the space. A load fires when Apple's privacy pre-fetch collects
+// a message nobody has looked at, and never fires at all for the Outlook users
+// who read every word, so the number moved for reasons that had nothing to do
+// with the recipient. It sat at the widest column on the page and answered no
+// question a seller actually has.
 //
-// Above that note, MetricsExplainer says in plain English what the three
-// words mean — an image load is a passive fetch, a click is a deliberate
-// action, a reply is a person writing back — because that difference is what
-// every question about these numbers turns on: why clicks trail loads, why a
-// send can click without ever loading, why a load is worth less than it looks.
+// What replaced it is depth on the click, which is the event a person has to
+// choose to produce:
 //
-// The pixel metric is called "image loads" and not "opens" on purpose. An open
-// claims a person read the message, and the pixel cannot know that: Apple Mail
-// Privacy Protection fetches it on delivery, a preview pane fetches it without
-// anyone reading, and Outlook blocks it for people who did. Naming it after
-// the mechanism keeps it from competing with the two columns that do mean
-// somebody acted; what it's genuinely good for — recency, and comparing sends
-// with each other — is called out where it's shown.
+//   • Clicks are gated on the send time now, the way the pixel always was.
+//     The links are rewritten inside the Outlook DRAFT, so following one while
+//     proof-reading it used to count as the recipient clicking.
+//   • A gateway that sweeps every link in a message inside a minute is scored
+//     as a machine however innocent its user-agent looks.
+//   • Sends addressed to the user's own address are marked as the tests they
+//     are and kept out of the rates.
+//   • The scheduling link is broken out from every other destination, because
+//     "they opened your calendar" is a different sentence from "they clicked
+//     something" — and because a click on it is NOT a booking, which is the
+//     single most misread number on this page.
+//
+// Every click event carries a device and a location, and the expanded row
+// shows both. That is not decoration: a gateway with an ordinary browser
+// user-agent that follows exactly one link cannot be told from a reader by any
+// rule, and the honest answer is to put the evidence in front of the person
+// who can judge it rather than to invent a verdict.
 //
 // Replies come from the saved campaign rosters, not from the tracking docs:
 // api/email-campaign.js already matches HubSpot's incoming mail to a campaign
@@ -38,11 +49,15 @@
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEmailTracking, normalizeTrackedEmail, sentAtByRecipient, replyByRecipient } from '../../hooks/useEmailTracking';
-import { countOpens, describeExcludedOpens } from '../../utils/emailOpens';
+// countOpens stays imported with the pixel still in the mail: the loads are no
+// longer shown as a metric, but they remain the strongest delivery evidence
+// there is, and the Delivery column reads them.
+import { countOpens } from '../../utils/emailOpens';
 import { countClicks, describeExcludedClicks, screeningEvidence } from '../../utils/emailClicks';
 import { useSavedCampaigns, campaignForSubject, campaignLabel } from '../../hooks/useSavedCampaigns';
-import { clicksByLink, linksForRow, shortLinkLabel } from '../../utils/emailLinks';
-import { engagementSignals } from '../../utils/emailSignals';
+import { clicksByLink, linksForRow, linkLabel, isSchedulingLink } from '../../utils/emailLinks';
+import { clickSignals } from '../../utils/emailSignals';
+import { isSelfSend } from '../../utils/selfSends';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE, isDelivered, isDeliveryKnown } from '../../utils/deliveryStatus';
 
 function toDate(ts) {
@@ -90,6 +105,17 @@ function deviceFromUa(ua) {
   return 'Other';
 }
 
+// Counted clicks on this send that landed on a scheduling link. Reads the
+// classified events rather than the row, so a gateway sweeping the signature
+// can't sort a recipient to the top of the follow-up list.
+function bookingClicks(linkedRow) {
+  let n = 0;
+  for (const { event, verdict } of linkedRow?.clicks?.events || []) {
+    if (verdict === 'counted' && isSchedulingLink(event?.url)) n += 1;
+  }
+  return n;
+}
+
 const tile = {
   flex: '1 1 130px',
   minWidth: 130,
@@ -132,76 +158,83 @@ function Pill({ children, tone }) {
   );
 }
 
-// Plain-English definitions of the two metrics, plus how each summary
-// tile is derived from them.
+// Plain-English definitions of what this page measures, plus how each
+// summary tile is derived from them.
 //
-// The definitions stay visible because they are the whole answer to
-// "what's the difference": one is the recipient's mail client fetching an
-// image, the other is a person choosing to click. The arithmetic behind
-// the tiles — and the reasons the two columns rarely agree — sits in a
+// The definitions stay visible because they are the whole answer to "what
+// does this number mean". Two of the three are events a person had to choose
+// to produce; the third is what the mail system did with the message. The
+// arithmetic, and the reasons a click is not always a person, sit in a
 // collapsed <details> so the top of the page doesn't turn into an essay.
 function MetricsExplainer() {
   return (
     <section
-      aria-label="What image loads, clicks and replies mean"
+      aria-label="What clicks, replies and delivery mean"
       style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.7rem 0.85rem', margin: '0.6rem 0 0.75rem' }}
     >
       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-        Image loads vs. clicks vs. replies
+        Clicks vs. replies vs. delivery
       </div>
 
       <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #86EFAC', paddingLeft: '0.7rem' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534', marginBottom: 2 }}>Image load — something fetched the pixel</div>
-          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
-            An invisible 1×1 image is tucked into the email body, and this counts the times it was fetched. Deliberately not
-            called an &ldquo;open&rdquo;: <strong>nobody has to read anything for it to fire</strong> — a preview pane or Apple&rsquo;s
-            privacy pre-fetch will do it — and a client that blocks images never fires it at all, so a real read can go
-            unrecorded. Useful for <em>when</em> (a load in the last hour means it&rsquo;s in front of someone now) and for
-            comparing one send against another. Not for judging one person&rsquo;s interest.
-          </div>
-        </div>
         <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #93C5FD', paddingLeft: '0.7rem' }}>
           <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E40AF', marginBottom: 2 }}>Click — a link was followed</div>
           <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
-            Every web link in the body is rewritten to point at our redirector, which logs the click and forwards straight to
-            the real page. A click is <strong>deliberate</strong> — a person read far enough to act — which makes it the better
-            of the two when they disagree. Not infallible: corporate security gateways follow every link to scan it, so those
-            are excluded here the same way scanner pixel fetches are, and the row says <em>Screened</em> when it sees one.
+            Every web link in the body is rewritten to point at our redirector, which logs the click and forwards straight
+            to the real page. A click is <strong>deliberate</strong> — somebody read far enough to act. If your only link is
+            the scheduling link in your signature, then a click means <strong>they opened your calendar</strong>, and the
+            row says <em>Opened booking page</em>. It does <strong>not</strong> mean they booked: that happens on the booking
+            site and reaches you as its own notification. Clicks with no booking are people who looked and didn&rsquo;t commit.
           </div>
         </div>
         <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #6EE7B7', paddingLeft: '0.7rem' }}>
           <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#047857', marginBottom: 2 }}>Reply — they wrote back</div>
           <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
             Matched from the campaign&rsquo;s HubSpot activity, with out-of-office and auto-replies filtered out. Nothing
-            automated produces one, so it outranks both of the others — and it only shows on sends a saved campaign claims by
-            subject line.
+            automated produces one, so it outranks everything else here — and it only shows on sends a saved campaign claims
+            by subject line.
+          </div>
+        </div>
+        <div style={{ flex: '1 1 300px', minWidth: 260, borderLeft: '3px solid #CBD5E1', paddingLeft: '0.7rem' }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155', marginBottom: 2 }}>Delivery — did it arrive</div>
+          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
+            Read from bounces, not from engagement: silence is not a failure. <strong>Confirmed</strong> means something in
+            the message was fetched or clicked, which can only happen after it landed — including by a security scanner,
+            since a scanner can only scan what it received. The invisible tracking image still travels with every send and
+            still does this job; it is no longer shown as a metric of its own, because a fetch of it says nothing reliable
+            about whether a person read anything.
           </div>
         </div>
       </div>
 
       <details style={{ marginTop: '0.7rem', borderTop: '1px dashed #E2E8F0', paddingTop: '0.55rem' }}>
         <summary style={{ cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, color: '#1D4ED8' }}>
-          How each number is counted, and why the three don&rsquo;t line up
+          How each number is counted, and when a click isn&rsquo;t a person
         </summary>
         <div style={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.55, marginTop: '0.5rem' }}>
           <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>The tiles</div>
           <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <li><strong>Tracked emails</strong> — drafts created with tracking on, inside the campaign filter above.</li>
-            <li><strong>Delivered (%)</strong> — of the sends a campaign is watching, how many arrived without bouncing. This is the question an &ldquo;open&rdquo; looks like it answers and doesn&rsquo;t: a pixel proves arrival when it fires, but proves nothing when it doesn&rsquo;t, so delivery is read off bounces instead. Sends nobody is watching are left out rather than assumed delivered.</li>
-            <li><strong>Images loaded (%)</strong> — how many of those emails had the pixel fetched at least once. One recipient counts once here however many times it fires.</li>
-            <li><strong>Total image loads</strong> — every fetch. The same person coming back an hour later adds two.</li>
-            <li><strong>Clicked (%)</strong> — how many emails had at least one link followed.</li>
-            <li><strong>Total clicks</strong> — every human click: the same link twice, or two different links in one email, each add one. Repeat clicks are <em>not</em> collapsed the way repeat image loads are: two clicks are two decisions, where two loads are one message re-rendered.</li>
+            <li><strong>Tracked emails</strong> — drafts created with tracking on, inside the campaign filter above. Tests you sent yourself are shown in the table but left out of every rate below.</li>
+            <li><strong>Delivered (%)</strong> — of the sends a campaign is watching, how many arrived without bouncing. Sends nobody is watching are left out rather than assumed delivered: no campaign means no bounce would have reached us, which is not the same as arriving.</li>
+            <li><strong>Clicked (%)</strong> — how many emails had at least one link followed by a person.</li>
+            <li><strong>Total clicks</strong> — every human click: the same link twice, or two different links in one email, each add one. Two clicks are two decisions, so they are never collapsed.</li>
+            <li><strong>Booking page</strong> — clicks that landed on your scheduling link, and how many people they came from. The number to compare against your actual bookings: the gap is the people who opened your availability and didn&rsquo;t pick a slot.</li>
             <li><strong>Replied (%)</strong> — of the sends a saved campaign is tracking, how many wrote back. Sends no campaign claims are left out of both halves of that fraction rather than counted as silence, and so are bounced addresses: nobody received those, so they aren&rsquo;t recipients who chose not to answer.</li>
           </ul>
-          <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>When they disagree</div>
+          <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>Clicks that aren&rsquo;t people, and how they&rsquo;re caught</div>
+          <ul style={{ margin: '0 0 0.7rem', paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <li><strong>You, proof-reading the draft.</strong> The links are rewritten inside the Outlook draft, so they work before the mail is sent. Any click before the send time is excluded and shown struck through when you expand the row.</li>
+            <li><strong>Tests you sent yourself.</strong> A send addressed to your own address is marked <em>Test</em> and kept out of the rates — clearing the composer leaves your address in the To line on purpose, so these accumulate.</li>
+            <li><strong>Security gateways that identify themselves.</strong> Mimecast, Proofpoint, Microsoft Defender and the rest name themselves in the request; those are excluded and the row says <em>Screened</em>.</li>
+            <li><strong>Gateways that don&rsquo;t.</strong> Caught by behaviour instead: one machine following several different links inside a minute is a sweep, not a reader choosing between them.</li>
+            <li><strong>What nothing can catch.</strong> A gateway with an ordinary browser user-agent that follows exactly <em>one</em> link is indistinguishable from a person, and a message whose only link is your signature gives it nowhere to give itself away. Expand the row and read the device and timing: a click seconds after the send, from a datacentre rather than the recipient&rsquo;s city, is a machine whatever the count says.</li>
+          </ul>
+          <div style={{ fontWeight: 700, color: '#334155', marginBottom: 3 }}>Reading a row</div>
           <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <li><strong>Clicks well below image loads is normal.</strong> Being shown a message costs nothing; clicking is a decision. The gap between the two is roughly the gap between attention and interest.</li>
-            <li><strong>A click with no image load is normal too</strong> — the reader&rsquo;s client blocked the image, so the pixel never fired, but the link still worked. Read that row as engaged, not as a glitch.</li>
-            <li><strong>An image load with no click isn&rsquo;t nothing</strong>, but it is the weakest of the three, and a zero is weaker still: it is as likely to be Outlook blocking images as it is disinterest.</li>
-            <li><strong>A <em>Screened</em> row reads differently from every other row.</strong> A security gateway is fetching the links and the pixel before the recipient sees them, which proves the mail arrived but usually means images are blocked and links rewritten for the real reader — so low numbers there say less than they would elsewhere.</li>
-            <li><strong>A reply with no load or click happens</strong>, and it is the best outcome on the page — someone read the message in a client that blocked the image and answered it without following a link.</li>
+            <li><strong>Clicks on separate days is the strongest shape here.</strong> A gateway scans a message once, when it arrives, and never comes back on Thursday.</li>
+            <li><strong>A reply with no click is the best outcome on the page</strong> — someone read the message and answered it without needing to follow anything.</li>
+            <li><strong>Delivered with no click is not a no.</strong> It is the ordinary state of most outreach, and it says nothing beyond the fact that the mail arrived.</li>
+            <li><strong>A <em>Screened</em> row reads differently from every other row.</strong> A gateway is following links before the recipient sees them, which proves the mail arrived but usually means links are rewritten for the real reader — so a low count there says less than it would elsewhere.</li>
           </ul>
         </div>
       </details>
@@ -217,22 +250,23 @@ export function EmailTrackingView({ onOpenCampaign }) {
   const { rows, loading, error, fallback } = useEmailTracking();
   const { campaigns } = useSavedCampaigns();
   const [expanded, setExpanded] = useState(null);
-  const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'opens' | 'clicks' | 'replies'
+  const [sortBy, setSortBy] = useState('sent'); // 'sent' | 'clicks' | 'booking' | 'replies'
   const [search, setSearch] = useState('');
   // '' = every send, 'none' = sends no campaign claims, otherwise the saved
   // campaign's index (subjects aren't unique, so the index is the identity).
   const [campaignFilter, setCampaignFilter] = useState('');
 
   // Attribute every tracked send to a saved campaign once, up front, and
-  // count its opens while we're there.
+  // classify its clicks while we're there.
   //
-  // The raw openCount on a doc is every hit on the pixel, and the pixel is
-  // injected into the Outlook DRAFT — so it fires while the draft is still
-  // being proof-read, again for link scanners, and again each time the
-  // message is re-rendered. countOpens() drops those (src/utils/emailOpens.js).
-  // The pre-send rule needs a send time, which a tracking doc doesn't have —
-  // it only knows when its draft was created — so it comes from the saved
-  // campaign that claims this send. Unclaimed sends keep their raw timeline.
+  // Both the pixel and the links are injected into the Outlook DRAFT (see
+  // api/outlook-draft.js), so both fire while the draft is still being
+  // proof-read — the pixel when the preview pane renders it, a link when the
+  // sender follows it to check that it works. countOpens() has gated on the
+  // send time since it was written and countClicks() now does the same. The
+  // send time isn't on the tracking doc (it only knows when its draft was
+  // created), so it comes from the saved campaign that claims this send;
+  // unclaimed sends keep their raw timeline.
   const sentAtByCampaign = useMemo(() => {
     const map = new Map();
     (campaigns || []).forEach((c, index) => map.set(index, sentAtByRecipient(c?.contacts)));
@@ -254,35 +288,40 @@ export function EmailTrackingView({ onOpenCampaign }) {
       const link = campaignForSubject(campaigns, r.subject);
       const sent = link ? sentAtByCampaign.get(link.index) : null;
       const key = normalizeTrackedEmail(r.to);
-      const opens = sent?.has(key)
-        ? countOpens(r, { sentAt: sent.get(key) ?? null })
-        : countOpens(r);
+      // Present-with-null and absent mean different things: a recipient the
+      // campaign lists but has no send date for is known NOT sent (gate on,
+      // every hit is a preview), while an address no campaign lists gets no
+      // gate at all, because we'd have nothing to gate against.
+      const gate = sent?.has(key) ? { sentAt: sent.get(key) ?? null } : undefined;
+      const opens = gate ? countOpens(r, gate) : countOpens(r);
+      const clicks = gate ? countClicks(r, gate) : countClicks(r);
       const replies = link ? replyByCampaign.get(link.index) : null;
       // null = nobody is tracking replies for this send (no campaign owns it).
       const reply = replies?.get(key) ?? null;
-      // What the SHAPE of the opens says, over and above the count — repeat
-      // reads across days, several places on several devices, a fast first
-      // open. See emailSignals.js for why each is worth more than a raw open.
-      // Clicks go through the same scanner filter the pixel has always used.
-      // A security gateway following every link in the message was the one
-      // number on this page with nothing filtering it at all.
-      const clicks = countClicks(r);
       const screening = screeningEvidence(clicks, opens);
-      const signals = engagementSignals(opens, { sentAt: sent?.get(key) ?? null, clickSummary: clicks });
-      // Did it arrive? Answered from the bounce, not from the pixel — a pixel
-      // that never loaded is silence, not a failure. Counted loads only, so
-      // the sender's own draft previews don't stand in as proof of delivery.
-      // Delivery reads the RAW activity, not the filtered counts: a scanner
-      // fetch is worthless as engagement and conclusive as delivery, since a
-      // gateway can only scan mail it received. Pre-send previews are the one
-      // kind that proves nothing — those are ours, before it ever went out.
+      // What the SHAPE of the clicks says over and above the count: repeat
+      // clicks across days, several places on several devices, a fast first
+      // click, and whether the booking page was one of the destinations.
+      // See emailSignals.js for why each is worth more than a raw total.
+      const signals = clickSignals(clicks, { sentAt: sent?.get(key) ?? null, openSummary: opens });
+      // A send addressed to the person who sent it. Kept and labelled rather
+      // than hidden — a test send is the fastest way to confirm tracking works
+      // at all — but excluded from every rate, where it would otherwise count
+      // the sender's own clicking as a prospect's interest.
+      const self = isSelfSend(r, user?.email);
+      // Did it arrive? Answered from the bounce, not from engagement — silence
+      // is not a failure. Delivery reads the RAW activity, not the filtered
+      // counts: a scanner fetch is worthless as engagement and conclusive as
+      // delivery, since a gateway can only scan mail it received. Pre-send
+      // previews are the one kind that proves nothing — those are ours, before
+      // it ever went out.
       const delivery = deliveryStatus(reply, {
-        hasActivity: (opens.count + opens.machine) > 0 || clicks.raw > 0,
+        hasActivity: (opens.count + opens.machine) > 0 || (clicks.count + clicks.machine + clicks.sweep) > 0,
         sentAt: sent?.get(key) ?? null,
       });
-      return { row: r, link, opens, clicks, reply, signals, delivery, screening };
+      return { row: r, link, opens, clicks, reply, signals, delivery, screening, self };
     }),
-    [rows, campaigns, sentAtByCampaign, replyByCampaign],
+    [rows, campaigns, sentAtByCampaign, replyByCampaign, user?.email],
   );
 
   // How many tracked sends each campaign claims — shown in the picker so an
@@ -311,15 +350,18 @@ export function EmailTrackingView({ onOpenCampaign }) {
     ? campaigns[Number(campaignFilter)]
     : null;
 
+  // Every rate on this page is measured over real outreach, so the sender's
+  // own test sends are separated out once here rather than filtered at each
+  // use. They stay in `scoped` — the table still shows them, labelled — and
+  // are simply not part of any denominator.
+  const outreach = useMemo(() => scoped.filter(l => !l.self), [scoped]);
+  const selfSends = scoped.length - outreach.length;
+
   const stats = useMemo(() => {
-    const list = scoped.map(l => l.row);
-    const trackedEmails = list.length;
-    const totalOpens = scoped.reduce((a, l) => a + l.opens.count, 0);
-    const openedEmails = scoped.filter(l => l.opens.count > 0).length;
-    const totalClicks = scoped.reduce((a, l) => a + l.clicks.count, 0);
-    const clickedEmails = scoped.filter(l => l.clicks.count > 0).length;
-    const screenedEmails = scoped.filter(l => l.screening.screened).length;
-    const openRate = trackedEmails ? Math.round((openedEmails / trackedEmails) * 100) : 0;
+    const trackedEmails = outreach.length;
+    const totalClicks = outreach.reduce((a, l) => a + l.clicks.count, 0);
+    const clickedEmails = outreach.filter(l => l.clicks.count > 0).length;
+    const screenedEmails = outreach.filter(l => l.screening.screened).length;
     const clickRate = trackedEmails ? Math.round((clickedEmails / trackedEmails) * 100) : 0;
     // Reply rate is measured against the sends a campaign actually tracks
     // replies for, not against every tracked email — dividing by sends nobody
@@ -328,24 +370,30 @@ export function EmailTrackingView({ onOpenCampaign }) {
     // A bounced address never received the email, so it is not a recipient who
     // chose not to answer — counting it as one understates the rate and hides
     // a data problem as a performance problem.
-    const bouncedEmails = scoped.filter(l => l.reply?.bounced).length;
+    const bouncedEmails = outreach.filter(l => l.reply?.bounced).length;
     // Measured only over sends a campaign is watching AND that went out —
     // a send nobody is watching has no bounce evidence either way, and
     // counting it as delivered would turn silence into a fact.
-    const deliveryKnown = scoped.filter(l => isDeliveryKnown(l.delivery)).length;
-    const deliveredEmails = scoped.filter(l => isDelivered(l.delivery)).length;
+    const deliveryKnown = outreach.filter(l => isDeliveryKnown(l.delivery)).length;
+    const deliveredEmails = outreach.filter(l => isDelivered(l.delivery)).length;
     const deliveryRate = deliveryKnown ? Math.round((deliveredEmails / deliveryKnown) * 100) : 0;
-    const oooEmails = scoped.filter(l => l.reply?.outOfOffice && !l.reply?.replied).length;
-    const replyTracked = scoped.filter(l => l.reply && !l.reply.bounced).length;
-    const repliedEmails = scoped.filter(l => l.reply?.replied).length;
+    const oooEmails = outreach.filter(l => l.reply?.outOfOffice && !l.reply?.replied).length;
+    const replyTracked = outreach.filter(l => l.reply && !l.reply.bounced).length;
+    const repliedEmails = outreach.filter(l => l.reply?.replied).length;
     const replyRate = replyTracked ? Math.round((repliedEmails / replyTracked) * 100) : 0;
-    return { trackedEmails, totalOpens, openedEmails, totalClicks, clickedEmails, openRate, clickRate, replyTracked, repliedEmails, replyRate, bouncedEmails, oooEmails, deliveryKnown, deliveredEmails, deliveryRate, screenedEmails };
-  }, [scoped]);
+    return { trackedEmails, totalClicks, clickedEmails, clickRate, replyTracked, repliedEmails, replyRate, bouncedEmails, oooEmails, deliveryKnown, deliveredEmails, deliveryRate, screenedEmails };
+  }, [outreach]);
 
   // Which links are actually pulling, across whatever the campaign filter has
   // selected. Scoped rather than filtered by the search box, same as the tiles:
   // this is a property of the campaign, not of the current search.
-  const linkStats = useMemo(() => clicksByLink(scoped.map(l => l.row)), [scoped]);
+  // Passes each row WITH the click summary already computed for it, so the
+  // breakdown agrees with the tiles about which clicks were real — recomputing
+  // here would lose the send-time gate and quietly count draft previews.
+  const linkStats = useMemo(
+    () => clicksByLink(outreach.map(l => ({ row: l.row, summary: l.clicks }))),
+    [outreach],
+  );
 
   const visible = useMemo(() => {
     let list = scoped;
@@ -360,8 +408,10 @@ export function EmailTrackingView({ onOpenCampaign }) {
     }
     const ms = (l) => { const d = toDate(l.row.createdAt); return d ? d.getTime() : 0; };
     const sorted = [...list];
-    if (sortBy === 'opens') sorted.sort((a, b) => b.opens.count - a.opens.count || ms(b) - ms(a));
-    else if (sortBy === 'clicks') sorted.sort((a, b) => b.clicks.count - a.clicks.count || ms(b) - ms(a));
+    if (sortBy === 'clicks') sorted.sort((a, b) => b.clicks.count - a.clicks.count || ms(b) - ms(a));
+    // Booking-page clicks first: the shortlist of people who went to look at
+    // the calendar is the one worth working before anything else on the page.
+    else if (sortBy === 'booking') sorted.sort((a, b) => bookingClicks(b) - bookingClicks(a) || b.clicks.count - a.clicks.count || ms(b) - ms(a));
     else if (sortBy === 'replies') sorted.sort((a, b) => (b.reply?.replied ? 1 : 0) - (a.reply?.replied ? 1 : 0) || ms(b) - ms(a));
     else sorted.sort((a, b) => ms(b) - ms(a)); // most recent
     return sorted;
@@ -376,7 +426,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
         <span style={{ fontSize: '0.8rem', color: '#64748B' }}>
           {selectedCampaign
             ? <>Activity for <strong>{campaignLabel(selectedCampaign)}</strong>.</>
-            : 'Image loads, clicks & replies for emails sent with tracking on.'}
+            : 'Clicks, replies & delivery for emails sent with tracking on.'}
         </span>
         {selectedCampaign && onOpenCampaign && (
           <button
@@ -391,9 +441,16 @@ export function EmailTrackingView({ onOpenCampaign }) {
           measure them. */}
       <MetricsExplainer />
 
-      {/* Accuracy note — set expectations the way an experienced HubSpot user reads these numbers. */}
+      {/* Accuracy note — what is excluded from the click count, and the one
+          case nothing can exclude. */}
       <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.74rem', lineHeight: 1.45, margin: '0.5rem 0 1rem' }}>
-        <strong>Reading these numbers:</strong> the pixel travels inside the Outlook draft, so hits before the send (proof-reading it), automated scanner fetches, and the same client re-loading within 5 minutes are excluded — expand a send to see what was dropped. What's left is still directional: Apple Mail Privacy Protection pre-loads the pixel (inflating the count), Gmail proxies images (so location shows Google), and Outlook blocks images by default (so plenty of real reads never register). <strong>Clicks are the better signal — scanner sweeps excluded — and a reply is the best.</strong>
+        <strong>Reading these numbers:</strong> the links are rewritten inside the Outlook draft, so clicks before the send
+        (you proof-reading it), security-gateway scans, and one machine following several links inside a minute are all
+        excluded — expand a send to see what was dropped and why. One case survives all of that: <strong>a gateway using an
+        ordinary browser user-agent that follows a single link cannot be told apart from a person</strong>, and an email whose
+        only link is your signature gives it nowhere to give itself away. Expand the row and read the device and timing —
+        a click seconds after the send, from somewhere the recipient isn&rsquo;t, is a machine whatever the count says.
+        <strong> A reply is the only signal nothing automated can produce.</strong>
       </div>
 
       {/* Shown only when the realtime read was blocked and we fell back to
@@ -419,17 +476,20 @@ export function EmailTrackingView({ onOpenCampaign }) {
           <div style={tileNum}>{stats.deliveryKnown ? stats.deliveredEmails : '—'}</div>
           <div style={tileLabel}>{stats.deliveryKnown ? `Delivered (${stats.deliveryRate}%)` : 'Delivered'}</div>
         </div>
-        <div style={tile} title="Emails whose tracking pixel was fetched at least once. Not the same as being read: a preview pane or a privacy pre-fetch counts, and a client that blocks images never fires it.">
-          <div style={tileNum}>{stats.openedEmails}</div><div style={tileLabel}>Images loaded ({stats.openRate}%)</div>
-        </div>
-        <div style={tile} title="Every fetch of the pixel, not just the first: the same recipient coming back later adds another.">
-          <div style={tileNum}>{stats.totalOpens}</div><div style={tileLabel}>Total image loads</div>
-        </div>
-        <div style={tile} title="Emails where at least one link was followed by a person. Security-gateway link scans are excluded, the same way they are for image loads.">
+        <div style={tile} title="Emails where at least one link was followed by a person. Clicks before the send (you proof-reading the draft), security-gateway scans, automated sweeps and your own test sends are all excluded.">
           <div style={tileNum}>{stats.clickedEmails}</div><div style={tileLabel}>Clicked ({stats.clickRate}%)</div>
         </div>
-        <div style={tile} title="Every human click: the same link twice, or two different links in one email, each add one. Repeat clicks are NOT collapsed the way repeat image loads are — two clicks are two decisions, where two loads are one message re-rendered.">
+        <div style={tile} title="Every human click: the same link twice, or two different links in one email, each add one. Two clicks are two decisions, so repeats are never collapsed.">
           <div style={tileNum}>{stats.totalClicks}</div><div style={tileLabel}>Total clicks</div>
+        </div>
+        <div
+          style={tile}
+          title={linkStats.schedulingClicks
+            ? `${linkStats.schedulingRecipients} ${linkStats.schedulingRecipients === 1 ? 'person' : 'people'} followed your scheduling link, ${linkStats.schedulingClicks} time${linkStats.schedulingClicks === 1 ? '' : 's'} — they went to look at your availability. This is NOT a count of bookings: whether they picked a slot happens on the booking site and reaches you as its own notification. Compare this number against the meetings actually in your calendar — the gap is the people who opened your availability and didn't commit, which is the best follow-up list on this page.`
+            : 'Clicks that landed on your scheduling link. None yet in this selection. If your signature carries a booking link, this is the number to compare against the meetings actually in your calendar — a click here means somebody opened your availability, not that they booked.'}
+        >
+          <div style={tileNum}>{linkStats.schedulingClicks || 0}</div>
+          <div style={tileLabel}>Booking page{linkStats.schedulingRecipients ? ` (${linkStats.schedulingRecipients})` : ''}</div>
         </div>
         <div
           style={tile}
@@ -442,7 +502,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
         </div>
       </div>
 
-      {(stats.bouncedEmails > 0 || stats.oooEmails > 0 || stats.screenedEmails > 0) && (
+      {(stats.bouncedEmails > 0 || stats.oooEmails > 0 || stats.screenedEmails > 0 || selfSends > 0) && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem', fontSize: '0.74rem' }}>
           {stats.bouncedEmails > 0 && (
             <span
@@ -455,6 +515,12 @@ export function EmailTrackingView({ onOpenCampaign }) {
               title="Their auto-responder answered. Not a no — hover the row to see what it said, and try again when they are back."
               style={{ background: '#FEF3C7', border: '1px solid #FDE68A', color: '#92400E', borderRadius: 999, padding: '0.15rem 0.6rem', fontWeight: 600 }}
             >{stats.oooEmails} out of office — worth a second send</span>
+          )}
+          {selfSends > 0 && (
+            <span
+              title="Sends addressed to your own address — tests, not outreach. They are still listed in the table, marked Test, because a test send is the quickest way to confirm tracking is working at all. They are left out of every rate above, where your own clicking would otherwise read as a prospect's interest."
+              style={{ background: '#F1F5F9', border: '1px solid #E2E8F0', color: '#475569', borderRadius: 999, padding: '0.15rem 0.6rem', fontWeight: 600 }}
+            >{selfSends} test send{selfSends === 1 ? '' : 's'} to yourself — not counted in the rates</span>
           )}
           {stats.screenedEmails > 0 && (
             <span
@@ -494,8 +560,8 @@ export function EmailTrackingView({ onOpenCampaign }) {
           Sort by
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit' }}>
             <option value="sent">Most recent</option>
-            <option value="opens">Most image loads</option>
             <option value="clicks">Most clicks</option>
+            <option value="booking">Opened booking page</option>
             <option value="replies">Replied first</option>
           </select>
         </label>
@@ -511,7 +577,7 @@ export function EmailTrackingView({ onOpenCampaign }) {
       ) : rows.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', border: '1px dashed #CBD5E1', borderRadius: 10 }}>
           <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 4 }}>No tracked emails yet</div>
-          <div style={{ fontSize: '0.8rem' }}>Go to the <strong>Drafts</strong> tab, keep “Track image loads &amp; clicks” checked, and download your drafts. Activity shows up here once recipients engage.</div>
+          <div style={{ fontSize: '0.8rem' }}>Go to the <strong>Drafts</strong> tab, keep “Track clicks &amp; delivery” checked, and download your drafts. Activity shows up here once recipients engage.</div>
         </div>
       ) : visible.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', border: '1px dashed #CBD5E1', borderRadius: 10 }}>
@@ -532,32 +598,29 @@ export function EmailTrackingView({ onOpenCampaign }) {
                 <th style={th}>Subject</th>
                 <th style={th}>Campaign</th>
                 <th style={th} title="When the tracked draft was created. The tool doesn't send the mail — you do, from Outlook — so this is the draft's timestamp, not the send's.">Drafted</th>
-                <th style={th} title="Whether the mail arrived, answered from bounces rather than from the pixel — a pixel that never loaded is silence, not a failure. Confirmed means something was fetched or clicked, which can only happen after delivery.">Delivery</th>
-                <th style={{ ...th, textAlign: 'center' }} title="Times the email's tracking pixel was fetched. Passive — a preview pane or a privacy pre-fetch fires it, and a client that blocks images never does — so treat it as a weak signal, and a zero as no signal at all.">Loads</th>
-                <th style={th} title="When the pixel was last fetched. The most useful thing this metric gives you: a load in the last hour means the message is in front of someone now.">Last load</th>
-                <th style={th} title="What the pattern of opens says beyond the count: repeat reads on separate days, opens from several places on several devices (often a forward), a first open within the hour. Inferences, not facts — hover one for its reasoning.">Signals</th>
-                <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed. Deliberate, so a click counts for more than any number of image loads — and can happen on a send that never registered one.">Clicks</th>
+                <th style={th} title="Whether the mail arrived, answered from bounces rather than from engagement — silence is not a failure. Confirmed means something in the message was fetched or clicked, which can only happen after delivery.">Delivery</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Times a link in the email was followed by a person. Clicks before the send, security-gateway scans and automated sweeps are excluded — expand a row to see what was dropped and why.">Clicks</th>
+                <th style={th} title="When a link was last followed. A click in the last hour means someone is on your page right now.">Last click</th>
+                <th style={th} title="What the pattern of clicks says beyond the count: whether the booking page was one of them, repeat clicks on separate days, clicks from several places on several devices (often a forward), a first click within the hour. Inferences, not facts — hover one for its reasoning.">Signals</th>
                 <th style={{ ...th, textAlign: 'center' }} title="Whether the recipient wrote back, from the campaign's HubSpot activity. Out-of-office and auto-replies don't count. The one signal here a machine can't produce — so it outranks both of the columns to its left.">Replied</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map(({ row: r, link, opens, clicks, reply, signals, delivery, screening }) => {
+              {visible.map(({ row: r, link, clicks, reply, signals, delivery, screening, self }) => {
                 const isOpen = expanded === r.id;
-                const clicked = clicks.count > 0;
                 return (
                   <FragmentRow
                     key={r.id}
                     r={r}
                     link={link}
-                    opens={opens}
                     clicks={clicks}
                     screening={screening}
                     reply={reply}
                     signals={signals}
                     delivery={delivery}
+                    self={self}
                     onOpenCampaign={onOpenCampaign}
                     isOpen={isOpen}
-                    clicked={clicked}
                     onToggle={() => setExpanded(isOpen ? null : r.id)}
                   />
                 );
@@ -618,29 +681,29 @@ function LinkBreakdown({ stats }) {
   );
 }
 
-// Why an individual pixel hit didn't make the open count, as shown next to
-// it in the expanded detail. 'counted' events get no label.
-const OPEN_VERDICT_LABEL = {
-  'pre-send': ['· before send', 'The pixel is inside the Outlook draft, so this hit landed before the email was sent — a preview of the draft, not a recipient.'],
-  machine: ['· automated', "A scanner or preview bot fetched the pixel; no human read anything."],
-  repeat: ['· repeat', 'The same client re-loaded the pixel within 5 minutes of its last hit — one read, re-rendered.'],
+// Why an individual click didn't make the count, as shown next to it in the
+// expanded detail. 'counted' events get no label.
+//
+// Every exclusion is shown rather than silently subtracted. A number that
+// quietly shrinks is a number nobody can check, and these three verdicts are
+// exactly where a reader's own knowledge beats ours — the sender knows whether
+// they were proof-reading a draft on Tuesday afternoon, and we don't.
+const CLICK_VERDICT_LABEL = {
+  'pre-send': ['· before send', 'The links are rewritten inside the Outlook draft, so this click landed before the email was sent — you following your own link while proof-reading it, not a recipient.'],
+  machine: ['· scanned', 'A security gateway followed this link to scan it before the recipient saw the message. Not a person — but it does prove the mail arrived.'],
+  sweep: ['· swept', 'One machine followed several different links in this message inside a minute. A reader picks a link; a scanner walks the whole message, so this is a gateway that did not identify itself in the ordinary way.'],
 };
 
-function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screening, reply, signals = [], delivery, onOpenCampaign, isOpen, clicked, onToggle }) {
-  const opened = openSummary.count > 0;
-  const excluded = describeExcludedOpens(openSummary);
-  // Newest first, carrying each event's verdict. Falls back to the raw
-  // events for a doc countOpens couldn't classify (no stored event detail).
-  const opens = openSummary.events.length
-    ? [...openSummary.events].reverse()
-    : (Array.isArray(r.opens) ? [...r.opens].reverse().map(event => ({ event, verdict: 'counted' })) : []);
-  // Newest first, carrying each click's verdict so a scanner sweep is visible
-  // as the thing that was dropped rather than silently missing.
+function FragmentRow({ r, link, clicks: clickSummary, screening, reply, signals = [], delivery, self, onOpenCampaign, isOpen, onToggle }) {
+  const clicked = clickSummary.count > 0;
+  // Newest first, carrying each click's verdict so an exclusion is visible as
+  // the thing that was dropped rather than silently missing.
   const clicks = [...clickSummary.events].reverse();
   const excludedClicks = describeExcludedClicks(clickSummary, screening?.scanner);
   // Distinct destinations this recipient went to, for the Clicks tooltip —
-  // the count alone doesn't say what they were interested in.
-  const rowLinks = linksForRow(r);
+  // the count alone doesn't say what they were interested in. Reads the
+  // already-gated summary so it agrees with the number beside it.
+  const rowLinks = linksForRow(r, clickSummary);
   const clickTitle = [
     rowLinks.map(l => `${l.label}${l.clicks > 1 ? ` ×${l.clicks}` : ''}`).join('\n'),
     excludedClicks,
@@ -650,7 +713,15 @@ function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screen
       <tr onClick={onToggle} style={{ cursor: 'pointer', background: isOpen ? '#F8FAFC' : 'transparent' }}>
         <td style={{ ...td, width: 28, color: '#94A3B8', textAlign: 'center' }}>{isOpen ? '▾' : '▸'}</td>
         <td style={td}>
-          <div style={{ fontWeight: 600 }}>{r.recipientName || '-'}</div>
+          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            {r.recipientName || '-'}
+            {self && (
+              <span
+                title="You sent this to yourself. It stays listed because a test send is the quickest way to confirm tracking is working — but it is left out of every rate above, where your own clicking would read as a prospect's interest."
+                style={{ background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0 0.4rem', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em' }}
+              >Test</span>
+            )}
+          </div>
           <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{r.to || ''}</div>
         </td>
         <td style={{ ...td, maxWidth: 220 }}>
@@ -689,13 +760,13 @@ function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screen
           }}>{DELIVERY_LABEL[delivery]}</span>
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
-          <span title={excluded || undefined}>
-            {opened ? <Pill tone="green">{openSummary.count}</Pill> : <Pill tone="grey">0</Pill>}
+          <span title={clickTitle}>
+            {clicked ? <Pill tone="blue">{clickSummary.count}</Pill> : <Pill tone="grey">0</Pill>}
           </span>
         </td>
         <td style={{ ...td, whiteSpace: 'nowrap', color: '#64748B' }}>
-          {openSummary.lastOpenAt
-            ? <span title={fmtDateTime(openSummary.lastOpenAt)}>{fmtRelative(openSummary.lastOpenAt)}</span>
+          {clickSummary.lastClickAt
+            ? <span title={fmtDateTime(clickSummary.lastClickAt)}>{fmtRelative(clickSummary.lastClickAt)}</span>
             : '-'}
         </td>
         <td style={{ ...td, maxWidth: 230 }}>
@@ -710,19 +781,16 @@ function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screen
                   style={{
                     display: 'inline-block', borderRadius: 999, padding: '0.05rem 0.45rem',
                     fontSize: '0.68rem', fontWeight: 600, whiteSpace: 'nowrap',
-                    background: sig.key === 'shared' ? '#FEF3C7' : '#F1F5F9',
-                    color: sig.key === 'shared' ? '#92400E' : '#475569',
-                    border: `1px solid ${sig.key === 'shared' ? '#FDE68A' : '#E2E8F0'}`,
+                    ...(sig.key === 'booking'
+                      ? { background: '#DBEAFE', color: '#1E40AF', border: '1px solid #BFDBFE' }
+                      : sig.key === 'shared'
+                        ? { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }
+                        : { background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0' }),
                   }}
                 >{sig.label}</span>
               ))}
             </span>
           )}
-        </td>
-        <td style={{ ...td, textAlign: 'center' }}>
-          <span title={clickTitle}>
-            {clicked ? <Pill tone="blue">{clickSummary.count}</Pill> : <Pill tone="grey">0</Pill>}
-          </span>
         </td>
         <td style={{ ...td, textAlign: 'center' }}>
           {!reply ? (
@@ -749,33 +817,66 @@ function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screen
       </tr>
       {isOpen && (
         <tr>
-          <td colSpan={11} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+          <td colSpan={10} style={{ padding: '0.75rem 1rem 1rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-              <div style={{ flex: '1 1 320px', minWidth: 280 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
-                  Image loads ({openSummary.count})
-                  {excluded && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600, color: '#B45309' }} title={excluded}> · {openSummary.raw - openSummary.count} hit{openSummary.raw - openSummary.count === 1 ? '' : 's'} not counted</span>}
+              {/* Every click, with the evidence that decides what it was.
+                  Device and location are the whole reason this panel exists:
+                  a gateway with a browser user-agent following one link is
+                  invisible to every rule we have, and the reader can still
+                  see that it fired from a datacentre eleven seconds after the
+                  send. So the events are shown in full — excluded ones struck
+                  through with their reason — rather than summarised into a
+                  number that hides its own workings. */}
+              <div style={{ flex: '1 1 420px', minWidth: 320 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
+                  Clicks ({clickSummary.count})
+                  {excludedClicks && (
+                    <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600, color: '#B45309' }} title={excludedClicks}>
+                      {' '}· {clickSummary.raw - clickSummary.count} not counted
+                    </span>
+                  )}
                 </div>
-                {opens.length === 0 ? (
-                  <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No image loads recorded yet.</div>
+                {clicks.length === 0 ? (
+                  <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>
+                    No link clicks recorded yet.
+                    {clickSummary.raw > 0 && ' Every click on this send was excluded — hover the count above for what was dropped.'}
+                  </div>
                 ) : (
-                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {opens.map(({ event: ev, verdict }, i) => {
-                      const label = OPEN_VERDICT_LABEL[verdict];
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {clicks.map(({ event: ev, verdict }, i) => {
+                      const label = CLICK_VERDICT_LABEL[verdict];
+                      const booking = isSchedulingLink(ev?.url);
                       return (
-                        <li key={i} style={{ fontSize: '0.76rem', color: label ? '#94A3B8' : '#334155', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: 600, textDecoration: label ? 'line-through' : 'none' }}>{fmtDateTime(ev.at)}</span>
-                          <span style={{ color: '#64748B' }}>· {location(ev)}</span>
-                          <span style={{ color: '#94A3B8' }}>· {deviceFromUa(ev.ua)}</span>
-                          {ev.proxied && <span style={{ color: '#B45309' }} title="Fetched through a mail-client image proxy, so the location is the proxy's, not the reader's. Still counted: the proxy fetches because someone opened the message.">· proxy</span>}
-                          {label && <span style={{ color: '#B45309', fontWeight: 600 }} title={label[1]}>{label[0]}</span>}
+                        <li key={i} style={{ fontSize: '0.76rem', color: label ? '#94A3B8' : '#334155' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'baseline' }}>
+                            <span style={{ fontWeight: 600, textDecoration: label ? 'line-through' : 'none' }}>{fmtDateTime(ev.at)}</span>
+                            <span style={{ color: '#64748B' }}>· {location(ev)}</span>
+                            {/* The device is the evidence no rule can weigh
+                                for the reader, so it is never abbreviated
+                                away — the full user-agent is on hover. */}
+                            <span style={{ color: '#94A3B8' }} title={ev.ua || 'No user-agent was sent — no ordinary browser does that, which is why this was excluded.'}>· {deviceFromUa(ev.ua)}</span>
+                            {label && <span style={{ color: '#B45309', fontWeight: 600 }} title={label[1]}>{label[0]}</span>}
+                          </div>
+                          {ev.url && (
+                            <div>
+                              <div style={{ color: booking ? '#1D4ED8' : '#1E40AF', fontWeight: 600 }}>
+                                {linkLabel(ev.url)}
+                                {booking && !label && (
+                                  <span style={{ color: '#64748B', fontWeight: 500 }} title="They followed your scheduling link, so they went to look at your availability. Whether they picked a slot happens on the booking site and reaches you as its own notification — it is not recorded here.">
+                                    {' '}— opened your availability, which is not a booking
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ color: '#64748B', wordBreak: 'break-all', fontSize: '0.72rem' }}>{ev.url}</div>
+                            </div>
+                          )}
                         </li>
                       );
                     })}
                   </ul>
                 )}
               </div>
-              <div style={{ flex: '1 1 320px', minWidth: 280 }}>
+              <div style={{ flex: '1 1 260px', minWidth: 240 }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>Reply</div>
                 <div style={{ fontSize: '0.78rem', color: reply?.replied ? '#334155' : '#94A3B8', marginBottom: '0.9rem' }}>
                   {!reply
@@ -787,33 +888,10 @@ function FragmentRow({ r, link, opens: openSummary, clicks: clickSummary, screen
                         </>
                       : 'No reply yet.'}
                 </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
-                  Clicks ({clickSummary.count})
-                  {excludedClicks && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600, color: '#B45309' }} title={excludedClicks}> · {clickSummary.machine} scanned</span>}
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>Delivery</div>
+                <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 700 }}>{DELIVERY_LABEL[delivery]}</span> — {DELIVERY_TITLE[delivery]}
                 </div>
-                {clicks.length === 0 ? (
-                  <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>No link clicks recorded yet.</div>
-                ) : (
-                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {clicks.map(({ event: ev, verdict }, i) => (
-                      <li key={i} style={{ fontSize: '0.76rem', color: verdict === 'machine' ? '#94A3B8' : '#334155' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: 600, textDecoration: verdict === 'machine' ? 'line-through' : 'none' }}>{fmtDateTime(ev.at)}</span>
-                          <span style={{ color: '#64748B' }}>· {location(ev)}</span>
-                          {verdict === 'machine' && (
-                            <span style={{ color: '#B45309', fontWeight: 600 }} title="A security gateway followed this link to scan it before the recipient saw the message. Not a person, so it isn't counted — but it does prove the mail arrived.">· scanned</span>
-                          )}
-                        </div>
-                        {ev.url && (
-                          <div>
-                            <div style={{ color: '#1E40AF', fontWeight: 600 }}>{shortLinkLabel(ev.url)}</div>
-                            <div style={{ color: '#64748B', wordBreak: 'break-all', fontSize: '0.72rem' }}>{ev.url}</div>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </div>
           </td>
