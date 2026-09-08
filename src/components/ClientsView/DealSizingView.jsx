@@ -456,7 +456,12 @@ export function DealSizingView({
   // the clients who already buy it alone, and what the last bulk edit changed
   // so it can be put back.
   const [bulkService, setBulkService] = useState('');
-  const [bulkSkipSold, setBulkSkipSold] = useState(true);
+  // Off: a client who already buys the service is added like any other, so
+  // the row shows what the card says about them instead of no row at all. It
+  // costs nothing — a scope the card has ruled on is not sized, so a buyer
+  // pulled in this way contributes a status and no money — and a book where
+  // the buyers are simply missing is the harder thing to read.
+  const [bulkSkipSold, setBulkSkipSold] = useState(false);
   const [bulkUndo, setBulkUndo] = useState(null);
   // A client the Clients tab ticks "Don't Track" isn't being worked at all,
   // so pricing one inflates the book with money nobody is going after. They
@@ -855,8 +860,10 @@ export function DealSizingView({
       // History against the what-if. A scope is a proposal; the company card
       // is the record of what has actually been sold, quoted or ruled out.
       // Shown side by side because a large number next to "3 sold" means
-      // something very different from the same number next to nothing.
-      key: 'explored', label: 'On the card', defaultWidth: 210,
+      // something very different from the same number next to nothing — and
+      // since the card's ruling is what decides whether a row is sized at
+      // all, the column says what it is: the status of the services picked.
+      key: 'explored', label: 'Service Status', defaultWidth: 210,
       getSortValue: (row) => row.statusCounts.sold,
       getFilterValue: (row) => {
         if (!row.serviceCount) return '';
@@ -1296,7 +1303,7 @@ export function DealSizingView({
           />
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.74rem', color: '#475569' }}>
             <input type="checkbox" checked={bulkSkipSold} onChange={e => setBulkSkipSold(e.target.checked)} />
-            <span title="A client whose company card says they already buy this is not new business. Sizing it as if it were counts revenue you already have — twice, if it is also under contract.">
+            <span title="Leave the clients whose card says they already buy this out of the add entirely. Off by default: they are worth having on the page with their status showing, and a scope the card has ruled on is not sized anyway, so including them adds no money to the totals.">
               Skip clients who already buy it
             </span>
           </label>
@@ -1352,10 +1359,10 @@ export function DealSizingView({
             )}
             {bulkPlan.sold.length > 0 && (
               <span title={bulkSkipSold
-                ? 'The company card says these clients already buy it, so they are being left out. Untick the box to size them anyway — a renewal is a real thing to want.'
-                : 'The company card says these clients already buy it, and they are being included. Their figures are a renewal, not new business.'}>
-                <strong style={{ color: bulkSkipSold ? '#166534' : '#B45309' }}>{bulkPlan.sold.length}</strong>
-                {bulkSkipSold ? ' already buy it — skipped' : ' already buy it — included'}
+                ? 'The company card says these clients already buy it, so they are being left out of the add — they get no row of their own on this scope. Untick the box to bring them in with their status showing.'
+                : 'The company card says these clients already buy it, and they are being included. Their row will show that status and no figures: the card has ruled on the scope, so it is not new business to size.'}>
+                <strong style={{ color: bulkSkipSold ? '#B45309' : '#166534' }}>{bulkPlan.sold.length}</strong>
+                {bulkSkipSold ? ' already buy it — skipped' : ' already buy it — included, status only'}
               </span>
             )}
             {bulkPlan.add.length === 0 && (
