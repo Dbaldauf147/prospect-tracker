@@ -13,6 +13,9 @@ import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByR
 import { describeExcludedOpens } from '../../utils/emailOpens';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import { isCampaignActive } from '../../utils/campaignOutreach';
+import {
+  campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, csvFilename, downloadCsv,
+} from '../../utils/campaignExport';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -925,6 +928,29 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     });
   })();
 
+  // Take the open campaign out as a CSV.
+  //
+  // Rows come out in whatever order the table is currently sorted into — what
+  // you see is what you get — but every column ships regardless of which ones
+  // are hidden: this is the campaign's data, not a picture of the table. The
+  // delivery verdict and the tracking counts are handed over already computed,
+  // since both need the whole tracking collection this view has loaded.
+  function exportContactsCsv() {
+    if (!displayResults) return;
+    const csv = campaignContactsCsv(displayResults, sortedContacts.map(({ c }) => c), {
+      deliveryFor: (c) => DELIVERY_LABEL[deliveryFor(c)] || '',
+      trackingFor: (c) => lookupTracking(c.email),
+    });
+    downloadCsv(csvFilename(`Email campaign - ${displayResults.title || displayResults.subject || 'untitled'}`), csv);
+  }
+
+  // Take the Saved Campaigns table out as a CSV: one row per campaign, the
+  // figures it prints plus the dates behind the Active/Inactive badge.
+  function exportSummaryCsv() {
+    if (savedCampaigns.length === 0) return;
+    downloadCsv(csvFilename('Email campaigns summary'), campaignsSummaryCsv(savedCampaigns));
+  }
+
   // ---- Column layout -----------------------------------------------------
   // The lineup this campaign can show (the tracking column only exists when
   // something here was sent with a pixel), then the user's order, then what
@@ -1048,16 +1074,32 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           </span>
         );
       }
-      case 'status':
-        return c.replied
-          ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
-          : c.bounced
-            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEE2E2', color: '#991B1B' }} title="The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.">Bounced</span>
-            : c.outOfOffice
-              ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E', whiteSpace: 'nowrap' }} title={c.oooSubject ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.` : "Their auto-responder answered. Not a no — worth a second send when they're back."}>Out of Office</span>
-              : c.sentDate
-                ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280', whiteSpace: 'nowrap' }}>No Reply</span>
-                : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E', whiteSpace: 'nowrap' }} title="In this campaign but not yet sent the email">Not Sent</span>;
+      case 'status': {
+        // The ladder itself lives in campaignExport, because the CSV prints
+        // the same words and the two must not drift; the badge here only
+        // decides how each of them looks.
+        const label = contactStatusLabel(c);
+        const STATUS_TONE = {
+          Replied: { background: '#DCFCE7', color: '#166534' },
+          Bounced: { background: '#FEE2E2', color: '#991B1B' },
+          'Out of Office': { background: '#FEF3C7', color: '#92400E' },
+          'No Reply': { background: '#F3F4F6', color: '#6B7280' },
+          'Not Sent': { background: '#FEF3C7', color: '#92400E' },
+        };
+        const STATUS_TITLE = {
+          Bounced: 'The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.',
+          'Out of Office': c.oooSubject
+            ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.`
+            : "Their auto-responder answered. Not a no — worth a second send when they're back.",
+          'Not Sent': 'In this campaign but not yet sent the email',
+        };
+        return (
+          <span
+            title={STATUS_TITLE[label]}
+            style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', ...STATUS_TONE[label] }}
+          >{label}</span>
+        );
+      }
       case 'tracking': {
         const t = lookupTracking(c.email);
         if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send didn't carry a tracking pixel">-</span>;
@@ -1403,6 +1445,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   </button>
                 );
               })()}
+              <button
+                onClick={exportContactsCsv}
+                disabled={!(displayResults.contacts || []).length}
+                title="Download this campaign as a CSV: every contact, with send date, delivery, status, image loads, clicks, replies and event status"
+                style={{
+                  padding: '0.35rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+                  cursor: (displayResults.contacts || []).length ? 'pointer' : 'default',
+                  opacity: (displayResults.contacts || []).length ? 1 : 0.5,
+                }}
+              >
+                Export CSV
+              </button>
               {viewingSaved === null && (
                 <button
                   onClick={handleSave}
@@ -1559,21 +1615,34 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         <div style={{ marginTop: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Saved Campaigns</div>
-            <button
-              onClick={refreshAllCampaigns}
-              disabled={refreshingAll}
-              title="Re-pull the latest activity for every saved campaign"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
-                background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
-                fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
-                cursor: refreshingAll ? 'wait' : 'pointer', opacity: refreshingAll ? 0.7 : 1,
-              }}
-            >
-              <span style={{ display: 'inline-block' }}>↻</span>
-              {refreshingAll ? 'Refreshing…' : 'Refresh all'}
-            </button>
+            <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
+              <button
+                onClick={exportSummaryCsv}
+                title="Download every saved campaign as a CSV: contacts, sent, % sent, replies, response rate and status"
+                style={{
+                  padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >
+                Export CSV
+              </button>
+              <button
+                onClick={refreshAllCampaigns}
+                disabled={refreshingAll}
+                title="Re-pull the latest activity for every saved campaign"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                  padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
+                  cursor: refreshingAll ? 'wait' : 'pointer', opacity: refreshingAll ? 0.7 : 1,
+                }}
+              >
+                <span style={{ display: 'inline-block' }}>↻</span>
+                {refreshingAll ? 'Refreshing…' : 'Refresh all'}
+              </button>
+            </div>
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
