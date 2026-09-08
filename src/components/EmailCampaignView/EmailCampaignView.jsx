@@ -1,5 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { ColumnToggle } from '../common/ColumnToggle';
+import {
+  isColumnVisible, resetToStarred, applyStar, orderColumns, mergeColumnOrder,
+} from '../../utils/tableColumnPrefs';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -7,6 +12,63 @@ import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import { isCampaignActive } from '../../utils/campaignOutreach';
+import {
+  campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, csvFilename, downloadCsv,
+} from '../../utils/campaignExport';
+import {
+  campaignSubjects, primarySubject, withSubjects, parseSubjectLines,
+  subjectLinesText, sameSubjects,
+} from '../../utils/campaignSubjects';
+
+// The contact table's columns, and how wide each one starts.
+//
+// One entry per column the table can show, in the order it ships in. The
+// user's own choices — which show, which are starred as their default view,
+// what order, how wide — sit on top of this in localStorage, keyed by
+// column key, so adding a column here doesn't disturb a layout somebody has
+// already set up: anything not on their hidden list simply appears.
+//
+// "Sent To" is the row's identity, so it can't be hidden; the remove (×)
+// button is table scaffolding rather than a column and isn't offered at all.
+const CONTACT_COLUMNS = [
+  { key: 'email', label: 'Sent To', sortKey: 'email', width: 280 },
+  { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
+  { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
+  { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
+  {
+    key: 'tracking',
+    label: 'Clicks',
+    width: 110,
+    // Only worth a column when something in this campaign was actually
+    // sent with tracking on.
+    needsTracking: true,
+    title: 'Links followed by a person. Clicks before the send (proof-reading the draft in Outlook, where the rewritten links already work), security-gateway scans and automated sweeps are excluded — hover a count to see what was dropped. The Email Tracking tab shows which link each person followed, and on what device.',
+  },
+  { key: 'repliedBy', label: 'Replied By', sortKey: 'repliedBy', width: 150 },
+  { key: 'replyDate', label: 'Reply Date', sortKey: 'replyDate', width: 110 },
+  { key: 'eventStatus', label: 'Event Status', sortKey: 'eventStatus', width: 130 },
+];
+const CONTACT_COLS_LOCKED = ['email'];
+const ACTIONS_COL_WIDTH = 36;
+const MIN_COL_WIDTH = 60;
+
+// Column prefs live per user, under one key each.
+const COLS_LS = {
+  hidden: 'email-campaign:contact-cols-hidden',
+  removed: 'email-campaign:contact-cols-removed',
+  starred: 'email-campaign:contact-cols-starred',
+  order: 'email-campaign:contact-cols-order',
+  widths: 'email-campaign:contact-cols-widths',
+};
+function readCols(key, fallback) {
+  try {
+    const v = JSON.parse(userLsGet(COLS_LS[key]));
+    return v ?? fallback;
+  } catch { return fallback; }
+}
+function writeCols(key, value) {
+  try { userLsSet(COLS_LS[key], JSON.stringify(value)); } catch { /* a full or blocked localStorage just means prefs don't persist */ }
+}
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
@@ -25,9 +87,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [saving, setSaving] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null); // index of saved campaign being edited
   const [editTitle, setEditTitle] = useState('');
-  const [editSubject, setEditSubject] = useState('');
-  const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject from the results header
+  // The saved-campaign editor's subject lines, one per row of a textarea. A
+  // campaign can match on several (an A/B test of two lines, a wave reworded
+  // for a second segment) and they are one campaign, one roster, one set of
+  // numbers — see src/utils/campaignSubjects.js.
+  const [editSubjects, setEditSubjects] = useState('');
+  const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject lines from the results header
   const [subjectDraft, setSubjectDraft] = useState('');
+  // "New Campaign" form: create a campaign by hand instead of searching for a
+  // subject line that has already been sent.
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newSubject, setNewSubject] = useState('');
+  const [creating, setCreating] = useState(false); // manual create in flight
   // Draft for the "add an email to this campaign" input. Manually-added
   // addresses are the only way contacts enter a campaign's fixed list.
   const [addEmail, setAddEmail] = useState('');
@@ -36,6 +108,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Which column the contact table is sorted by, and the direction. key === null
   // leaves the table in its natural (roster) order.
   const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
+  // Column layout: what's hidden, what's starred as the user's default view,
+  // what's been deleted out of the table, the order, and the widths. Stored
+  // as the user set it and reapplied on every visit.
+  const [colHidden, setColHidden] = useState(() => new Set(readCols('hidden', [])));
+  const [colStarred, setColStarred] = useState(() => new Set(readCols('starred', [])));
+  const [colRemoved, setColRemoved] = useState(() => new Set(readCols('removed', [])));
+  const [colOrder, setColOrder] = useState(() => readCols('order', []));
+  const [colWidths, setColWidths] = useState(() => readCols('widths', {}));
+  useEffect(() => { writeCols('hidden', [...colHidden]); }, [colHidden]);
+  useEffect(() => { writeCols('starred', [...colStarred]); }, [colStarred]);
+  useEffect(() => { writeCols('removed', [...colRemoved]); }, [colRemoved]);
+  useEffect(() => { writeCols('order', colOrder); }, [colOrder]);
+  useEffect(() => { writeCols('widths', colWidths); }, [colWidths]);
   // Identifies the most recent "open a saved campaign" request so a slow
   // refresh for a campaign the user has since navigated away from can't stomp
   // the currently-shown one.
@@ -68,7 +153,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   useEffect(() => {
     if (!openSubject || !campaignsLoaded) return;
     const want = String(openSubject).trim().toLowerCase();
-    const idx = savedCampaigns.findIndex(c => String(c?.subject || '').trim().toLowerCase() === want);
+    // Any of the campaign's subject lines identifies it: the tracking tab
+    // hands over the line the send matched, which needn't be the first one.
+    const idx = savedCampaigns.findIndex(
+      c => campaignSubjects(c).some(sub => sub.toLowerCase() === want),
+    );
     if (idx !== -1) viewCampaign(idx);
     onOpened?.();
     // viewCampaign/onOpened are stable enough for this one-shot handoff;
@@ -92,14 +181,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     }
   }
 
-  // Pull the current activity for a subject line from the live source. Shared
-  // by the manual Search and the automatic refresh that runs when a saved
-  // campaign is opened.
-  async function fetchCampaignActivity(subjectLine) {
+  // Pull the current activity for a campaign's subject line(s) from the live
+  // source. Shared by the manual Search and the automatic refresh that runs
+  // when a saved campaign is opened. Takes one line or several: the endpoint
+  // searches each and pools the results, so mail sent under any of them is
+  // this campaign's (and a recipient emailed under two is still one send).
+  async function fetchCampaignActivity(subjectLines) {
+    const subjects = parseSubjectLines(
+      Array.isArray(subjectLines) ? subjectLines.join('\n') : subjectLines,
+    );
     const res = await apiFetch('/api/email-campaign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subject: subjectLine.trim() }),
+      body: JSON.stringify({ subject: subjects[0] || '', subjects }),
     });
     // The endpoint returns JSON on success and on its own handled errors,
     // but a platform-level failure — the function crashing or timing out
@@ -225,9 +319,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const current = savedCampaigns;
     const outcomes = [];
     for (const c of current) {
-      if (!c.subject) { outcomes.push({ campaign: c, ok: true }); continue; }
+      const subjects = campaignSubjects(c);
+      if (subjects.length === 0) { outcomes.push({ campaign: c, ok: true }); continue; }
       try {
-        outcomes.push({ campaign: mergeActivity(c, await fetchCampaignActivity(c.subject)), ok: true });
+        outcomes.push({ campaign: mergeActivity(c, await fetchCampaignActivity(subjects)), ok: true });
       } catch {
         outcomes.push({ campaign: c, ok: false });
       }
@@ -237,9 +332,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     // Keep the open campaign's view in sync with its refreshed numbers.
     if (viewingSaved != null && updated[viewingSaved]) {
       const c = updated[viewingSaved];
-      setResults({ ...c, title: c.title || c.subject, subject: c.subject });
+      setResults({ ...c, title: c.title || primarySubject(c) });
     }
-    const failedNames = outcomes.filter(o => !o.ok).map(o => o.campaign.title || o.campaign.subject || '(untitled)');
+    const failedNames = outcomes.filter(o => !o.ok).map(o => o.campaign.title || primarySubject(o.campaign) || '(untitled)');
     if (failedNames.length > 0) {
       setError(`Refreshed ${updated.length - failedNames.length} of ${updated.length} campaigns: couldn’t reach ${failedNames.length} (kept last saved numbers): ${failedNames.join(', ')}.`);
     }
@@ -266,13 +361,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   async function handleSave() {
     if (!results) return;
     setSaving(true);
-    const campaign = {
-      // Title is the campaign's display name; subject is the email subject
-      // line matched against sent mail. A freshly-searched campaign has no
-      // separate title yet, so seed it from the subject — the user can split
-      // them later by editing the saved campaign.
-      title: results.title || results.subject,
-      subject: results.subject,
+    const campaign = withSubjects({
+      // Title is the campaign's display name; the subject lines are what sent
+      // mail is matched against. A freshly-searched campaign has no separate
+      // title yet, so seed it from the first line — the user can split them
+      // later by editing the saved campaign.
+      title: results.title || primarySubject(results),
       savedAt: new Date().toISOString(),
       ...deriveCounts(results.contacts),
       totalEmails: results.totalEmails,
@@ -280,14 +374,73 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       suppressed: results.suppressed || null,
       removedEmails: results.removedEmails || [],
       contacts: results.contacts,
-    };
-    // Replace if same subject exists, otherwise add
-    const existing = savedCampaigns.findIndex(c => c.subject === campaign.subject);
+    }, campaignSubjects(results));
+    // Replace if a campaign already leads with the same subject, otherwise add
+    const existing = savedCampaigns.findIndex(c => primarySubject(c) === campaign.subject);
     const updated = existing >= 0
       ? savedCampaigns.map((c, i) => i === existing ? campaign : c)
       : [campaign, ...savedCampaigns];
     await saveCampaigns(updated);
     setSaving(false);
+  }
+
+  // Create a campaign by hand, without searching a subject line first.
+  //
+  // The search flow can only produce a campaign once mail has already gone out
+  // for that subject; this is how one gets set up ahead of the send. The new
+  // campaign starts with an empty roster — the same fixed, manually-curated
+  // list every campaign has — is saved straight away, and is opened so contacts
+  // can be added with "Add an email to this campaign…".
+  async function createCampaign() {
+    const nextSubjects = parseSubjectLines(newSubject);
+    if (nextSubjects.length === 0) {
+      setError('Give the new campaign a subject line.');
+      return;
+    }
+    const title = newTitle.trim() || nextSubjects[0];
+    setCreating(true);
+    setError('');
+    const campaign = withSubjects({
+      title,
+      savedAt: new Date().toISOString(),
+      ...deriveCounts([]),
+      totalEmails: 0,
+      autoRepliesSuppressed: 0,
+      suppressed: null,
+      removedEmails: [],
+      contacts: [],
+    }, nextSubjects);
+    // Newest first, matching handleSave.
+    await saveCampaigns([campaign, ...savedCampaigns]);
+    setCreating(false);
+    closeNewForm();
+    // Open it right away so the next thing the user does is add contacts.
+    // Every saved index shifts down one, so drop any edit state that pointed
+    // at the old positions, and cancel a refresh still in flight for whichever
+    // campaign was open before.
+    viewTokenRef.current++;
+    setRefreshing(false);
+    setEditingIndex(null);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
+    setSubject(nextSubjects[0]);
+    setResults(campaign);
+    setViewingSaved(0);
+  }
+
+  function openNewForm() {
+    setError('');
+    setNewTitle('');
+    // Seed from the search box: a subject typed there is usually the one the
+    // campaign is being created for.
+    setNewSubject(subject.trim());
+    setShowNewForm(true);
+  }
+
+  function closeNewForm() {
+    setShowNewForm(false);
+    setNewTitle('');
+    setNewSubject('');
   }
 
   // Push every "Not Sent" contact (in the campaign roster but never emailed)
@@ -369,14 +522,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         ? { ...c, contacts: nextContacts, removedEmails, ...counts }
         : c)));
     }
-    // Pull the subject's activity so a freshly-added email that really was
-    // sent this subject lights up as Sent / Replied right away. Best-effort:
-    // if the fetch fails the contact simply stays "Not Sent" until the next
-    // refresh.
-    const subj = results.subject;
-    if (!subj) return;
+    // Pull the subject lines' activity so a freshly-added email that really
+    // was sent one of them lights up as Sent / Replied right away.
+    // Best-effort: if the fetch fails the contact simply stays "Not Sent"
+    // until the next refresh.
+    const subs = campaignSubjects(results);
+    if (subs.length === 0) return;
     try {
-      const json = await fetchCampaignActivity(subj);
+      const json = await fetchCampaignActivity(subs);
       const mergedContacts = mergeContacts(nextContacts, json.contacts, removedEmails);
       const c2 = deriveCounts(mergedContacts);
       setResults(r => (r ? { ...r, contacts: mergedContacts, ...c2 } : r));
@@ -487,24 +640,25 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     // latest activity in the background so the user never has to hit a refresh.
     // Re-derive counts from the roster so the numbers reflect everyone in the
     // campaign right away, even before the background refresh lands.
+    const subjects = campaignSubjects(c);
     setResults({ ...c, ...deriveCounts(c.contacts) });
-    setSubject(c.subject);
+    setSubject(subjects[0] || '');
     setViewingSaved(index);
     setEditingSubjectInline(false);
     setSubjectDraft('');
     setError('');
-    if (!c.subject) return;
+    if (subjects.length === 0) return;
     const token = ++viewTokenRef.current;
     setRefreshing(true);
     try {
-      const json = await fetchCampaignActivity(c.subject);
+      const json = await fetchCampaignActivity(subjects);
       // Drop the result if the user has since opened a different campaign.
       if (viewTokenRef.current !== token) return;
       // Merge the live activity into the campaign's roster (keep the
       // campaign's own title/subject) rather than replacing the contact list —
       // so unsent roster members and event statuses survive the refresh.
       const merged = mergeActivity(c, json);
-      setResults({ ...merged, title: c.title || c.subject, subject: c.subject });
+      setResults({ ...merged, title: c.title || subjects[0] });
       // Persist the fresher numbers so the saved list reflects them too, but
       // only when something actually changed — no needless Firestore writes.
       const changed =
@@ -534,55 +688,89 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setError('');
     const c = savedCampaigns[index];
     setEditingIndex(index);
-    setEditTitle(c?.title || c?.subject || '');
-    setEditSubject(c?.subject || '');
+    setEditTitle(c?.title || primarySubject(c) || '');
+    setEditSubjects(subjectLinesText(c));
   }
 
   function cancelEdit(e) {
     if (e) e.stopPropagation();
     setEditingIndex(null);
     setEditTitle('');
-    setEditSubject('');
+    setEditSubjects('');
   }
 
   // Edit a saved campaign's two fields: the Title (display name) and the
-  // Subject line (the email subject matched against sent mail). Subject must be
-  // non-empty, but it need not be unique: two campaigns can share a subject to
-  // track different contact segments of the same email. Persists to Firestore
-  // and keeps the open campaign + the search box in sync when the edited one is
+  // Subject lines (the email subjects matched against sent mail — one per row,
+  // and mail matching any of them counts). At least one line is required, but
+  // they need not be unique: two campaigns can share a subject to track
+  // different contact segments of the same email. Persists to Firestore and
+  // keeps the open campaign + the search box in sync when the edited one is
   // being viewed.
   async function commitEdit() {
     const idx = editingIndex;
     if (idx == null) return;
     const current = savedCampaigns[idx];
     if (!current) { cancelEdit(); return; }
-    const subject = editSubject.trim();
-    const title = editTitle.trim() || subject;
-    if (!subject) {
-      setError('Subject line can’t be empty.');
+    const subjects = parseSubjectLines(editSubjects);
+    const title = editTitle.trim() || subjects[0] || '';
+    if (subjects.length === 0) {
+      setError('Add at least one subject line.');
       return;
     }
-    if (subject === current.subject && title === (current.title || current.subject)) { cancelEdit(); return; }
+    const subjectsChanged = !sameSubjects(subjects, campaignSubjects(current));
+    if (!subjectsChanged && title === (current.title || primarySubject(current))) { cancelEdit(); return; }
     setError('');
-    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, title, subject } : c));
+    const updated = savedCampaigns.map((c, i) => (i === idx ? withSubjects({ ...c, title }, subjects) : c));
     await saveCampaigns(updated);
     if (viewingSaved === idx) {
-      setSubject(subject);
-      setResults(r => (r ? { ...r, title, subject } : r));
+      setSubject(subjects[0]);
+      setResults(r => (r ? withSubjects({ ...r, title }, subjects) : r));
     }
     setEditingIndex(null);
     setEditTitle('');
-    setEditSubject('');
+    setEditSubjects('');
+    // The subject lines drive which sent mail matches, so a change to them
+    // needs the activity re-pulled — same as editing them from the header.
+    if (subjectsChanged && viewingSaved === idx) {
+      await refreshOpenCampaign({ index: idx, base: updated[idx], subjects, title });
+    }
   }
 
-  // Inline subject editing from the results header, for the currently open saved
-  // campaign. Mirrors commitEdit's validation (non-empty; duplicates across
-  // campaigns are allowed), and — since the subject is what sent mail is matched
-  // against — re-pulls the latest activity once the new subject is saved.
+  // Pull activity for a campaign's subject lines and fold it into the open
+  // campaign. Shared by both places the lines can be edited — the results
+  // header and the saved-list row — since a changed set of lines changes
+  // which sent mail matches and the numbers on screen are stale until it is
+  // re-pulled. `base` is the campaign the merge starts from (its roster,
+  // manual removals and event statuses survive); `index` is its slot in the
+  // saved list, or null for a search result that hasn't been saved yet.
+  async function refreshOpenCampaign({ index, base, subjects, title }) {
+    const token = ++viewTokenRef.current;
+    setRefreshing(true);
+    try {
+      const json = await fetchCampaignActivity(subjects);
+      if (viewTokenRef.current !== token) return;
+      const merged = withSubjects({ ...mergeActivity(base, json), title }, subjects);
+      setResults(merged);
+      if (index != null) saveCampaigns(savedCampaigns.map((x, i) => (i === index ? merged : x)));
+    } catch (err) {
+      if (viewTokenRef.current === token) {
+        setError(`Couldn’t refresh activity for the new subject line${subjects.length === 1 ? '' : 's'} (${err.message || 'unknown error'}): showing the last saved numbers.`);
+      }
+    } finally {
+      if (viewTokenRef.current === token) setRefreshing(false);
+    }
+  }
+
+  // Inline subject editing from the results header, for whatever campaign is
+  // open — saved or a search result not yet saved. One line per subject: a
+  // campaign can go out under several and mail matching any of them belongs
+  // to it. Mirrors commitEdit's validation (at least one line; duplicates
+  // across campaigns are allowed), and re-pulls the latest activity once the
+  // lines are saved, since they are what sent mail is matched against.
   function startSubjectEdit() {
-    if (viewingSaved == null) return;
+    if (!displayResults) return;
     setError('');
-    setSubjectDraft(displayResults?.subject || '');
+    setSubjectDraft(subjectLinesText(displayResults));
     setEditingSubjectInline(true);
   }
 
@@ -593,41 +781,25 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   async function commitSubjectEdit() {
     const idx = viewingSaved;
-    if (idx == null) { cancelSubjectEdit(); return; }
-    const current = savedCampaigns[idx];
+    const current = idx == null ? displayResults : savedCampaigns[idx];
     if (!current) { cancelSubjectEdit(); return; }
-    const nextSubject = subjectDraft.trim();
-    if (!nextSubject) {
-      setError('Subject line can’t be empty.');
+    const nextSubjects = parseSubjectLines(subjectDraft);
+    if (nextSubjects.length === 0) {
+      setError('Add at least one subject line.');
       return;
     }
-    if (nextSubject === current.subject) { cancelSubjectEdit(); return; }
+    if (sameSubjects(nextSubjects, campaignSubjects(current))) { cancelSubjectEdit(); return; }
     setError('');
     // Keep a distinct custom title; if the title was just mirroring the old
-    // subject, let it follow the new subject.
-    const title = (current.title && current.title !== current.subject) ? current.title : nextSubject;
-    const updated = savedCampaigns.map((c, i) => (i === idx ? { ...c, subject: nextSubject, title } : c));
-    await saveCampaigns(updated);
+    // first subject, let it follow the new one.
+    const title = (current.title && current.title !== primarySubject(current)) ? current.title : nextSubjects[0];
+    const next = withSubjects({ ...current, title }, nextSubjects);
+    if (idx != null) await saveCampaigns(savedCampaigns.map((c, i) => (i === idx ? next : c)));
     setEditingSubjectInline(false);
     setSubjectDraft('');
-    setSubject(nextSubject);
-    setResults(r => (r ? { ...r, subject: nextSubject, title } : r));
-    // The subject drives which sent mail matches, so pull fresh activity for it.
-    const token = ++viewTokenRef.current;
-    setRefreshing(true);
-    try {
-      const json = await fetchCampaignActivity(nextSubject);
-      if (viewTokenRef.current !== token) return;
-      const merged = mergeActivity(updated[idx], json);
-      setResults({ ...merged, title, subject: nextSubject });
-      saveCampaigns(updated.map((x, i) => (i === idx ? { ...merged, title, subject: nextSubject } : x)));
-    } catch (err) {
-      if (viewTokenRef.current === token) {
-        setError('Couldn’t refresh activity for the new subject (' + (err.message || 'unknown error') + '): showing the last saved numbers.');
-      }
-    } finally {
-      if (viewTokenRef.current === token) setRefreshing(false);
-    }
+    setSubject(nextSubjects[0]);
+    setResults(next);
+    await refreshOpenCampaign({ index: idx, base: next, subjects: nextSubjects, title });
   }
 
   function fmtDate(d) {
@@ -705,6 +877,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   }
 
   const displayResults = results;
+  // The subject lines the open campaign matches on. Kept as a stable array
+  // (keyed off the joined string) so the tracking joins below don't recompute
+  // on every render just because the campaign object was rebuilt.
+  const subjectsKey = campaignSubjects(displayResults).join('\n');
+  const displaySubjects = useMemo(
+    () => (subjectsKey ? subjectsKey.split('\n') : []),
+    [subjectsKey],
+  );
   const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
 
   // Click tracking for this campaign. The campaign report never sends
@@ -724,8 +904,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     [displayResults?.contacts],
   );
   const trackingFor = useMemo(
-    () => trackingByRecipient(trackingRows, displayResults?.subject, { sentAtByEmail }),
-    [trackingRows, displayResults?.subject, sentAtByEmail],
+    () => trackingByRecipient(trackingRows, displaySubjects, { sentAtByEmail }),
+    [trackingRows, displaySubjects, sentAtByEmail],
   );
   const lookupTracking = useMemo(() => (contactEmail) => {
     let best = null;
@@ -787,22 +967,264 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     });
   })();
 
-  const SORT_HEADER_STYLE = { padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
-  function SortHeader({ label, sortKey }) {
-    const active = sortConfig.key === sortKey;
+  // Take the open campaign out as a CSV.
+  //
+  // Rows come out in whatever order the table is currently sorted into — what
+  // you see is what you get — but every column ships regardless of which ones
+  // are hidden: this is the campaign's data, not a picture of the table. The
+  // delivery verdict and the tracking counts are handed over already computed,
+  // since both need the whole tracking collection this view has loaded.
+  function exportContactsCsv() {
+    if (!displayResults) return;
+    const csv = campaignContactsCsv(displayResults, sortedContacts.map(({ c }) => c), {
+      deliveryFor: (c) => DELIVERY_LABEL[deliveryFor(c)] || '',
+      trackingFor: (c) => lookupTracking(c.email),
+    });
+    downloadCsv(csvFilename(`Email campaign - ${displayResults.title || displayResults.subject || 'untitled'}`), csv);
+  }
+
+  // Take the Saved Campaigns table out as a CSV: one row per campaign, the
+  // figures it prints plus the dates behind the Active/Inactive badge.
+  function exportSummaryCsv() {
+    if (savedCampaigns.length === 0) return;
+    downloadCsv(csvFilename('Email campaigns summary'), campaignsSummaryCsv(savedCampaigns));
+  }
+
+  // ---- Column layout -----------------------------------------------------
+  // The lineup this campaign can show (the tracking column only exists when
+  // something here was sent with a pixel), then the user's order, then what
+  // survives their hidden / deleted lists.
+  const availableColumns = useMemo(
+    () => CONTACT_COLUMNS.filter(c => !c.needsTracking || trackingStats.tracked > 0),
+    [trackingStats.tracked],
+  );
+  const orderedColumns = useMemo(
+    () => orderColumns(availableColumns.filter(c => !colRemoved.has(c.key)), colOrder),
+    [availableColumns, colRemoved, colOrder],
+  );
+  const removedColumns = useMemo(
+    () => availableColumns.filter(c => colRemoved.has(c.key)),
+    [availableColumns, colRemoved],
+  );
+  const visibleColumns = useMemo(
+    () => orderedColumns.filter(c => isColumnVisible(c.key, {
+      hidden: colHidden, removed: colRemoved, alwaysVisible: CONTACT_COLS_LOCKED,
+    })),
+    [orderedColumns, colHidden, colRemoved],
+  );
+  const visibleColKeys = useMemo(() => new Set(visibleColumns.map(c => c.key)), [visibleColumns]);
+  const widthOf = useCallback(
+    (col) => Number(colWidths[col.key]) || col.width,
+    [colWidths],
+  );
+  // The table is laid out at exactly the width of its columns, and at least
+  // the width of its box: resizing then means what it says, and a table
+  // narrower than the pane still fills it rather than leaving a gap.
+  const tableWidth = useMemo(
+    () => visibleColumns.reduce((sum, c) => sum + widthOf(c), 0) + ACTIONS_COL_WIDTH,
+    [visibleColumns, widthOf],
+  );
+
+  const toggleCol = (key) => setColHidden(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const starCol = (key) => {
+    const next = applyStar({ key, starred: colStarred, hidden: colHidden, removed: colRemoved, star: !colStarred.has(key) });
+    setColStarred(next.starred);
+    setColHidden(next.hidden);
+    setColRemoved(next.removed);
+  };
+  const removeCol = (key) => setColRemoved(prev => new Set(prev).add(key));
+  const restoreCol = (key) => setColRemoved(prev => {
+    const next = new Set(prev);
+    next.delete(key);
+    return next;
+  });
+  const reorderCols = (keys) => setColOrder(prev => mergeColumnOrder(prev, keys));
+  // Reset is the way back to a layout that got away from you: the starred
+  // columns (or all of them, with nothing starred), the shipped order, and
+  // the shipped widths.
+  const resetCols = () => {
+    const { hidden, removed } = resetToStarred({
+      columnKeys: availableColumns.map(c => c.key),
+      starred: colStarred,
+      alwaysVisible: CONTACT_COLS_LOCKED,
+    });
+    setColHidden(hidden);
+    setColRemoved(removed);
+    setColOrder([]);
+    setColWidths({});
+  };
+
+  // Drag a header's right edge to set that column's width. The key and the
+  // start metrics are captured in local scope rather than read back off the
+  // ref: a mousemove can land after the mouseup that cleared it, and reading
+  // `.key` off null there would blank the page.
+  const resizingRef = useRef(null);
+  function startColResize(colKey, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const col = CONTACT_COLUMNS.find(c => c.key === colKey);
+    const startWidth = Number(colWidths[colKey]) || col?.width || 120;
+    resizingRef.current = { key: colKey, startX, startWidth };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(MIN_COL_WIDTH, startWidth + (ev.clientX - startX));
+      setColWidths(prev => ({ ...prev, [colKey]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // One cell, by column key. The markup is the same it has always been —
+  // this only moves it behind a key so a column can be hidden, moved or
+  // resized without the row and the header drifting out of step.
+  function renderContactCell(key, c, i, isDup) {
+    switch (key) {
+      case 'email':
+        return (
+          <>
+            <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email}</span>
+              {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
+            </div>
+            {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
+          </>
+        );
+      case 'sentDate':
+        return <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</span>;
+      case 'delivery': {
+        const d = deliveryFor(c);
+        const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
+          : d === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
+            : d === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
+              : { background: 'transparent', color: 'var(--color-text-muted)' };
+        return (
+          <span title={DELIVERY_TITLE[d]} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', ...tone }}>
+            {DELIVERY_LABEL[d]}
+          </span>
+        );
+      }
+      case 'status': {
+        // The ladder itself lives in campaignExport, because the CSV prints
+        // the same words and the two must not drift; the badge here only
+        // decides how each of them looks.
+        const label = contactStatusLabel(c);
+        const STATUS_TONE = {
+          Replied: { background: '#DCFCE7', color: '#166534' },
+          Bounced: { background: '#FEE2E2', color: '#991B1B' },
+          'Out of Office': { background: '#FEF3C7', color: '#92400E' },
+          'No Reply': { background: '#F3F4F6', color: '#6B7280' },
+          'Not Sent': { background: '#FEF3C7', color: '#92400E' },
+        };
+        const STATUS_TITLE = {
+          Bounced: 'The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.',
+          'Out of Office': c.oooSubject
+            ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.`
+            : "Their auto-responder answered. Not a no — worth a second send when they're back.",
+          'Not Sent': 'In this campaign but not yet sent the email',
+        };
+        return (
+          <span
+            title={STATUS_TITLE[label]}
+            style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', ...STATUS_TONE[label] }}
+          >{label}</span>
+        );
+      }
+      case 'tracking': {
+        const t = lookupTracking(c.email);
+        if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send wasn't created with tracking on">-</span>;
+        // Every exclusion is named rather than silently subtracted: the sender
+        // is the only one who knows whether they were proof-reading the draft
+        // that afternoon, and a number that quietly shrinks is a number nobody
+        // can check.
+        const clickTitle = [
+          t.clickCount
+            ? `${t.clickCount} click${t.clickCount === 1 ? '' : 's'} by a person.`
+            : 'No clicks by a person recorded.',
+          t.firstClickAt ? `First click ${new Date(t.firstClickAt).toLocaleString()}.` : '',
+          t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}.` : '',
+          t.clickPreSend ? `${t.clickPreSend} click${t.clickPreSend === 1 ? '' : 's'} before the send excluded — the rewritten links already work inside the Outlook draft, so that is you proof-reading it.` : '',
+          t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
+          t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
+          'The Email Tracking tab shows which link they followed, and on what device.',
+        ].filter(Boolean).join(' ');
+        return (
+          <span
+            title={clickTitle}
+            style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap', background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
+          >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
+        );
+      }
+      case 'repliedBy':
+        return <span style={{ color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }} title={c.repliedBy || ''}>{c.repliedBy || '-'}</span>;
+      case 'replyDate':
+        return <span style={{ color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</span>;
+      case 'eventStatus': {
+        const EVENT_STATUS_STYLES = {
+          going: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
+          'not-going': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+          maybe: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
+        };
+        const st = EVENT_STATUS_STYLES[c.eventStatus] || { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' };
+        return (
+          <select
+            value={c.eventStatus || ''}
+            onChange={e => setEventStatus(i, e.target.value)}
+            style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', maxWidth: '100%', ...st }}
+          >
+            <option value="">-</option>
+            <option value="going">Going</option>
+            <option value="not-going">Not going</option>
+            <option value="maybe">Maybe</option>
+          </select>
+        );
+      }
+      default:
+        return null;
+    }
+  }
+
+  const SORT_HEADER_STYLE = { position: 'relative', padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
+
+  // A column header: sorts on click where the column can be sorted, and
+  // always carries the grip on its right edge that sets its width.
+  function ColHeader({ col }) {
+    const active = col.sortKey && sortConfig.key === col.sortKey;
     return (
-      <th onClick={() => toggleSort(sortKey)} style={SORT_HEADER_STYLE} title={`Sort by ${label}`}>
-        {label}
-        <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', opacity: active ? 1 : 0.3 }}>
-          {active ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
-        </span>
+      <th
+        style={{ ...SORT_HEADER_STYLE, cursor: col.sortKey ? 'pointer' : 'default' }}
+        title={col.title || (col.sortKey ? `Sort by ${col.label}` : col.label)}
+        onClick={col.sortKey ? () => toggleSort(col.sortKey) : undefined}
+      >
+        {col.label}
+        {col.sortKey && (
+          <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', opacity: active ? 1 : 0.3 }}>
+            {active ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        )}
+        <span
+          onMouseDown={e => startColResize(col.key, e)}
+          onClick={e => e.stopPropagation()}
+          title={`Drag to resize ${col.label}`}
+          style={RESIZE_HANDLE}
+        />
       </th>
     );
   }
 
   return (
     // Wide: the campaign's contact table carries nine columns — sent date,
-    // delivery, status, loads/clicks, who replied and when, event status —
+    // delivery, status, clicks, who replied and when, event status —
     // and at the old 1000px cap the last of them fell off the right edge of
     // a container that clipped rather than scrolled. The cap is what keeps
     // the search box and the subject line from stretching across an
@@ -832,7 +1254,93 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         >
           {loading ? 'Searching...' : 'Search'}
         </button>
+        <button
+          onClick={() => (showNewForm ? closeNewForm() : openNewForm())}
+          title="Create a campaign by hand, before any mail has gone out for it"
+          style={{
+            padding: '0.5rem 1rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
+            background: 'var(--color-surface)', color: 'var(--color-accent)', fontSize: '0.85rem',
+            fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          {showNewForm ? 'Cancel' : '+ New Campaign'}
+        </button>
       </div>
+
+      {/* Create a campaign by hand. The Search box above only finds campaigns
+          whose mail has already gone out; this sets one up first, with an empty
+          roster to add contacts to. */}
+      {showNewForm && (
+        <div style={{ padding: '0.75rem', marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>New Campaign</div>
+          {/* Top-aligned: the subject box is a textarea now and grows
+              downwards, and a bottom-aligned row dragged the Title field down
+              with it. The buttons carry the label's height so they still sit
+              on the fields' first line. */}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ flex: '1 1 220px' }}>
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Title</label>
+              <input
+                autoFocus
+                type="text"
+                value={newTitle}
+                onChange={e => setNewTitle(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); createCampaign(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
+                }}
+                placeholder="Campaign name (defaults to the subject)"
+                style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit' }}
+              />
+            </div>
+            <div style={{ flex: '1 1 280px' }}>
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject lines</label>
+              {/* One per row: a campaign going out under two lines is set up
+                  as one campaign here rather than as two that each hold half
+                  the roster. Enter adds a row, so ⌘/Ctrl+Enter creates. */}
+              <textarea
+                value={newSubject}
+                rows={Math.min(6, Math.max(2, newSubject.split('\n').length + 1))}
+                onChange={e => setNewSubject(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); createCampaign(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
+                }}
+                placeholder={'Email subject line to match sent mail on\nAnother line, if it goes out under more than one'}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
+              />
+            </div>
+            <button
+              onClick={createCampaign}
+              disabled={creating || !newSubject.trim()}
+              style={{
+                marginTop: '0.95rem',
+                padding: '0.4rem 0.9rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem',
+                fontWeight: 600, fontFamily: 'inherit',
+                cursor: creating ? 'wait' : (newSubject.trim() ? 'pointer' : 'default'),
+                opacity: newSubject.trim() ? 1 : 0.5,
+              }}
+            >
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+            <button
+              onClick={closeNewForm}
+              style={{
+                marginTop: '0.95rem',
+                padding: '0.4rem 0.9rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.8rem',
+                fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
+            The campaign starts empty — add the contacts it tracks with “Add an email to this campaign…”. The subject lines are only used to look up whether those addresses were sent or replied — one per row, and mail matching any of them counts.
+          </div>
+        </div>
+      )}
 
       {error && <div style={{ padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.8rem', color: '#DC2626', marginBottom: '1rem' }}>{error}</div>}
 
@@ -882,7 +1390,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           {/* Nudge when nothing in this campaign was sent with tracking on. */}
           {trackingStats.tracked === 0 && !trackingError && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' }}>
-              No tracking for this subject. Tracking is added when you generate the drafts from{' '}
+              No tracking for {displaySubjects.length > 1 ? 'these subjects' : 'this subject'}. Tracking is added when you generate the drafts from{' '}
               <strong>Draft Emails</strong> with “Track clicks &amp; delivery” checked.
             </div>
           )}
@@ -890,27 +1398,36 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           {/* Subject + Save button */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
-              {(displayResults.title && displayResults.title !== displayResults.subject) && (
+              {(displayResults.title && displayResults.title !== displaySubjects[0]) && (
                 <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: '2px' }}>{displayResults.title}</div>
               )}
               {editingSubjectInline ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
-                  Matching subject:
-                  <input
-                    type="text"
-                    value={subjectDraft}
-                    autoFocus
-                    onChange={(e) => setSubjectDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); commitSubjectEdit(); }
-                      else if (e.key === 'Escape') { e.preventDefault(); cancelSubjectEdit(); }
-                    }}
-                    style={{
-                      minWidth: '260px', padding: '0.2rem 0.4rem', border: '1px solid var(--color-accent)',
-                      borderRadius: '4px', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)',
-                      background: 'var(--color-surface)',
-                    }}
-                  />
+                /* One subject line per row. Enter adds a row rather than
+                   saving — the whole point of the box is that a campaign can
+                   carry several — so ⌘/Ctrl+Enter is the keyboard save. */
+                <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <span style={{ paddingTop: '0.25rem' }}>Matching subjects:</span>
+                  <span style={{ display: 'inline-flex', flexDirection: 'column', gap: '2px' }}>
+                    <textarea
+                      value={subjectDraft}
+                      autoFocus
+                      rows={Math.min(6, Math.max(2, subjectDraft.split('\n').length + 1))}
+                      onChange={(e) => setSubjectDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitSubjectEdit(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelSubjectEdit(); }
+                      }}
+                      placeholder={'One subject line per row'}
+                      style={{
+                        minWidth: '320px', padding: '0.25rem 0.4rem', border: '1px solid var(--color-accent)',
+                        borderRadius: '4px', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)',
+                        background: 'var(--color-surface)', resize: 'vertical', lineHeight: 1.5,
+                      }}
+                    />
+                    <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
+                      One per row — mail matching any of them counts toward this campaign. ⌘/Ctrl+Enter to save.
+                    </span>
+                  </span>
                   <button
                     onClick={commitSubjectEdit}
                     style={{
@@ -930,18 +1447,27 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 </span>
               ) : (
                 <>
-                  Matching subject: <strong>"{displayResults.subject}"</strong>
-                  {viewingSaved !== null && (
-                    <button
-                      onClick={startSubjectEdit}
-                      title="Edit this campaign's subject line"
-                      style={{
-                        marginLeft: '0.4rem', padding: '1px 6px', border: '1px solid var(--color-border)',
-                        borderRadius: '4px', background: 'var(--color-surface)', color: 'var(--color-accent)',
-                        fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-                      }}
-                    >Edit</button>
-                  )}
+                  {/* Every line the campaign matches on. One reads as it
+                      always did; several are listed so it's obvious at a
+                      glance that this campaign pools more than one send. */}
+                  {displaySubjects.length > 1 ? 'Matching subjects: ' : 'Matching subject: '}
+                  {displaySubjects.length === 0
+                    ? <strong>—</strong>
+                    : displaySubjects.map((sub, i) => (
+                      <span key={sub}>
+                        {i > 0 && <span style={{ color: 'var(--color-text-muted)' }}> · </span>}
+                        <strong>"{sub}"</strong>
+                      </span>
+                    ))}
+                  <button
+                    onClick={startSubjectEdit}
+                    title="Edit this campaign's subject lines — a campaign can match on more than one"
+                    style={{
+                      marginLeft: '0.4rem', padding: '1px 6px', border: '1px solid var(--color-border)',
+                      borderRadius: '4px', background: 'var(--color-surface)', color: 'var(--color-accent)',
+                      fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                    }}
+                  >Edit</button>
                 </>
               )}
               {viewingSaved !== null && <span style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#DBEAFE', color: '#1E40AF' }}>Saved</span>}
@@ -984,6 +1510,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   </button>
                 );
               })()}
+              <button
+                onClick={exportContactsCsv}
+                disabled={!(displayResults.contacts || []).length}
+                title="Download this campaign as a CSV: every contact, with send date, delivery, status, clicks, replies and event status"
+                style={{
+                  padding: '0.35rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+                  cursor: (displayResults.contacts || []).length ? 'pointer' : 'default',
+                  opacity: (displayResults.contacts || []).length ? 1 : 0.5,
+                }}
+              >
+                Export CSV
+              </button>
               {viewingSaved === null && (
                 <button
                   onClick={handleSave}
@@ -1045,7 +1585,37 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 cursor: addEmail.trim() ? 'pointer' : 'default', opacity: addEmail.trim() ? 1 : 0.6,
               }}
             >Add email</button>
+
+            {/* The same Columns picker the contacts tables use: show / hide,
+                star a default set, drag to reorder, Reset to get back. Widths
+                are set by dragging a header's right edge. */}
+            <div style={{ marginLeft: 'auto' }}>
+              <ColumnToggle
+                align="right"
+                columns={orderedColumns}
+                visibleCols={visibleColKeys}
+                starredCols={colStarred}
+                removedColumns={removedColumns}
+                alwaysVisible={CONTACT_COLS_LOCKED}
+                colNames={{}}
+                onToggle={toggleCol}
+                onStar={starCol}
+                onRemove={removeCol}
+                onRestore={restoreCol}
+                onReorder={reorderCols}
+                onResetColumns={resetCols}
+              />
+            </div>
           </div>
+
+          {/* An empty roster — a just-created campaign, or one every contact has
+              been removed from. The table renders nothing at all in that case,
+              so say what to do next instead of showing a blank panel. */}
+          {!(displayResults.contacts || []).length && (
+            <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+              No contacts in this campaign yet — add an email above to start tracking who it goes to.
+            </div>
+          )}
 
           {/* Contact table */}
           {displayResults.contacts && displayResults.contacts.length > 0 && (
@@ -1055,24 +1625,24 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                columns don't compress below minWidth, they just go past the
                edge. */
             <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', maxHeight: '500px', overflowY: 'auto', overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '1080px', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+              {/* Fixed layout, so a column is exactly as wide as it is set to
+                  be and a drag on one header edge moves that column and
+                  nothing else. The last column has no width of its own: it
+                  soaks up whatever is left over, which is what keeps a
+                  narrow table filling the pane without the other columns
+                  being stretched to do it. Past the pane's width the table
+                  simply overflows and the box scrolls. */}
+              <table style={{ tableLayout: 'fixed', width: '100%', minWidth: `${tableWidth}px`, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                <colgroup>
+                  {visibleColumns.map(col => <col key={col.key} style={{ width: `${widthOf(col)}px` }} />)}
+                  <col style={{ width: `${ACTIONS_COL_WIDTH}px` }} />
+                  <col />
+                </colgroup>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
-                    <SortHeader label="Sent To" sortKey="email" />
-                    <SortHeader label="Sent Date" sortKey="sentDate" />
-                    <SortHeader label="Delivery" sortKey="delivery" />
-                    <SortHeader label="Status" sortKey="status" />
-                    {/* Only worth a column when something in this campaign
-                        was actually sent with tracking on. */}
-                    {trackingStats.tracked > 0 && (
-                      <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-                        title="Links followed by a person. Clicks before the send (proof-reading the draft in Outlook, where the rewritten links already work), security-gateway scans and automated sweeps are excluded — hover a count to see what was dropped. The Email Tracking tab shows which link each person followed, and on what device."
-                      >Clicks</th>
-                    )}
-                    <SortHeader label="Replied By" sortKey="repliedBy" />
-                    <SortHeader label="Reply Date" sortKey="replyDate" />
-                    <SortHeader label="Event Status" sortKey="eventStatus" />
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', width: '36px' }}></th>
+                    {visibleColumns.map(col => <ColHeader key={col.key} col={col} />)}
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }} aria-label="Remove" />
+                    <th style={{ borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1080,96 +1650,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     const isDup = dupKeys.has(contactKey(c));
                     return (
                     <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)', background: isDup ? '#FFFBEB' : undefined }}>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text)' }}>
-                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                          {c.email}
-                          {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E' }} title="This contact appears more than once in this campaign">Duplicate</span>}
-                        </div>
-                        {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
-                      </td>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const d = deliveryFor(c);
-                          const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
-                            : d === DELIVERY.CONFIRMED ? { background: '#DCFCE7', color: '#166534' }
-                            : d === DELIVERY.DELIVERED ? { background: '#F1F5F9', color: '#334155' }
-                            : { background: 'transparent', color: 'var(--color-text-muted)' };
-                          return (
-                            <span title={DELIVERY_TITLE[d]} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, ...tone }}>
-                              {DELIVERY_LABEL[d]}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ padding: '0.4rem 0.6rem' }}>
-                        {c.replied
-                          ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#DCFCE7', color: '#166534' }}>Replied</span>
-                          : c.bounced
-                            ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEE2E2', color: '#991B1B' }} title="The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.">Bounced</span>
-                            : c.outOfOffice
-                              ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title={c.oooSubject ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.` : "Their auto-responder answered. Not a no — worth a second send when they're back."}>Out of Office</span>
-                              : c.sentDate
-                                ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#F3F4F6', color: '#6B7280' }}>No Reply</span>
-                                : <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: '#FEF3C7', color: '#92400E' }} title="In this campaign but not yet sent the email">Not Sent</span>
-                        }
-                      </td>
-                      {trackingStats.tracked > 0 && (
-                        <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
-                          {(() => {
-                            const t = lookupTracking(c.email);
-                            if (!t) {
-                              return <span style={{ color: 'var(--color-text-muted)' }} title="This send wasn't created with tracking on">-</span>;
-                            }
-                            // Every exclusion is named rather than silently
-                            // subtracted: the sender is the only one who knows
-                            // whether they were proof-reading the draft that
-                            // afternoon, and a number that quietly shrinks is
-                            // a number nobody can check.
-                            const clickTitle = [
-                              t.clickCount
-                                ? `${t.clickCount} click${t.clickCount === 1 ? '' : 's'} by a person.`
-                                : 'No clicks by a person recorded.',
-                              t.firstClickAt ? `First click ${new Date(t.firstClickAt).toLocaleString()}.` : '',
-                              t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}.` : '',
-                              t.clickPreSend ? `${t.clickPreSend} click${t.clickPreSend === 1 ? '' : 's'} before the send excluded — the rewritten links already work inside the Outlook draft, so that is you proof-reading it.` : '',
-                              t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
-                              t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
-                              'The Email Tracking tab shows which link they followed, and on what device.',
-                            ].filter(Boolean).join(' ');
-                            return (
-                              <span
-                                title={clickTitle}
-                                style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: t.clickCount ? '#E0F2FE' : '#F3F4F6', color: t.clickCount ? '#075985' : '#6B7280' }}
-                              >{t.clickCount} click{t.clickCount === 1 ? '' : 's'}</span>
-                            );
-                          })()}
+                      {visibleColumns.map(col => (
+                        <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {renderContactCell(col.key, c, i, isDup)}
                         </td>
-                      )}
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '-'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem' }}>
-                        {(() => {
-                          const EVENT_STATUS_STYLES = {
-                            going: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
-                            'not-going': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
-                            maybe: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
-                          };
-                          const s = EVENT_STATUS_STYLES[c.eventStatus] || { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' };
-                          return (
-                            <select
-                              value={c.eventStatus || ''}
-                              onChange={e => setEventStatus(i, e.target.value)}
-                              style={{ padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...s }}
-                            >
-                              <option value="">-</option>
-                              <option value="going">Going</option>
-                              <option value="not-going">Not going</option>
-                              <option value="maybe">Maybe</option>
-                            </select>
-                          );
-                        })()}
-                      </td>
+                      ))}
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => removeContact(i)}
@@ -1179,6 +1664,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                           title="Remove from list"
                         >&times;</button>
                       </td>
+                      <td aria-hidden="true" />
                     </tr>
                     );
                   })}
@@ -1194,21 +1680,34 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         <div style={{ marginTop: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Saved Campaigns</div>
-            <button
-              onClick={refreshAllCampaigns}
-              disabled={refreshingAll}
-              title="Re-pull the latest activity for every saved campaign"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
-                background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
-                fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
-                cursor: refreshingAll ? 'wait' : 'pointer', opacity: refreshingAll ? 0.7 : 1,
-              }}
-            >
-              <span style={{ display: 'inline-block' }}>↻</span>
-              {refreshingAll ? 'Refreshing…' : 'Refresh all'}
-            </button>
+            <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
+              <button
+                onClick={exportSummaryCsv}
+                title="Download every saved campaign as a CSV: contacts, sent, % sent, replies, response rate and status"
+                style={{
+                  padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >
+                Export CSV
+              </button>
+              <button
+                onClick={refreshAllCampaigns}
+                disabled={refreshingAll}
+                title="Re-pull the latest activity for every saved campaign"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                  padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
+                  cursor: refreshingAll ? 'wait' : 'pointer', opacity: refreshingAll ? 0.7 : 1,
+                }}
+              >
+                <span style={{ display: 'inline-block' }}>↻</span>
+                {refreshingAll ? 'Refreshing…' : 'Refresh all'}
+              </button>
+            </div>
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -1224,6 +1723,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <tbody>
             {savedCampaigns.map((c, i) => {
               const isEditing = editingIndex === i;
+              const subs = campaignSubjects(c);
               const sent = c.uniqueRecipients ?? 0;
               const total = c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients ?? 0;
               const pctSent = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
@@ -1260,25 +1760,38 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         />
                       </div>
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject line</label>
-                        <input
-                          type="text"
-                          value={editSubject}
-                          onChange={e => setEditSubject(e.target.value)}
+                        <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Subject lines</label>
+                        {/* One per row: a campaign that went out under two
+                            lines is still one campaign, one roster, one
+                            response rate. Enter adds a row, so ⌘/Ctrl+Enter
+                            is the save. */}
+                        <textarea
+                          value={editSubjects}
+                          rows={Math.min(6, Math.max(2, editSubjects.split('\n').length + 1))}
+                          onChange={e => setEditSubjects(e.target.value)}
                           onKeyDown={e => {
-                            if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitEdit(); }
                             else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
                           }}
-                          placeholder="Email subject line"
-                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                          placeholder={'Email subject line\nAnother subject line'}
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text-secondary)', resize: 'vertical', lineHeight: 1.5 }}
                         />
+                        <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                          One per row — mail matching any of them counts toward this campaign.
+                        </div>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || c.subject}</div>
-                      {(c.title && c.title !== c.subject) && (
-                        <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.subject}>Subject: {c.subject}</div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || subs[0]}</div>
+                      {/* The lines this campaign matches on, shown when they
+                          are not simply the title — and always when there is
+                          more than one, since a second line is the kind of
+                          thing you need to see without opening the campaign. */}
+                      {((c.title && c.title !== subs[0]) || subs.length > 1) && (
+                        <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={subs.join('\n')}>
+                          {subs.length > 1 ? 'Subjects: ' : 'Subject: '}{subs.join(' · ')}
+                        </div>
                       )}
                     </>
                   )}
@@ -1333,7 +1846,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
                         onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                        title="Edit title & subject"
+                        title="Edit title & subject lines"
                       >✎</button>
                       <button
                         onClick={e => { e.stopPropagation(); deleteCampaign(i); }}

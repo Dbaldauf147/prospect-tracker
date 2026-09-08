@@ -164,13 +164,16 @@ export function replyByRecipient(contacts) {
   return map;
 }
 
-// Roll the tracking rows for one campaign subject up per recipient.
+// Roll the tracking rows for one campaign's subject line(s) up per recipient.
 //
 // A campaign matches HubSpot emails whose subject *contains* the campaign
 // subject, so the same containment test is used here — that way a tracked
-// draft whose subject picked up a prefix/suffix still counts. Recipients
-// can appear more than once (a re-send mints a new tracking doc), so the
-// counts are summed and the timestamps reduced to first-open / last-click.
+// draft whose subject picked up a prefix/suffix still counts. A campaign can
+// carry several subject lines (see src/utils/campaignSubjects.js) and a row
+// matching ANY of them belongs to it, so `subject` takes a string or a list.
+// Recipients can appear more than once (a re-send mints a new tracking doc),
+// so the counts are summed and the timestamps reduced to first-open /
+// last-click.
 //
 // Opens are counted through countOpens() rather than read off the doc's
 // openCount: the raw counter includes the sender's own pre-send previews of
@@ -196,12 +199,15 @@ export function replyByRecipient(contacts) {
 //     clickCount, clickMachine, clickPreSend, rawClickCount, screened, scanner,
 //     firstOpenAt, firstClickAt, lastClickAt, sends }
 export function trackingByRecipient(rows, subject, { sentAtByEmail } = {}) {
-  const want = String(subject || '').trim().toLowerCase();
+  const wanted = (Array.isArray(subject) ? subject : [subject])
+    .map(s => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
   const byEmail = new Map();
-  if (!want) return byEmail;
+  if (wanted.length === 0) return byEmail;
 
   for (const r of rows || []) {
-    if (!String(r?.subject || '').toLowerCase().includes(want)) continue;
+    const sent = String(r?.subject || '').toLowerCase();
+    if (!wanted.some(w => sent.includes(w))) continue;
     const key = normalizeTrackedEmail(r.to);
     if (!key) continue;
     // Present-with-null and absent mean different things here: a contact

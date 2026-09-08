@@ -167,3 +167,26 @@
 .insertDivLine { height: 1px; background: var(--color-border); margin: 0.3rem 0.4rem; }
 .editorWrap :global(.ql-editor hr) { border: none; border-top: 1px solid #CBD5E1; margin: 10px 0; }
 .previewBody :global(hr) { border: none; border-top: 1px solid #CBD5E1; margin: 12px 0; }
+
+/* Category banner picker — the coloured bar that opens the email, above the
+   greeting. Chips pick one; the editor below names and colours them. */
+.bannerRow { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.bannerChip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.28rem 0.65rem; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); font-size: 0.72rem; font-weight: 600; font-family: inherit; color: var(--color-text-secondary); cursor: pointer; }
+.bannerChip:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+.bannerChipOn { border-color: transparent; }
+.bannerChipNone { background: #F1F5F9; color: var(--color-text); border-color: var(--color-text-muted); }
+.bannerDot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.bannerPreview { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 2px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.bannerEditBtn { padding: 0.25rem 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); font-size: 0.72rem; font-weight: 500; cursor: pointer; font-family: inherit; color: var(--color-text-secondary); }
+.bannerEditor { margin-top: 0.5rem; padding: 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; background: #FAFAFA; display: flex; flex-direction: column; gap: 0.4rem; }
+.bannerEditHint { font-size: 0.72rem; color: var(--color-text-muted); margin: 0 0 0.1rem; line-height: 1.4; }
+.bannerEditRow { display: flex; align-items: center; gap: 0.4rem; }
+.bannerColorInput { width: 32px; height: 28px; padding: 0; border: 1px solid var(--color-border); border-radius: 4px; background: none; cursor: pointer; flex-shrink: 0; }
+.bannerSwatches { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.bannerSwatch { width: 16px; height: 16px; padding: 0; border-radius: 3px; border: 1px solid rgba(0, 0, 0, 0.15); cursor: pointer; }
+.bannerLabelInput { flex: 1; min-width: 0; padding: 0.35rem 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-size: 0.78rem; font-family: inherit; color: var(--color-text); outline: none; }
+.bannerLabelInput:focus { border-color: var(--color-accent); }
+.bannerDelete { padding: 0.2rem 0.45rem; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface); color: #9CA3AF; font-size: 0.85rem; line-height: 1; cursor: pointer; font-family: inherit; }
+.bannerDelete:hover { color: #DC2626; border-color: #FCA5A5; }
+.bannerAddBtn { align-self: flex-start; padding: 0.25rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 6px; background: var(--color-surface); font-size: 0.72rem; font-weight: 500; color: var(--color-text-secondary); cursor: pointer; font-family: inherit; }
+.bannerAddBtn:hover { border-color: var(--color-accent); color: var(--color-accent); }

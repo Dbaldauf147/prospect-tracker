@@ -14,17 +14,21 @@ import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
 import { SiteListOverview } from './SiteListOverview';
 import { DansDraftsView } from './DansDraftsView';
 import { MarketUpdatesView } from './MarketUpdatesView';
+import { primarySubject } from '../../utils/campaignSubjects';
 
 const TABS = ['drafts', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
-  // Subject of a campaign the tracking tab asked to open. Cleared as soon as
-  // the campaign view picks it up, so clicking the same campaign twice works.
+  // Subject of a campaign the tracking tab asked to open — its first line,
+  // since a campaign can match on several and any one of them identifies it.
+  // Cleared as soon as the campaign view picks it up, so clicking the same
+  // campaign twice works.
   const [openCampaignSubject, setOpenCampaignSubject] = useState(null);
 
   const openCampaign = (campaign) => {
-    if (campaign?.subject) setOpenCampaignSubject(campaign.subject);
+    const subject = primarySubject(campaign);
+    if (subject) setOpenCampaignSubject(subject);
     setTab('campaigns');
   };
 
