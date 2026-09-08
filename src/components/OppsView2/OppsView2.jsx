@@ -6045,7 +6045,9 @@ const OPP_DETAIL_TABS = [
   { key: 'stage5', label: 'Stage 5', hint: 'Stage 5 — Prepare & Bid' },
   { key: 'stage6', label: 'Stage 6', hint: 'Stage 6 — Negotiate to Win' },
   { key: 'stage7', label: 'Stage 7', hint: 'Stage 7 — closing the deal out' },
-  { key: 'close', label: 'Close' },
+  // No "Close" tab: its fields have moved onto the two stages that do that
+  // work — Verbal and Target Signature Date to Stage 6, the close-out set
+  // to Stage 7 — so nothing routes to it any more and it could never show.
   { key: 'other', label: 'Other' },
 ];
 
@@ -6120,13 +6122,14 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // here, so there's no Notes tab left to leave them on.
   'Next Steps': 'overview',
   'Notes': 'overview',
-  // How and when it ends
-  'Target Signature Date': 'close',
-  'Verbal': 'close',
-  // The close-out set lives on Stage 7: what the deal closed as, when, and
-  // against whom is the work of that stage, not a category of its own.
-  // ("Close Year" / "Close Month" join them via the regexes below, since
-  // their labels vary by import.)
+  // How and when it ends, split across the two stages that do that work.
+  // Getting a signature agreed is Stage 6 — it's what the negotiation is
+  // for, and a verbal is the same commitment one step earlier.
+  'Target Signature Date': 'stage6',
+  'Verbal': 'stage6',
+  // Stage 7 is the close itself: what the deal closed as, when, and
+  // against whom. ("Close Year" / "Close Month" join them via the regexes
+  // below, since their labels vary by import.)
   'Close Date': 'stage7',
   'Competition': 'stage7',
   'Reason Not Sold': 'stage7',
