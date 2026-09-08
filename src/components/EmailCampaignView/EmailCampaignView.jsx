@@ -10,6 +10,8 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { addQueuedRecipients } from '../../utils/draftRecipientsQueue';
 import { useEmailTracking, trackingByRecipient, normalizeTrackedEmail, sentAtByRecipient } from '../../hooks/useEmailTracking';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { brandFromDomain } from '../../utils/companyGuess';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import { isCampaignActive } from '../../utils/campaignOutreach';
 import {
@@ -32,6 +34,13 @@ import {
 // button is table scaffolding rather than a column and isn't offered at all.
 const CONTACT_COLUMNS = [
   { key: 'email', label: 'Sent To', sortKey: 'email', width: 280 },
+  {
+    key: 'company',
+    label: 'Company',
+    sortKey: 'company',
+    width: 180,
+    title: 'The company on the recipient\u2019s HubSpot contact. Where HubSpot has none, the brand read off their email domain stands in, greyed.',
+  },
   { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
   { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
   { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
@@ -49,6 +58,8 @@ const CONTACT_COLUMNS = [
   { key: 'eventStatus', label: 'Event Status', sortKey: 'eventStatus', width: 130 },
 ];
 const CONTACT_COLS_LOCKED = ['email'];
+// See companyFor: what a domain's "brand" must never turn out to be.
+const DOMAIN_SUFFIX_WORDS = new Set(['com', 'co', 'net', 'org', 'gov', 'edu', 'ac', 'ne', 'or']);
 const ACTIONS_COL_WIDTH = 36;
 const MIN_COL_WIDTH = 60;
 
@@ -476,7 +487,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           name,
           firstName: parts[0] || '',
           lastName: parts.slice(1).join(' '),
-          company: c.company || '',
+          // Whatever the Company column shows for this row, unless only a
+          // domain stood in: a guess at an employer has no business being
+          // written into a draft.
+          company: companyFor(c).source === 'domain' ? '' : companyFor(c).name,
         });
       });
     }
@@ -885,6 +899,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       case 'repliedBy': return String(c.repliedBy || '').toLowerCase();
       case 'replyDate': return c.replied && c.replyDate ? (new Date(c.replyDate).getTime() || 0) : 0;
       case 'eventStatus': return String(c.eventStatus || '');
+      // Sorted on what the cell shows, the domain fallback included, so the
+      // order on screen matches the column that was clicked.
+      case 'company': return companyFor(c).name.toLowerCase();
       default: return '';
     }
   }
@@ -899,6 +916,66 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     [subjectsKey],
   );
   const { dupKeys, extraRows } = findDuplicates(displayResults?.contacts);
+
+  // ---- Company, per recipient --------------------------------------------
+  // The campaign API answers with addresses, not employers: it reads HubSpot
+  // *engagements*, which carry who was emailed and when and nothing about
+  // them. The company sits on the HubSpot contact, and this browser already
+  // holds a cache of those — the same one the contacts pages read — so the
+  // column is joined on here rather than asking the server for a second pull
+  // of records it has already fetched once.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache()
+        .then(cache => { if (!cancelled) setHubspotContacts(cache?.contacts || []); })
+        .catch(() => {});
+    };
+    refresh();
+    // The cache is refreshed from the HubSpot tab; pick that up rather than
+    // showing companies from whenever this tab happened to mount.
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  const companyByEmail = useMemo(() => {
+    const map = new Map();
+    for (const c of hubspotContacts) {
+      const email = normEmail(c?.email);
+      const company = String(c?.company || '').trim();
+      if (!email || !company || map.has(email)) continue;
+      map.set(email, company);
+    }
+    return map;
+  }, [hubspotContacts]);
+
+  // A row's company. A row can carry several addresses (one send to a group),
+  // so the first one HubSpot knows the employer of wins; failing that the
+  // brand from the first usable domain stands in, and the cell greys it to
+  // say it was read off the address rather than recorded on the contact.
+  const companyFor = useCallback((c) => {
+    const stored = String(c?.company || '').trim();
+    if (stored) return { name: stored, source: 'contact' };
+    const emails = String(c?.email || '').split(';').map(normEmail).filter(Boolean);
+    for (const e of emails) {
+      const hit = companyByEmail.get(e);
+      if (hit) return { name: hit, source: 'hubspot' };
+    }
+    // Read the way the Suggested Company hints elsewhere read it —
+    // "svpglobal.com" → "Svpglobal" — and nothing at all for a personal
+    // inbox, which names no employer.
+    for (const e of emails) {
+      const brand = brandFromDomain(String(e).split('@')[1] || '');
+      // A bare suffix is not a company: a domain whose brand reads as one
+      // — a two-part TLD nobody has listed yet — is better left blank than
+      // printed as "Com".
+      if (brand && !DOMAIN_SUFFIX_WORDS.has(brand.toLowerCase())) {
+        return { name: brand, source: 'domain' };
+      }
+    }
+    return { name: '', source: 'none' };
+  }, [companyByEmail]);
 
   // Click tracking for this campaign. The campaign report never sends
   // mail — HubSpot is the source of the sends — so tracking is joined in
@@ -1112,6 +1189,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
           </>
         );
+      case 'company': {
+        const { name, source } = companyFor(c);
+        if (!name) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        return (
+          <span
+            style={{ color: source === 'domain' ? 'var(--color-text-muted)' : 'var(--color-text)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            title={source === 'domain'
+              ? 'No company on the HubSpot contact — this is the brand read off the email domain. Set the company in HubSpot Contacts and it shows here instead.'
+              : name}
+          >{name}</span>
+        );
+      }
       case 'sentDate':
         return <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</span>;
       case 'delivery': {
