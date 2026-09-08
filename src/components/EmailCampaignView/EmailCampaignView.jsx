@@ -1449,16 +1449,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       {/* Results */}
       {displayResults && (
         <div>
-          {/* Collapse the numbers away. The campaign's own work happens in
-              the contact table below, and on a long roster the cards push it
-              off the first screenful; the headline figures come back inline
-              here while they're hidden so nothing has to be reopened to read
-              them. The choice sticks per user. */}
+          {/* Collapse the campaign's body away — the summary cards and the
+              contact roster both — leaving the headline figures inline here so
+              nothing has to be reopened to read them. Between the cards and a
+              long list of contacts a campaign fills the screen, and the reason
+              to collapse it is to reach what's underneath. The choice sticks
+              per user. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
             <button
               onClick={() => setDetailsCollapsed(v => !v)}
               aria-expanded={!detailsCollapsed}
-              title={detailsCollapsed ? 'Show the campaign summary cards' : 'Hide the campaign summary cards and start the contact table higher up'}
+              title={detailsCollapsed
+                ? 'Show the campaign summary cards and its contact list'
+                : 'Hide the campaign summary cards and its contact list, leaving the headline figures'}
               style={{
                 padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
@@ -1689,6 +1692,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
           )}
 
+          {/* The roster itself — the duplicate warning that describes it, the
+              box that adds to it, and the table. Collapsed together with the
+              cards: on a campaign with a long contact list this is nearly the
+              whole page, and "Hide details" is asked for to get past it to
+              what's below. Everything that acts on the campaign as a whole
+              (Export CSV, Add unsent to Draft, Save) stays put — those don't
+              need the rows on screen to be worth clicking. */}
+          {!detailsCollapsed && (
+          <>
           {/* Duplicate contacts warning */}
           {dupKeys.size > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '0.78rem', color: '#92400E' }}>
@@ -1814,6 +1826,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 </tbody>
               </table>
             </div>
+          )}
+          </>
           )}
         </div>
       )}
