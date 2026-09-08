@@ -1,13 +1,12 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
-import { getEffectiveServiceMetadata, rolloutWeeks } from '../../data/serviceCatalog';
+import { rolloutWeeks } from '../../data/serviceCatalog';
 import {
   getServiceCategories,
   moveServiceToBucket,
   pruneServicesFromCategories,
   renameServiceInCategories,
-  serviceBucketOf,
   UNGROUPED_SERVICES,
 } from '../../utils/serviceCategoriesStore';
 import {
@@ -17,6 +16,7 @@ import {
 } from '../../utils/dropdownListsStore';
 import { QuestionsTab } from './QuestionsTab';
 import { ServicesPricingTab } from './ServicesPricingTab';
+import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
@@ -1152,16 +1152,12 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // the live Solutions list — the same source the rows come from — so a
   // service added there is immediately pickable as a dependency.
   const solutionNames = useMemo(() => solutionsList?.options || [], [solutionsList]);
-  const serviceRows = useMemo(() => {
-    const options = solutionsList?.options || [];
-    return options.map(name => ({
-      name,
-      meta: getEffectiveServiceMetadata(name, serviceOverrides),
-      // '' means no box claims it, which is the Scope picker's catch-all
-      // card — named here so the cell and the search box read the same.
-      bucket: serviceBucketOf(serviceCategories, name) || UNGROUPED_SERVICES,
-    }));
-  }, [solutionsList, serviceOverrides, serviceCategories]);
+  // Name + metadata + which box on the board claims it, assembled in
+  // src/utils/serviceRows.js. It lives there rather than here because the
+  // Clients tab's Deal Sizing subtab estimates against the same rows, and a
+  // service that is "recurring, 3 years" on this page and a project on that
+  // one would price to two different deals.
+  const serviceRows = useMemo(() => buildServiceRows(settings), [settings]);
   // Services the user has retired. The same app-wide set the company card's
   // Services Explored board and the Opps Scope picker read, so hiding here
   // takes a service out of circulation everywhere rather than only on this

@@ -7,6 +7,7 @@ import { DealsView } from '../DealsView/DealsView';
 import { CommissionsView } from './CommissionsView';
 import { ContractServicesView } from './ContractServicesView';
 import { ContractLanguageView } from './ContractLanguageView';
+import { DealSizingView } from './DealSizingView';
 import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
@@ -557,10 +558,19 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
 }
 
 const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
+// Every subtab the tab bar offers. Read back as a set so a remembered subtab
+// is validated against the real list rather than a hand-maintained || chain —
+// which is how 'contractlanguage' came to be droppable: it was added to the
+// bar and never to the check, so picking it and reloading landed on Clients.
+const SUBTAB_KEYS = new Set([
+  'clients', 'oldclients', 'deals', 'commissions', 'postsale',
+  'dealsizing', 'contractservices', 'contractlanguage',
+]);
+
 function readSavedSubtab() {
   try {
     const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
-    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions' || s === 'postsale' || s === 'contractservices') return s;
+    if (SUBTAB_KEYS.has(s)) return s;
   } catch {}
   return 'clients';
 }
@@ -1331,6 +1341,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
         { key: 'postsale', label: 'Post-Sale Follow-Up' },
+        { key: 'dealsizing', label: 'Deal Sizing' },
         { key: 'contractservices', label: 'Contract Services' },
         { key: 'contractlanguage', label: 'Contract Language' },
       ].map(t => {
@@ -1383,6 +1394,22 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
         <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
+      </div>
+    );
+  }
+
+  if (subtab === 'dealsizing') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <DealSizingView
+          prospects={prospects}
+          cdmName={cdmName}
+          settings={settings}
+          updateSettings={updateSettings}
+          updateProspect={updateProspect}
+          onSelectProspect={onSelectProspect}
+        />
       </div>
     );
   }
