@@ -14,6 +14,10 @@ import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from 
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import {
+  normalizeBanners, findBanner, bannerHtml, bannerPlainText, bannerTextColor,
+  bannerIdFor, normalizeBannerColor, BANNER_SWATCHES, DEFAULT_BANNER_COLOR,
+} from '../../utils/emailBanners';
 import { htmlSectionLines } from '../../utils/inlineImages.js';
 import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
@@ -110,18 +114,21 @@ function collapseBodyToBreaks(pBodyHtml, { preview = false } = {}) {
 // surviving line break gets a faint ↵ marker and every break that the sent
 // email strips gets a struck-through red ↵, so the user can see which breaks
 // won't appear.
-function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false } = {}) {
+function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false, banner = null } = {}) {
   let html = collapseBodyToBreaks(pBodyHtml, { preview: showBreaks });
   if (showBreaks) {
     html = html
       .replace(/\x00DROP\x00/g, `<span class="${styles.lbDrop}" title="This line break is removed in the sent email">↵</span>`)
       .replace(/<br>/gi, `<span class="${styles.lbKeep}" title="Line break in the sent email">↵</span><br>`);
   }
-  return html;
+  // The banner is prepended AFTER the collapse, not typed into the body: it
+  // isn't the user's prose, and running it through the paragraph collapse
+  // would strip the break that separates it from the greeting.
+  return bannerHtml(banner) + html;
 }
 
-function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
-  const htmlContent = collapseBodyToBreaks(pBodyHtml);
+function buildStyledBodyHtml(pBodyHtml, { signature = '', banner = null } = {}) {
+  const htmlContent = bannerHtml(banner) + collapseBodyToBreaks(pBodyHtml);
 
   // Signature sits a real blank line below the body, indented slightly from
   // the left so it isn't flush against the body text (matches the look of
@@ -972,7 +979,7 @@ function CampaignRecipientsQueueSection({ selectedContacts, setSelectedContacts 
   );
 }
 
-function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
+function PreviewTabs({ contacts, subject, body, banner, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
   const [activeIdx, setActiveIdx] = useState(0);
   const [showBreaks, setShowBreaks] = useState(true);
   const c = contacts[activeIdx] || contacts[0];
@@ -1014,7 +1021,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
           </div>
         )}
         <div className={styles.previewSubject}>{personalizeForContact(subject, c)}</div>
-        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: buildPreviewBodyHtml(personalizeForContact(body, c), { showBreaks }) }} />
+        <div className={styles.previewBody} dangerouslySetInnerHTML={{ __html: buildPreviewBodyHtml(personalizeForContact(body, c), { showBreaks, banner }) }} />
       </div>
     </div>
   );
@@ -1054,6 +1061,14 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   const [selectedContacts, setSelectedContacts] = useState(() => {
     try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.contacts || []; } catch { return []; }
   });
+  // The category banner this draft carries, by id — the bar that goes above
+  // the greeting. Only the id is held (and autosaved, and stored with a saved
+  // draft): the label and colour live in settings, so recolouring a category
+  // updates every draft using it instead of freezing the old colour in.
+  const [bannerId, setBannerId] = useState(() => {
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.bannerId || ''; } catch { return ''; }
+  });
+  const [showBannerEditor, setShowBannerEditor] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [result, setResult] = useState(null);
@@ -1064,6 +1079,58 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   function setDrafts(updater) {
     const next = typeof updater === 'function' ? updater(drafts) : updater;
     updateSettings({ emailDrafts: next });
+  }
+  // The user's category banners. Absent settings seed the defaults; an
+  // explicit empty list is someone who deleted them all and meant it.
+  const banners = useMemo(() => normalizeBanners(settings?.emailBanners), [settings?.emailBanners]);
+  const activeBanner = useMemo(() => findBanner(banners, bannerId), [banners, bannerId]);
+  function setBanners(next) {
+    updateSettings({ emailBanners: normalizeBanners(next) });
+  }
+  // The banner editor works on its own copy of the list while it's open:
+  // updateSettings writes straight to Firestore, so committing per keystroke
+  // would be a write per letter. Edits land on blur and on Done — the same
+  // way the signature editor below saves.
+  const [bannerDraft, setBannerDraft] = useState(banners);
+  function openBannerEditor() {
+    setBannerDraft(banners);
+    setShowBannerEditor(true);
+  }
+  function editBannerRow(idx, patch) {
+    setBannerDraft(rows => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+  // A banner with no label is a coloured bar with nothing to say, so an
+  // emptied name reverts to what's saved — or drops the row, if it was never
+  // saved in the first place.
+  function commitBannerRow(idx) {
+    const rows = bannerDraft.slice();
+    const row = rows[idx];
+    if (!row) return;
+    if (!String(row.label || '').trim()) {
+      const saved = findBanner(banners, row.id);
+      if (saved) rows[idx] = { ...saved };
+      else rows.splice(idx, 1);
+      setBannerDraft(rows);
+    }
+    setBanners(rows);
+  }
+  function addBannerRow() {
+    // Start on a colour none of the existing banners uses, so a new category
+    // is distinguishable the moment it appears.
+    const used = new Set(bannerDraft.map(b => b.color));
+    const color = BANNER_SWATCHES.find(c => !used.has(c)) || DEFAULT_BANNER_COLOR;
+    const label = 'New Banner';
+    const rows = [...bannerDraft, { id: bannerIdFor(`${label}-${Date.now().toString(36)}`), label, color }];
+    setBannerDraft(rows);
+    setBanners(rows);
+  }
+  function deleteBannerRow(idx) {
+    const row = bannerDraft[idx];
+    const rows = bannerDraft.filter((_, i) => i !== idx);
+    setBannerDraft(rows);
+    setBanners(rows);
+    // Don't leave the compose pointing at a banner that no longer exists.
+    if (row && row.id === bannerId) setBannerId('');
   }
   const [draftQueue, setDraftQueue] = useState([]); // contacts waiting to be opened
   const [draftsSent, setDraftsSent] = useState(0);
@@ -1131,7 +1198,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
+        userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc, bannerId }));
         setAutosaveFailed(false);
       } catch (err) {
         console.warn('Draft autosave failed (likely storage quota):', err?.message || err);
@@ -1139,7 +1206,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [subject, body, selectedContacts, draftCc]);
+  }, [subject, body, selectedContacts, draftCc, bannerId]);
 
   // Shrink oversized pasted images. Quill hands a pasted screenshot straight
   // into the body at its full capture size; redrawing it at email width keeps
@@ -1531,17 +1598,21 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   }
 
   // "Clear all" — reset the composer to a fresh email: drop the CC list, the
-  // subject, the attachments, and the message body, and reset the To line to
-  // just the user's own address (SELF_RECIPIENT). The body resets to the
-  // "Hi {goesBy}," greeting rather than going fully blank, and the saved
-  // signature (a separate field) is left untouched.
+  // subject, the attachments, the category banner, and the message body, and
+  // reset the To line to just the user's own address (SELF_RECIPIENT). The
+  // body resets to the "Hi {goesBy}," greeting rather than going fully blank,
+  // and the saved signature (a separate field) is left untouched. The banner
+  // goes because it labels THIS message: carrying a "Compliance Update" bar
+  // into the next email is how one goes out mislabelled. The definitions
+  // themselves are settings and stay put.
   function clearCompose() {
-    const ok = window.confirm('Clear the CC, subject, message, and attachments? The To line is reset to your own address (daniel.baldauf@se.com), and the "Hi {goesBy}," greeting and your signature are kept.');
+    const ok = window.confirm('Clear the CC, subject, message, banner, and attachments? The To line is reset to your own address (daniel.baldauf@se.com), and the "Hi {goesBy}," greeting and your signature are kept.');
     if (!ok) return;
     setSelectedContacts([SELF_RECIPIENT]);
     setDraftCc([]);
     setSubject('');
     setBody(GREETING_BODY);
+    setBannerId('');
     setAttachments([]);
     setCritique(null);
   }
@@ -1574,6 +1645,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       body,
       contacts: selectedContacts,
       cc: draftCc,
+      bannerId,
       createdAt: new Date().toISOString(),
       pinned: false,
     };
@@ -1595,6 +1667,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     setBody(draft.body || '');
     setSelectedContacts(draft.contacts || []);
     setDraftCc(draft.cc || []);
+    // Drafts saved before banners existed carry none, which is the right
+    // answer for them — and clears whatever the composer had before.
+    setBannerId(draft.bannerId || '');
   }
 
   function deleteDraft(id) {
@@ -1882,8 +1957,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
   function openDraftForContact(c) {
     const personalBodyHtml = personalizeForContact(body, c);
-    const styledHtml = buildStyledBodyHtml(personalBodyHtml);
-    const personalBodyPlain = htmlToPlainText(personalBodyHtml);
+    const styledHtml = buildStyledBodyHtml(personalBodyHtml, { banner: activeBanner });
+    // The deeplink and the clipboard's text/plain flavour can't carry a
+    // coloured bar, so the banner goes in as an upper-cased heading line —
+    // the message still says which category it is wherever it lands.
+    const personalBodyPlain = bannerPlainText(activeBanner) + htmlToPlainText(personalBodyHtml);
     const personalSubject = personalizeForContact(subject, c);
     let trimmedBody = personalBodyPlain;
     const baseUrl = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(c.email)}&subject=${encodeURIComponent(personalSubject)}&body=`;
@@ -1980,7 +2058,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       // Same paragraph-spacing fix as the Outlook draft path, plus the
       // signature block (the .eml is opened/sent as-is, so it carries its own
       // signature rather than relying on Outlook to add one).
-      const htmlContent = buildStyledBodyHtml(pBodyHtml, { signature });
+      const htmlContent = buildStyledBodyHtml(pBodyHtml, { signature, banner: activeBanner });
       return { c, pSubject, toHeader, ccHeader, htmlContent };
     });
 
@@ -2318,6 +2396,101 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             />
           </div>
 
+          {/* Category banner — the coloured bar the email opens with, above
+              the greeting. Sits here in the composer for the same reason it
+              sits there in the email: it's the first thing the reader sees. */}
+          <div className={styles.field}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem', gap: 8, flexWrap: 'wrap' }}>
+              <label className={styles.label} style={{ marginBottom: 0 }}>
+                Banner
+                <span className={styles.labelHint}>a coloured bar above the greeting — one colour per category</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => (showBannerEditor ? setShowBannerEditor(false) : openBannerEditor())}
+                className={styles.bannerEditBtn}
+              >{showBannerEditor ? 'Done' : 'Edit banners'}</button>
+            </div>
+            <div className={styles.bannerRow}>
+              <button
+                type="button"
+                onClick={() => setBannerId('')}
+                className={bannerId ? styles.bannerChip : `${styles.bannerChip} ${styles.bannerChipNone}`}
+                title="Send this email with no banner"
+              >No banner</button>
+              {banners.map(b => {
+                const on = b.id === bannerId;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setBannerId(on ? '' : b.id)}
+                    className={on ? `${styles.bannerChip} ${styles.bannerChipOn}` : styles.bannerChip}
+                    style={on ? { background: b.color, color: bannerTextColor(b.color) } : undefined}
+                    title={on ? `${b.label} — click to remove the banner` : `Put a ${b.label} banner on this email`}
+                  >
+                    {!on && <span className={styles.bannerDot} style={{ background: b.color }} />}
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
+            {activeBanner && (
+              <div
+                className={styles.bannerPreview}
+                style={{ background: activeBanner.color, color: bannerTextColor(activeBanner.color) }}
+                title="How the banner will look at the top of the email"
+              >{activeBanner.label}</div>
+            )}
+            {showBannerEditor && (
+              <div className={styles.bannerEditor}>
+                <p className={styles.bannerEditHint}>
+                  Name each category and give it a colour. The text colour is picked for
+                  you — black or white, whichever reads against the colour you choose.
+                </p>
+                {bannerDraft.map((b, i) => (
+                  <div key={b.id} className={styles.bannerEditRow}>
+                    <input
+                      type="color"
+                      className={styles.bannerColorInput}
+                      value={normalizeBannerColor(b.color) || DEFAULT_BANNER_COLOR}
+                      onChange={e => editBannerRow(i, { color: e.target.value })}
+                      onBlur={() => commitBannerRow(i)}
+                      title="Banner colour"
+                    />
+                    <div className={styles.bannerSwatches}>
+                      {BANNER_SWATCHES.map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          className={styles.bannerSwatch}
+                          style={{ background: c }}
+                          onClick={() => { editBannerRow(i, { color: c }); setBanners(bannerDraft.map((r, j) => (j === i ? { ...r, color: c } : r))); }}
+                          title={c}
+                        />
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      className={styles.bannerLabelInput}
+                      value={b.label}
+                      onChange={e => editBannerRow(i, { label: e.target.value })}
+                      onBlur={() => commitBannerRow(i)}
+                      placeholder="Category name, e.g. Energy Market Update"
+                    />
+                    <button
+                      type="button"
+                      className={styles.bannerDelete}
+                      onClick={() => deleteBannerRow(i)}
+                      title={`Delete the ${b.label} banner`}
+                    >&times;</button>
+                  </div>
+                ))}
+                <button type="button" className={styles.bannerAddBtn} onClick={addBannerRow}>+ Add banner</button>
+              </div>
+            )}
+          </div>
+
           <div className={styles.field}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem', gap: 8, flexWrap: 'wrap' }}>
               <label className={styles.label} style={{ marginBottom: 0 }}>Body</label>
@@ -2516,7 +2689,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
           {/* Preview — all contacts with tabs */}
           {selectedContacts.length > 0 && (subject.trim() || body.trim()) && (
-            <PreviewTabs contacts={selectedContacts} subject={subject} body={body} personalizeForContact={personalizeForContact} draftCc={draftCc} ccMap={settings?.ccMap || {}} toAlsoMap={settings?.toAlsoMap || {}} />
+            <PreviewTabs contacts={selectedContacts} subject={subject} body={body} banner={activeBanner} personalizeForContact={personalizeForContact} draftCc={draftCc} ccMap={settings?.ccMap || {}} toAlsoMap={settings?.toAlsoMap || {}} />
           )}
         </div>
 
