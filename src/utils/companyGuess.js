@@ -10,8 +10,14 @@ export const FREE_MAIL_DOMAINS = new Set([
   'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
 ]);
 
+// Second-level domains that are part of the suffix rather than the brand:
+// without them "mapletree.com.sg" reads as the company "Com". Not the whole
+// public suffix list — just the ones this book of accounts actually uses.
 const TWO_PART_TLDS = new Set([
   'co.uk', 'co.jp', 'com.au', 'com.br', 'co.nz', 'com.mx', 'co.in',
+  'com.sg', 'com.hk', 'com.cn', 'co.kr', 'com.tw', 'com.my', 'com.ph',
+  'co.za', 'com.tr', 'com.ar', 'com.co', 'co.il', 'com.sa', 'com.pe',
+  'co.th', 'com.vn', 'ne.jp', 'or.jp', 'org.uk', 'ac.uk', 'gov.uk',
 ]);
 
 const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
