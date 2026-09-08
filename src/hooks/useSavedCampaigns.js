@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { matchedSubject, primarySubject } from '../utils/campaignSubjects';
 
 // Read-only loader for this user's saved email campaigns (the same
 // `emailCampaigns/{uid}` doc the Email Campaigns tab writes). The Email
@@ -37,27 +38,27 @@ export function useSavedCampaigns() {
 //
 // Uses the same containment test the campaign report uses to match sent mail
 // (see trackingByRecipient): a campaign owns a send when the send's subject
-// CONTAINS the campaign's subject, so a draft that picked up a prefix or
-// suffix still counts. When several campaigns match, the longest — most
-// specific — subject wins; ties keep the earlier campaign.
+// CONTAINS one of the campaign's subject lines, so a draft that picked up a
+// prefix or suffix still counts, and a campaign running two lines claims the
+// sends under either. When several campaigns match, the longest — most
+// specific — matching line wins; ties keep the earlier campaign.
 //
 // `campaigns` is the raw saved list; the returned object carries the campaign
 // plus its `index` in that list, which is what identifies it for filtering
-// and for opening it on the Email Campaigns tab (subjects need not be unique).
+// and for opening it on the Email Campaigns tab (subjects need not be
+// unique), and `subject`, the line that actually matched.
 export function campaignForSubject(campaigns, subject) {
-  const sent = String(subject || '').toLowerCase();
-  if (!sent) return null;
   let best = null;
   (campaigns || []).forEach((c, index) => {
-    const want = String(c?.subject || '').trim().toLowerCase();
-    if (!want || !sent.includes(want)) return;
+    const want = matchedSubject(c, subject);
+    if (!want) return;
     if (!best || want.length > best.subjectLength) {
-      best = { campaign: c, index, subjectLength: want.length };
+      best = { campaign: c, index, subject: want, subjectLength: want.length };
     }
   });
   return best;
 }
 
 export function campaignLabel(c) {
-  return c?.title || c?.subject || '(untitled campaign)';
+  return c?.title || primarySubject(c) || '(untitled campaign)';
 }

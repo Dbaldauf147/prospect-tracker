@@ -3,6 +3,14 @@
  * Groups multi-recipient emails as single sends.
  * POST /api/email-campaign
  * Body: { subject: "Your subject line" }
+ *    or { subjects: ["Line one", "Line two"] }
+ *
+ * A campaign can go out under more than one subject line — an A/B test of
+ * two lines, a wave reworded for a second segment — and those are one
+ * campaign with one contact list. Every line is searched and the results
+ * are pooled: a send matching ANY of them belongs to the campaign, and a
+ * recipient emailed under two of them is still one send (they dedupe by
+ * recipient set exactly as repeated sends of one subject always have).
  */
 
 import { withAuth } from './_lib/http.js';
@@ -123,13 +131,32 @@ async function listAllEmails(token) {
   return collected;
 }
 
-// Candidate emails whose subject may match the campaign subject. Narrow
-// server-side when we have a distinctive token; otherwise list everything.
-async function fetchCandidateEmails(token, subjectLower) {
-  const searchToken = distinctiveSubjectToken(subjectLower);
-  return searchToken
-    ? searchEmailsBySubjectToken(token, searchToken)
-    : listAllEmails(token);
+// Candidate emails whose subject may match any of the campaign's subject
+// lines. Narrow server-side when every line has a distinctive token —
+// one search per line, pooled and deduplicated by email id, which is far
+// cheaper than a mailbox scan even at several lines. A line with no
+// distinctive token can only be served by listing everything, and that
+// list is a superset of every other line's, so it short-circuits the rest.
+async function fetchCandidateEmails(token, subjectsLower) {
+  const searchTokens = [];
+  for (const subjectLower of subjectsLower) {
+    const searchToken = distinctiveSubjectToken(subjectLower);
+    if (!searchToken) return listAllEmails(token);
+    searchTokens.push(searchToken);
+  }
+  const byId = new Map();
+  let first = true;
+  for (const searchToken of [...new Set(searchTokens)]) {
+    // Same pacing between searches as between pages: HubSpot's per-second
+    // cap is portal-wide, so two lines back to back count against it just
+    // as two pages of one line do.
+    if (!first) await sleep(PAGE_PACING_MS);
+    first = false;
+    for (const email of await searchEmailsBySubjectToken(token, searchToken)) {
+      if (!byId.has(email.id)) byId.set(email.id, email);
+    }
+  }
+  return [...byId.values()];
 }
 
 async function handler(req, res, auth) {
@@ -139,20 +166,36 @@ async function handler(req, res, auth) {
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
   if (!token) return res.status(500).json({ error: 'HubSpot token not configured' });
 
-  const { subject } = req.body;
-  if (!subject) return res.status(400).json({ error: 'subject is required' });
+  // One subject line or several. `subject` is the older single-line form and
+  // is still what a campaign's first line is sent as, so both are accepted;
+  // blank and duplicate lines are dropped so a stray empty row in the editor
+  // can't turn into a filter that matches every email in the portal.
+  const { subject, subjects } = req.body;
+  const wanted = [];
+  const seen = new Set();
+  for (const value of [...(Array.isArray(subjects) ? subjects : []), subject]) {
+    const s = String(value ?? '').trim();
+    if (!s || seen.has(s.toLowerCase())) continue;
+    seen.add(s.toLowerCase());
+    wanted.push(s);
+  }
+  if (wanted.length === 0) return res.status(400).json({ error: 'subject is required' });
 
-  const subjectLower = subject.toLowerCase().trim();
+  const subjectsLower = wanted.map(s => s.toLowerCase());
 
   try {
-    // Pull candidate emails — narrowed server-side by a distinctive subject
-    // token so we no longer scan the whole mailbox (which timed out on large
-    // portals). The exact case-insensitive substring match below is unchanged,
-    // so the result set is identical to the old list-everything approach.
-    const allEmails = await fetchCandidateEmails(token, subjectLower);
+    // Pull candidate emails — narrowed server-side by a distinctive token per
+    // subject line so we no longer scan the whole mailbox (which timed out on
+    // large portals). The exact case-insensitive substring match below is
+    // unchanged, so the result set is identical to the old list-everything
+    // approach.
+    const allEmails = await fetchCandidateEmails(token, subjectsLower);
 
-    // Filter emails matching the subject
-    const matching = allEmails.filter(e => (e.hs_email_subject || '').toLowerCase().includes(subjectLower));
+    // Filter emails matching any of the subject lines
+    const matching = allEmails.filter((e) => {
+      const sent = (e.hs_email_subject || '').toLowerCase();
+      return subjectsLower.some(s => sent.includes(s));
+    });
 
     // Separate sent vs replies
     const sentEmails = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
@@ -291,7 +334,10 @@ async function handler(req, res, auth) {
     });
 
     return res.json({
-      subject,
+      // The lines this ran against, echoed back: `subject` stays the first
+      // of them for anything still reading the single-subject response.
+      subject: wanted[0],
+      subjects: wanted,
       totalEmails: matching.length,
       sent: totalSends,
       replies: totalReplied,

@@ -25,6 +25,7 @@ import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './DraftEmailView.module.css';
+import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -1782,7 +1783,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       setResult({ type: 'error', message: 'Add at least one contact before adding to a campaign' });
       return;
     }
-    const target = existingCampaigns.find(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+    const target = existingCampaigns.find(c => primarySubject(c).toLowerCase() === name.toLowerCase());
     if (!target) {
       setResult({ type: 'error', message: `Campaign "${name}" no longer exists: refresh and try again.` });
       return;
@@ -1809,7 +1810,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       const ref = doc(db, 'emailCampaigns', user.uid);
       const snap = await getDoc(ref);
       const existing = snap.exists() ? (snap.data().campaigns || []) : [];
-      const idx = existing.findIndex(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase());
+      const idx = existing.findIndex(c => primarySubject(c).toLowerCase() === name.toLowerCase());
       if (idx === -1) {
         setResult({ type: 'error', message: `Campaign "${name}" no longer exists: refresh and try again.` });
         setCampaignPreview(null);
@@ -1863,7 +1864,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       const existing = snap.exists() ? (snap.data().campaigns || []) : [];
       // Don't clobber an existing campaign (which may hold real tracking
       // data) that happens to share this name — ask for a unique one.
-      if (existing.some(c => String(c.subject || '').trim().toLowerCase() === name.toLowerCase())) {
+      if (existing.some(c => primarySubject(c).toLowerCase() === name.toLowerCase())) {
         setResult({ type: 'error', message: `A campaign named "${name}" already exists: choose a different name or add to it instead.` });
         setSavingCampaign(false);
         return;
@@ -1879,8 +1880,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       // Nothing has been emailed yet, so the send/reply counters start at zero;
       // the roster is tracked separately as totalContacts. Opening the campaign
       // in the Email Campaigns tab folds in real send/reply activity by subject.
-      const campaign = {
-        subject: name,
+      const campaign = withSubjects({
         savedAt: nowISO,
         source: 'draft-emails',
         uniqueRecipients: 0,
@@ -1893,7 +1893,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
         autoRepliesSuppressed: 0,
         removedEmails: [],
         contacts,
-      };
+        // One subject line to start with; more can be added on the Email
+        // Campaigns tab when the same outreach goes out reworded.
+      }, [name]);
       await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
       setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}": find it under the Email Campaigns tab.` });
       setNamingCampaign(false);
@@ -2733,7 +2735,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         >
                           <option value="">Choose a campaign…</option>
                           {existingCampaigns.map((c, i) => {
-                            const subj = String(c.subject || '').trim();
+                            const subj = primarySubject(c);
                             const count = c.totalContacts ?? c.contacts?.length ?? 0;
                             return <option key={i} value={subj}>{subj || '(untitled)'}: {count}</option>;
                           })}
