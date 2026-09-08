@@ -13,7 +13,7 @@
 
 import {
   CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
-  eligibilityByOrdinance, totalEligible,
+  eligibilityByOrdinance, totalEligible, sitesWithMandate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
   bpsPrioritization,
 } from './complianceMandates.js';
@@ -89,7 +89,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
 
   const matched = results.filter(r => r.matched);
   const jurisdictions = new Set(matched.map(r => r.govId)).size;
-  const withMandate = results.filter(r => CATEGORIES.some(c => r[c]?.eligible === true)).length;
+  const withMandate = sitesWithMandate(results);
   const grandPenalty = CATEGORIES.reduce((s, c) => s + totalPenalty(results, c), 0);
   const siteCount = meta.siteCount ?? results.length;
   const generatedAt = meta.generatedAt || '';

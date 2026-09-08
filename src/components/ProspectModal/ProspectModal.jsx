@@ -494,7 +494,7 @@ const DATA_DEAL_PER_ACCOUNT_MONTH = 5;
 // string on another — which is how these three copies drifted apart before.
 const NUMERIC_FIELDS = [
   'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts',
-  'numberOfMeters', 'equipmentCount', 'annualMwh',
+  'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate',
 ];
 
 function recordToSave(fields) {
@@ -512,7 +512,7 @@ function recordToSave(fields) {
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
-  numberOfMeters: null, equipmentCount: null, annualMwh: null, rank: '', tier: 'Tier 3',
+  numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null, rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -6692,6 +6692,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '-'}</div></div>
         <div class="info-item"><div class="info-label">PE AUM</div><div class="info-val">${f.peAum != null ? '$' + f.peAum + 'B' : '-'}</div></div>
         <div class="info-item"><div class="info-label">Sites</div><div class="info-val">${f.numberOfSites ?? '-'}</div></div>
+        <div class="info-item"><div class="info-label">Sites w/ Mandate</div><div class="info-val">${f.sitesWithMandate ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Accounts</div><div class="info-val">${f.numberOfAccounts ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Meters</div><div class="info-val">${f.numberOfMeters ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Equipment</div><div class="info-val">${f.equipmentCount ?? '-'}</div></div>
@@ -7299,6 +7300,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label} title="Number of sites">Sites</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
+            </div>
+
+            <div>
+              <label
+                className={styles.label}
+                title="How many of this company's sites owe a building-performance obligation — benchmarking, an energy audit or a performance standard. Filled in from the Utility Lookup page's Building Compliance screening when a Master Analysis is saved against the company, and typed over here if you know better."
+              >Sites w/ Mandate</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.sitesWithMandate ?? ''} onCommit={v => set('sitesWithMandate', v)} />
             </div>
 
             <div>
