@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
+import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -2593,6 +2594,70 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   }
 
   // Stats
+  // --- Tag history audit --------------------------------------------------
+  //
+  // dans_tags is one string, so every write to it replaces the whole list:
+  // an "add one tag" built from a stale copy of a contact wipes everything
+  // else they carried, and nothing on this side records what was lost.
+  // HubSpot's property history does, so this reads it back — for every
+  // contact in the synced list — and reports who is missing tags, what they
+  // were, when they went and what wrote it.
+  //
+  // Read-only. It writes nothing to HubSpot; the CSV is the copy to keep
+  // before anything is put back.
+  const [auditState, setAuditState] = useState(null); // { done, total } while running
+  const [auditResult, setAuditResult] = useState(null);
+  const [auditError, setAuditError] = useState('');
+
+  async function runTagAudit() {
+    if (auditState) return;
+    setAuditError('');
+    setAuditResult(null);
+    // Contacts HubSpot knows about: a locally-created row has no history to
+    // read and would just spend a call.
+    const ids = contacts.map(c => String(c.id || c.vid || '')).filter(id => id && !id.startsWith('local-'));
+    if (ids.length === 0) {
+      setAuditError('No synced contacts to audit — hit Sync Now first.');
+      return;
+    }
+    setAuditState({ done: 0, total: ids.length });
+    const rows = [];
+    try {
+      // 100 is HubSpot's batch-read cap, and the progress the user watches.
+      for (let i = 0; i < ids.length; i += 100) {
+        const batch = ids.slice(i, i + 100);
+        const res = await apiFetch('/api/hubspot?action=tag-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: batch }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || json.error) throw new Error(json?.error || `HubSpot ${res.status}`);
+        rows.push(...(json.rows || []));
+        setAuditState({ done: Math.min(i + batch.length, ids.length), total: ids.length });
+      }
+      setAuditResult(summarizeTagAudit(rows));
+    } catch (err) {
+      console.error('[tag audit]', err);
+      setAuditError(err?.message || 'The audit could not finish.');
+    } finally {
+      setAuditState(null);
+    }
+  }
+
+  function downloadTagAuditCsv() {
+    if (!auditResult?.rows?.length) return;
+    const blob = new Blob([tagAuditCsv(auditResult.rows)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dans-tags-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const enrolledCount = enrichedContacts.filter(c => c.isEnrolled).length;
   const matchedCount = enrichedContacts.filter(c => c.matchedProspect).length;
 
@@ -2609,6 +2674,89 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
+
+      {/* Read-only audit of what happened to Dan's Tags. Lives here because
+          this is the page that talks to HubSpot; it never writes. */}
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.8rem', marginBottom: '0.8rem', background: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>Tag history audit</span>
+          <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+            Reads HubSpot's own history for Dan's Tags and reports every contact missing tags they used to carry. Changes nothing.
+          </span>
+          <button
+            type="button"
+            onClick={runTagAudit}
+            disabled={!!auditState}
+            style={{
+              marginLeft: 'auto', padding: '0.35rem 0.8rem', borderRadius: 6, fontFamily: 'inherit',
+              fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530',
+              background: auditState ? '#F1F5F9' : '#009530', color: auditState ? '#94A3B8' : '#fff',
+              cursor: auditState ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >{auditState ? `Reading ${auditState.done.toLocaleString()} / ${auditState.total.toLocaleString()}…` : 'Run audit'}</button>
+          {auditResult?.rows?.length > 0 && (
+            <button
+              type="button"
+              onClick={downloadTagAuditCsv}
+              style={{
+                padding: '0.35rem 0.7rem', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.78rem',
+                fontWeight: 600, border: '1px solid #CBD5E1', background: '#fff', color: '#334155', cursor: 'pointer',
+              }}
+            >Download CSV</button>
+          )}
+        </div>
+        {auditError && <div style={{ fontSize: '0.74rem', color: '#B91C1C', marginTop: '0.4rem' }}>{auditError}</div>}
+        {auditResult && (
+          <div style={{ marginTop: '0.6rem' }}>
+            <div style={{ fontSize: '0.78rem', color: '#0F172A' }}>
+              <strong>{auditResult.lostCount.toLocaleString()}</strong> of {auditResult.examined.toLocaleString()} contacts are missing tags
+              {auditResult.lostCount > 0 && <> — <strong>{auditResult.tagsLost.toLocaleString()}</strong> tags in total</>}
+              {auditResult.firstAt && <>, between {auditResult.firstAt.replace('T', ' ').slice(0, 16)} and {auditResult.lastAt.replace('T', ' ').slice(0, 16)} UTC</>}.
+            </div>
+            {auditResult.lostCount > 0 && (
+              <>
+                {/* The shape of it: one bulk write lands as a single spike
+                    from a single source; somebody editing contacts one at a
+                    time scatters across days. */}
+                <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.35rem' }}>
+                  When: {auditResult.byHour.slice(0, 4).map(h => `${h.hour}:00 UTC (${h.count})`).join(' · ')}
+                  {auditResult.byHour.length > 4 && ` · +${auditResult.byHour.length - 4} more`}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.15rem' }}>
+                  What wrote it: {auditResult.bySource.map(s2 => `${s2.source} (${s2.count})`).join(' · ')}
+                </div>
+                <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, marginTop: '0.5rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC', textAlign: 'left' }}>
+                        <th style={{ padding: '0.3rem 0.5rem' }}>Contact</th>
+                        <th style={{ padding: '0.3rem 0.5rem' }}>Tags now</th>
+                        <th style={{ padding: '0.3rem 0.5rem' }}>Lost</th>
+                        <th style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>When (UTC)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditResult.rows.slice(0, 200).map(r => (
+                        <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                          <td style={{ padding: '0.3rem 0.5rem' }}>{r.name || r.email || r.id}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{r.current || '—'}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', color: '#B91C1C' }}>{r.removed.join('; ')}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', color: '#475569' }}>{r.at.replace('T', ' ').slice(0, 16)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {auditResult.rows.length > 200 && (
+                  <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: '0.3rem' }}>
+                    Showing the 200 worst-hit — the CSV has all {auditResult.rows.length.toLocaleString()}.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className={styles.summary}>
         <button className={`${styles.summaryCard} ${cardFilter === null ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === null ? null : null)}>

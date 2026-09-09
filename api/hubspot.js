@@ -612,6 +612,59 @@ async function handler(req, res) {
       });
     }
 
+    // Read-only: what HubSpot's own property history says about dans_tags for
+    // a batch of contacts.
+    //
+    // dans_tags is one semicolon-joined string, so every write replaces the
+    // whole list and a wipe leaves nothing behind to compare against — except
+    // this history, which keeps a value per version with the timestamp and
+    // the source that wrote it. That is the only record of what a contact
+    // used to carry, and the only way to tell a deliberate edit from a bulk
+    // write that took everything.
+    //
+    // Batched 100 ids at a time (HubSpot's cap) by the caller, so a long
+    // audit reports progress instead of sitting on one request until the
+    // function times out. Writes nothing.
+    if (action === 'tag-history') {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : [];
+      if (ids.length === 0) return res.status(400).json({ error: 'No contact ids to read.' });
+      if (ids.length > 100) return res.status(400).json({ error: 'Send at most 100 ids per call.' });
+      const readRes = await fetch(`${BASE}/crm/v3/objects/contacts/batch/read`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          propertiesWithHistory: ['dans_tags'],
+          properties: ['firstname', 'lastname', 'email', 'dans_tags'],
+          inputs: ids.map(id => ({ id })),
+        }),
+      });
+      const json = await readRes.json().catch(() => ({}));
+      if (!readRes.ok) {
+        return res.status(readRes.status).json({ error: json?.message || `HubSpot ${readRes.status}` });
+      }
+      const rows = (json.results || []).map((r) => {
+        const p = r.properties || {};
+        // Newest first is what the audit walks; HubSpot returns it that way,
+        // but sorting here means the analysis can't be wrong if it doesn't.
+        const history = [...((r.propertiesWithHistory || {}).dans_tags || [])]
+          .map(h => ({
+            value: h.value || '',
+            timestamp: h.timestamp || '',
+            sourceType: h.sourceType || '',
+            sourceId: h.sourceId || '',
+          }))
+          .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+        return {
+          id: r.id,
+          name: [p.firstname, p.lastname].filter(Boolean).join(' '),
+          email: p.email || '',
+          current: p.dans_tags || '',
+          history,
+        };
+      });
+      return res.json({ rows, requested: ids.length, returned: rows.length });
+    }
+
     if (action === 'sequences') {
       const sequences = await getSequences(token);
       return res.json({ sequences });
