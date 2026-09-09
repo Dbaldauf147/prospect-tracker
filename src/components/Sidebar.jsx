@@ -300,12 +300,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#127919;</span>
           Prospecting
-          {/* What the counted steps of the ladder are showing as outstanding,
-              added up: services still short of coverage, client renewals with
-              no status, Top PCs with no intro asked for. The same numbers the
-              page prints in red beside those steps, so the badge and the page
-              can't disagree — and the opps step is left out because the Opps
-              item below already carries exactly that count. */}
+          {/* How much is owed at the step the ladder has actually reached:
+              services still short of coverage, client renewals with no
+              status, Top PCs with no intro asked for. Held back until every
+              step above it is caught up, the same rule the dot follows — a
+              number raised from three rungs down would send the user past
+              the warmer work the ladder puts first. The opps step is left
+              out because the Opps item below already carries that count. */}
           {prospectingWork > 0 && (
             <span
               className={styles.navBadge}

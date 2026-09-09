@@ -10,7 +10,7 @@ import {
   caughtUpSnapshot,
   countDueSteps,
   countLadderWork,
-  ladderWorkItems,
+  ladderWork,
   countRenewalWork,
   countServiceGaps,
   ladderStates,
@@ -110,20 +110,19 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     [steps, counts, autoClear, caughtUpMap, today],
   );
 
-  // What the Prospecting nav badge says: how many items the counted steps
-  // are showing as outstanding, and a tooltip naming them. Built here rather
-  // than in the sidebar because the phrasing belongs to the step — each one
-  // already knows how to say its own number (workTitle) — and because the
-  // badge and the page's Status column then read one computation.
+  // What the Prospecting nav badge says: the count on the step the ladder has
+  // reached, and a tooltip naming it. Built here rather than in the sidebar
+  // because the phrasing belongs to the step — each one already knows how to
+  // say its own number (workTitle) — and because the badge and the page's
+  // Status column then read one computation.
   const work = useMemo(() => {
-    const items = ladderWorkItems(states);
-    const byKey = new Map(steps.map(s => [s.key, s]));
-    const lines = items.map(({ key, count }) => {
-      const step = byKey.get(key);
-      if (typeof step?.workTitle === 'function') return step.workTitle(count);
-      return `${count} outstanding: ${step?.title || key}`;
-    });
-    return { count: countLadderWork(states), title: lines.join('\n') };
+    const item = ladderWork(states);
+    if (!item) return { count: 0, title: '' };
+    const step = steps.find(s => s.key === item.key);
+    const title = typeof step?.workTitle === 'function'
+      ? step.workTitle(item.count)
+      : `${item.count} outstanding: ${step?.title || item.key}`;
+    return { count: countLadderWork(states), title };
   }, [states, steps]);
 
   return useMemo(() => ({
