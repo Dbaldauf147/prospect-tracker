@@ -71,6 +71,7 @@ import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { withTimeout, isTimeoutError } from '../../utils/withTimeout.js';
+import { isClientWedged } from '../../utils/firestoreClientHealth';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -219,9 +220,17 @@ const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3)
 // utils/withTimeout. One document for one company; if it hasn't landed in
 // this long it isn't going to on this attempt.
 const SITE_LIST_WRITE_TIMEOUT_MS = 60_000;
-// Used instead when the analysis only saved by going around the SDK: the
-// SDK is known not to be answering, so this write is a formality that
-// should not cost another minute of spinner.
+// Used instead when the analysis only saved by going around the SDK and the
+// client has not been written off outright: the SDK is not answering, so a
+// write that still has to go through it is a formality that should not cost
+// another minute of spinner.
+//
+// A CRASHED client is the other case and keeps the full ceiling. The site
+// list has its own HTTPS fallback now (see companySiteListsStore), so once
+// the client is written off this write goes over HTTPS itself — a real save
+// of a merged portfolio, several hundred KB of rows, not a formality. Eight
+// seconds would abandon it on any connection slower than an office one and
+// report a save that was still in flight as lost.
 const SITE_LIST_WRITE_SHORT_TIMEOUT_MS = 8_000;
 
 // Ceiling on reading the Utility Name Mapping table while a workbook is
@@ -5595,7 +5604,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // from the company popup. Ahead of the prospect stamp below because
       // the merged list is what Number of Sites is counted from.
       const siteList = await saveSitesAsCompanySiteList(prospect.company, {
-        timeoutMs: savedOverRest ? SITE_LIST_WRITE_SHORT_TIMEOUT_MS : SITE_LIST_WRITE_TIMEOUT_MS,
+        timeoutMs: savedOverRest && !isClientWedged()
+          ? SITE_LIST_WRITE_SHORT_TIMEOUT_MS
+          : SITE_LIST_WRITE_TIMEOUT_MS,
       });
       phase('saved the site list');
       // Stamp a lightweight marker on the prospect record so the Company
