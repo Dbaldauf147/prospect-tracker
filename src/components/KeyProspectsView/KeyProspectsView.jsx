@@ -14,6 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { accountHasDecisionMaker, decisionMakerCompanies } from '../../utils/decisionMakerCoverage';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
@@ -142,33 +143,18 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
   // HubSpot contacts) representing Tier 1 / Tier 2 accounts that DO
   // have a decision-maker contact tagged in HubSpot. Used by both the
   // missing-DM banner and the untouched-account banner below.
-  const localFields = settings?.contactLocalFields || {};
-  const passingDmContacts = useMemo(() => {
-    const out = [];
-    for (const baseC of hubspotContacts) {
-      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
-      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
-        ? { ...baseC, company: lf._companyOverride }
-        : baseC;
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) continue;
-      if (isSchneiderContact(c)) continue;
-      if (!tags.includes('decision maker')) continue;
-      const company = String(c.company || '').trim();
-      if (!company) continue;
-      out.push({ company, lc: company.toLowerCase() });
-    }
-    return out;
-  }, [hubspotContacts, localFields]);
+  const localFields = settings?.contactLocalFields || null;
+  // The same rule the Prospecting page's decision-maker table runs, off the
+  // one module, so the two readouts can't put an account on one list and
+  // not the other: tagged Decision Maker, not Hidden / Left / Schneider,
+  // matched to the account by name.
+  const passingDmContacts = useMemo(
+    () => decisionMakerCompanies(hubspotContacts, localFields),
+    [hubspotContacts, localFields],
+  );
 
   function accountHasDm(p) {
-    const pLc = String(p.company || '').toLowerCase().trim();
-    if (!pLc) return false;
-    for (const c of passingDmContacts) {
-      if (c.lc === pLc) return true;
-      if (companiesMatch(p.company, c.company)) return true;
-    }
-    return false;
+    return accountHasDecisionMaker(p, passingDmContacts);
   }
 
   // Tier 1 / Tier 2 accounts (CDM = me) with no decision-maker contact

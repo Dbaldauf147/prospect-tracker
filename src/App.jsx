@@ -17,6 +17,7 @@ import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
 import { useProspectingLadder } from './hooks/useProspectingLadder';
+import { useDecisionMakerCoverage } from './hooks/useDecisionMakerCoverage';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
 import { AGENTS_SETTINGS_KEY, AGENTS_SNOOZE_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
@@ -133,6 +134,16 @@ function App() {
   // Same guard for the targeted-services step: an empty roster yields no
   // coverage rows, which would read as "every service is at 100%".
   const prospectingServiceGaps = dataLoading ? null : serviceGaps;
+  // The cold-outreach step's own list: how far the decision-maker mapping
+  // has got, tier by tier, and the accounts the current tier is waiting on.
+  // Handed the same guarded prospects the ladder gets — an empty roster
+  // would otherwise report every tier at 0% mapped while the book loads.
+  const dmCoverage = useDecisionMakerCoverage({
+    prospects: dataLoading ? null : prospects,
+    cdmName,
+    settings,
+    userId: user?.uid,
+  });
   // The Prospecting ladder's status, computed once: the page's Status
   // column and the sidebar's Prospecting dot both read it, so the dot can
   // never flag a step the page shows as caught up.
@@ -567,6 +578,7 @@ function App() {
               updateSettings={updateSettings}
               tagCoverage={tagDebt.coverage}
               tagDebt={tagDebt.missing}
+              dmCoverage={dmCoverage}
             />
           ) : view === 'issues' ? (
             <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
