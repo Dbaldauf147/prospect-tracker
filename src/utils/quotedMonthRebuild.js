@@ -96,3 +96,33 @@ export function rebuildOwnsMonth(saved, monthKey) {
   if (saved._auto) return !capturedAtMonthEnd(saved, monthKey);
   return false;
 }
+
+// The figures a rebuild actually produces. `bfoPipe` isn't one of them — BFO
+// Activity is a pasted current snapshot with no history, so a rebuilt month
+// carries across whatever was already recorded for it.
+export const REBUILT_FIELDS = QUOTED_FIELDS.filter(f => f !== 'bfoPipe');
+
+// Did a rebuilt month come out identical to the live (in-progress) month?
+//
+// A rebuild reads TODAY'S Opps rows and subtracts what it can place after the
+// month end: opps quoted since (only where `Quoted On` is set) and opps whose
+// stage history shows them closed by then. `Chance?` is always today's grade,
+// since nothing records what an opp was graded at back then. Early in a month
+// — or on rows carrying no dates and no stage history — there is nothing to
+// subtract, and the "month end" figure is just today's pipeline wearing last
+// month's label. It is not wrong so much as unverifiable, and it is worth
+// saying so rather than plotting a flat line and leaving the user to wonder.
+//
+// Both sides are whole $K, so exact equality is the right test. A month with
+// nothing in it matches nothing.
+export function rebuildMatchesLive(snap, live) {
+  if (!snap || !live) return false;
+  let any = false;
+  for (const f of REBUILT_FIELDS) {
+    const a = snap[f] ?? null;
+    const b = live[f] ?? null;
+    if (a !== b) return false;
+    if (a != null) any = true;
+  }
+  return any;
+}
