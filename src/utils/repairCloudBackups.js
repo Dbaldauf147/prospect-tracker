@@ -28,8 +28,22 @@ import { userLsGet, userLsSet } from './userLs';
 // One pass a day per browser. The holes this fills do not appear on their
 // own — only an app version that could not write them creates one — so
 // checking on every page load would be all cost.
-const LAST_RUN_KEY = 'cloud-backup-repair:last-at';
+//
+// A pass that could NOT fill the holes it found is the exception, and it
+// used to cost a whole day: the stamp was written before the work, so a
+// pass that failed on every list looked exactly like one that had nothing
+// to do. That is the wrong way round — a browser still holding the only
+// copy of a list is precisely where a retry matters, and "come back
+// tomorrow" is a long time to hold the only copy. So a pass that leaves
+// holes behind is stamped for a short retry instead.
+//
+// The stamp is WHEN TO RUN NEXT rather than when the last pass ran, so the
+// two intervals live in the same value. A leftover stamp from the old key
+// is simply ignored, which makes the first load after this change run a
+// pass — which is the point.
+const NEXT_RUN_KEY = 'cloud-backup-repair:next-at';
 const REPAIR_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const RETRY_INTERVAL_MS = 30 * 60 * 1000;
 
 const FILES_DB = 'prospect-tracker-files';
 const LISTS_STORE = 'uploaded-lists';
@@ -87,11 +101,14 @@ async function cloudCopyMissing(ref) {
 // admin may write it — everyone else would collect a permission error per
 // list for no benefit.
 async function repairUploadedLists(userId, email) {
-  if (email !== ADMIN_EMAIL) return 0;
+  if (email !== ADMIN_EMAIL) return { fixed: 0, failed: 0 };
   let db;
+  // Not being able to open the local database is a hole left unchecked,
+  // not a clean pass: another tab mid-upgrade blocks it, and that clears.
   try { db = await openExisting(FILES_DB); }
-  catch { return 0; }
+  catch { return { fixed: 0, failed: 1 }; }
   let fixed = 0;
+  let failed = 0;
   try {
     const rows = await readAll(db, LISTS_STORE);
     for (const { key, value } of rows) {
@@ -106,12 +123,13 @@ async function repairUploadedLists(userId, email) {
         fixed++;
       } catch (err) {
         console.warn('List backup repair failed', storageKey, err);
+        failed++;
       }
     }
   } finally {
     try { db.close(); } catch { /* already closed */ }
   }
-  return fixed;
+  return { fixed, failed };
 }
 
 // The RFP workbooks attached to opps. Per-user, so this runs for everyone.
@@ -122,8 +140,9 @@ async function repairRfpTemplates(userId) {
   ]);
   let rows;
   try { rows = await dbGetAllEntries('rfp-templates'); }
-  catch { return 0; }
+  catch { return { fixed: 0, failed: 1 }; }
   let fixed = 0;
+  let failed = 0;
   for (const { key, value } of rows) {
     if (!value?.blob || !key) continue;
     try {
@@ -133,30 +152,46 @@ async function repairRfpTemplates(userId) {
       fixed++;
     } catch (err) {
       console.warn('RFP template backup repair failed', key, err);
+      failed++;
     }
   }
-  return fixed;
+  return { fixed, failed };
+}
+
+function scheduleNextRun(delayMs) {
+  try { userLsSet(NEXT_RUN_KEY, String(Date.now() + delayMs)); } catch { /* quota */ }
 }
 
 /**
  * Push anything held locally that the cloud is missing. Safe to call on
  * every signin: it reads first and writes only where there is a hole, and
- * it does nothing at all if it already ran today.
+ * it does nothing at all if a clean pass already ran today.
  */
 export async function repairCloudBackups(userId, email) {
   if (!userId) return 0;
-  const last = Number(userLsGet(LAST_RUN_KEY)) || 0;
-  if (last && Date.now() - last < REPAIR_INTERVAL_MS) return 0;
-  try { userLsSet(LAST_RUN_KEY, String(Date.now())); } catch { /* quota */ }
+  const nextAt = Number(userLsGet(NEXT_RUN_KEY)) || 0;
+  if (nextAt && Date.now() < nextAt) return 0;
+  // Claim the slot before any work, so two tabs opening together don't both
+  // run the pass. Claiming it for the SHORT interval means a tab closed
+  // mid-pass costs half an hour rather than a day.
+  scheduleNextRun(RETRY_INTERVAL_MS);
 
   const results = await Promise.allSettled([
     repairUploadedLists(userId, email),
     repairRfpTemplates(userId),
   ]);
   let fixed = 0;
+  let failed = 0;
   for (const r of results) {
-    if (r.status === 'fulfilled') fixed += r.value || 0;
-    else console.warn('cloud backup repair failed', r.reason);
+    if (r.status === 'fulfilled') {
+      fixed += r.value?.fixed || 0;
+      failed += r.value?.failed || 0;
+    } else {
+      console.warn('cloud backup repair failed', r.reason);
+      failed++;
+    }
   }
+  if (failed === 0) scheduleNextRun(REPAIR_INTERVAL_MS);
+  else console.warn(`${failed} backup(s) could not be repaired; retrying in ${RETRY_INTERVAL_MS / 60000} minutes.`);
   return fixed;
 }
