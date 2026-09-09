@@ -3880,7 +3880,14 @@ function KeyContactsViewInner({
                     category: (
                       <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                         {(() => {
-                          const cats = categorizeContact(c.raw || c) || [];
+                          // Guarded because this object is built for EVERY column
+                          // on every row, not just the visible ones: the cell is
+                          // constructed even on the pages that pass no
+                          // categorizeContact (Key / Active / Client Contacts,
+                          // Key Prospects, Changed Jobs), where calling it threw
+                          // and took the whole table down. Same guard as the sort
+                          // key, the filter and the CSV column use.
+                          const cats = (categorizeContact ? categorizeContact(c.raw || c) : []) || [];
                           if (cats.length === 0) return <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>;
                           const COLORS = {
                             Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
