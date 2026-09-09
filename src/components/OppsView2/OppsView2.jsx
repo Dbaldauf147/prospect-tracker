@@ -666,6 +666,35 @@ function needsUsdFlag(row) {
   return usd === '';
 }
 
+// "Missing Competition" flag: the opp is closed — Sold or Not Sold — but
+// nobody recorded who it was competed against. Competition is what the
+// close-out reporting reads to say how the book is being won and lost, and a
+// deal that has already been decided is the last moment anyone still knows
+// the answer, so it is required at close-out: the Sold / Not Sold popups
+// won't save without it, and this flag catches the ones that got past those
+// popups (skipped, or closed by editing the Stage cell straight in the
+// table).
+//
+// Blank and dash placeholders count as missing. "N/A" does NOT — it is a real
+// option on the Competition list and a deliberate answer to the question.
+function needsCompetitionFlag(row) {
+  if (!row) return false;
+  const stage = String(row['Stage'] ?? '').replace(ZERO_WIDTH_RE, '').trim();
+  if (!CLOSED_STAGES_SET.has(stage)) return false;
+  return !hasCompetitionValue(row['Competition']);
+}
+
+// True when a Competition cell carries a real answer. Shared by the flag and
+// by the close-out popups' Save button so "filled in" means the same thing in
+// both places: strip zero-width characters, whitespace and every dash variant
+// and see whether anything is left.
+function hasCompetitionValue(value) {
+  return String(value ?? '')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(/\s/g, '')
+    .replace(/[-\u2013\u2014\u2212]/g, '') !== '';
+}
+
 // Look up a row value by header name, tolerant to casing / zero-width /
 // whitespace drift in the stored key — needed for user-added columns like
 // "Timeline?" whose key can arrive with odd casing from a paste.
@@ -4380,6 +4409,12 @@ function TrackedMarginHint({ opp, current, onUse }) {
   );
 }
 
+// How a required close-out field that hasn't been answered yet reads: a red
+// border on the control and one line under it saying so. Module-level so
+// "required" looks the same on the win popup and the loss popup.
+const requiredHintStyle = { fontSize: '0.68rem', color: '#DC2626', marginTop: 3 };
+const requiredFieldLook = { border: '1px solid #FCA5A5', background: '#FEF2F2' };
+
 // Popup that fires after Stage flips to "Not Sold". Prompts the user to
 // fill in the close-out columns (Close Date, Reason Not Sold, Final
 // Margin, Competition) so the downstream reporting tabs (AgentsView's
@@ -4440,7 +4475,13 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
     }
   }
 
+  // Competition is required to close a deal out: it is the answer the
+  // win/loss reporting is built on, and the close-out is the last moment
+  // anyone still knows it. Save stays disabled until it's chosen.
+  const competitionMissing = !hasCompetitionValue(competition);
+
   function handleSave() {
+    if (competitionMissing) return;
     // Same flattening the Follow Up Notes popup does: drop wholly-empty rows,
     // join the notes with newlines and keep the parallel Waiting On array
     // index-aligned with them.
@@ -4463,6 +4504,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
     fontSize: '0.85rem', fontFamily: 'inherit',
     background: '#fff', color: 'var(--color-text)',
   };
+  const requiredInputStyle = { ...inputStyle, ...requiredFieldLook };
 
   // Only dismiss when the press *started* on the backdrop. Drag-selecting text
   // in a field and releasing the mouse over the dimmed backdrop otherwise fires
@@ -4544,17 +4586,20 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
               />
             </div>
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-              <label style={labelStyle}>Competition</label>
+              <label style={labelStyle}>
+                Competition <span style={{ color: '#DC2626' }}>*</span>
+              </label>
               <select
                 value={competition}
                 onChange={(e) => handleCompetitionChange(e.target.value)}
-                style={inputStyle}
+                style={competitionMissing ? requiredInputStyle : inputStyle}
               >
                 <option value="">(Select)</option>
                 {competitionOptions.map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}
               </select>
+              {competitionMissing && <div style={requiredHintStyle}>Required to close this out.</div>}
             </div>
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
               <label style={labelStyle}>Reason Not Sold</label>
@@ -4615,11 +4660,15 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
           <button
             type="button"
             onClick={handleSave}
+            disabled={competitionMissing}
+            title={competitionMissing ? 'Choose a Competition to close this out.' : undefined}
             style={{
-              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
-              border: '1px solid var(--color-accent)', borderRadius: 4,
+              padding: '0.35rem 0.85rem',
+              background: competitionMissing ? '#CBD5E1' : 'var(--color-accent)',
+              border: `1px solid ${competitionMissing ? '#CBD5E1' : 'var(--color-accent)'}`,
+              borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: 'pointer',
+              color: '#fff', cursor: competitionMissing ? 'not-allowed' : 'pointer',
             }}
           >Save</button>
         </div>
@@ -4639,7 +4688,13 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
 
+  // Required for the same reason it is on the Not Sold close-out: a won deal
+  // still says who else was in the running, and this is the last moment
+  // anyone knows.
+  const competitionMissing = !hasCompetitionValue(competition);
+
   function handleSave() {
+    if (competitionMissing) return;
     onSave({
       reason,
       finalMargin: finalMargin.trim(),
@@ -4655,6 +4710,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
     fontSize: '0.85rem', fontFamily: 'inherit',
     background: '#fff', color: 'var(--color-text)',
   };
+  const requiredInputStyle = { ...inputStyle, ...requiredFieldLook };
 
   // Only dismiss when the press *started* on the backdrop. Drag-selecting text
   // in a field and releasing the mouse over the dimmed backdrop otherwise fires
@@ -4728,17 +4784,20 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
             <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
           </div>
           <div>
-            <label style={labelStyle}>Competition</label>
+            <label style={labelStyle}>
+              Competition <span style={{ color: '#DC2626' }}>*</span>
+            </label>
             <select
               value={competition}
               onChange={(e) => setCompetition(e.target.value)}
-              style={inputStyle}
+              style={competitionMissing ? requiredInputStyle : inputStyle}
             >
               <option value="">(Select)</option>
               {competitionOptions.map(o => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
+            {competitionMissing && <div style={requiredHintStyle}>Required to close this out.</div>}
           </div>
         </div>
 
@@ -4760,11 +4819,15 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
           <button
             type="button"
             onClick={handleSave}
+            disabled={competitionMissing}
+            title={competitionMissing ? 'Choose a Competition to close this out.' : undefined}
             style={{
-              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
-              border: '1px solid var(--color-accent)', borderRadius: 4,
+              padding: '0.35rem 0.85rem',
+              background: competitionMissing ? '#CBD5E1' : 'var(--color-accent)',
+              border: `1px solid ${competitionMissing ? '#CBD5E1' : 'var(--color-accent)'}`,
+              borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: 'pointer',
+              color: '#fff', cursor: competitionMissing ? 'not-allowed' : 'pointer',
             }}
           >Save</button>
         </div>
@@ -7328,6 +7391,29 @@ export function OppInfoModal({
                 <strong>Missing USD value.</strong> This opp is at the{' '}
                 <strong>{String(opp['Stage'] || '').trim() || 'current'}</strong> stage but the{' '}
                 <strong>USD?</strong> field is blank or “-”. Fill it in to clear the flag.
+              </span>
+            </div>
+          )}
+          {needsCompetitionFlag(opp) && (
+            // Competition is required to close a deal out — the Sold / Not
+            // Sold popups won't save without it. This catches the opps that
+            // were closed some other way (the popup skipped, or the Stage
+            // cell edited straight in the table), where the popup is not
+            // coming back to ask.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px solid #FCA5A5', borderRadius: 6,
+              background: '#FEF2F2', fontSize: '0.8rem',
+              color: '#991B1B', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+              <span>
+                <strong>Missing Competition.</strong> This opp is closed at{' '}
+                <strong>{String(opp['Stage'] || '').trim() || 'a closed stage'}</strong> but the{' '}
+                <strong>Competition</strong> field is blank or “-”. It's required to close an opp
+                out — pick who this was competed against to clear the flag.
               </span>
             </div>
           )}
@@ -12888,6 +12974,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (flagsSuppressedForStage(row)) return '';
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
+      if (needsCompetitionFlag(row)) parts.push('Missing Competition');
       if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
       if (qualifyingStageFlagState(row) === 'active') parts.push('Move to Qualifying');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
@@ -12913,6 +13000,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         if (flagsSuppressedForStage(row)) return 0;
         let n = 0;
         if (needsUsdFlag(row)) n += 1;
+        if (needsCompetitionFlag(row)) n += 1;
         if (needsBudgetTimelineFlag(row)) n += 1;
         if (qualifyingStageFlagState(row) === 'active') n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
@@ -12931,6 +13019,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       render: (row) => {
         if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         const missingUsd = needsUsdFlag(row);
+        const missingCompetition = needsCompetitionFlag(row);
         const missingBudgetTimeline = needsBudgetTimelineFlag(row);
         const qualifyingFlag = qualifyingStageFlagState(row);
         const missingAddr = oppMissingBfoAddress(row);
@@ -12944,7 +13033,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingCompetition && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -12952,6 +13041,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 title="Stage is Qualifying or later but the USD? field is blank or “-”: fill in USD? to clear it."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing USD value</span>
+            )}
+            {missingCompetition && (
+              <span
+                title="This opp is closed but the Competition field is blank or “-”: it's required to close an opp out."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ Missing Competition</span>
             )}
             {missingBudgetTimeline && (
               <span
