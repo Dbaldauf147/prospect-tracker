@@ -65,6 +65,10 @@ const LOCAL_BY_DESIGN = {
   'draftCampaignQueue.js': 'session-scoped queue for the Draft Emails page',
   'draftLeadsQueue.js': 'session-scoped queue for the Draft Emails page',
   'draftRecipientsQueue.js': 'session-scoped queue for the Draft Emails page',
+  'tagAuditQueue.js':
+    'session-scoped handoff: the contacts one page asked the tag history audit to read. '
+    + 'It is a pointer at a list that can be rebuilt in a click from the step that made it, '
+    + 'and the audit itself reads from HubSpot rather than from anything kept here.',
 
   // Per-browser view preferences. Cheap to redo, and arguably SHOULD differ
   // between a laptop and an external monitor.

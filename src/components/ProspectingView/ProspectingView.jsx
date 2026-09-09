@@ -40,6 +40,7 @@ import {
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
+import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -110,9 +111,16 @@ const TAG_LIST_LIMIT = 200;
 // The contacts behind one Tagged chip: who is on that roster, and how far
 // through the tag questions each of them is. Least-tagged first, so the
 // names the percentage is waiting on lead.
-function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact }) {
+function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAudit }) {
   const people = Array.isArray(bucket?.people) ? bucket.people : [];
   const shown = people.slice(0, TAG_LIST_LIMIT);
+  // The contacts this list is flagging — the ones still short of a full set
+  // of answers — as the tag history audit can read them. Not the shown slice:
+  // a roster longer than the inline limit still hands over all of them. Left
+  // unmemoized deliberately: it is one filter over a list that is already in
+  // memory, and memoizing a value derived from a prop array is what the
+  // React Compiler refuses to preserve here.
+  const flagged = auditablePeople(people);
   // A name opens that contact's popup — the same one the contacts pages
   // open, so the tags this percentage is counting can be answered from the
   // list that names them rather than a tab away. Underlined so it reads as
@@ -137,6 +145,21 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact }) {
           {bucket?.pct != null && <> · {bucket.pct}% tagged</>}
         </span>
         <span style={{ flex: 1 }} />
+        {/* Straight into the tag history audit with exactly these contacts.
+            When tags have gone missing this list is the set worth reading
+            HubSpot's history for, and re-finding the names by hand on the
+            HubSpot page is the sort of work that stops an audit being run. */}
+        {onAudit && flagged.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onAudit(flagged)}
+            title={`Send these ${flagged.length} contact${flagged.length === 1 ? '' : 's'} to the tag history audit on the HubSpot page, which reads what tags they used to carry and when they went. Nothing is changed.`}
+            style={{
+              padding: '1px 7px', background: '#fff', border: '1px solid #FCA5A5', borderRadius: 5,
+              fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', color: '#B91C1C', cursor: 'pointer',
+            }}
+          >Audit tag history ({flagged.length})</button>
+        )}
         {onNavigate && (
           <button
             type="button"
@@ -212,7 +235,7 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact }) {
   );
 }
 
-function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact }) {
+function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onAudit }) {
   // Which chip's contacts are listed underneath, if any. Local to the row:
   // it's a look, not a setting, and it should be closed again next visit.
   const [openKey, setOpenKey] = useState(null);
@@ -314,6 +337,7 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact }) {
           onNavigate={onNavigate}
           onClose={() => setOpenKey(null)}
           onOpenContact={onOpenContact}
+          onAudit={onAudit}
         />
       )}
     </div>
@@ -721,6 +745,20 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // "Company ↗" in the contact popup: close the contact and open the company
   // it names, through the app-level company popup this page already routes
   // its other company links to.
+  // Hand a Tagged-row list to the tag history audit and go there.
+  //
+  // The audit lives on Contacts → HubSpot, which is where the HubSpot token
+  // and the contact cache already are. `contacts-view:active-subtab` is that
+  // page's memory of which subtab was last open, so setting it is exactly
+  // what walking to the HubSpot subtab by hand would have done — and it is
+  // what makes this one click instead of three.
+  const queueTagAudit = useCallback((contacts) => {
+    const n = setQueuedAuditContacts(contacts);
+    if (!n) return;
+    try { localStorage.setItem('contacts-view:active-subtab', 'hubspot'); } catch (e) { void e; }
+    onNavigate?.('contacts');
+  }, [onNavigate]);
+
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);
     if (!target || !onSelectProspect) return;
@@ -1004,6 +1042,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                 {!editing && step.key === 'contact-mapping' && (
                   <TagCoverageBar
                     coverage={tagCoverage}
+                    onAudit={queueTagAudit}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                     missing={tagDebt || []}
                     onOpenContact={openContact}
