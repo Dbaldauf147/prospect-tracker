@@ -219,6 +219,10 @@ const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3)
 // utils/withTimeout. One document for one company; if it hasn't landed in
 // this long it isn't going to on this attempt.
 const SITE_LIST_WRITE_TIMEOUT_MS = 60_000;
+// Used instead when the analysis only saved by going around the SDK: the
+// SDK is known not to be answering, so this write is a formality that
+// should not cost another minute of spinner.
+const SITE_LIST_WRITE_SHORT_TIMEOUT_MS = 8_000;
 
 // Utility accounts (bills) estimated for one site, as text. Halves are
 // real — a property type whose water account is "0 – 1" contributes 0.5 —
@@ -5310,7 +5314,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // to append to the save status, how many sites the company's list holds
   // afterwards, and the utility accounts behind them (both 0 when it
   // couldn't be written).
-  async function saveSitesAsCompanySiteList(company) {
+  // `timeoutMs` is the caller's, because the caller may already know
+  // something this function doesn't: when the analysis had to go around the
+  // SDK to get saved, the SDK is mute, and this write — which goes through
+  // it — is not going to land either. Waiting the full minute to find that
+  // out again would put a minute of spinner after a save that had already
+  // succeeded.
+  async function saveSitesAsCompanySiteList(company, { timeoutMs = SITE_LIST_WRITE_TIMEOUT_MS } = {}) {
     const slug = companySlug(company);
     if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0, equipment: 0 };
     if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0, equipment: 0 };
@@ -5411,7 +5421,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // was already safely stored.
       await withTimeout(
         updateSettingsPath({ [`companySiteLists.${slug}`]: entry }),
-        SITE_LIST_WRITE_TIMEOUT_MS,
+        timeoutMs,
         'saving the site list',
       );
       const parts = [];
@@ -5498,7 +5508,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // one of them, and of a browser that had quietly stopped talking to
       // Firestore at all. Naming the step is what makes the next report
       // ("it stuck on part 2 of 3") worth anything.
-      const onPhase = ({ step, done = 0, total = 0, ok = false, to = 0 }) => {
+      // Set when the analysis had to go around the SDK, so the success line
+      // can say so — a save that only worked over HTTPS is a finding, not a
+      // routine save.
+      let savedOverRest = false;
+      const onPhase = ({ step, done = 0, total = 0, ok = false, to = 0, viaRest = false }) => {
+        if (viaRest) savedOverRest = true;
+        if (step === 'rest') {
+          // Worth naming rather than hiding behind "Saving…": this is the
+          // app working around its own database connection, and if it
+          // succeeds that is the fact that explains everything else.
+          setSaveStatus({
+            state: 'saving',
+            message: total > 1
+              ? `The app's database connection is not answering — saving over a plain web request instead (part ${Math.min(done + 1, total)} of ${total})…`
+              : `The app's database connection is not answering — saving over a plain web request instead…`,
+          });
+          return;
+        }
         if (step === 'probing') {
           setSaveStatus({ state: 'saving', message: `Saving to ${companyLabel}: checking the database is reachable…` });
         } else if (step === 'probed' && !ok) {
@@ -5544,7 +5571,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // instead of staying empty until someone re-uploads the same rows
       // from the company popup. Ahead of the prospect stamp below because
       // the merged list is what Number of Sites is counted from.
-      const siteList = await saveSitesAsCompanySiteList(prospect.company);
+      const siteList = await saveSitesAsCompanySiteList(prospect.company, {
+        timeoutMs: savedOverRest ? SITE_LIST_WRITE_SHORT_TIMEOUT_MS : SITE_LIST_WRITE_TIMEOUT_MS,
+      });
       phase('saved the site list');
       // Stamp a lightweight marker on the prospect record so the Company
       // Look Up widget can show "analysis saved" without fetching the
@@ -5631,7 +5660,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const equipmentNote = equipmentTotal > 0
         ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}` });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${savedOverRest ? ' (saved over a plain web request — the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
@@ -5643,7 +5672,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // answering, and point at the download, which needs no database.
       setSaveStatus({
         state: 'error',
-        message: isTimeoutError(err)
+        message: err.restTried
+          // Both transports failed, and this one came back with a reason
+          // rather than silence. Printed verbatim: a status code is the
+          // difference between a quota, a permissions rule and a firewall,
+          // and paraphrasing it would throw that away.
+          ? `Save failed. The app's database connection got no answer, so it retried over a plain web request, `
+            + `and that came back with: ${err.restDetail || err.message}. `
+            + 'A 429 means the database is over its daily quota (it resets at midnight Pacific); a 403 means a '
+            + 'permissions rule; a request that never completed means something on this network is blocking '
+            + 'firestore.googleapis.com. ⬇ Master Analysis downloads the workbook meanwhile.'
+          : isTimeoutError(err)
           ? `Save stalled: ${err.label} got no answer after ${Math.round(err.ms / 1000)}s. `
             + (err.probeOk
               // A small write landed and the workbook didn't, at every size
