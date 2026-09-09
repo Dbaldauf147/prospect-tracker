@@ -3,21 +3,29 @@
 // The step asks for outreach to PE partners, and the firms worth that call
 // are the ones the relationship has already started with and nothing is
 // happening on: past Lead, not written off as Not Sold, and carrying no
-// opportunity at all — not on the firm, not on any of its portfolio
+// OPEN opportunity — not on the firm, not on any of its portfolio
 // companies. A firm with an opp in flight is being worked; a Lead has not
 // been picked up yet, and a Not Sold has been answered.
+//
+// Closed deals — Sold, Not Sold, Closed, Lost — do NOT disqualify a firm.
+// They did once, on the reasoning that the question was whether anything
+// had ever been opened here. But the step is about what is in flight, and
+// a firm whose every deal has landed or died has nothing in flight: that
+// is precisely the relationship worth ringing for the next intro, and the
+// old rule buried it forever behind deals that closed years ago. Each row
+// carries `closedCount` so a firm that shows up with history says so.
 //
 // It used to list each firm's Top PC that wasn't at Qualifying, which
 // ranked companies by Opportunity Score and said nothing about whether the
 // firm had anything going on. A firm with three live opps could top the
 // list because its highest-scoring PC hadn't been opened.
 //
-// "Has an opp" is read through peFirmOpps, which is what the PE Portfolio
-// table's PE Opps column counts — so a firm reading 0/0 there is exactly a
-// firm listed here.
+// "Has an open opp" is read through peFirmOpps, which is what the PE
+// Portfolio table's PE Opps column counts — that column prints open/total,
+// so a firm reading 0/anything there is exactly a firm listed here.
 
 import { PE_STAGES } from '../data/enums.js';
-import { peFirmAccountNames, peFirmOppRows, portfolioByPeOwner } from './peFirmOpps.js';
+import { isOppActive, peFirmAccountNames, peFirmOppRows, portfolioByPeOwner } from './peFirmOpps.js';
 
 // The Type that marks a prospect as a PE firm — same filter the PE
 // Portfolio page lists its firms with.
@@ -47,15 +55,17 @@ export function isWorkablePeStage(stage) {
 }
 
 /**
- * PE firms with a live relationship and no opportunity on it.
+ * PE firms with a live relationship and nothing open on it.
  *
  * Returns null when either input hasn't loaded yet, so the caller can tell
  * "no firms to chase" from "don't know yet" — an empty list would otherwise
  * clear the step before the opps have even arrived.
  *
- * Each row: { firm, firmId, stage, pcCount }. `pcCount` is how many
- * portfolio companies name this firm as their PE Owner — the material for
- * the conversation, and a zero there is its own kind of gap.
+ * Each row: { firm, firmId, stage, pcCount, closedCount }. `pcCount` is how
+ * many portfolio companies name this firm as their PE Owner — the material
+ * for the conversation, and a zero there is its own kind of gap.
+ * `closedCount` is how many opps the firm has that are all done with, which
+ * is why a firm with a long history can still be sitting here silent.
  *
  * Ordered by how far the relationship has got, furthest first: an Existing
  * Partnership with nothing in flight is a louder silence than a firm still
@@ -71,14 +81,19 @@ export function collectPeFirmsToWork(prospects, oppsRecords) {
     if (!isWorkablePeStage(stage)) continue;
     const firm = String(p?.company || '').trim();
     const portfolio = portfolios.get(firm.toLowerCase()) || [];
-    // Any opp at all, open or closed: the question is whether this firm has
-    // ever had something on it, not whether that something is still live.
-    if (peFirmOppRows(peFirmAccountNames(firm, portfolio), oppsRecords).length > 0) continue;
+    // Open opps only. One live deal anywhere across the firm and its
+    // portfolio companies means the relationship is being worked; a pile of
+    // closed ones means it isn't, however busy it once was.
+    const oppRows = peFirmOppRows(peFirmAccountNames(firm, portfolio), oppsRecords);
+    if (oppRows.some(isOppActive)) continue;
     out.push({
       firm: firm || '-',
       firmId: p?.id || null,
       stage,
       pcCount: portfolio.length,
+      // Every row here failed the `some(isOppActive)` test above, so all of
+      // this firm's opps are closed — the count is the whole history.
+      closedCount: oppRows.length,
     });
   }
   const rank = (s) => PE_STAGES.indexOf(s);

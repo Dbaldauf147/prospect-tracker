@@ -11,11 +11,13 @@
 //      with no stage stored reads as Lead — the same reading the PE
 //      Portfolio board gives it — so an unstaged firm is never counted as a
 //      relationship nobody is working.
-//   2. What "has an opp" means. Not just opps on the firm's own account:
-//      an opp on any of its portfolio companies is the relationship
-//      working, and missing that would put a busy firm on a list of silent
-//      ones. Closed opps count too — the question is whether anything has
-//      ever been opened here.
+//   2. What "has an opp in flight" means. Not just opps on the firm's own
+//      account: an OPEN opp on any of its portfolio companies is the
+//      relationship working, and missing that would put a busy firm on a
+//      list of silent ones. Closed ones are the mirror image: a firm whose
+//      every deal has landed or died has nothing in flight, and dropping it
+//      for deals that closed years ago hides exactly the relationship this
+//      step exists to ring.
 //   3. Not knowing yet. Prospects and opps load separately, and an empty
 //      list before the opps arrive would clear the step (and the sidebar's
 //      dot) on work that hasn't been looked at.
@@ -85,10 +87,26 @@ check('Lead and Not Sold are not',
   check('so does one on a portfolio company',
     names(collectPeFirmsToWork(prospects, [opp('Harbor Foods')])),
     ['Dunmore Holdings', 'Birchwood Partners']);
-  // Closed deals still count: something has been opened here.
-  check('a closed opp still counts as having one',
+  // Closed deals are not something in flight — the firm stays listed.
+  check('a closed opp on a PC leaves the firm on the list',
     names(collectPeFirmsToWork(prospects, [opp('Ironworks Mfg', 'Not Sold')])),
+    ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
+  check('every closed stage reads the same way',
+    ['Sold', 'Not Sold', 'Closed', 'Lost'].map(st =>
+      names(collectPeFirmsToWork(prospects, [opp('Birchwood Partners', st)])).includes('Birchwood Partners')),
+    [true, true, true, true]);
+  // ...but one open deal anywhere still takes the firm off it, however many
+  // closed ones sit beside it.
+  check('an open opp alongside closed ones still disqualifies',
+    names(collectPeFirmsToWork(prospects, [
+      opp('Ironworks Mfg', 'Sold'), opp('Ironworks Mfg', 'Qualifying'),
+    ])),
     ['Cedar Point Equity', 'Birchwood Partners']);
+  // The row says why a firm with a history is nonetheless silent.
+  check('the row counts the closed deals behind it',
+    collectPeFirmsToWork(prospects, [opp('Ironworks Mfg', 'Sold'), opp('Dunmore Holdings', 'Lost')])
+      .map(r => [r.firm, r.closedCount]),
+    [['Dunmore Holdings', 2], ['Cedar Point Equity', 0], ['Birchwood Partners', 0]]);
   // Spreadsheet debris is not an opportunity.
   check('an invalid stage is not an opp',
     names(collectPeFirmsToWork(prospects, [opp('Birchwood Partners', '#N/A')])),
@@ -103,14 +121,31 @@ check('Lead and Not Sold are not',
     [['Dunmore Holdings', 1], ['Cedar Point Equity', 1], ['Birchwood Partners', 0]]);
 }
 
+// --- the reported case ---------------------------------------------------
+// A firm past Lead whose PE Opps column reads 0/7: seven deals on its
+// portfolio companies, every one of them closed, nothing open. It belongs
+// on this list — the old "any opp ever" rule dropped it.
+{
+  const pcs = ['Alpha Pack', 'Beta Mills', 'Gamma Foods', 'Delta Plastics', 'Epsilon Labs', 'Zeta Coatings', 'Eta Resins'];
+  const prospects = [
+    firm('Northgate Private Capital', 'Existing Partnership'),
+    ...pcs.map(c => pc(c, 'Northgate Private Capital')),
+  ];
+  const closed = ['Sold', 'Not Sold', 'Lost', 'Closed', 'Sold', 'Lost', 'Not Sold'];
+  const rows = collectPeFirmsToWork(prospects, pcs.map((c, i) => opp(c, closed[i])));
+  check('a firm reading 0/7 is listed', names(rows), ['Northgate Private Capital']);
+  check('and says how much history it has', rows.map(r => [r.pcCount, r.closedCount]), [[7, 7]]);
+}
+
 // --- not knowing yet -----------------------------------------------------
 check('no prospects yet is null, not an empty list', collectPeFirmsToWork(null, []), null);
 check('no opps yet is null too', collectPeFirmsToWork([], null), null);
 check('both loaded and nothing to chase is an empty list', collectPeFirmsToWork([], []), []);
 
 // --- the matcher this all rests on --------------------------------------
-// Shared with the PE Portfolio table's PE Opps column, so a firm reading
-// 0/0 there is exactly a firm listed here.
+// Shared with the PE Portfolio table's PE Opps column, which prints
+// open/total — so a firm reading 0/anything there is exactly a firm listed
+// here, whether that's 0/0 or 0/7.
 check('an exact name matches', accountMatchesCompany('Harbor Foods', 'harbor foods'), true);
 check('a suffix is not a difference', accountMatchesCompany('Harbor Foods', 'Harbor Foods, Inc.'), true);
 check('a longer account containing the phrase matches',

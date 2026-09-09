@@ -551,6 +551,20 @@ function PeFirmRow({ row, onSelectProspect, byId, last }) {
             fontStyle: row.pcCount ? 'normal' : 'italic',
           }}
         >{row.pcCount ? `${row.pcCount} PC${row.pcCount === 1 ? '' : 's'}` : 'No PCs mapped'}</span>
+        {/* Why a firm with a history is nonetheless sitting here: every one
+            of its deals is done with. Without this the row reads as a firm
+            nobody has ever opened, and the user goes looking for the opps
+            the PE Portfolio table is showing them. */}
+        {row.closedCount > 0 && (
+          <span
+            title={`${row.closedCount} closed opportunit${row.closedCount === 1 ? 'y' : 'ies'} on this firm or its portfolio companies and nothing open — the PE Opps column reads 0/${row.closedCount}. Closed deals aren't something in flight, so the firm still belongs on this list.`}
+            style={{
+              flexShrink: 0, padding: '0 6px', borderRadius: 999,
+              border: '1px solid #E2E8F0', background: '#F8FAFC',
+              fontSize: '0.62rem', fontWeight: 700, color: '#64748B',
+            }}
+          >{row.closedCount} closed</span>
+        )}
       </div>
     </div>
   );
