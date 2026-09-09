@@ -83,14 +83,17 @@ function CellInput({ value, onCommit, align, placeholder, listId }) {
 // The SIA line items, with the three tags that say what each one is for.
 //
 // Modelled on the Linked To page, and for the same reason: the workbook says
-// what a line item costs, not which part of the business it belongs to. Tags
-// are keyed by (Line Item, Type) rather than by row, so the answer is given
-// once and holds across every option and every later upload of the same sheet.
+// what a line item costs, not which part of the business it belongs to.
+//
+// One row per Line Item, not per (Line Item, Type) row of the workbook. A
+// service belongs to one segment whether it bills as a Setup or a Recurring
+// cost, so it is asked about once — see utils/s2cTags for why keying the Type
+// in was what made the mapping stop applying to the next SIA.
 //
 // A line item the current workbook no longer carries but that still has tags
 // keeps its row, marked as such — otherwise the tags are invisible and there
 // is no way to clear them.
-function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effectiveType }) {
+function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
   const listPrefix = useId();
   const [filter, setFilter] = useState('');
   const [taggedOnly, setTaggedOnly] = useState(false);
@@ -102,8 +105,7 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
     options: workbook?.options || [],
     tags,
     activeOptionNumber: activeOpt?.optionNumber,
-    typeOf: effectiveType,
-  }), [workbook, tags, activeOpt, effectiveType]);
+  }), [workbook, tags, activeOpt]);
 
   const suggestionsByField = useMemo(() => {
     const out = {};
@@ -118,7 +120,6 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
       if (!q) return true;
       const entry = tags?.[p.key] || {};
       return p.lineItem.toLowerCase().includes(q)
-        || String(p.type || '').toLowerCase().includes(q)
         || S2C_TAG_FIELDS.some(f => String(entry[f.key] || '').toLowerCase().includes(q));
     });
   }, [pairs, tags, filter, taggedOnly]);
@@ -131,10 +132,11 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
         SIA line items ({tagged} of {pairs.length} tagged)
       </h3>
       <div className={styles.intro}>
-        Every Line Item + Type pair in the uploaded workbook. Tag each with the Service Segment,
-        Product Name and Deliverable it belongs to. Tags are saved against the pair, not the row —
-        so one answer covers every option, and it survives a re-upload, the Clear button and parser
-        updates, the same way the Linked To defaults do.
+        Every Line Item in the uploaded workbook. Tag each with the Service Segment, Product Name
+        and Deliverable it belongs to. Tags are saved against the line item itself — not the row,
+        the Type or the file — so one answer covers its Setup and Recurring rows and every option,
+        and it survives a re-upload, removing the SIA, the Clear button and parser updates, the
+        same way the Linked To defaults do.
       </div>
 
       {S2C_TAG_FIELDS.map(f => (
@@ -178,7 +180,6 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
                 <thead>
                   <tr>
                     <th rowSpan={2} className={styles.costElementHeader}>Line Item</th>
-                    <th rowSpan={2} className={styles.siaMetaHeader}>Type</th>
                     <th colSpan={S2C_TAG_FIELDS.length} className={styles.tagGroup}>TAGS</th>
                     <th rowSpan={2} className={styles.siaMetaHeader}>CTS ({activeOpt?.sheetName || 'active option'})</th>
                     <th rowSpan={2} className={styles.siaMetaHeader}>On options</th>
@@ -200,11 +201,12 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
                           {workbook && !pair.reachable && (
                             <span className={styles.siaMuted}> · not in this workbook</span>
                           )}
-                        </td>
-                        <td className={styles.siaCell}>
-                          <span className={styles.siaType} title={pair.type || ''}>
-                            {pair.type || <span className={styles.siaMuted}>-</span>}
-                          </span>
+                          {/* What the one answer is covering. Only worth
+                              saying above one row — "· 1 row" on most of the
+                              table would be noise. */}
+                          {pair.rowCount > 1 && (
+                            <span className={styles.siaMuted}> · {pair.rowCount} rows</span>
+                          )}
                         </td>
                         {S2C_TAG_FIELDS.map(f => (
                           <td key={f.key} className={styles.tagCell}>
@@ -213,7 +215,7 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
                               value={entry[f.key]}
                               listId={`${listPrefix}-${f.key}`}
                               placeholder={f.placeholder}
-                              onCommit={(v) => setTag(pair.key, f.key, v)}
+                              onCommit={(v) => setTag(pair.key, f.key, v, pair.lineItem)}
                             />
                           </td>
                         ))}
@@ -250,7 +252,7 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags, effe
   );
 }
 
-export function S2CTab({ rows, setRows, workbook, activeOption, lineItemTags, setLineItemTags, effectiveType }) {
+export function S2CTab({ rows, setRows, workbook, activeOption, lineItemTags, setLineItemTags }) {
   const safeRows = Array.isArray(rows) && rows.length
     ? rows
     : Array.from({ length: 10 }, EMPTY_ROW);
@@ -436,8 +438,7 @@ export function S2CTab({ rows, setRows, workbook, activeOption, lineItemTags, se
           workbook={workbook}
           activeOption={activeOption}
           tags={lineItemTags || {}}
-          effectiveType={effectiveType}
-          setTag={(key, field, value) => setLineItemTags(prev => setS2cTag(prev, key, field, value))}
+          setTag={(key, field, value, label) => setLineItemTags(prev => setS2cTag(prev, key, field, value, label))}
           clearTags={(key) => setLineItemTags(prev => clearS2cTags(prev, key))}
         />
       )}
