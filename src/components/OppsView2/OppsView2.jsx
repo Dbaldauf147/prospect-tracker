@@ -98,6 +98,7 @@ import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
+import { STAGE_BANDS } from '../../utils/stageBands';
 import {
   TRACKED_STAGES,
   TRACKED_STAGES_SET,
@@ -6056,6 +6057,50 @@ const OPP_DETAIL_TABS = [
 // checks below.
 const OPP_DETAIL_STAGE_TABS = new Set(['stage3', 'stage4', 'stage5', 'stage6', 'stage7']);
 
+// The pipeline columns each numbered stage tab is split into, taken
+// straight from the Days-in-Stage board's bands so the popup and the
+// board name the same steps: Stage 3 is Lead, Stage 4 is Qualifying then
+// Quoting, Stage 5 is Quoted then Contracting, Stage 6 is Agreement Sent.
+// A tab with subsections renders one headed block per column instead of a
+// single flat table, so a field sits under the step it belongs to.
+//
+// Stage 7 is deliberately absent: it's the close-out, which the board
+// doesn't band (Sold / Not Sold aren't columns on it), so that tab keeps
+// its single table.
+const OPP_DETAIL_STAGE_SUBSECTIONS = new Map(
+  STAGE_BANDS
+    .filter(b => b.label)
+    .map(b => [b.label.replace(/\s+/g, '').toLowerCase(), b.stages]),
+);
+
+// Which subsection a stage-tab field sits under. Only needed where a tab
+// has more than one column and the split isn't obvious from the field
+// itself; anything unlisted falls to its tab's first subsection, which is
+// the step the stage opens on.
+const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
+  // Stage 6 is one column (Agreement Sent), so both of its fields sit
+  // there — spelled out rather than left to the fallback so a later
+  // second column can't silently pull them along.
+  'Target Signature Date': 'Agreement Sent',
+  'Verbal': 'Agreement Sent',
+}));
+
+// Split a stage tab's fields across its subsections, keeping the table's
+// column order inside each one. Returns [{ stage, fields }] in board
+// order — every subsection is listed, empty ones included, because a
+// stage with nothing on it yet is a place to move fields onto rather than
+// a heading to hide.
+function splitStageTabFields(tabKey, fields) {
+  const stages = OPP_DETAIL_STAGE_SUBSECTIONS.get(tabKey);
+  if (!stages || stages.length === 0) return null;
+  const byStage = new Map(stages.map(s => [s, []]));
+  for (const h of fields) {
+    const mapped = OPP_DETAIL_SUBSECTION_BY_FIELD.get(h);
+    byStage.get(mapped && byStage.has(mapped) ? mapped : stages[0]).push(h);
+  }
+  return stages.map(stage => ({ stage, fields: byStage.get(stage) }));
+}
+
 // Tabs that show whether or not the record has fields for them. Scope &
 // Quote carries the saved Pricing Option snapshot, which every opp can
 // have; Call Notes is content in its own right; the stage tabs are being
@@ -6275,6 +6320,12 @@ export function OppInfoModal({
     ? activeTab
     : (visibleTabs[0]?.key || 'overview');
   const tabFields = fieldsByTab.get(currentTab) || [];
+  // A numbered stage tab is split into the pipeline columns that roll up
+  // into it (Stage 4 → Qualifying, Quoting), the same way the
+  // Days-in-Stage board bands its columns. null on every other tab, which
+  // keeps its single table.
+  const stageSubsections = splitStageTabFields(currentTab, tabFields);
+  const oppStage = String(opp['Stage'] ?? '').trim();
   // Linked call recordings sit with the rest of the day-to-day activity;
   // if this record somehow has no activity columns, they ride on whatever
   // tab is showing first so they're never stranded.
@@ -6432,6 +6483,109 @@ export function OppInfoModal({
       />
     );
   };
+  // One field table: six fixed columns — toggle, label and value, twice
+  // over. A paired row fills all six; every other row fills the first
+  // three and spans the rest. Fixed rather than auto because the two
+  // shapes in one table otherwise fight over the widths, and the labels
+  // lose — they'd wrap to three lines to give a value cell room it
+  // doesn't need.
+  //
+  // Takes its fields as an argument so a stage tab can draw one table per
+  // subsection (Stage 4's Qualifying and Quoting) off the same code the
+  // flat tabs use. Draws nothing for an empty list: an empty table is a
+  // header rule across the popup with nothing under it.
+  const renderFieldTable = (fields) => {
+    if (!fields || fields.length === 0) return null;
+    return (
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', tableLayout: 'fixed' }}>
+        <colgroup>
+          <col style={{ width: 24 }} />
+          <col style={{ width: 160 }} />
+          <col />
+          <col style={{ width: 24 }} />
+          <col style={{ width: 160 }} />
+          <col />
+        </colgroup>
+        <tbody>
+          {(() => {
+            // A paired field renders beside its partner rather than on
+            // a row of its own, so the partner is skipped when the walk
+            // reaches it. Pairs collapse to a single field whenever the
+            // other half isn't on this record or is hidden — a lone
+            // request date still reads as a full row.
+            const shown = fields.filter(h => showHiddenRows || !hiddenFields.has(h));
+            const shownSet = new Set(shown);
+            const consumed = new Set();
+            for (const h of shown) {
+              const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
+              if (partner && shownSet.has(partner)) consumed.add(partner);
+            }
+            const cellFor = (h) => {
+              const isHidden = hiddenFields.has(h);
+              const label = headerLabel(h);
+              return (
+                <>
+                  <td style={{
+                    padding: '0.45rem 0.4rem 0.45rem 0',
+                    width: 24, verticalAlign: 'top',
+                    opacity: isHidden ? 0.5 : undefined,
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleDetailField(h)}
+                      title={isHidden
+                        ? `Show "${label}" on every opp's details`
+                        : `Hide "${label}" on every opp's details`}
+                      aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
+                      style={{
+                        width: 18, height: 18, lineHeight: '16px',
+                        padding: 0, borderRadius: 4,
+                        border: '1px solid var(--color-border)',
+                        background: isHidden ? '#E2E8F0' : 'transparent',
+                        color: 'var(--color-text-muted)',
+                        fontSize: '0.72rem', fontFamily: 'inherit',
+                        cursor: 'pointer', display: 'block',
+                      }}
+                    >{isHidden ? '+' : '×'}</button>
+                  </td>
+                  <td style={{
+                    padding: '0.45rem 0.5rem 0.45rem 0',
+                    fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                    color: 'var(--color-text-muted)', fontWeight: 600,
+                    verticalAlign: 'top',
+                    opacity: isHidden ? 0.5 : undefined,
+                  }}>{label}</td>
+                  <td style={{
+                    padding: '0.45rem 0',
+                    color: 'var(--color-text)',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    opacity: isHidden ? 0.5 : undefined,
+                  }}>{renderEditor(h)}</td>
+                </>
+              );
+            };
+            return shown.map(h => {
+              if (consumed.has(h)) return null;
+              const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
+              const paired = partner && shownSet.has(partner) ? partner : null;
+              return (
+                <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                  {cellFor(h)}
+                  {paired
+                    ? cellFor(paired)
+                    // Keeps the single-field rows the same shape as the
+                    // paired ones, so labels and values line up down the
+                    // column instead of stepping in and out.
+                    : <td colSpan={3} />}
+                </tr>
+              );
+            });
+          })()}
+        </tbody>
+      </table>
+    );
+  };
+
   // Only dismiss when the press *started* on the backdrop, so drag-selecting
   // text in a field and releasing over the backdrop doesn't close the popup.
   const backdropMouseDown = useRef(false);
@@ -6715,111 +6869,68 @@ export function OppInfoModal({
               </label>
             </div>
           )}
-          {/* Six columns, fixed: toggle, label and value, twice over. A
-              paired row fills all six; every other row fills the first
-              three and spans the rest. Fixed rather than auto because the
-              two shapes in one table otherwise fight over the widths, and
-              the labels lose — they'd wrap to three lines to give a value
-              cell room it doesn't need. */}
-          {/* A tab with no columns of its own (Call Notes, or Scope &
-              Quote on a record with no quote fields) draws no table at
-              all — an empty one is a header rule across the popup with
-              nothing under it. */}
-          {tabFields.length > 0 && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', tableLayout: 'fixed' }}>
-            <colgroup>
-              <col style={{ width: 24 }} />
-              <col style={{ width: 160 }} />
-              <col />
-              <col style={{ width: 24 }} />
-              <col style={{ width: 160 }} />
-              <col />
-            </colgroup>
-            <tbody>
-              {(() => {
-                // A paired field renders beside its partner rather than on
-                // a row of its own, so the partner is skipped when the walk
-                // reaches it. Pairs collapse to a single field whenever the
-                // other half isn't on this record or is hidden — a lone
-                // request date still reads as a full row.
-                const shown = tabFields.filter(h => showHiddenRows || !hiddenFields.has(h));
-                const shownSet = new Set(shown);
-                const consumed = new Set();
-                for (const h of shown) {
-                  const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
-                  if (partner && shownSet.has(partner)) consumed.add(partner);
-                }
-                const cellFor = (h) => {
-                  const isHidden = hiddenFields.has(h);
-                  const label = headerLabel(h);
-                  return (
-                    <>
-                      <td style={{
-                        padding: '0.45rem 0.4rem 0.45rem 0',
-                        width: 24, verticalAlign: 'top',
-                        opacity: isHidden ? 0.5 : undefined,
+          {/* A numbered stage tab is split into the pipeline columns
+              that roll up into it, so a field sits under the step it
+              belongs to — the same split the Days-in-Stage board makes.
+              Every other tab draws one flat table. */}
+          {stageSubsections
+            ? stageSubsections.map(({ stage, fields }) => {
+                const shownCount = fields.filter(h => showHiddenRows || !hiddenFields.has(h)).length;
+                const isCurrent = stage === oppStage;
+                return (
+                  <div key={stage} style={{ margin: '0 0 0.9rem' }}>
+                    {/* Reads like the board's column header: the step's
+                        name, and how many fields sit under it. The column
+                        the opp is actually in is picked out, so the tab
+                        says where the deal stands as well as what to fill
+                        in. */}
+                    <div style={{
+                      display: 'flex', alignItems: 'baseline',
+                      justifyContent: 'space-between', gap: '0.6rem',
+                      padding: '2px 0 5px',
+                      borderBottom: `1px solid ${isCurrent ? 'var(--color-accent)' : '#CBD5E1'}`,
+                    }}>
+                      <span style={{
+                        fontSize: '0.82rem', fontWeight: 600,
+                        color: isCurrent ? 'var(--color-accent)' : 'var(--color-text)',
                       }}>
-                        <button
-                          type="button"
-                          onClick={() => toggleDetailField(h)}
-                          title={isHidden
-                            ? `Show "${label}" on every opp's details`
-                            : `Hide "${label}" on every opp's details`}
-                          aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
-                          style={{
-                            width: 18, height: 18, lineHeight: '16px',
-                            padding: 0, borderRadius: 4,
-                            border: '1px solid var(--color-border)',
-                            background: isHidden ? '#E2E8F0' : 'transparent',
-                            color: 'var(--color-text-muted)',
-                            fontSize: '0.72rem', fontFamily: 'inherit',
-                            cursor: 'pointer', display: 'block',
-                          }}
-                        >{isHidden ? '+' : '×'}</button>
-                      </td>
-                      <td style={{
-                        padding: '0.45rem 0.5rem 0.45rem 0',
-                        fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                        color: 'var(--color-text-muted)', fontWeight: 600,
-                        verticalAlign: 'top',
-                        opacity: isHidden ? 0.5 : undefined,
-                      }}>{label}</td>
-                      <td style={{
-                        padding: '0.45rem 0',
-                        color: 'var(--color-text)',
-                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                        opacity: isHidden ? 0.5 : undefined,
-                      }}>{renderEditor(h)}</td>
-                    </>
-                  );
-                };
-                return shown.map(h => {
-                  if (consumed.has(h)) return null;
-                  const partner = OPP_DETAIL_FIELD_PAIRS.get(h);
-                  const paired = partner && shownSet.has(partner) ? partner : null;
-                  return (
-                    <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
-                      {cellFor(h)}
-                      {paired
-                        ? cellFor(paired)
-                        // Keeps the single-field rows the same shape as the
-                        // paired ones, so labels and values line up down the
-                        // column instead of stepping in and out.
-                        : <td colSpan={3} />}
-                    </tr>
-                  );
-                });
-              })()}
-            </tbody>
-          </table>
-          )}
+                        {stage}
+                        {isCurrent && (
+                          <span style={{
+                            marginLeft: 6, fontSize: '0.68rem', fontWeight: 600,
+                            textTransform: 'uppercase', letterSpacing: '0.04em',
+                          }}>· current</span>
+                        )}
+                      </span>
+                      {/* Count only when there is one — an empty step
+                          already says so in the line below, and a "0"
+                          beside it just repeats it. */}
+                      {shownCount > 0 && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                          {shownCount}
+                        </span>
+                      )}
+                    </div>
+                    {shownCount > 0 ? renderFieldTable(fields) : (
+                      <div style={{
+                        padding: '0.5rem 0.1rem', fontSize: '0.78rem',
+                        color: 'var(--color-text-muted)',
+                      }}>
+                        No fields on this step yet.
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            : renderFieldTable(tabFields)}
 
           {/* A stage tab with nothing moved onto it yet says so. Every
               other empty tab has something else to show (Call Notes its
               log, Scope & Quote its Pricing Option snapshot, Stage 6 its
               ticket links); these would be a blank pane that reads as a
-              bug. */}
-          {OPP_DETAIL_STAGE_TABS.has(currentTab) && currentTab !== 'stage6' && tabFields.length === 0 && (
+              bug. The banded tabs say it per step above instead, so this
+              is Stage 7's line. */}
+          {OPP_DETAIL_STAGE_TABS.has(currentTab) && !stageSubsections && tabFields.length === 0 && (
             <div style={{
               padding: '0.75rem 0.85rem', border: '1px dashed var(--color-border)',
               borderRadius: 6, fontSize: '0.8rem', lineHeight: 1.5,
