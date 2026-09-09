@@ -23,6 +23,16 @@ import { newSheetRows } from './sheetSyncDiff.js';
 // CSV import and the duplicate collapse cannot drift apart.
 import { planProspectReconcile, prospectScore, createdMillis, isEmptyValue, MERGE_FIELDS } from './prospectMerge.js';
 import { markImportedTier } from './tierSource.js';
+// Chunk-doc ids, and the rule for which of them a finished save may delete.
+// Pure and firebase-free so it can be tested on its own — see
+// scripts/analysisChunks.test.mjs.
+import {
+  analysisChunkId,
+  analysisChunkIds,
+  isAnalysisChunkId,
+  newAnalysisGen,
+  planAnalysisPrune,
+} from './analysisChunks.js';
 export { prospectScore, MERGE_FIELDS, planProspectReconcile } from './prospectMerge.js';
 
 // Admin uses the shared collection; everyone else gets their own
@@ -360,33 +370,49 @@ function getAnalysisCol(prospectId) {
 // small field/metadata overhead.
 const ANALYSIS_CHUNK_SIZE = 900_000;
 
-// Chunk doc ids carry the generation that wrote them: `chunk-<gen>-<i>`.
+// Small sibling doc listing the generations whose chunks are on the server
+// but that `main` does not point at: the one currently being written, and
+// any left behind by a save that died partway.
 //
-// They used to be plain `chunk-<i>`, which meant a save that died partway
-// left the collection holding a mix of two workbooks — the chunks it managed
-// to overwrite, and the older ones it didn't reach. The `main` doc still
-// pointed at the previous chunkCount, so the next read reassembled across
-// that seam and produced base64 that decoded to a broken zip. The symptom
-// was a error from deep inside the xlsx reader ("Bad compressed size:
-// 5714 != 6246") with nothing to connect it back to a half-finished upload.
-//
-// Generation-stamped ids make a partial save inert instead: its chunks are
-// under an id no `main` references, so readers keep seeing the last complete
-// workbook until a save finishes and swings `main` over to the new
-// generation. The stale ones are pruned on the next successful save.
-const newAnalysisGen = () => {
+// It exists so a save never has to read the collection to find what it may
+// delete. It used to getDocs() the whole `analyses` collection for that,
+// which downloaded every stored chunk's base64 — the previous workbook in
+// full, plus every generation an earlier prune had failed to remove —
+// before the new one could start uploading. On a portfolio that had been
+// saved a few times that read was several megabytes of pure waste on the
+// critical path, and it grew with every save.
+const ANALYSIS_PENDING_DOC_ID = 'pending';
+
+// One-off cleanup for a prospect whose analyses predate the pending doc:
+// those collections can hold orphan chunks under generations nothing ever
+// recorded, and their ids can only be learned by listing. Runs at most once
+// per prospect (the pending doc's absence is what marks it), detached from
+// the save so the user never waits on it.
+async function sweepLegacyAnalysisChunks(col, liveGen) {
   try {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID().slice(0, 8);
-  } catch { /* fall through to the timestamp form */ }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-};
-
-const analysisChunkId = (gen, i) => (gen ? `chunk-${gen}-${i}` : `chunk-${i}`);
-
-// True for any doc id that is a payload chunk, of any generation — what
-// pruning needs in order to recognise the docs it may delete. `main` and
-// anything else in the collection are left alone.
-const isAnalysisChunkId = (id) => /^chunk-(?:[a-z0-9-]+-)?\d+$/i.test(String(id || ''));
+    // Re-read the two bookkeeping docs first: a save on another device may
+    // have swung `main` over, or be part-way through writing its chunks, in
+    // the time this sweep took to start. Those generations are spared —
+    // everything else under a chunk id is an orphan nothing can reach.
+    const [mainSnap, pendingSnap] = await Promise.all([
+      fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
+      fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
+    ]);
+    const spared = new Set([liveGen]);
+    const currentGen = mainSnap.exists() ? mainSnap.data()?.gen : '';
+    if (typeof currentGen === 'string' && currentGen) spared.add(currentGen);
+    for (const e of (Array.isArray(pendingSnap.data()?.gens) ? pendingSnap.data().gens : [])) {
+      if (typeof e?.gen === 'string' && e.gen) spared.add(e.gen);
+    }
+    const all = await getDocs(col);
+    const stale = all.docs.filter((d) => (
+      isAnalysisChunkId(d.id) && ![...spared].some((g) => d.id.startsWith(`chunk-${g}-`))
+    ));
+    await Promise.all(stale.map((d) => deleteDoc(d.ref)));
+  } catch (err) {
+    console.warn('Analysis legacy chunk sweep failed (old chunks left behind):', err);
+  }
+}
 
 // Base64 length for a payload of `sizeBytes`: 4 characters per 3 bytes,
 // padded up. Lets a read check the reassembled string against the size the
@@ -407,9 +433,23 @@ export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64,
   for (let i = 0; i < data.length; i += ANALYSIS_CHUNK_SIZE) {
     chunks.push(data.slice(i, i + ANALYSIS_CHUNK_SIZE));
   }
-  // Learn what's already stored so the previous generation's chunks can be
-  // pruned once this one is live.
-  const existing = await getDocs(col);
+  // Two small documents, never the collection: what `main` points at now,
+  // and what a previous save may have left unreferenced. Between them they
+  // name every chunk this save is allowed to delete, by id, so nothing
+  // downloads a stored workbook on the way to writing one.
+  const [mainSnap, pendingSnap] = await Promise.all([
+    fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
+    fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
+  ]);
+  const prevMeta = mainSnap.exists() ? (mainSnap.data() || {}) : {};
+  const pendingRaw = pendingSnap.exists() ? pendingSnap.data() : null;
+  const priorPending = Array.isArray(pendingRaw?.gens) ? pendingRaw.gens : [];
+  // Written before the chunks it describes, so a save that dies mid-upload
+  // leaves its ids on record for the next one to clean up. That's what the
+  // old collection listing bought, at a fraction of the cost.
+  await setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), {
+    gens: [...priorPending, { gen, chunkCount: chunks.length, at: Date.now() }],
+  });
   // Write every chunk first, then the `main` metadata doc LAST, so a live
   // subscriber only reassembles once all referenced chunks exist. Under a
   // fresh generation, so nothing here touches the docs the current `main`
@@ -428,12 +468,26 @@ export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64,
   // Only now that `main` names the new generation is the old one
   // unreferenced. Best-effort: a failure here wastes storage but leaves the
   // analysis readable, so it must not fail the save.
-  const stale = existing.docs.filter((d) => isAnalysisChunkId(d.id));
-  if (stale.length) {
-    await Promise.all(stale.map((d) => deleteDoc(d.ref))).catch((err) => {
-      console.warn('Analysis chunk cleanup failed (old chunks left behind):', err);
-    });
+  //
+  // The generation `main` pointed at is described by `main` itself; the
+  // rest come off the pending list. An analysis written before generations
+  // existed carries no `gen` and its chunks are plain `chunk-<i>`, which
+  // analysisChunkId() still builds from an empty gen.
+  const { ids: doomed, keep } = planAnalysisPrune({ prevMeta, pending: priorPending, liveGen: gen });
+  try {
+    if (doomed.length) await Promise.all(doomed.map((id) => deleteDoc(doc(col, id))));
+    // This save's own entry comes off the list (`main` names it now); a
+    // generation still inside the grace window stays on it, so a save
+    // running on another device isn't deleted out from under itself and is
+    // still cleaned up if it never finishes.
+    await setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), { gens: keep });
+  } catch (err) {
+    console.warn('Analysis chunk cleanup failed (old chunks left behind):', err);
   }
+  // First save under the pending-doc scheme for this prospect: its
+  // collection may still hold orphans from before, whose ids nothing
+  // recorded. Swept once, in the background — the save is already done.
+  if (!pendingSnap.exists()) sweepLegacyAnalysisChunks(col, gen);
 }
 
 // Metadata-only read of a saved analysis: fetches just the `main` doc and
@@ -475,15 +529,19 @@ export async function loadIndicativeAnalysis(prospectId) {
   if (chunkCount === 0) return { ...base, dataBase64: '' };
   // Analyses written before generations are stored under plain `chunk-<i>`.
   const gen = typeof meta.gen === 'string' ? meta.gen : '';
-  const all = await getDocs(col);
-  const byId = new Map();
-  all.forEach((d) => { byId.set(d.id, d.data()?.data || ''); });
+  // Fetched by id rather than by listing the collection: `main` says
+  // exactly which chunks make up this workbook, and a listing would also
+  // pull down any older generation still awaiting cleanup — doubling (or
+  // worse) the download for parts that get thrown away.
+  const snaps = await Promise.all(
+    analysisChunkIds(gen, chunkCount).map((id) => fsGetDoc(doc(col, id))),
+  );
   const parts = new Array(chunkCount);
   const missing = [];
   for (let i = 0; i < chunkCount; i++) {
-    const part = byId.get(analysisChunkId(gen, i));
+    const part = snaps[i]?.exists() ? (snaps[i].data()?.data || '') : '';
     if (!part) missing.push(i + 1);
-    parts[i] = part || '';
+    parts[i] = part;
   }
   // A gap used to join into a shorter string and reach the xlsx reader as a
   // truncated zip, which failed with a byte-count mismatch that said nothing
