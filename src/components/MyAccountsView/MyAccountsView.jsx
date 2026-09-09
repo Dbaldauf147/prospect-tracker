@@ -356,6 +356,15 @@ function companiesMatch(a, b) {
   return false;
 }
 
+// Badge colour per tier, shared by the target-mismatch banners so Tier 3
+// chips read as Tier 3 instead of borrowing the Tier 2 blue. Matches the
+// summary cards: Tier 1 red, Tier 2 blue, Tier 3 amber.
+function tierColor(tier) {
+  if (tier === 'Tier 1') return '#DC2626';
+  if (tier === 'Tier 3') return '#F59E0B';
+  return '#3B82F6';
+}
+
 function fuzzyHas(names, target) {
   for (const name of names) {
     if (companiesMatch(name, target)) return true;
@@ -1399,31 +1408,36 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         let tier = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
         if (!tier) {
-          tier = Object.values(r).find(v => /Tier\s*[12]/i.test(String(v || ''))) || '';
+          tier = Object.values(r).find(v => /Tier\s*[1-3]/i.test(String(v || ''))) || '';
           tier = String(tier);
         }
-        if (!tier.match(/(Tier\s*)?[12]/i)) {
-          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `Tier="${tier}" (not Tier 1/2)` });
+        // Tier 3 belongs to the book too. It used to be dropped here, which
+        // is what kept the rep's Tier 3 targets ("all remaining assigned in
+        // your segments") off My Accounts entirely — no row, no 'Target
+        // List' badge, no missing-target chip. Prefer an explicit "Tier N"
+        // over a bare digit so a cell like "2025 Tier 1" still reads as
+        // Tier 1 rather than Tier 2.
+        const tierDigit = (tier.match(/Tier\s*([1-3])/i) || tier.match(/([1-3])/) || [])[1];
+        if (!tierDigit) {
+          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `Tier="${tier}" (not Tier 1/2/3)` });
           continue;
         }
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        const normalizedTier = tier.match(/1/) ? 'Tier 1' : 'Tier 2';
-        accounts.push({ company: company.trim(), tier: normalizedTier, ...r });
+        accounts.push({ company: company.trim(), tier: `Tier ${tierDigit}`, ...r });
       }
     }
-    console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2 accounts`);
+    console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2/3 accounts`);
     if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
     return accounts;
   }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
 
   // All-tier view of the CDM's Target Accounts — same rows as
-  // `targetAccounts` above, but WITHOUT the Tier 1/2 restriction and with
-  // a tier normalizer that keeps Tier 3+. Used only to surface a tier
-  // mismatch when an account that's already in My Accounts sits at Tier 3
-  // (or lower) on the Targets list. The Tier 1/2 `targetAccounts` still
-  // drives the target book, the missing-target buckets, and the 'Target
-  // List' source badge, so those are unchanged.
+  // `targetAccounts` above, but WITHOUT the Tier 1-3 restriction, so it
+  // keeps Tier 4+ as well. Used only to surface a tier mismatch when an
+  // account that's already in My Accounts sits below Tier 3 on the Targets
+  // list. The Tier 1/2/3 `targetAccounts` drives the target book, the
+  // missing-target buckets, and the 'Target List' source badge.
   const targetAccountTiers = useMemo(() => {
     const data = targetAccountsData;
     if (!data?.sheets) return [];
@@ -2192,8 +2206,8 @@ Fix that now?
       if (targetNames.length > 0) {
         const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
-        // Mapped name isn't in the Tier 1/2 book — resolve its true tier
-        // (Tier 3+) purely so the mismatch flag can fire.
+        // Mapped name isn't in the Tier 1/2/3 book — resolve its true tier
+        // (Tier 4+) purely so the mismatch flag can fire.
         if (!targetTier) {
           for (const nm of targetNames) {
             const tt = targetTierByName.get((nm || '').toLowerCase().trim());
@@ -2214,11 +2228,10 @@ Fix that now?
           const t = targetByName.get((tName || '').toLowerCase().trim());
           if (t) { targetNames = [t.company]; targetTier = t.tier; break; }
         }
-        // No Tier 1/2 target matched. Check the all-tier lookup so a Tier
-        // 3+ target still surfaces a tier mismatch (e.g. My Accounts Tier
-        // 2 vs Targets Tier 3). Deliberately don't touch targetNames /
-        // sources so the target book and 'Target List' badge stay Tier
-        // 1/2 only.
+        // No Tier 1/2/3 target matched. Check the all-tier lookup so a
+        // Tier 4+ target still surfaces a tier mismatch. Deliberately
+        // don't touch targetNames / sources so the target book and the
+        // 'Target List' badge stay Tier 1/2/3 only.
         if (!targetTier) {
           for (const tName of findMatchesInIndex(targetTierIndex, p.company)) {
             const tt = targetTierByName.get((tName || '').toLowerCase().trim());
@@ -2378,12 +2391,17 @@ Fix that now?
         && p.dismissedSuggestedType !== suggestedType
         && !p.hideTypeSuggestion;
       // Hide accounts with zero open opps — UNLESS they're one of Dan's
-      // strategic (Tier 1/Tier 2) accounts or one of his active Clients.
+      // strategic (Tier 1/Tier 2) accounts, an account on his Target
+      // Accounts list, or one of his active Clients.
       // A won Client on Dan's book belongs on the list even with no open
       // opp and no tier tag (a blank tier resolves to "-" above, which is
       // not strategic, so status carries it instead).
+      // The Targets-list clause is what keeps Tier 3 targets on the page:
+      // they're assigned work with no open opp yet, so the opp filter used
+      // to drop them even once the book above started including Tier 3.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
-      const keepForDan = isBaldauf && (isStrategicTier || p.status === 'Client');
+      const onTargetList = (targetNames || []).length > 0;
+      const keepForDan = isBaldauf && (isStrategicTier || onTargetList || p.status === 'Client');
       if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
       // Master Site List count for this account — summed across the parent
       // company and any division names, matched on the normalized name.
@@ -2547,6 +2565,22 @@ Fix that now?
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
+
+  // Targets-list accounts, per tier, that still have no row on My Accounts.
+  // Feeds the "N not in list" line under each tier card and the expandable
+  // chip list below them. Computed once instead of three times inline now
+  // that Tier 3 needs the same treatment as Tier 1/2.
+  const targetsMissingByTier = useMemo(() => {
+    const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
+    const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => (n || '').toLowerCase())));
+    const out = { 'Tier 1': [], 'Tier 2': [], 'Tier 3': [] };
+    for (const t of targetAccounts) {
+      if (!out[t.tier]) continue;
+      if (fuzzyHas(myNames, t.company) || mappedNames.has((t.company || '').toLowerCase())) continue;
+      out[t.tier].push(t);
+    }
+    return out;
+  }, [allAccounts, targetAccounts]);
 
   // Accounts whose stored Tier differs from the Target Accounts tier and
   // hasn't been individually dismissed — these are the ⚠ flags shown in
@@ -3408,7 +3442,7 @@ Fix that now?
     <div className={styles.wrapper}>
       {(() => {
         // Company mappings resolve against `targetAccounts` — the Target
-        // Accounts list, filtered to this CDM + Tier 1/2. When that list
+        // Accounts list, filtered to this CDM + Tier 1/2/3. When that list
         // comes back empty, every auto-fuzzy mapping silently vanishes and
         // the picker dropdown empties, which reads as "all my mappings
         // disappeared." Surface the two ways it collapses so the failure is
@@ -3641,7 +3675,7 @@ Fix that now?
                   {onlyMyAccounts.map(a => (
                     <span key={a.company} className={styles.missingChip}>
                       {a.company}
-                      <Badge label={a.myTier} color={a.myTier === 'Tier 1' ? '#DC2626' : '#3B82F6'} />
+                      <Badge label={a.myTier} color={tierColor(a.myTier)} />
                     </span>
                   ))}
                 </div>
@@ -3662,7 +3696,7 @@ Fix that now?
                   {onlyTarget.map((t, i) => (
                     <span key={i} className={styles.addedChip}>
                       {t.company}
-                      <Badge label={t.tier} color={t.tier === 'Tier 1' ? '#DC2626' : '#3B82F6'} />
+                      <Badge label={t.tier} color={tierColor(t.tier)} />
                       <button
                         className={styles.addChipBtn}
                         onClick={() => addTargetToMyAccounts(t)}
@@ -3679,10 +3713,8 @@ Fix that now?
       })()}
       <div className={styles.summary}>
         {(() => {
-          const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
-          const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
-          const t1Missing = targetAccounts.filter(t => t.tier === 'Tier 1' && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase())).length;
-          const t2Missing = targetAccounts.filter(t => t.tier === 'Tier 2' && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase())).length;
+          const t1Missing = targetsMissingByTier['Tier 1'].length;
+          const t2Missing = targetsMissingByTier['Tier 2'].length;
           return <>
             <button className={`${styles.summaryCard} ${bucketFilter === 'tier1' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#DC2626' }} onClick={() => { setBucketFilter(bucketFilter === 'tier1' ? null : 'tier1'); setExpandedBucket(expandedBucket === 'tier1' ? null : 'tier1'); }}>
               <div className={styles.summaryLabel}>Tier 1</div>
@@ -3708,9 +3740,10 @@ Fix that now?
           <div className={styles.summaryLabel}>Clients</div>
           <div className={styles.summaryValue}>{clientCount}</div>
         </button>
-        <button className={`${styles.summaryCard} ${bucketFilter === 'pipeline' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#F59E0B', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'pipeline' ? null : 'pipeline')}>
+        <button className={`${styles.summaryCard} ${bucketFilter === 'pipeline' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#F59E0B', cursor: 'pointer' }} onClick={() => { setBucketFilter(bucketFilter === 'pipeline' ? null : 'pipeline'); setExpandedBucket(expandedBucket === 'tier3' ? null : 'tier3'); }}>
           <div className={styles.summaryLabel}>Tier 3</div>
           <div className={styles.summaryValue}>{tier3Count}</div>
+          {targetsMissingByTier['Tier 3'].length > 0 && <div className={styles.summaryBreakdown} style={{ color: '#B45309' }}>{targetsMissingByTier['Tier 3'].length} not in list</div>}
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'noTarget' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#9CA3AF', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'noTarget' ? null : 'noTarget')}>
           <div className={styles.summaryLabel}>No Target Mapped</div>
@@ -3746,11 +3779,8 @@ Fix that now?
         </div>
       )}
       {expandedBucket && (() => {
-        const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
-        const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
-        const tierLabel = expandedBucket === 'tier1' ? 'Tier 1' : 'Tier 2';
-        const notInMyAccounts = targetAccounts
-          .filter(t => t.tier === tierLabel && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase()));
+        const tierLabel = expandedBucket === 'tier1' ? 'Tier 1' : expandedBucket === 'tier3' ? 'Tier 3' : 'Tier 2';
+        const notInMyAccounts = targetsMissingByTier[tierLabel] || [];
         if (notInMyAccounts.length === 0) return (
           <div className={styles.bucketList}>
             <div className={styles.bucketHeader}>
