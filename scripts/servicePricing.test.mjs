@@ -27,76 +27,56 @@ function check(label, actual, expected) {
 const RECURRING = { serviceType: 'Recurring', years: '3 years' };
 const PROJECT = { serviceType: 'Project', years: '1 year' };
 
-// ── A typed fee is the answer ─────────────────────────────────────────
+// ── A typed fee and a minimum fee are retired ─────────────────────────
+//
+// Both used to sit on the card and quietly outrank the model: a typed fee
+// replaced whatever the basis worked out to, a minimum fee floored it. They
+// are gone from the pricing panel, and pricingFor drops them on the way out
+// of storage — so a figure somebody saved months ago is still in settings
+// and still reaches nothing. What this pins is that second half, because it
+// is the half a stored number could silently undo.
 {
-  const both = estimateService({
-    entry: { basis: 'per_site', rate: 900, avgFee: 30000 },
-    meta: RECURRING, counts: { sites: 20 }, dealSize: '',
+  const stored = { basis: 'per_site', rate: 900, minFee: 5000, avgFee: 30000 };
+
+  const entry = pricingFor({ Widgets: stored }, 'Widgets');
+  check('a stored typed fee never reaches the estimate', entry.avgFee, null);
+  check('nor does a stored minimum fee', entry.minFee, null);
+  check('the basis and rate come through untouched',
+    [entry.basis, entry.rate], ['per_site', 900]);
+
+  const rows = [{ name: 'Widgets', meta: RECURRING }];
+  const priced = estimateScope({
+    rows, services: ['Widgets'], pricing: { Widgets: stored },
+    counts: { sites: 20 }, dealSize: '',
   });
-  check('a typed fee beats the basis', both.fee, 30000);
-  check('it is flagged as typed', both.typed, true);
-  check('and still runs across the term', both.value, 90000);
-  check('the count it would have used is not claimed', both.units, null);
+  check('so the service prices off its basis, not the figure typed over it',
+    priced.recurringAnnual, 900 * 20);
+  check('and no line claims to be a typed fee', priced.lines[0].typed, false);
 
-  const alone = estimateService({ entry: { avgFee: 40000 }, meta: RECURRING, counts: {}, dealSize: '' });
-  check('a typed fee alone prices a service', [alone.priced, alone.fee, alone.value], [true, 40000, 120000]);
+  // The floor is the quieter of the two: it only showed up on a thin scope,
+  // which is exactly where nobody would notice it had stopped.
+  const thin = estimateScope({
+    rows, services: ['Widgets'], pricing: { Widgets: stored },
+    counts: { sites: 2 }, dealSize: '',
+  });
+  check('a thin scope is worth what it is worth, not the old floor',
+    thin.recurringAnnual, 1800);
 
-  const project = estimateService({ entry: { avgFee: 40000 }, meta: PROJECT, counts: {}, dealSize: '' });
-  check('a one-off project is worth its fee once', project.value, 40000);
+  // A service that had nothing BUT a typed fee has nothing left. It is not
+  // quietly worth zero — it comes back unpriced and named, so the scope it
+  // is in says the total is short rather than printing a confident figure.
+  const feeOnly = estimateScope({
+    rows: [{ name: 'Audits', meta: PROJECT }], services: ['Audits'],
+    pricing: { Audits: { avgFee: 40000 } }, counts: {}, dealSize: '',
+  });
+  check('a service priced only that way is unpriced now', feeOnly.unpriced, ['Audits']);
+  check('and contributes nothing rather than its old figure', feeOnly.year1Total, 0);
 }
 
-// ── A typed fee prices one of them, and the deal can carry several ────
-{
-  // The panel this is for: an integration quoted at $5,000 a rollout, on a
-  // deal doing three of them.
-  const three = estimateService({
-    entry: { basis: 'per_project', avgFee: 5000, units: 3 }, meta: PROJECT, counts: {}, dealSize: '',
-  });
-  check('a typed fee times the count typed against the row', three.fee, 15000);
-  check('and it is still a typed fee, with the count on the row', [three.typed, three.units], [true, 3]);
-
-  const one = estimateService({
-    entry: { basis: 'per_project', avgFee: 5000 }, meta: PROJECT, counts: {}, dealSize: '',
-  });
-  check('nobody counted, so it is worth what was typed', [one.fee, one.units], [5000, null]);
-
-  // The rule that keeps this safe: an account-wide figure never multiplies
-  // a lump sum. 819 sites × a typed $40,000 would be a $32m service.
-  const shared = estimateService({
-    entry: { basis: 'per_site', avgFee: 40000 }, meta: PROJECT, counts: { sites: 819 }, dealSize: '',
-  });
-  check('the shared count leaves a typed fee alone', shared.fee, 40000);
-
-  const none = estimateService({
-    entry: { basis: 'per_project', avgFee: 5000, units: 0 }, meta: PROJECT, counts: {}, dealSize: '',
-  });
-  check('none of them is worth nothing, and says so', [none.fee, none.note], [0, 'Set to no projects']);
-
-  const ranged = estimateService({
-    entry: { basis: 'per_project', avgFee: 5000, units: 3 }, meta: RECURRING, counts: {}, dealSize: '',
-  });
-  check('a multiplied typed fee is still one figure, not a range',
-    [ranged.fee, ranged.feeHigh], [15000, 15000]);
-  check('and it runs across the term', ranged.value, 45000);
-
-  check('the line says how many it priced', feeBasisLabel({ typed: true, units: 3 }), 'Typed fee × 3');
-  check('and says nothing extra when it priced one', feeBasisLabel({ typed: true, units: null }), 'Typed fee');
-
-  // A typed row no longer asks the bar for a count it can't use.
-  const scope = estimateScope({
-    rows: [{ name: 'API/ETL', meta: PROJECT }], services: ['API/ETL'],
-    pricing: { 'API/ETL': { basis: 'per_project', avgFee: 5000 } }, counts: {}, dealSize: '',
-  });
-  check('a typed row puts no count box on the estimator', [...scope.unitsUsed], []);
-  check('while a rate-priced row still does',
-    [...estimateScope({
-      rows: [{ name: 'API/ETL', meta: PROJECT }], services: ['API/ETL'],
-      pricing: { 'API/ETL': { basis: 'per_project', rate: 5000 } }, counts: {}, dealSize: '',
-    }).unitsUsed],
-    ['projects']);
-}
-
-// ── Clearing a basis keeps a typed fee ────────────────────────────────
+// ── Storage keeps what it was given ───────────────────────────────────
+//
+// setPricingField still writes and clears the retired fields — nothing goes
+// out of its way to destroy a figure that is merely no longer read.
 {
   const start = { Widgets: { basis: 'per_site', rate: 900, minFee: 5000, avgFee: 30000 } };
   const cleared = setPricingField(start, 'Widgets', 'basis', '');
@@ -106,23 +86,23 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('with nothing left, the entry goes entirely', noFee.Widgets, undefined);
 
   const unset = setPricingField(start, 'Widgets', 'avgFee', '');
-  check('clearing the typed fee leaves the model behind',
+  check('clearing a retired figure leaves the model behind',
     unset.Widgets, { basis: 'per_site', rate: 900, minFee: 5000 });
 }
 
-// ── Minimum fees floor a thin scope, not an empty one ─────────────────
+// ── A count nobody entered prices at nothing, and says so ─────────────
 {
   const thin = estimateService({
-    entry: { basis: 'per_meter', rate: 12.5, minFee: 5000 },
+    entry: { basis: 'per_meter', rate: 12.5 },
     meta: RECURRING, counts: { meters: 200 }, dealSize: '',
   });
-  check('a thin scope is floored at the minimum', thin.fee, 5000);
+  check('a thin scope is worth exactly what its count comes to', thin.fee, 2500);
 
   const empty = estimateService({
-    entry: { basis: 'per_meter', rate: 12.5, minFee: 5000 },
+    entry: { basis: 'per_meter', rate: 12.5 },
     meta: RECURRING, counts: {}, dealSize: '',
   });
-  check('no count means no fee, not the minimum', [empty.priced, empty.fee], [true, 0]);
+  check('no count means no fee', [empty.priced, empty.fee], [true, 0]);
   check('and it says why', empty.note, 'No meters entered');
 }
 
@@ -133,9 +113,9 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   });
   check('a percentage takes its cut', pct.fee, 35000);
   const noDeal = estimateService({
-    entry: { basis: 'pct_deal', rate: 3.5, minFee: 9000 }, meta: RECURRING, counts: {}, dealSize: '',
+    entry: { basis: 'pct_deal', rate: 3.5 }, meta: RECURRING, counts: {}, dealSize: '',
   });
-  check('no deal size means no fee, not the minimum', noDeal.fee, 0);
+  check('no deal size means no fee', noDeal.fee, 0);
 }
 
 // ── Nothing to price on ───────────────────────────────────────────────
@@ -155,7 +135,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     { name: 'Unpriced', meta: PROJECT },
   ];
   const pricing = {
-    'Bill payment': { avgFee: 40000 },
+    'Bill payment': { basis: 'recurring_annual', rate: 40000 },
     Audits: { basis: 'flat', rate: 25000 },
     'Broker fee': { basis: 'pct_deal', rate: 3.5 },
   };
@@ -172,7 +152,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
 {
   check('years parse off the metadata', contractYears({ years: '3 years' }), 3);
   check('an unreadable term is one year, never zero', contractYears({ years: 'TBD' }), 1);
-  check('a typed fee reads back off the entry', pricingFor({ A: { avgFee: '12,500' } }, 'A').avgFee, 12500);
+  check('a retired figure reads back as nothing', pricingFor({ A: { avgFee: '12,500' } }, 'A').avgFee, null);
   check('whole dollars for deal figures', formatMoney(2500), '$2,500');
   check('cents survive on a small rate', formatMoney(12.5), '$12.50');
 }
@@ -192,8 +172,8 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     { name: 'Data', meta: { serviceType: 'Project' } },
   ];
   const pricing = {
-    'Bill Pay': { avgFee: 40000 },
-    'Budgets': { basis: 'per_site', rate: 500, minFee: 2000 },
+    'Bill Pay': { basis: 'recurring_annual', rate: 40000 },
+    'Budgets': { basis: 'per_site', rate: 500 },
     'Risk': { basis: 'pct_deal', rate: 3 },
     'Data': {},
   };
@@ -210,7 +190,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('an unpriced service is named rather than counted as nothing', est.unpriced, ['Data']);
 
   const by = Object.fromEntries(est.lines.map(l => [l.name, feeBasisLabel(l)]));
-  check('a typed fee says so', by['Bill Pay'], 'Typed fee');
+  check('a flat annual says so', by['Bill Pay'], 'Recurring annual');
   check('a per-unit fee shows its rate and the count it multiplied', by.Budgets, '$500 per site × 12');
   check('a percentage says what it is a percentage of', by.Risk, '3% of deal size');
   check('an unpriced service has nothing to say', by.Data, '');
@@ -239,8 +219,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     'Lighting retrofit': { basis: 'per_project', rate: 45000 },
     'Chiller replacement': { basis: 'per_project', rate: 80000 },
     'Bill payment': { basis: 'per_site', rate: 500 },
-    // Priced per project, but with the fee typed straight in.
-    'Solar feasibility': { basis: 'per_project', rate: 10000, avgFee: 12000 },
+    'Solar feasibility': { basis: 'per_project', rate: 10000 },
   };
 
   const shared = estimateScope({
@@ -251,29 +230,26 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('only the per-project services are listed',
     listed.map(l => l.name), ['Lighting retrofit', 'Chiller replacement', 'Solar feasibility']);
   check('a shared count prices every row that has no number of its own',
-    listed.map(l => l.fee), [90000, 160000, 12000]);
-  check('a typed fee stays in the list rather than dropping out of the scope',
-    listed.find(l => l.name === 'Solar feasibility').typed, true);
+    listed.map(l => l.fee), [90000, 160000, 20000]);
 
-  // A typed fee doesn't depend on a count, so it must not be what keeps the
-  // estimator asking for one — otherwise the panel would report a shared
-  // count as pricing a row whose fee it can't move.
-  check('a typed fee does not ask the estimator for a count',
+  // Every per-project row is priced on a count now that no fee can be stated
+  // outright, so one on its own still puts the shared box on the estimator.
+  check('a row with no count of its own asks for the shared one',
     estimateScope({
       rows, services: ['Solar feasibility'], pricing, counts: {}, dealSize: 0,
-    }).unitsUsed.has('projects'), false);
+    }).unitsUsed.has('projects'), true);
 
   // The point of the panel: one row's count moves one row's fee.
   const perService = estimateScope({
     rows, services: rows.map(r => r.name), pricing,
     counts: { sites: 10, projects: 2 }, dealSize: 0,
-    serviceUnits: { 'Lighting retrofit': 3, 'Chiller replacement': 1 },
+    serviceUnits: { 'Lighting retrofit': 3, 'Chiller replacement': 1, 'Solar feasibility': 1 },
   });
   const own = projectServiceLines(perService.lines);
-  check('each row prices on its own count', own.map(l => l.fee), [135000, 80000, 12000]);
+  check('each row prices on its own count', own.map(l => l.fee), [135000, 80000, 10000]);
   check('...and the shared count no longer has a row to answer for',
     perService.unitsUsed.has('projects'), false);
-  check('the deal adds them up as one-off money', perService.oneTime, 135000 + 80000 + 12000);
+  check('the deal adds them up as one-off money', perService.oneTime, 135000 + 80000 + 10000);
 
   // A row left blank is not a row set to zero: it falls back.
   const partial = estimateScope({
@@ -282,7 +258,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     serviceUnits: { 'Lighting retrofit': 3 },
   });
   check('a blank row still falls back to the shared count',
-    projectServiceLines(partial.lines).map(l => l.fee), [135000, 160000, 12000]);
+    projectServiceLines(partial.lines).map(l => l.fee), [135000, 160000, 20000]);
   check('...so the shared box is still asked for', partial.unitsUsed.has('projects'), true);
 
   check('nothing per-project in scope means no list',
@@ -349,7 +325,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     rows, services: ['Bill payment', 'Audits'],
     // One service ranged, one not: the high total is the high end of the
     // first plus the ONLY end of the second, not the low total scaled up.
-    pricing: { 'Bill payment': { basis: 'per_site', rate: 100, rateHigh: 150 }, 'Audits': { avgFee: 15000 } },
+    pricing: { 'Bill payment': { basis: 'per_site', rate: 100, rateHigh: 150 }, 'Audits': { basis: 'flat', rate: 15000 } },
     counts: { sites: 10 }, dealSize: '',
   });
   check('the year-one range adds each end to its own end',
@@ -360,7 +336,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('and the scope knows it is a range', est.ranged, true);
 
   const flat = estimateScope({
-    rows, services: ['Audits'], pricing: { 'Audits': { avgFee: 15000 } }, counts: {}, dealSize: '',
+    rows, services: ['Audits'], pricing: { 'Audits': { basis: 'flat', rate: 15000 } }, counts: {}, dealSize: '',
   });
   check('a scope with no ranged service is not a range', flat.ranged, false);
   check('and its ends agree', [flat.year1Total, flat.year1TotalHigh], [15000, 15000]);
