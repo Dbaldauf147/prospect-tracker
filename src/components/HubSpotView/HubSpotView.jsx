@@ -8,6 +8,7 @@ import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
+import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -2608,14 +2609,21 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [auditState, setAuditState] = useState(null); // { done, total } while running
   const [auditResult, setAuditResult] = useState(null);
   const [auditError, setAuditError] = useState('');
+  // Contacts sent over from the Prospecting ladder's "Map and tag your
+  // contacts" step. When there are any, they ARE the audit: that list is the
+  // one flagging missing tags, so auditing the whole book instead would bury
+  // the answer in thousands of contacts nobody asked about.
+  const auditQueue = useTagAuditQueue();
 
-  async function runTagAudit() {
+  async function runTagAudit(queued) {
     if (auditState) return;
     setAuditError('');
     setAuditResult(null);
     // Contacts HubSpot knows about: a locally-created row has no history to
     // read and would just spend a call.
-    const ids = contacts.map(c => String(c.id || c.vid || '')).filter(id => id && !id.startsWith('local-'));
+    const ids = (queued && queued.length)
+      ? queued.map(c => String(c.id))
+      : contacts.map(c => String(c.id || c.vid || '')).filter(id => id && !id.startsWith('local-'));
     if (ids.length === 0) {
       setAuditError('No synced contacts to audit — hit Sync Now first.');
       return;
@@ -2688,15 +2696,20 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           </span>
           <button
             type="button"
-            onClick={runTagAudit}
+            onClick={() => runTagAudit(auditQueue)}
             disabled={!!auditState}
+            title={auditQueue.length
+              ? `Read HubSpot's tag history for the ${auditQueue.length} contact${auditQueue.length === 1 ? '' : 's'} sent over from Prospecting`
+              : `Read HubSpot's tag history for every synced contact`}
             style={{
               marginLeft: 'auto', padding: '0.35rem 0.8rem', borderRadius: 6, fontFamily: 'inherit',
               fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530',
               background: auditState ? '#F1F5F9' : '#009530', color: auditState ? '#94A3B8' : '#fff',
               cursor: auditState ? 'wait' : 'pointer', whiteSpace: 'nowrap',
             }}
-          >{auditState ? `Reading ${auditState.done.toLocaleString()} / ${auditState.total.toLocaleString()}…` : 'Run audit'}</button>
+          >{auditState
+            ? `Reading ${auditState.done.toLocaleString()} / ${auditState.total.toLocaleString()}…`
+            : auditQueue.length ? `Run audit on ${auditQueue.length}` : 'Run audit'}</button>
           {auditResult?.rows?.length > 0 && (
             <button
               type="button"
@@ -2708,6 +2721,20 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             >Download CSV</button>
           )}
         </div>
+        {auditQueue.length > 0 && (
+          <div style={{ fontSize: '0.72rem', color: '#334155', marginTop: '0.4rem' }}>
+            Auditing <strong>{auditQueue.length}</strong> contact{auditQueue.length === 1 ? '' : 's'} sent from Prospecting → Map and tag your contacts
+            {auditQueue.length <= 6 && <> — {auditQueue.map(c => c.name || c.email || c.id).join(', ')}</>}.{' '}
+            <button
+              type="button"
+              onClick={() => { clearQueuedAuditContacts(); setAuditResult(null); }}
+              style={{
+                background: 'none', border: 0, padding: 0, font: 'inherit', color: '#1D4ED8',
+                textDecoration: 'underline', cursor: 'pointer',
+              }}
+            >Audit every synced contact instead</button>
+          </div>
+        )}
         {auditError && <div style={{ fontSize: '0.74rem', color: '#B91C1C', marginTop: '0.4rem' }}>{auditError}</div>}
         {auditResult && (
           <div style={{ marginTop: '0.6rem' }}>
