@@ -24,6 +24,13 @@ import {
   LinkColumnsModal,
 } from '../common/columnLinks';
 import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
+import {
+  coaItemsForOpp, coaItemsToStore, coaItemStatus, coaDaysWaiting, coaItemsSummary,
+  emptyCoaItem,
+} from '../../utils/coaItems';
+import {
+  loadCoaItemOptions, addCoaItemOption, COA_ITEM_OPTIONS_EVENT,
+} from '../../utils/coaItemOptions';
 import { KeithAgenda } from './KeithAgenda';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
@@ -5564,6 +5571,192 @@ function OppTicketLinksSection({ opp, onFieldChange }) {
   );
 }
 
+// The COA Approval items table on the Opp details page.
+//
+// A quote can need several COA exceptions signed off — a 3% escalator to start
+// with — and each is its own errand: requested on a date, approved on a later
+// one. The page already had a COA Approval cell and a ticket link, which say
+// COA is involved but not which exception, asked for when, or whether it has
+// come back. This is that list, one row per exception.
+//
+// It sits directly under the ticket links so the whole COA story — the cell,
+// the ticket, the items — reads top to bottom in one place.
+//
+// Rows are held locally and written to the record on every edit, the same
+// local-list-plus-commit shape the timelines and links editors use. The empty
+// form row (and a seeded row nobody has filled in) is kept on screen but never
+// stored, so an opp nobody has touched carries no COA data.
+//
+// Keyed by opp id at the call site: the rows are seeded from the record on
+// mount, so without a remount the section would keep showing the previous
+// opp's items after moving to another record.
+function OppCoaItemsSection({ opp, onFieldChange }) {
+  const [rows, setRows] = useState(() => coaItemsForOpp(opp));
+  // Presets plus every item typed before, so an exception named once is
+  // offered on the next opp. Re-read on the in-tab event and on cross-tab
+  // storage writes, like the Timeline Type list.
+  const [itemOptions, setItemOptions] = useState(loadCoaItemOptions);
+  useEffect(() => {
+    const refresh = () => setItemOptions(loadCoaItemOptions());
+    window.addEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  const commit = (next) => {
+    setRows(next);
+    if (onFieldChange) onFieldChange('_coaItems', coaItemsToStore(next));
+  };
+  const updateRow = (idx, key, value) =>
+    commit(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+  const addRow = () => commit([...rows, emptyCoaItem()]);
+  const deleteRow = (idx) => {
+    const next = rows.filter((_, i) => i !== idx);
+    // Never leave the table with nothing to type into: deleting the last row
+    // leaves the blank form row rather than an empty table and no way back.
+    commit(next.length ? next : [emptyCoaItem()]);
+  };
+  // Remembered on commit (blur / Enter) rather than per keystroke, so a
+  // half-typed name doesn't join the dropdown.
+  const commitItemName = (value) => {
+    if (addCoaItemOption(value)) setItemOptions(loadCoaItemOptions());
+  };
+
+  const summary = coaItemsSummary(rows);
+  const listId = `coa-item-options-${opp?._id ?? 'new'}`;
+  const cellInput = {
+    width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
+    border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem',
+    fontFamily: 'inherit', background: '#fff', color: '#334155',
+  };
+  const th = {
+    textAlign: 'left', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
+  };
+  const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+
+  // Where a row stands, as a chip. A request that is still out carries how
+  // long it has been out — the number that decides whether to go and chase it.
+  const renderStatus = (row) => {
+    const status = coaItemStatus(row);
+    if (status === 'approved') {
+      return (
+        <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999, background: '#DCFCE7', color: '#166534', whiteSpace: 'nowrap' }}>
+          Approved
+        </span>
+      );
+    }
+    if (status === 'requested') {
+      const days = coaDaysWaiting(row);
+      return (
+        <span
+          title={days == null ? undefined : `Requested ${days} day${days === 1 ? '' : 's'} ago and not approved yet.`}
+          style={{ fontSize: '0.66rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999, background: '#FEF3C7', color: '#92400E', whiteSpace: 'nowrap' }}
+        >Waiting{days == null ? '' : ` ${days}d`}</span>
+      );
+    }
+    return <span style={{ fontSize: '0.66rem', color: '#CBD5E1' }}>Not requested</span>;
+  };
+
+  return (
+    <div style={{ margin: '0.25rem 0 0.75rem' }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap',
+        marginBottom: '0.35rem',
+      }}>
+        <div style={{
+          fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+          color: 'var(--color-text-muted)', fontWeight: 600,
+        }}>COA Approval Items</div>
+        {summary.total > 0 && (
+          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+            {summary.approved} of {summary.total} approved
+            {summary.waiting > 0 && (
+              <span style={{ color: '#92400E', fontWeight: 600 }}>
+                {' '}· {summary.waiting} waiting
+                {summary.oldestWaitingDays != null ? ` (oldest ${summary.oldestWaitingDays}d)` : ''}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, width: '40%' }}>COA item</th>
+            <th style={th}>Requested</th>
+            <th style={th}>Approved</th>
+            <th style={th}>Status</th>
+            <th style={{ ...th, width: 24 }} aria-label="Remove" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx}>
+              <td style={td}>
+                <input
+                  list={listId}
+                  value={row.item || ''}
+                  placeholder="e.g. 3% esc"
+                  onChange={(e) => updateRow(idx, 'item', e.target.value)}
+                  onBlur={(e) => commitItemName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                  style={cellInput}
+                />
+              </td>
+              <td style={td}>
+                <input
+                  type="date"
+                  value={row.requested || ''}
+                  onChange={(e) => updateRow(idx, 'requested', e.target.value)}
+                  title="The date the COA exception was sent for approval."
+                  style={{ ...cellInput, width: 'auto' }}
+                />
+              </td>
+              <td style={td}>
+                <input
+                  type="date"
+                  value={row.approved || ''}
+                  onChange={(e) => updateRow(idx, 'approved', e.target.value)}
+                  title="The date it came back approved. Leave blank until it does."
+                  style={{ ...cellInput, width: 'auto' }}
+                />
+              </td>
+              <td style={{ ...td, whiteSpace: 'nowrap', paddingTop: '0.4rem' }}>{renderStatus(row)}</td>
+              <td style={{ ...td, paddingTop: '0.4rem' }}>
+                <button
+                  type="button"
+                  onClick={() => deleteRow(idx)}
+                  title="Remove this COA item"
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    color: '#94A3B8', fontSize: '0.85rem', lineHeight: 1, padding: '0 2px',
+                  }}
+                >&times;</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <datalist id={listId}>
+        {itemOptions.map(o => <option key={o} value={o} />)}
+      </datalist>
+      <button
+        type="button"
+        onClick={addRow}
+        style={{
+          marginTop: '0.15rem', padding: '0.25rem 0.6rem', border: '1px dashed var(--color-border)',
+          borderRadius: 6, background: 'var(--color-surface)', fontSize: '0.72rem', fontWeight: 500,
+          color: 'var(--color-text-secondary)', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >+ Add item</button>
+    </div>
+  );
+}
+
 // "today" / "tomorrow" / "in 8 days" / "6 days ago" for the Follow Up date
 // shown in the Follow Up Notes popup, so the picked day reads as a distance as well
 // as a date. Past dates are spelled out rather than folded into "today" —
@@ -7210,6 +7403,16 @@ export function OppInfoModal({
           {currentTab === 'stage6' && (
             <OppTicketLinksSection
               key={opp._id}
+              opp={opp}
+              onFieldChange={onFieldChange}
+            />
+          )}
+          {/* The COA exceptions themselves, under the COA Approval cell and
+              the COA ticket that opened them — same tab, so the whole COA
+              story reads top to bottom in one place. */}
+          {currentTab === 'stage6' && (
+            <OppCoaItemsSection
+              key={`coa-${opp._id}`}
               opp={opp}
               onFieldChange={onFieldChange}
             />

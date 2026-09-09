@@ -365,6 +365,7 @@ async function loadMirroredStores() {
     import('./raClientsStore.js'),
     import('./dealTimelineHiddenStore.js'),
     import('./timelineTypeOptions.js'),
+    import('./coaItemOptions.js'),
     import('./prospectingStatus.js'),
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
