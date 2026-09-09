@@ -59,6 +59,43 @@
   background: #a93226;
 }
 
+/* The tab is still saving — it just can't hear other devices any more.
+   Amber rather than the red above: nothing is lost, but the page is
+   showing a view of the data that has stopped moving. */
+.staleBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0.5rem 1.25rem 0;
+  padding: 0.625rem 0.875rem;
+  background: #fdf3e2;
+  border: 1px solid #eccb8f;
+  border-radius: 6px;
+  color: #7a4f10;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.staleBannerReload {
+  flex: none;
+  padding: 0.35rem 0.75rem;
+  background: #b26a12;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.staleBannerReload:hover {
+  background: #96590d;
+}
+
 .title {
   font-size: var(--font-size-xl);
   font-weight: 700;

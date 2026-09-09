@@ -95,7 +95,14 @@ const failureFor = (call) => failures.find((rule) => {
   return rule.match instanceof RegExp ? rule.match.test(call.path) : rule.match === call.path;
 })?.error;
 
-export const collection = (_db, ...segments) => ({ path: segments.join('/') });
+// Both take a parent — the db handle (which has no path of its own) or a
+// document ref. collection(doc(db, 'a', 'b'), 'chunks') has to come out as
+// 'a/b/chunks', not 'chunks': a stub that drops the parent makes a
+// subcollection look like a top-level one, and every rule a test sets on
+// the real path then quietly misses it.
+export const collection = (parent, ...segments) => ({
+  path: [parent?.path, ...segments].filter(Boolean).join('/'),
+});
 export const doc = (parent, ...segments) => ({
   path: [parent?.path, ...segments].filter(Boolean).join('/'),
 });
@@ -140,7 +147,9 @@ export function getDocs(ref) {
   const docs = [...store.entries()]
     .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
     .map(([path, data]) => ({ id: path.slice(prefix.length), ref: { path }, data: () => data }));
-  return Promise.resolve({ docs });
+  // forEach as well as docs: a QuerySnapshot has both, and app code picks
+  // whichever reads better at the call site.
+  return Promise.resolve({ docs, forEach: (fn) => docs.forEach(fn), size: docs.length, empty: !docs.length });
 }
 
 // Unused by the analysis save, but imported by the modules under test.

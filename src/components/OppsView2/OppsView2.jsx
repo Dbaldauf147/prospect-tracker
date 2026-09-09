@@ -47,6 +47,7 @@ import {
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
+import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreClientHealth';
 import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
@@ -10506,6 +10507,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // True while a manual "Retry now" is in flight, to disable the button
   // and avoid clearing the banner optimistically before the write acks.
   const [retryingSync, setRetryingSync] = useState(false);
+  // The Firestore SDK can crash its own async queue mid-session (an
+  // internal assertion — see utils/firestoreClientHealth). Saves survive
+  // it: opps2Store falls back to plain HTTPS. Live updates do not — the
+  // snapshot listener above is dead for the rest of the tab's life, so
+  // this browser silently stops seeing what other devices write. That
+  // needs saying, and the only cure is a reload.
+  const [clientWedged, setClientWedged] = useState(() => isClientWedged());
+  useEffect(() => subscribeToClientWedged(() => setClientWedged(true)), []);
 
   // HubSpot contacts cache feeds the Contact column's per-row picker.
   // Most contact rosters live here (not on the prospect record), so
@@ -14063,13 +14072,32 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
   return (
     <div className={styles.wrapper}>
+      {clientWedged && (
+        <div className={styles.staleBanner} role="status">
+          <span>
+            <strong>⚠ Live updates have stopped in this tab.</strong>{' '}
+            The database connection crashed (a Firebase SDK bug, not your data).
+            Your edits are still being saved over a direct connection, but
+            changes made on other devices won't appear here until you reload.
+          </span>
+          <button
+            type="button"
+            className={styles.staleBannerReload}
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      )}
       {syncError && (
         <div className={styles.syncBanner} role="alert" aria-live="assertive">
           <span>
             <strong>⚠ Cloud sync failed: your changes are saved on this device only.</strong>{' '}
             Other devices may show older data, and these edits will be lost if
-            you clear this browser. Check your connection and Firestore access,
-            then retry.
+            you clear this browser.{' '}
+            {clientWedged
+              ? 'This tab fell back to a direct connection because the live one crashed, and that was refused too — reload the page, then retry.'
+              : 'Check your connection and Firestore access, then retry.'}
             {syncErrorDetail && (
               <><br /><span className={styles.syncBannerDetail}>Reason: {syncErrorDetail}</span></>
             )}

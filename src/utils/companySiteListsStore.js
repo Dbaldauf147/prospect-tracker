@@ -25,7 +25,7 @@ import { db } from '../firebase';
 import {
   dottedFieldEntries, restDeleteDoc, restGetDoc, restListDocs, restSetDoc, restUpdateFields,
 } from './firestoreRest.js';
-import { isClientWedged, isClientWedgedError, noteClientWedged } from './firestoreClientHealth.js';
+import { viaSdkOrRest } from './firestoreClientHealth.js';
 import { SITE_LISTS_KEY, isStorableSlug } from './companySiteListRouting';
 
 const COL = 'userSettings';
@@ -51,7 +51,8 @@ const listDocPath = (userId, slug) => `${listColPath(userId)}/${slug}`;
 // downloading every company's rows to find out which slugs exist.
 const NO_FIELDS = ['_idsOnly'];
 
-// `sdk`, falling back to `rest` when the Firestore SDK has crashed.
+// Every read and write below goes through viaSdkOrRest, which falls back to
+// plain HTTPS once the Firestore SDK has crashed its own async queue.
 //
 // "Save to <company>" writes the company's site list here, and this was the
 // one step of that save with no way round a crashed client: it threw the
@@ -62,16 +63,6 @@ const NO_FIELDS = ['_idsOnly'];
 // The transaction in migrateCompanySiteLists is deliberately not wrapped: it
 // is a read-and-conditional-write with no honest one-request equivalent, and
 // it only runs off a snapshot — which a crashed client never delivers.
-async function viaSdkOrRest(sdk, rest) {
-  if (isClientWedged()) return rest();
-  try {
-    return await sdk();
-  } catch (err) {
-    if (!isClientWedgedError(err)) throw err;
-    noteClientWedged(err);
-    return rest();
-  }
-}
 
 // Live view of every company's list, as the same slug → entry map the
 // settings key always exposed.
