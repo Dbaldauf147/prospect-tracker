@@ -18,10 +18,12 @@
 // sidebar dots Prospecting while it stands. See utils/prospectingStatus.js
 // for that rule and for why a manual mark expires overnight.
 //
-// Three steps list their work in place rather than only counting it: the
+// Several steps list their work in place rather than only counting it: the
 // services still short of coverage, the Top PC of every PE firm that isn't
-// already Qualifying, and the email campaigns that haven't finished going
-// out — so the calls to make are on the page rather than a tab away.
+// already Qualifying, the email campaigns that haven't finished going out,
+// the Key contacts a visit hasn't reached yet, and the accounts with no
+// decision maker mapped yet — so the calls to make are on the page rather
+// than a tab away.
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
@@ -739,6 +741,191 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
   );
 }
 
+// The decision makers still to be found, under the cold-outreach step.
+//
+// Cold outreach needs a name to ring, so the step's first job is mapping
+// one: an account with nobody tagged Decision Maker is an account the rest
+// of this step can't be worked on at all. The percentages say how far that
+// mapping has got, tier by tier, and the table underneath is the accounts
+// the current tier is waiting on.
+//
+// One tier at a time, in order, because that is the order the work is
+// worth doing in — see utils/decisionMakerCoverage.js. Tier 2's rows only
+// appear once Tier 1 is fully mapped, and Tier 3's once Tier 2 is; until
+// then those tiers show their percentage and nothing else, so the table is
+// always the list to work now rather than a book to choose from.
+
+// Rows shown before the table asks to be expanded. Long enough for a
+// morning's calls, short enough that a book with 300 unmapped accounts
+// doesn't paint all of them into a step on a ladder.
+const DM_ROWS_SHOWN = 8;
+
+const TIER_TINTS = {
+  'Tier 1': { bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
+  'Tier 2': { bg: '#F5F3FF', border: '#DDD6FE', ink: '#6D28D9' },
+  'Tier 3': { bg: '#F8FAFC', border: '#E2E8F0', ink: '#475569' },
+};
+const tierTint = (tier) => TIER_TINTS[tier] || { bg: '#F8FAFC', border: '#E2E8F0', ink: '#475569' };
+
+const DM_CELL = {
+  padding: '3px 8px', borderTop: '1px solid #F1F5F9', textAlign: 'left',
+  fontSize: '0.72rem', color: '#334155', fontWeight: 400,
+};
+// Sticky so the columns are still named after the list has been expanded
+// and scrolled — a table of company names with the headings scrolled off
+// stops saying what its right-hand figure is.
+const DM_HEAD = {
+  padding: '3px 8px', textAlign: 'left', fontSize: '0.62rem', fontWeight: 700,
+  letterSpacing: '0.04em', textTransform: 'uppercase', color: '#94A3B8',
+  position: 'sticky', top: 0, background: '#fff', zIndex: 1,
+};
+
+function DecisionMakerTable({ coverage, onSelectProspect }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!coverage) return null;
+  const tiers = coverage.tiers.filter(t => t.total > 0);
+  // No tiered accounts on this CDM at all — there is no percentage to
+  // report and nothing to list, so the step keeps its one-line detail.
+  if (tiers.length === 0) return null;
+  const focus = coverage.tiers.find(t => t.tier === coverage.focusTier) || null;
+  const rows = focus ? focus.missing : [];
+  const shown = expanded ? rows : rows.slice(0, DM_ROWS_SHOWN);
+  const hidden = rows.length - shown.length;
+  // The tiers held back behind the one being worked — named so the table
+  // reads as "this tier first", not as a list that forgot the others.
+  const waiting = focus
+    ? tiers.filter(t => t.missing.length > 0 && t.tier !== focus.tier).map(t => t.tier)
+    : [];
+  return (
+    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
+          Decision makers mapped:
+        </span>
+        {tiers.map((t) => {
+          const tint = tierTint(t.tier);
+          const done = t.missing.length === 0;
+          return (
+            <span
+              key={t.tier}
+              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot — ${t.missing.length} still to map. Clients are left out; the accounts counted are the ones on your Table View.`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '1px 8px', borderRadius: 999,
+                background: done ? '#F0FDF4' : tint.bg,
+                border: `1px solid ${done ? '#BBF7D0' : tint.border}`,
+                color: done ? '#166534' : tint.ink,
+                fontSize: '0.68rem',
+                // The tier being worked is the one the table below belongs
+                // to, so it is the one the eye should land on first.
+                boxShadow: focus && t.tier === focus.tier ? `0 0 0 2px ${tint.border}` : 'none',
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>{t.tier}</span>
+              <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{t.pct}%</span>
+              <span style={{ opacity: 0.75, fontVariantNumeric: 'tabular-nums' }}>
+                {t.mapped}/{t.total}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+
+      {!focus ? (
+        <div style={{ fontSize: '0.72rem', color: '#166534' }}>
+          Every tiered account has a decision maker tagged — nothing left to map.
+        </div>
+      ) : (
+        <>
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
+            {/* Above the scroll area rather than in the table, so the tier
+                the rows belong to is still named once the list is long
+                enough to be scrolled. */}
+            <div style={{
+              padding: '4px 8px',
+              background: tierTint(focus.tier).bg,
+              borderBottom: `1px solid ${tierTint(focus.tier).border}`,
+              fontSize: '0.68rem', fontWeight: 700, color: tierTint(focus.tier).ink,
+            }}>
+              {focus.tier} — {focus.missing.length} account{focus.missing.length === 1 ? '' : 's'} with no decision maker identified
+            </div>
+            <div style={{ maxHeight: expanded ? 280 : 'none', overflowY: expanded ? 'auto' : 'visible' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                <caption style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}>
+                  {focus.tier} accounts with no decision maker identified
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col" style={DM_HEAD}>Account</th>
+                    <th scope="col" style={{ ...DM_HEAD, width: 130 }}>Status</th>
+                    {/* Nought here means the name still has to be found;
+                        anything else means somebody at the company is
+                        already in HubSpot and only needs the tag. */}
+                    <th scope="col" style={{ ...DM_HEAD, width: 80, textAlign: 'right' }}>Contacts</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((p) => (
+                    <tr key={p.id || p.company}>
+                      <td style={{ ...DM_CELL, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {onSelectProspect ? (
+                          <button
+                            type="button"
+                            onClick={() => onSelectProspect(p)}
+                            title={`Open ${p.company || 'this account'}`}
+                            style={{
+                              padding: 0, border: 0, background: 'none', font: 'inherit',
+                              fontWeight: 700, color: '#1E293B', cursor: 'pointer', textAlign: 'left',
+                              maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              textDecoration: 'underline', textDecorationColor: '#CBD5E1', textUnderlineOffset: 2,
+                            }}
+                          >{p.company || '(unnamed account)'}</button>
+                        ) : (
+                          <span style={{ fontWeight: 700, color: '#1E293B' }}>{p.company || '(unnamed account)'}</span>
+                        )}
+                      </td>
+                      <td style={{ ...DM_CELL, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {p.status || '—'}
+                      </td>
+                      <td
+                        style={{
+                          ...DM_CELL, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                          color: p.contactCount ? '#B45309' : '#94A3B8',
+                        }}
+                        title={p.contactCount
+                          ? `${p.contactCount} contact${p.contactCount === 1 ? '' : 's'} at this company in HubSpot, none tagged Decision Maker — tag one and this row clears`
+                          : 'No contacts at this company in HubSpot yet — the decision maker still has to be found'}
+                      >{p.contactCount || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {(hidden > 0 || expanded) && (
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              style={{
+                alignSelf: 'flex-start', padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
+                border: '1px solid #E2E8F0', background: '#fff', color: '#0A66C2',
+                fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+              }}
+            >
+              {expanded ? 'Show fewer' : `Show all ${rows.length}`}
+            </button>
+          )}
+          {waiting.length > 0 && (
+            <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+              {waiting.join(' and ')} {waiting.length === 1 ? 'is' : 'are'} listed once {focus.tier} is fully mapped.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- Edit mode ------------------------------------------------------------
 //
 // Reordering, retitling and adding steps all live behind one "Edit steps"
@@ -851,7 +1038,7 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null }) {
+export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null, dmCoverage = null }) {
   // The ladder's status — the steps, what each one counts, and which of
   // them is caught up, outstanding or still loading. Computed once in App
   // (useProspectingLadder) and handed down, so this page's Status column
@@ -1126,14 +1313,16 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
               : state === 'due'
                 ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today — the mark clears tomorrow.'
                 : 'Nothing counts this step automatically — click once you\'ve worked it today';
-          // Two steps print their work under the detail line rather than
-          // only counting it — those rows are tall, so their right-hand
-          // cells sit at the top rather than floating in the middle.
+          // Several steps print their work under the detail line rather
+          // than only counting it — those rows are tall, so their
+          // right-hand cells sit at the top rather than floating in the
+          // middle.
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && peFirmsToWork?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
             || (step.key === 'market-updates' && campaignsToFinish?.length)
-            || (step.key === 'visits' && visitContacts?.groups?.length);
+            || (step.key === 'visits' && visitContacts?.groups?.length)
+            || (step.key === 'cold' && dmCoverage?.tiers?.some(t => t.total > 0));
           return (
             <div
               key={step.key}
@@ -1239,6 +1428,12 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     onNavigate={onNavigate ? openKeyContacts : null}
                     onOpenContact={openContact}
                   />
+                )}
+                {/* And who there is to ring at the accounts nobody has
+                    started on: the decision makers still to be mapped,
+                    Tier 1 before Tier 2 before Tier 3. */}
+                {!editing && step.key === 'cold' && (
+                  <DecisionMakerTable coverage={dmCoverage} onSelectProspect={onSelectProspect} />
                 )}
                 {!editing && step.key === 'pe-intros' && (
                   <PeFirmList
