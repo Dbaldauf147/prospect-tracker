@@ -102,6 +102,14 @@ export const PRICING_BASES = [
   // basis carrying it always bills annually and always runs for the term.
   { key: 'recurring_annual', label: 'Recurring annual', kind: 'flat', unit: null, unitLabel: null, recurs: true },
   { key: 'per_site',    label: 'Per site',       kind: 'unit',    unit: 'sites',    unitLabel: 'Sites' },
+  // The subset of the portfolio a regulation actually bites on. Its own
+  // count rather than a share of the site count: a service sold because a
+  // mandate exists is charged on the sites that carry one, and on a book
+  // where 300 of 6,176 sites are mandated those two numbers price two
+  // completely different deals. The company card already collects it
+  // ("Sites w/ Mandate" — typed there, or stamped from the site list's
+  // compliance screening), so Deal Sizing fills this count on its own.
+  { key: 'per_site_mandate', label: 'Per site w/ mandate', kind: 'unit', unit: 'sites_mandate', unitLabel: 'Sites w/ Mandate' },
   { key: 'per_account', label: 'Per account',    kind: 'unit',    unit: 'accounts', unitLabel: 'Accounts' },
   { key: 'per_meter',   label: 'Per meter',      kind: 'unit',    unit: 'meters',   unitLabel: 'Meters' },
   { key: 'per_invoice', label: 'Per invoice',    kind: 'unit',    unit: 'invoices', unitLabel: 'Invoices' },
@@ -124,8 +132,10 @@ export const PRICING_BASES = [
 // they never chose to leave out, and without this the only way to see a new
 // default would be Reset to defaults, which throws their own bases away.
 // See pricingBasesTopUp.
-export const PRICING_BASES_VERSION = 3;
-const BASIS_ADDED_IN = { per_project: 2, per_equipment: 2, recurring_annual: 3 };
+export const PRICING_BASES_VERSION = 4;
+const BASIS_ADDED_IN = {
+  per_project: 2, per_equipment: 2, recurring_annual: 3, per_site_mandate: 4,
+};
 
 // A key out of a label: lowercase, words joined by underscores, and a
 // numeric suffix when that key is already taken. Keys are what the saved
@@ -400,8 +410,16 @@ export function setupTotal(setup, { counts = null, ownUnit = null, ownUnits = nu
 export function unitNoun(unitLabel) {
   const label = String(unitLabel || '').trim();
   if (!label) return 'unit';
-  const singular = label.replace(/s$/, '');
-  return /^[A-Z][a-z]+$/.test(singular) ? singular.toLowerCase() : singular;
+  // A plain capitalized English word is a name for a thing and reads better
+  // mid-sentence in lower case; anything else — MWh, "w/", an acronym
+  // somebody named a unit after — is left exactly as it was typed.
+  const soften = (w) => (/^[A-Z][a-z]+$/.test(w) ? w.toLowerCase() : w);
+  // Only the first word loses its plural: a multi-word label is a noun with
+  // qualifiers after it, so "Sites w/ Mandate" is charged per SITE with a
+  // mandate — "per Sites w/ Mandate" was the whole label read as one lump.
+  const words = label.split(/\s+/);
+  words[0] = words[0].replace(/s$/, '');
+  return words.map(soften).join(' ');
 }
 
 // How a service is charged, in words: "$625 to $825 per site", "3% of the

@@ -28,6 +28,7 @@
 //      those apart so an untouched book doesn't read as a worthless one.
 import {
   clientCounts,
+  countsUsed,
   exploredStatus,
   planBulkAdd,
   planBulkRemove,
@@ -124,6 +125,63 @@ check('counts: a zero on the record is not a count',
 check('counts: a unit off the record can still be typed',
   clientCounts(PROLOGIS, { counts: { meters: 900 } }).counts,
   { sites: 6176, accounts: 10000, meters: 900 });
+
+// Sites w/ Mandate is the third field the card answers on its own. It is a
+// SEPARATE count from Sites — the mandated subset of a portfolio, not the
+// portfolio — so a client carrying both brings both, and the same
+// typed-beats-the-record rule applies to it.
+check('counts: the card answers sites w/ mandate too',
+  clientCounts({ ...PROLOGIS, sitesWithMandate: 300 }, emptyClientScope()),
+  {
+    counts: { sites: 6176, sites_mandate: 300, accounts: 10000 },
+    sources: { sites: 'client', sites_mandate: 'client', accounts: 'client' },
+  });
+check('counts: a mandated-site figure typed for the deal beats the record',
+  clientCounts({ ...PROLOGIS, sitesWithMandate: 300 }, { counts: { sites_mandate: 40 } }),
+  {
+    counts: { sites: 6176, sites_mandate: 40, accounts: 10000 },
+    sources: { sites: 'client', sites_mandate: 'typed', accounts: 'client' },
+  });
+
+// ---- what the Counts used column prints ---------------------------------
+//
+// The column answers "what was this client priced ON", so every count is
+// named by its BASIS. And because a company record answers Sites, Accounts
+// and Sites w/ Mandate whether or not anything in scope is charged on them,
+// a count that fed nothing has to say so — otherwise it reads, beside the
+// money, as though it produced some of it.
+{
+  const estimate = {
+    counts: { sites: 6176, accounts: 10000, sites_mandate: 300 },
+    countSources: { sites: 'client', accounts: 'client', sites_mandate: 'typed' },
+    unitsUsed: new Set(['sites_mandate']),
+  };
+  const rows = countsUsed(estimate);
+  check('counts used: the basis names the count, not the unit noun',
+    rows.map(r => [r.label, r.count]),
+    [['Per site w/ mandate', 300], ['Per site', 6176], ['Per account', 10000]]);
+  check('counts used: only the count a line consulted reads as used',
+    rows.map(r => r.used), [true, false, false]);
+  check('counts used: where each came from rides along',
+    rows.map(r => r.source), ['typed', 'client', 'client']);
+  check('counts used: nothing counted, nothing printed', countsUsed({ counts: {} }), []);
+
+  // Two bases on one unit share the one count, so the chip names both
+  // rather than picking whichever was declared first.
+  const shared = countsUsed(
+    { counts: { sites: 12 }, countSources: {}, unitsUsed: new Set(['sites']) },
+    [
+      { key: 'per_site', label: 'Per site', kind: 'unit', unit: 'sites', unitLabel: 'Sites' },
+      { key: 'per_visit', label: 'Per site visit', kind: 'unit', unit: 'sites', unitLabel: 'Sites' },
+    ],
+  );
+  check('counts used: two bases on one unit are both named',
+    shared.map(r => r.label), ['Per site / Per site visit']);
+
+  // A count whose basis has since been deleted still has to render.
+  check('counts used: a unit no basis claims falls back to its key',
+    countsUsed({ counts: { widgets: 3 }, unitsUsed: new Set(['widgets']) })[0].label, 'widgets');
+}
 
 // ---- estimating one client ----------------------------------------------
 
