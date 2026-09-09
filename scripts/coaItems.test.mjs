@@ -17,6 +17,10 @@
 //      it is counted from the requested date and never goes negative.
 //   4. The header summary. It counts recorded rows only — a seeded row nobody
 //      filled in is not an outstanding approval.
+//   5. The N/A mark. "Doesn't apply to this deal" is a decision, so it is
+//      stored even on the seeded row that is otherwise dropped, it settles a
+//      row whatever dates it carries, and it is counted apart from the
+//      approvals so a cleared deal doesn't read as "1 of 2 approved" forever.
 
 import {
   DEFAULT_COA_ITEMS, emptyCoaItem, normalizeCoaItems, coaItemsForOpp,
@@ -36,6 +40,7 @@ function eq(label, actual, expected) {
 
 const NOW = Date.parse('2026-09-09T12:00:00');
 const row = (item, requested = '', approved = '') => ({ item, requested, approved });
+const naRow = (item, requested = '', approved = '') => ({ ...row(item, requested, approved), na: true });
 
 // --- what the table shows -------------------------------------------------
 
@@ -54,6 +59,11 @@ eq('junk rows are dropped and the rest survive',
   [row('3% esc', '2026-09-01')]);
 eq('nothing stored is no rows', normalizeCoaItems(undefined), []);
 eq('a missing field reads as blank', normalizeCoaItems([{ item: 'x' }]), [row('x')]);
+// The mark is only written when it is set, so an ordinary row round-trips
+// exactly as it did before there was one.
+eq('an unmarked row carries no na key', normalizeCoaItems([row('x')]), [row('x')]);
+eq('the na mark survives normalizing', normalizeCoaItems([naRow('3% esc')]), [naRow('3% esc')]);
+eq('na:false is not a mark', normalizeCoaItems([{ ...row('x'), na: false }]), [row('x')]);
 
 // --- what gets written to the record --------------------------------------
 
@@ -70,6 +80,13 @@ eq('the seed name is matched however it is cased',
 eq('a real row survives beside a blank one',
   coaItemsToStore([row('3% esc', '2026-09-01'), emptyCoaItem()]),
   [row('3% esc', '2026-09-01')]);
+// "The 3% escalator doesn't apply to this deal" is an answer about the deal.
+// Dropping it as an untouched seed row would put the question back every time
+// the opp is opened.
+eq('N/A on the seeded row is worth storing',
+  coaItemsToStore([naRow('3% esc')]), [naRow('3% esc')]);
+eq('but N/A on a row with no item still is not',
+  coaItemsToStore([{ ...emptyCoaItem(), na: true }]), []);
 
 // --- where a row stands ---------------------------------------------------
 
@@ -79,6 +96,11 @@ eq('come back approved', coaItemStatus(row('3% esc', '2026-09-01', '2026-09-05')
 // The approval is the answer, whether or not the request was ever logged.
 eq('approved with no logged request is still approved',
   coaItemStatus(row('3% esc', '', '2026-09-05')), 'approved');
+eq('marked N/A', coaItemStatus(naRow('3% esc')), 'na');
+// A request that went out before anyone realised the exception didn't apply
+// is not still out.
+eq('N/A settles a row that was already requested',
+  coaItemStatus(naRow('3% esc', '2026-09-01')), 'na');
 
 // --- how long a request has been out --------------------------------------
 
@@ -90,20 +112,33 @@ eq('a future request does not count backwards',
 eq('an approved row is not waiting',
   coaDaysWaiting(row('3% esc', '2026-09-01', '2026-09-05'), NOW), null);
 eq('an unrequested row is not waiting', coaDaysWaiting(row('3% esc'), NOW), null);
+eq('an N/A row is not waiting either',
+  coaDaysWaiting(naRow('3% esc', '2026-09-01'), NOW), null);
 eq('an unparseable date is not a wait', coaDaysWaiting(row('3% esc', 'soon'), NOW), null);
 
 // --- the header line ------------------------------------------------------
 
 eq('an untouched opp has nothing to summarize',
   coaItemsSummary([row('3% esc')], NOW),
-  { total: 0, approved: 0, waiting: 0, oldestWaitingDays: null });
+  { total: 0, approved: 0, waiting: 0, oldestWaitingDays: null, na: 0 });
 eq('one approved, two waiting, oldest leads',
   coaItemsSummary([
     row('3% esc', '2026-09-01', '2026-09-05'),
     row('Non-standard terms', '2026-09-02'),
     row('Payment terms', '2026-08-30'),
   ], NOW),
-  { total: 3, approved: 1, waiting: 2, oldestWaitingDays: 10 });
+  { total: 3, approved: 1, waiting: 2, oldestWaitingDays: 10, na: 0 });
+// N/A rows are counted on their own: an opp whose one live exception came
+// back reads "1 of 1 approved", not "1 of 2".
+eq('N/A rows sit outside the approval count',
+  coaItemsSummary([
+    row('3% esc', '2026-09-01', '2026-09-05'),
+    naRow('Non-standard terms'),
+  ], NOW),
+  { total: 1, approved: 1, waiting: 0, oldestWaitingDays: null, na: 1 });
+eq('an opp with nothing but N/A has no approvals to report',
+  coaItemsSummary([naRow('3% esc')], NOW),
+  { total: 0, approved: 0, waiting: 0, oldestWaitingDays: null, na: 1 });
 
 console.log(failures === 0 ? '\nAll COA item tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
