@@ -23,6 +23,7 @@ import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
 import { LoginPage } from './components/LoginPage';
+import { ProspectsLoadError } from './components/ProspectsLoadError';
 import { FilterBar } from './components/FilterBar/FilterBar';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { UpdateBanner } from './components/UpdateBanner';
@@ -85,7 +86,7 @@ function App() {
     }
   }, [updateSettings]);
 
-  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, reconcileAll, findDuplicates, dedupe } =
+  const { prospects, loading: dataLoading, error: dataError, addProspect, updateProspect, deleteProspect, reconcileAll, findDuplicates, dedupe } =
     useProspects(user, { settingsLoaded, onDuplicatesCollapsed: handleDuplicatesCollapsed });
 
   // The CDM name to filter and default new-prospect ownership against.
@@ -487,6 +488,12 @@ function App() {
           <Suspense fallback={<div className="loading">Loading view…</div>}>
           {dataLoading ? (
             <div className="loading">Loading prospects...</div>
+          ) : dataError ? (
+            // The roster never arrived. Every view below is driven by it,
+            // so drawing them anyway would show an app-wide empty state --
+            // no companies, no opps, no contacts -- which reads as "your
+            // data is gone" rather than "it didn't load". Say which it is.
+            <ProspectsLoadError message={dataError} />
           ) : view === 'drafts' || view === 'campaigns' || view === 'tracking' ? (
             // Campaigns and Tracking are sub-tabs of Draft Emails; the view
             // keys stay routable so existing links land on the right tab.

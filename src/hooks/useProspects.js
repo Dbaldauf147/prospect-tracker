@@ -13,11 +13,18 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// A promise plus its resolver, for "has the first snapshot arrived yet".
+// A promise plus its settlers, for "has the first snapshot arrived yet".
+// Rejectable as well as resolvable: the add guard's contract is that the
+// wait rejects when the subscription is never going to deliver, which is
+// what sends it to an authoritative read instead of waiting for a
+// snapshot that isn't coming. The no-op catch is only there so the
+// rejection is always handled — the guard attaches its own handler later,
+// if at all, and an unhandled one would surface as a page-level error.
 function deferred() {
-  let resolve;
-  const promise = new Promise((r) => { resolve = r; });
-  return { promise, resolve };
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  promise.catch(() => {});
+  return { promise, resolve, reject };
 }
 
 export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapsed } = {}) {
@@ -54,12 +61,34 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
   }
 
   useEffect(() => {
-    if (!user) { setProspects([]); setLoading(false); setProspectsUser(null, null); return; }
+    if (!user) { setProspects([]); setLoading(false); setError(null); setProspectsUser(null, null); return; }
     setProspectsUser(user.uid, user.email);
+    setError(null); // a previous account's failure is not this one's
+    setLoading(true);
     dedupeRanRef.current = false; // re-arm the one-time cleanup for this user
     // A different account has a different roster, so the previous one's
     // "it has arrived" signal must not carry over.
     rosterReadyRef.current = deferred();
+    const ready = rosterReadyRef.current;
+    // The effect can be torn down (a sign-out, a user switch, StrictMode's
+    // double-mount) while the subscription is still live. Settling state
+    // for a listener that is no longer the current one would show a stale
+    // failure over the new account's roster.
+    let cancelled = false;
+
+    // The one place loading is given up on. Firestore hands a failed
+    // listener its error once and then stops -- nothing arrives later --
+    // so the load has to end here or the app sits on "Loading
+    // prospects..." with nothing on screen to say why.
+    function failed(err) {
+      if (cancelled) return;
+      console.error('Prospects failed to load:', err);
+      setError(err?.message ? String(err.message) : String(err || 'Unknown error'));
+      setLoading(false);
+      // Tells the add guard to stop waiting on a snapshot that isn't
+      // coming and read the roster directly instead.
+      ready.reject(err instanceof Error ? err : new Error(String(err)));
+    }
 
     async function init() {
       try {
@@ -76,22 +105,37 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
         setError('Failed to seed data: ' + err.message);
       }
 
-      // Subscribe to real-time updates
-      unsubRef.current = subscribeToProspects((data) => {
-        if (pausedRef.current) return; // Skip updates during bulk operations
-        console.log('Firestore returned', data.length, 'prospects');
-        prospectsRef.current = data;
-        setProspects(data);
-        setLoading(false);
-        // Anything the roster now carries no longer needs remembering,
-        // and adds waiting on the first delivery can go ahead.
-        addGuardRef.current?.noteRoster(data);
-        rosterReadyRef.current.resolve();
-      });
+      // Subscribe to real-time updates. Attaching the listener can throw
+      // outright (a malformed collection path, a torn-down SDK); that
+      // rejection has no handler of its own, so it is caught here rather
+      // than left to strand the load.
+      try {
+        const unsub = subscribeToProspects((data) => {
+          if (cancelled || pausedRef.current) return; // Skip updates during bulk operations
+          console.log('Firestore returned', data.length, 'prospects');
+          prospectsRef.current = data;
+          setProspects(data);
+          setLoading(false);
+          setError(null); // a snapshot after a failure clears it
+          // Anything the roster now carries no longer needs remembering,
+          // and adds waiting on the first delivery can go ahead.
+          addGuardRef.current?.noteRoster(data);
+          ready.resolve();
+        }, failed);
+        // Unsubscribed already: the effect tore down while we were
+        // seeding, so nothing is left to hold on to.
+        if (cancelled) unsub();
+        else unsubRef.current = unsub;
+      } catch (err) {
+        failed(err);
+      }
     }
 
     init();
-    return () => { if (unsubRef.current) unsubRef.current(); };
+    return () => {
+      cancelled = true;
+      if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+    };
   }, [user]);
 
   // any duplicate prospect documents (same company stored twice).
