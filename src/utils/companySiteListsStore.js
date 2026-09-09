@@ -22,9 +22,41 @@ import {
   collection, doc, deleteDoc, deleteField, getDoc, getDocs, onSnapshot, runTransaction, setDoc, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import {
+  dottedFieldEntries, restDeleteDoc, restGetDoc, restListDocs, restSetDoc, restUpdateFields,
+} from './firestoreRest.js';
+import { isClientWedged, isClientWedgedError, noteClientWedged } from './firestoreClientHealth.js';
 import { SITE_LISTS_KEY, isStorableSlug } from './companySiteListRouting';
 
 const COL = 'userSettings';
+
+// ── Going around a crashed SDK ─────────────────────────────────────────
+//
+// The Firestore client can kill its own async queue mid-session (see
+// utils/firestoreClientHealth), and from then on every call in the tab
+// rejects with an internal assertion. Saving a company from the Utility
+// Look Up page writes one of these documents, so that save used to die
+// with the message that there was no fallback either — the settings
+// document had an HTTPS fallback and the site lists did not.
+//
+// Every operation below is one document read, write or delete, and each
+// has an exact one-request REST equivalent, so there is nothing here that
+// has to go through the SDK. `sdkOrRest` runs the SDK version unless the
+// client is already known to be dead, and takes the assertion as the cue
+// to switch for the rest of the tab.
+async function sdkOrRest(sdk, rest) {
+  if (isClientWedged()) return { value: await rest(), viaRest: true };
+  try {
+    return { value: await sdk(), viaRest: false };
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    return { value: await rest(), viaRest: true };
+  }
+}
+
+const listsPath = (userId) => `${COL}/${userId}/${SITE_LISTS_KEY}`;
+const listPath = (userId, slug) => `${listsPath(userId)}/${slug}`;
 
 // Re-exported so the sync layer has one import for all of this.
 export {
@@ -58,14 +90,26 @@ export function subscribeToCompanySiteLists(userId, onChange, onError) {
 export async function readCompanySiteLists(userId, slugs = null) {
   const out = {};
   if (slugs == null) {
-    const snap = await getDocs(listsCol(userId));
-    snap.forEach((d) => { out[d.id] = d.data(); });
+    const { value } = await sdkOrRest(
+      async () => {
+        const snap = await getDocs(listsCol(userId));
+        return snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+      },
+      () => restListDocs(listsPath(userId)),
+    );
+    for (const d of value) out[d.id] = d.data;
     return out;
   }
   const wanted = [...new Set(slugs)].filter(isStorableSlug);
   await Promise.all(wanted.map(async (slug) => {
-    const snap = await getDoc(listDoc(userId, slug));
-    if (snap.exists()) out[slug] = snap.data();
+    const { value } = await sdkOrRest(
+      async () => {
+        const snap = await getDoc(listDoc(userId, slug));
+        return snap.exists() ? snap.data() : null;
+      },
+      () => restGetDoc(listPath(userId, slug)),
+    );
+    if (value) out[slug] = value;
   }));
   return out;
 }
@@ -82,18 +126,47 @@ export async function readCompanySiteLists(userId, slugs = null) {
 // Sequential rather than batched on purpose: a single list can run to
 // several hundred KB and a batch commit caps at 10 MiB, so a restore of a
 // large portfolio would fail as one write where it succeeds as many.
+//
+// Returns { viaRest }: true when the SDK had crashed and any part of this
+// went over plain HTTPS instead, so the save that called it can tell the
+// user the tab needs reloading even though their work landed.
 export async function applySiteListOps(userId, ops) {
+  let viaRest = false;
+  // Each operation reports whether it had to go around the SDK; one that
+  // did is enough to make the whole save a fallback save.
+  const run = async (sdk, rest) => {
+    const result = await sdkOrRest(sdk, rest);
+    if (result.viaRest) viaRest = true;
+    return result.value;
+  };
+
   for (const op of ops) {
     if (op.replaceAll) {
       const map = op.replaceAll;
-      const existing = await getDocs(listsCol(userId));
+      const existing = await run(
+        async () => {
+          const snap = await getDocs(listsCol(userId));
+          return snap.docs.map((d) => d.id);
+        },
+        // Ids only: this listing decides which companies to DELETE, and
+        // downloading every stored portfolio to answer that would be a
+        // few megabytes to learn a handful of slugs.
+        async () => (await restListDocs(listsPath(userId), { idsOnly: true })).map((d) => d.id),
+      );
       const keep = new Set(Object.keys(map).filter(isStorableSlug));
       for (const [slug, entry] of Object.entries(map)) {
         if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
-        await setDoc(listDoc(userId, slug), entry);
+        await run(
+          () => setDoc(listDoc(userId, slug), entry),
+          () => restSetDoc(listPath(userId, slug), entry),
+        );
       }
-      for (const d of existing.docs) {
-        if (!keep.has(d.id)) await deleteDoc(d.ref);
+      for (const slug of existing) {
+        if (keep.has(slug)) continue;
+        await run(
+          () => deleteDoc(listDoc(userId, slug)),
+          () => restDeleteDoc(listPath(userId, slug)),
+        );
       }
       continue;
     }
@@ -107,31 +180,46 @@ export async function applySiteListOps(userId, ops) {
       for (const [path, value] of Object.entries(op.paths)) {
         patch[path] = value == null ? deleteField() : value;
       }
-      try {
-        await updateDoc(ref, patch);
-      } catch (err) {
-        // No document yet: build the nested shape and create it. Deletes
-        // have nothing to delete from, so they simply drop out.
-        if (err?.code !== 'not-found') throw err;
-        const nested = {};
-        for (const [path, value] of Object.entries(op.paths)) {
-          if (value == null) continue;
-          const parts = path.split('.');
-          let cur = nested;
-          for (let i = 0; i < parts.length - 1; i += 1) {
-            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
-            cur = cur[parts[i]];
+      await run(
+        async () => {
+          try {
+            await updateDoc(ref, patch);
+          } catch (err) {
+            // No document yet: build the nested shape and create it. Deletes
+            // have nothing to delete from, so they simply drop out.
+            if (err?.code !== 'not-found') throw err;
+            const nested = {};
+            for (const [path, value] of Object.entries(op.paths)) {
+              if (value == null) continue;
+              const parts = path.split('.');
+              let cur = nested;
+              for (let i = 0; i < parts.length - 1; i += 1) {
+                if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+                cur = cur[parts[i]];
+              }
+              cur[parts[parts.length - 1]] = value;
+            }
+            if (Object.keys(nested).length) await setDoc(ref, nested);
           }
-          cur[parts[parts.length - 1]] = value;
-        }
-        if (Object.keys(nested).length) await setDoc(ref, nested);
-      }
+        },
+        // A masked PATCH needs no not-found branch of its own: it creates
+        // the document when it is missing, and a null value is a field
+        // delete, which is what deleteField() spells above.
+        () => restUpdateFields(listPath(userId, op.slug), dottedFieldEntries(op.paths)),
+      );
     } else if (op.value == null) {
-      await deleteDoc(ref);
+      await run(
+        () => deleteDoc(ref),
+        () => restDeleteDoc(listPath(userId, op.slug)),
+      );
     } else {
-      await setDoc(ref, op.value);
+      await run(
+        () => setDoc(ref, op.value),
+        () => restSetDoc(listPath(userId, op.slug), op.value),
+      );
     }
   }
+  return { viaRest };
 }
 
 // Move a legacy `companySiteLists` map off the settings document.

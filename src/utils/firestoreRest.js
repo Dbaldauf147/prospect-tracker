@@ -200,3 +200,51 @@ export async function restGetDoc(docPath, timeoutMs = FIRESTORE_REST_TIMEOUT_MS)
   const body = await res.json();
   return fromRestFields(body?.fields);
 }
+
+// One document, deleted over HTTPS. A document that isn't there is already
+// in the state a delete wants, so a 404 is success rather than a failure.
+export async function restDeleteDoc(docPath, timeoutMs = FIRESTORE_REST_TIMEOUT_MS) {
+  const token = await idToken(timeoutMs);
+  const res = await restFetch(restUrl(docPath), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }, timeoutMs);
+  if (res.status === 404) return true;
+  if (!res.ok) throw await restError(res);
+  return true;
+}
+
+// Every document in one collection, over HTTPS — the REST equivalent of
+// getDocs(collection(...)), returning { id, data } in the order the server
+// gives them.
+//
+// `idsOnly` asks for a field mask that matches nothing, so a caller that
+// only needs the ids (which of a user's companies have a stored site list,
+// say) doesn't pull every one of those lists down to find out. A single
+// underscore is a legal bare field path and no document here has a field
+// by that name; the response then carries names and nothing else.
+export async function restListDocs(collectionPath, { idsOnly = false, timeoutMs = FIRESTORE_REST_TIMEOUT_MS } = {}) {
+  const token = await idToken(timeoutMs);
+  const out = [];
+  let pageToken = '';
+  // Paged, because a listing has a server-side cap however large the
+  // pageSize asked for: stopping at the first page would silently treat
+  // the companies past it as if they did not exist.
+  do {
+    const params = new URLSearchParams({ pageSize: '300' });
+    if (idsOnly) params.set('mask.fieldPaths', '_');
+    if (pageToken) params.set('pageToken', pageToken);
+    const res = await restFetch(`${restUrl(collectionPath)}?${params}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    }, timeoutMs);
+    if (!res.ok) throw await restError(res);
+    const body = await res.json();
+    for (const d of body?.documents || []) {
+      const id = String(d?.name || '').split('/').pop();
+      if (id) out.push({ id, data: fromRestFields(d?.fields) });
+    }
+    pageToken = body?.nextPageToken || '';
+  } while (pageToken);
+  return out;
+}

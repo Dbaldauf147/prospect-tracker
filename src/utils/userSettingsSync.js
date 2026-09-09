@@ -84,10 +84,11 @@ export function subscribeToUserSettings(userId, onChange) {
 // losing the change, these two go around the corpse. The caller is told the
 // tab needs reloading; the work still lands.
 //
-// The one thing that does not survive is a companySiteLists write: those go
-// to a subcollection through runTransaction, which has no honest one-request
-// equivalent (a transaction is a read and a conditional write). A save
-// carrying site-list ops still fails on a crashed client, and says so.
+// A save that carries site-list ops goes the same way: those write one
+// document per company in a subcollection, and companySiteListsStore falls
+// back on each of them (it is where the Utility Look Up save actually
+// died). `viaRest` from either half makes the whole save a fallback save,
+// so the reload notice is shown once whichever half needed it.
 const settingsPath = (userId) => `${COL}/${userId}`;
 
 // The settings document for the stale check, read over HTTPS once the SDK
@@ -160,7 +161,8 @@ export async function saveUserSettings(userId, updates, opts = {}) {
   }
 
   const writtenAt = Date.now();
-  if (ops.length) await applySiteListOps(userId, ops);
+  let opsViaRest = false;
+  if (ops.length) ({ viaRest: opsViaRest } = await applySiteListOps(userId, ops));
   const written = { ...rest, _lastWriteAt: writtenAt };
   // Whole keys, not dotted paths: a settings key is free to contain a dot
   // (orgCharts entries are keyed by name), and splitting one would write to
@@ -170,7 +172,7 @@ export async function saveUserSettings(userId, updates, opts = {}) {
     keyFieldEntries(written),
     () => setDoc(ref, written, { merge: true }),
   );
-  return { stale: false, writtenAt, viaRest };
+  return { stale: false, writtenAt, viaRest: viaRest || opsViaRest };
 }
 
 // The remote settings document with the site lists a write touches folded
@@ -255,7 +257,8 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   }
 
   const writtenAt = Date.now();
-  if (ops.length) await applySiteListOps(userId, ops);
+  let opsViaRest = false;
+  if (ops.length) ({ viaRest: opsViaRest } = await applySiteListOps(userId, ops));
 
   // Still stamp _lastWriteAt even when every path went to the
   // subcollection: it is what other devices watch to know this one wrote.
@@ -295,7 +298,7 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
     }
   });
 
-  return { stale: false, writtenAt, viaRest };
+  return { stale: false, writtenAt, viaRest: viaRest || opsViaRest };
 }
 
 export async function initUserSettings(userId) {
