@@ -708,7 +708,7 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, updateSettings = null, tagCoverage = null, tagDebt = null }) {
+export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null }) {
   // The ladder's status — the steps, what each one counts, and which of
   // them is caught up, outstanding or still loading. Computed once in App
   // (useProspectingLadder) and handed down, so this page's Status column
@@ -813,7 +813,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // there's nowhere to save to.
   const steps = useMemo(() => ladder?.steps || readSteps(settings), [ladder, settings]);
 
-  const canEdit = typeof updateSettings === 'function';
+  // Editing waits for the stored ladder to actually arrive. `settings` is
+  // {} until the Firestore snapshot lands, and an empty settings object is
+  // indistinguishable from "never customized" — so the page shows the
+  // shipped defaults for that moment. Committing any edit made in it
+  // serializes THOSE steps as the whole ladder, and every step the user
+  // added is gone: the write carries no _lastWriteAt to be stale against
+  // (see useUserSettings), so nothing downstream can catch it either.
+  // Hence the gate here rather than a guard further down.
+  const canEdit = typeof updateSettings === 'function' && settingsLoaded;
   const [editing, setEditing] = useState(false);
   // Text as it's being typed, keyed by step. Held here rather than written
   // through on every keystroke: a settings write per character round-trips
@@ -821,6 +829,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   const [drafts, setDrafts] = useState({});
 
   const commitSteps = (next) => {
+    // Belt and braces on the gate above: a write can only ever be made
+    // against a ladder the user's own settings produced.
+    if (!canEdit) return;
     setDrafts({});
     updateSettings?.({ [PROSPECTING_STEPS_SETTING]: serializeSteps(next) });
   };
@@ -858,6 +869,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
     { key: newStepKey(), title, detail, view, viewLabel: viewLabelFor(view, '') },
   ]);
   const resetSteps = () => {
+    if (!canEdit) return;
     if (!window.confirm('Restore the original steps, in their original order? Any step you added will be removed.')) return;
     setDrafts({});
     // null rather than the default array: absent means "never touched", so

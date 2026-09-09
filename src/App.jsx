@@ -563,6 +563,7 @@ function App() {
               prospects={dataLoading ? null : prospects}
               onSelectProspect={handleSelect}
               settings={settings}
+              settingsLoaded={settingsLoaded}
               updateSettings={updateSettings}
               tagCoverage={tagDebt.coverage}
               tagDebt={tagDebt.missing}
