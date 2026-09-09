@@ -23,6 +23,13 @@
 // rest of the tab's life — rejects with it, quoting the original error in
 // its context. Nothing reconnects it; only a reload builds a new client.
 //
+// The inner assertion is not always ca9. The Opps auto-save hit the same
+// wall with `(ID: b7de) CONTEXT: {"batchId":5526}` inside it — a mutation
+// batch the local store could not find while acknowledging it — and the
+// aftermath was identical: b815 on everything afterwards. Which assertion
+// tripped first says nothing useful to a caller, which is why the check
+// below matches the family rather than an id.
+//
 // So a save that hits this has not hit a database problem. The database is
 // fine, and the same document can still be written over HTTPS (see
 // firestoreRest). What the caller needs to know is (a) that retrying
@@ -32,6 +39,7 @@
 let wedged = false;
 let firstError = null;
 let announced = false;
+const listeners = new Set();
 
 // True for the assertion pair above, however it was re-thrown. Matching on
 // the text is deliberate: the SDK's minified assertion carries no code, no
@@ -49,6 +57,9 @@ export function noteClientWedged(err) {
   if (wedged) return false;
   wedged = true;
   firstError = err || null;
+  for (const fn of [...listeners]) {
+    try { fn(firstError); } catch { /* a listener must not stop the others */ }
+  }
   console.error(
     'The Firestore client in this tab has crashed (an internal SDK assertion). '
     + 'Live updates have stopped and every SDK call will fail until the page is reloaded; '
@@ -101,6 +112,39 @@ export function shouldAnnounceWedgedClient() {
   return true;
 }
 
+// Be told when the client crashes, rather than finding out at the next
+// save. A view whose live updates have just stopped needs to say so while
+// the user is still reading the screen — the crash itself is the event, not
+// the failed write that eventually follows it. Fires immediately when the
+// client is already dead, so a view mounted afterwards is not left silent.
+export function subscribeToClientWedged(fn) {
+  if (typeof fn !== 'function') return () => {};
+  if (wedged) { try { fn(firstError); } catch { /* caller's problem */ } }
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+// `sdk`, falling back to `rest` when the Firestore SDK has crashed.
+//
+// The two halves must be equivalent, because which one runs is not the
+// caller's choice: once the async queue is dead every SDK call rejects, so
+// a step with no HTTPS twin is a step that can no longer happen. Running
+// `rest` up front when the client is already known dead saves the doomed
+// round-trip; the catch is for the save that is the first to find out.
+//
+// Not for a read-modify-write that has no honest single-request form (a
+// transaction): there the right answer is to skip the fallback, not fake it.
+export async function viaSdkOrRest(sdk, rest) {
+  if (wedged) return rest();
+  try {
+    return await sdk();
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    return rest();
+  }
+}
+
 // Catch the crash where it actually happens, not just where it surfaces.
 // The assertion is thrown inside the SDK's own async queue, so it reaches
 // the page as an unhandled rejection (or a window error) with no call of
@@ -125,4 +169,5 @@ export function __resetClientHealth() {
   wedged = false;
   firstError = null;
   announced = false;
+  listeners.clear();
 }

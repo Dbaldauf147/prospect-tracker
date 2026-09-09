@@ -8,6 +8,10 @@
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dbGet, dbPut } from './db';
+import { viaSdkOrRest } from './firestoreClientHealth.js';
+import {
+  keyFieldEntries, restDeleteDoc, restGetDoc, restListDocs, restSetDoc, restUpdateFields,
+} from './firestoreRest.js';
 
 export const OPPS2_STORE = 'opps2-cache';
 export const OPPS2_CACHE_KEY = 'data';
@@ -32,6 +36,63 @@ function utf8ByteLength(str) {
   // char-length fallback only matters in a non-DOM environment.
   try { return new TextEncoder().encode(str).length; }
   catch { return str.length; }
+}
+
+// The same documents the SDK refs above point at, as paths for the HTTPS
+// fallback. Every Firestore step in this file runs through viaSdkOrRest:
+// the SDK can crash its own async queue mid-session (an internal assertion
+// — see utils/firestoreClientHealth), and from that moment every SDK read
+// and write in the tab rejects forever. This is the whole Opps dataset, so
+// "forever" meant every edit for the rest of the session lived in
+// IndexedDB only, behind a banner telling the user to check a connection
+// that was never the problem. The REST API is ordinary HTTPS under the
+// same security rules, so the same documents still save.
+const parentPath = (userId) => `${OPPS2_FIRESTORE_COLLECTION}/${userId}`;
+const chunksPath = (userId) => `${parentPath(userId)}/chunks`;
+const chunkPath = (userId, i) => `${chunksPath(userId)}/${i}`;
+
+// A field name nothing stores, so listing the chunks to clean up asks for
+// ids without downloading the megabyte of JSON they hold.
+const NO_FIELDS = ['_idsOnly'];
+
+/** The parent doc's fields, or null when it doesn't exist. */
+function readParentDoc(userId) {
+  return viaSdkOrRest(async () => {
+    const snap = await getDoc(doc(db, OPPS2_FIRESTORE_COLLECTION, userId));
+    return snap.exists() ? (snap.data() || {}) : null;
+  }, () => restGetDoc(parentPath(userId)));
+}
+
+/** Every stored chunk, as { id, json }. */
+function readChunks(userId) {
+  return viaSdkOrRest(async () => {
+    const snap = await getDocs(collection(doc(db, OPPS2_FIRESTORE_COLLECTION, userId), 'chunks'));
+    const out = [];
+    snap.forEach((d) => out.push({ id: d.id, json: String(d.data()?.json || '') }));
+    return out;
+  }, async () => (await restListDocs(chunksPath(userId)))
+    .map(({ id, data }) => ({ id, json: String(data?.json || '') })));
+}
+
+/** Which chunk documents exist, by id — no payload. */
+function readChunkIds(userId) {
+  return viaSdkOrRest(async () => {
+    const snap = await getDocs(collection(doc(db, OPPS2_FIRESTORE_COLLECTION, userId), 'chunks'));
+    const out = [];
+    snap.forEach((d) => out.push(d.id));
+    return out;
+  }, async () => (await restListDocs(chunksPath(userId), { fieldPaths: NO_FIELDS })).map(({ id }) => id));
+}
+
+// Merge the given fields into the parent doc, leaving the rest alone.
+// merge: true on the SDK side, an update mask on the REST side — a PATCH
+// without one REPLACES the document, which would drop the chunk
+// bookkeeping this doc also carries.
+function writeParentFields(userId, fields) {
+  return viaSdkOrRest(
+    () => setDoc(doc(db, OPPS2_FIRESTORE_COLLECTION, userId), fields, { merge: true }),
+    () => restUpdateFields(parentPath(userId), keyFieldEntries(fields)),
+  );
 }
 
 // Stamp every save with a wall-clock timestamp so hydration can pick
@@ -177,20 +238,15 @@ export async function saveOpps2Cache(data) {
 
 export async function loadOpps2FromFirestore(userId) {
   try {
-    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    const raw = snap.data() || {};
+    const raw = await readParentDoc(userId);
+    if (!raw) return null;
     let json = null;
     if (Number.isFinite(raw.chunkCount) && raw.chunkCount > 0) {
       const parts = new Array(raw.chunkCount).fill('');
-      const chunksSnap = await getDocs(collection(ref, 'chunks'));
-      chunksSnap.forEach((d) => {
-        const idx = Number(d.id);
-        if (Number.isFinite(idx) && idx >= 0 && idx < parts.length) {
-          parts[idx] = String(d.data()?.json || '');
-        }
-      });
+      for (const { id, json: part } of await readChunks(userId)) {
+        const idx = Number(id);
+        if (Number.isFinite(idx) && idx >= 0 && idx < parts.length) parts[idx] = part;
+      }
       json = parts.join('');
     } else if (raw.json) {
       json = raw.json;
@@ -213,7 +269,6 @@ export async function loadOpps2FromFirestore(userId) {
 // surface the failure instead of silently leaving stale data behind.
 export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } = {}) {
   const stamped = stampUpdatedAt(data);
-  const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
 
   // Structural guard: a payload with no `records` array is corruption,
   // not a save — never let it reach the cloud.
@@ -232,8 +287,7 @@ export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } 
     let priorPopulated = false;
     let priorCount = 0;
     try {
-      const priorSnap = await getDoc(ref);
-      const prior = priorSnap.exists() ? priorSnap.data() : null;
+      const prior = await readParentDoc(userId);
       if (prior) {
         if (Number(prior.chunkCount) > 0) {
           priorPopulated = true; // was chunked => definitely had data
@@ -270,20 +324,25 @@ export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } 
     // previous larger save left chunks behind. Avoiding getDocs on the
     // subcollection keeps this path independent of the chunks rule.
     let priorChunkCount = 0;
-    try { priorChunkCount = Number((await getDoc(ref)).data()?.chunkCount) || 0; }
+    try { priorChunkCount = Number((await readParentDoc(userId))?.chunkCount) || 0; }
     catch { priorChunkCount = 0; }
-    await setDoc(ref, { chunkCount: 0, updatedAt, json }, { merge: true });
+    await writeParentFields(userId, { chunkCount: 0, updatedAt, json });
     // Best-effort: delete chunks from a previous chunked save. The
     // loader now ignores them (chunkCount is 0), so a failure here —
     // e.g. a missing chunks rule — is harmless dead data, not a lost
     // save. Done in a separate commit so it can't abort the json write.
     if (priorChunkCount > 0) {
       try {
-        const cleanup = writeBatch(db);
-        for (let i = 0; i < priorChunkCount; i++) {
-          cleanup.delete(doc(ref, 'chunks', String(i)));
-        }
-        await cleanup.commit();
+        await viaSdkOrRest(async () => {
+          const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+          const cleanup = writeBatch(db);
+          for (let i = 0; i < priorChunkCount; i++) {
+            cleanup.delete(doc(ref, 'chunks', String(i)));
+          }
+          await cleanup.commit();
+        }, async () => {
+          for (let i = 0; i < priorChunkCount; i++) await restDeleteDoc(chunkPath(userId, i));
+        });
       } catch (err) { console.warn('opps2: stale chunk cleanup failed (harmless)', err); }
     }
     return stamped._updatedAt;
@@ -297,21 +356,40 @@ export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } 
   }
   // Drop any leftover chunks from a previous (larger) save so a
   // shrinking dataset doesn't reassemble with stale tail data.
-  const existing = await getDocs(collection(ref, 'chunks'));
-  const batch = writeBatch(db);
-  // merge: true is required so deleteField() takes effect -- in a
-  // plain set() the Firestore SDK throws and the whole batch aborts,
-  // and trySaveOpps2ToFirestore's catch silently swallows the failure
-  // (which is how every chunked save was a no-op).
-  batch.set(ref, { chunkCount: chunks.length, updatedAt, json: deleteField() }, { merge: true });
-  for (let i = 0; i < chunks.length; i++) {
-    batch.set(doc(ref, 'chunks', String(i)), { json: chunks[i] });
-  }
-  existing.forEach((d) => {
-    const idx = Number(d.id);
-    if (!Number.isFinite(idx) || idx >= chunks.length) batch.delete(d.ref);
+  const stale = (await readChunkIds(userId)).filter((id) => {
+    const idx = Number(id);
+    return !Number.isFinite(idx) || idx >= chunks.length;
   });
-  await batch.commit();
+  await viaSdkOrRest(async () => {
+    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+    const batch = writeBatch(db);
+    // merge: true is required so deleteField() takes effect -- in a
+    // plain set() the Firestore SDK throws and the whole batch aborts,
+    // and trySaveOpps2ToFirestore's catch silently swallows the failure
+    // (which is how every chunked save was a no-op).
+    batch.set(ref, { chunkCount: chunks.length, updatedAt, json: deleteField() }, { merge: true });
+    for (let i = 0; i < chunks.length; i++) {
+      batch.set(doc(ref, 'chunks', String(i)), { json: chunks[i] });
+    }
+    for (const id of stale) batch.delete(doc(ref, 'chunks', id));
+    await batch.commit();
+  }, async () => {
+    // No batch over REST, so the order carries the atomicity the commit
+    // used to: chunks first, parent last. A run that dies halfway leaves
+    // the parent still pointing at the previous save's chunkCount, which
+    // reassembles the PREVIOUS dataset — stale, but readable. Bumping the
+    // count first would leave the loader stitching a half-written one.
+    for (let i = 0; i < chunks.length; i++) {
+      await restSetDoc(chunkPath(userId, i), { json: chunks[i] });
+    }
+    await restUpdateFields(parentPath(userId), keyFieldEntries({
+      chunkCount: chunks.length, updatedAt, json: null,
+    }));
+    for (const id of stale) {
+      try { await restDeleteDoc(`${chunksPath(userId)}/${id}`); }
+      catch (err) { console.warn('opps2: stale chunk cleanup failed (harmless)', err); }
+    }
+  });
   return stamped._updatedAt;
 }
 
