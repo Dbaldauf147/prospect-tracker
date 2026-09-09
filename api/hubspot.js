@@ -2,6 +2,10 @@ import { withAuth } from './_lib/http.js';
 import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
 
 const BASE = 'https://api.hubapi.com';
+// HubSpot's cap on a batch read that asks for property history. A plain
+// batch read takes 100 inputs; asking for versions halves it, and going over
+// is a 400 rather than a truncated answer.
+export const TAG_HISTORY_BATCH = 50;
 
 async function hubspotFetch(path, token) {
   const res = await fetch(`${BASE}${path}`, {
@@ -622,13 +626,17 @@ async function handler(req, res) {
     // used to carry, and the only way to tell a deliberate edit from a bulk
     // write that took everything.
     //
-    // Batched 100 ids at a time (HubSpot's cap) by the caller, so a long
-    // audit reports progress instead of sitting on one request until the
-    // function times out. Writes nothing.
+    // Batched by the caller — 50 ids at a time, HubSpot's cap for a batch
+    // read that asks for property HISTORY (a plain batch read takes 100, but
+    // asking for versions halves it) — so a long audit reports progress
+    // instead of sitting on one request until the function times out.
+    // Writes nothing.
     if (action === 'tag-history') {
       const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : [];
       if (ids.length === 0) return res.status(400).json({ error: 'No contact ids to read.' });
-      if (ids.length > 100) return res.status(400).json({ error: 'Send at most 100 ids per call.' });
+      if (ids.length > TAG_HISTORY_BATCH) {
+        return res.status(400).json({ error: `Send at most ${TAG_HISTORY_BATCH} ids per call: that is HubSpot's limit for a property-history read.` });
+      }
       const readRes = await fetch(`${BASE}/crm/v3/objects/contacts/batch/read`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
