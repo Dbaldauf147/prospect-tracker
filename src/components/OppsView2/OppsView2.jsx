@@ -6079,11 +6079,20 @@ const OPP_DETAIL_STAGE_SUBSECTIONS = new Map(
 // the step the stage opens on.
 const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
   // Stage 4 spans Qualifying and Quoting. The estimate is worked out
-  // while qualifying, before there is a quote to put against it. Named
-  // rather than left to the fallback: Qualifying happens to be the first
-  // of the two today, so the fallback would land it in the right place by
-  // accident, and it would move on its own if that order ever changed.
+  // while qualifying, before there is a quote to put against it, and so
+  // is whether the deal prices in USD. The margin only goes for review
+  // once there's a number to review, which is the quoting step. All of
+  // them are named rather than left to the fallback: Qualifying happens
+  // to be the first of the two today, so the fallback would land those in
+  // the right place by accident, and they would move on their own if that
+  // order ever changed. Both sides of the margin pair name the same step
+  // so they keep rendering on one row.
   [ESTIMATED_FEE_COLUMN]: 'Qualifying',
+  'USD?': 'Qualifying',
+  'Margin Email Date - Sales Leader Review Date': 'Quoting',
+  'Margin Email Date': 'Quoting',
+  'Sales Leader Review Date': 'Quoting',
+  'Margin Approval Date': 'Quoting',
   // Stage 6 is one column (Agreement Sent), so every field on it sits
   // there — spelled out rather than left to the fallback so a later
   // second column can't silently pull them along.
@@ -6141,24 +6150,19 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'BFO Link': 'overview',
   'BFO Company Name': 'overview',
   'BFO Address': 'overview',
-  // What's being sold and for how much, plus the margin sign-off the
-  // quote itself has to clear. The credit / COA approvals moved to Stage
-  // 6, where they're actually chased.
+  // What's being sold and for how much. The credit / COA approvals moved
+  // to Stage 6 and the margin sign-off to Stage 4, where each is actually
+  // chased; the margin the quote lands on stays here with the quote.
   'Scope': 'scope',
   'Sites': 'scope',
   'Quoted Amount': 'scope',
-  'USD?': 'scope',
   'Pricing Option': 'scope',
   'Pull Through': 'scope',
   'Quoted On': 'scope',
   'Quoted Date': 'scope',
   'Chance?': 'scope',
   'Chance': 'scope',
-  'Margin Email Date - Sales Leader Review Date': 'scope',
-  'Margin Email Date': 'scope',
-  'Sales Leader Review Date': 'scope',
   'Final Margin': 'scope',
-  'Margin Approval Date': 'scope',
   'Entity Outside the US Approval': 'scope',
   // Dates + nudges that drive the day-to-day working of the opp
   'Start Date': 'activity',
@@ -6175,13 +6179,27 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // here, so there's no Notes tab left to leave them on.
   'Next Steps': 'overview',
   'Notes': 'overview',
-  // What the Services Pricing estimator worked this deal's scope out to.
-  // Stage 4 is where that number is arrived at: it's the figure the
-  // estimator produces while the opportunity is being qualified, ahead of
-  // anything quoted to the client, so it sits under Qualifying rather
-  // than beside the Quoted Amount on Scope & Quote. Nothing routed it
-  // before, so it had been falling through to Other.
+  // Stage 4 — Influence and Develop covers both the Qualifying and the
+  // Quoting stages (see daysInStage.jsx), which is where the number gets
+  // worked out: what the Services Pricing estimator makes of the scope,
+  // whether the deal prices in USD, and the margin going for sales-leader
+  // review and coming back approved.
+  //
+  // The estimated fee is the figure the estimator produces while the
+  // opportunity is being qualified, ahead of anything quoted to the
+  // client, so it sits here rather than beside the Quoted Amount on Scope
+  // & Quote. Nothing routed it before, so it had been falling through to
+  // Other.
+  //
+  // 'Margin Email Date' and 'Sales Leader Review Date' are the split-out
+  // labels some imports carry for the request date, so they ride along
+  // rather than landing on a different tab than the combined header does.
   [ESTIMATED_FEE_COLUMN]: 'stage4',
+  'USD?': 'stage4',
+  'Margin Email Date - Sales Leader Review Date': 'stage4',
+  'Margin Email Date': 'stage4',
+  'Sales Leader Review Date': 'stage4',
+  'Margin Approval Date': 'stage4',
   // How and when it ends, split across the two stages that do that work.
   // Getting a signature agreed is Stage 6 — it's what the negotiation is
   // for, and a verbal is the same commitment one step earlier.
