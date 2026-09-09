@@ -193,6 +193,82 @@ function fresh() {
   restore();
 }
 
+// ── "Save to <company>": the site list ─────────────────────────────────
+//
+// This is what the second report was. Saving a company writes its site
+// list, which lives in a subcollection rather than on the settings
+// document — and that write had no fallback, so it threw the assertion
+// BEFORE the settings write it sits in front of ever ran. The whole save
+// was lost, and the alert said the fallback had failed when nothing had
+// tried one.
+{
+  fresh();
+  stubFetch();
+  fs.failOn(/^userSettings\/u1/, wedgedError());
+
+  const entry = { company: 'Veris Residential', headers: ['Site'], rows: [{ Site: 'One' }] };
+  const result = await savePathUpdates('u1', { 'companySiteLists.veris-residential': entry }, { expectedAt: 5 });
+
+  ok(result.viaRest === true, 'the save reports it went over HTTPS');
+  const list = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
+  ok(!!list, 'the company\'s list document is written over HTTPS');
+  ok(list.method === 'PATCH' && maskOf(list).length === 0,
+    'as a whole-document write — the entry IS the document');
+  ok(list.body.fields.rows.arrayValue.values[0].mapValue.fields.Site.stringValue === 'One',
+    'carrying the rows');
+  const stamp = restCalls.find((c) => c.method === 'PATCH' && /documents\/userSettings\/u1\?/.test(c.url));
+  ok(!!stamp && maskOf(stamp).includes('_lastWriteAt'),
+    'and the settings document still gets the write stamp other devices watch');
+}
+
+// Removing a company's list.
+{
+  fresh();
+  stubFetch();
+  fs.failOn(/^userSettings\/u1/, wedgedError());
+
+  await savePathUpdates('u1', { 'companySiteLists.veris-residential': null }, {});
+  const del = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
+  ok(del?.method === 'DELETE', 'the list document is deleted over HTTPS');
+}
+
+// Patching one field inside a company's list.
+{
+  fresh();
+  stubFetch();
+  fs.failOn(/^userSettings\/u1/, wedgedError());
+
+  await savePathUpdates('u1', { 'companySiteLists.veris-residential.uploadedAt': '2026-09-09' }, {});
+  const patch = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
+  ok(maskOf(patch).includes('uploadedAt'), 'the field is patched under a mask');
+  ok(patch.body.fields.uploadedAt.stringValue === '2026-09-09', 'with its value');
+}
+
+// Writing the whole key replaces the set: every company stored, every
+// company absent from it dropped.
+{
+  fresh();
+  stubFetch({
+    body: {
+      documents: [
+        { name: 'projects/test-project/databases/(default)/documents/userSettings/u1/companySiteLists/stale-co' },
+        { name: 'projects/test-project/databases/(default)/documents/userSettings/u1/companySiteLists/keep-co' },
+      ],
+    },
+  });
+  fs.failOn(/^userSettings\/u1/, wedgedError());
+
+  await saveUserSettings('u1', { companySiteLists: { 'keep-co': { rows: [] } } }, {});
+  const listing = restCalls.find((c) => c.method === 'GET' && c.url.includes('/companySiteLists?'));
+  ok(!!listing, 'the stored companies are listed first');
+  ok(new URL(listing.url).searchParams.getAll('mask.fieldPaths').length === 1,
+    'asking for ids only, not every company\'s rows');
+  ok(restCalls.some((c) => c.method === 'PATCH' && c.url.includes('/companySiteLists/keep-co')),
+    'the company in the map is written');
+  ok(restCalls.some((c) => c.method === 'DELETE' && c.url.includes('/companySiteLists/stale-co')),
+    'and the one absent from it is dropped');
+}
+
 // ── Whole-key saves too ────────────────────────────────────────────────
 {
   fresh();
@@ -268,7 +344,19 @@ function fresh() {
   ok(/^Saved/.test(saved) && /[Rr]eload/.test(saved),
     'a save that landed leads with that, and still says to reload');
   ok(!/ASSERTION|b815|ca9/.test(saved), 'and never quotes the assertion at the user');
-  ok(/[Rr]eload/.test(health.wedgedClientMessage(false)), 'a lost save says to reload and try again');
+
+  // The message the second report was: it said the fallback had failed
+  // when no fallback had run. A bare assertion reaching the caller means
+  // exactly that — a fallback that runs and fails throws its own HTTP
+  // error — so with no detail the message must not claim one was tried.
+  const lost = health.wedgedClientMessage(false);
+  ok(/could not be saved/.test(lost) && /[Rr]eload/.test(lost), 'a lost save says so, and to reload');
+  ok(!/fallback|direct connection/i.test(lost), 'without claiming a fallback it never ran');
+
+  const refused = health.wedgedClientMessage(false, 'HTTP 429: Quota exceeded');
+  ok(/HTTP 429/.test(refused), 'a fallback that WAS refused passes on its status');
+  ok(/direct connection was refused/.test(refused), 'and says which half of the save that was');
+
   ok(health.shouldAnnounceWedgedClient() === true, 'the notice is offered once');
   ok(health.shouldAnnounceWedgedClient() === false, 'and not again');
 }

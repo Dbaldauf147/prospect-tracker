@@ -200,3 +200,47 @@ export async function restGetDoc(docPath, timeoutMs = FIRESTORE_REST_TIMEOUT_MS)
   const body = await res.json();
   return fromRestFields(body?.fields);
 }
+
+// Remove one document by path, over HTTPS. A document that is already gone
+// is not an error — the caller wanted it absent and it is.
+export async function restDeleteDoc(docPath, timeoutMs = FIRESTORE_REST_TIMEOUT_MS) {
+  const token = await idToken(timeoutMs);
+  const res = await restFetch(restUrl(docPath), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }, timeoutMs);
+  if (res.status === 404) return true;
+  if (!res.ok) throw await restError(res);
+  return true;
+}
+
+// Every document in a collection, as { id, data } pairs, following the
+// API's paging until it runs out.
+//
+// `fieldPaths` narrows what comes back. The caller that only needs to know
+// WHICH documents exist passes a field nothing stores, and gets ids without
+// downloading a megabyte of site lists to throw away. (A reserved name —
+// anything spelled `__like_this__` — is rejected by the API, so the
+// no-such-field trick has to use an ordinary name.)
+export async function restListDocs(collectionPath, { fieldPaths = null, timeoutMs = FIRESTORE_REST_TIMEOUT_MS } = {}) {
+  const token = await idToken(timeoutMs);
+  const out = [];
+  let pageToken = '';
+  do {
+    const params = new URLSearchParams({ pageSize: '300' });
+    if (pageToken) params.set('pageToken', pageToken);
+    for (const path of fieldPaths || []) params.append('mask.fieldPaths', path);
+    const res = await restFetch(`${restUrl(collectionPath)}?${params}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    }, timeoutMs);
+    if (res.status === 404) return out; // no collection is an empty collection
+    if (!res.ok) throw await restError(res);
+    const body = await res.json();
+    for (const d of body?.documents || []) {
+      out.push({ id: String(d?.name || '').split('/').pop(), data: fromRestFields(d?.fields) });
+    }
+    pageToken = body?.nextPageToken || '';
+  } while (pageToken);
+  return out;
+}

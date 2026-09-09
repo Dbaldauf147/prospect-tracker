@@ -125,6 +125,8 @@ export function setDoc(ref, data) {
 export function deleteDoc(ref) {
   calls.push({ op: 'deleteDoc', path: ref.path });
   if (hangs(calls[calls.length - 1])) return NEVER();
+  const failure = failureFor(calls[calls.length - 1]);
+  if (failure) return Promise.reject(failure);
   store.delete(ref.path);
   return Promise.resolve();
 }
@@ -132,6 +134,8 @@ export function deleteDoc(ref) {
 export function getDocs(ref) {
   calls.push({ op: 'getDocs', path: ref.path });
   if (hangs(calls[calls.length - 1])) return NEVER();
+  const failure = failureFor(calls[calls.length - 1]);
+  if (failure) return Promise.reject(failure);
   const prefix = `${ref.path}/`;
   const docs = [...store.entries()]
     .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))

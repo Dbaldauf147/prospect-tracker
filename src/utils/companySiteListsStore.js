@@ -22,6 +22,10 @@ import {
   collection, doc, deleteDoc, deleteField, getDoc, getDocs, onSnapshot, runTransaction, setDoc, updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import {
+  dottedFieldEntries, restDeleteDoc, restGetDoc, restListDocs, restSetDoc, restUpdateFields,
+} from './firestoreRest.js';
+import { isClientWedged, isClientWedgedError, noteClientWedged } from './firestoreClientHealth.js';
 import { SITE_LISTS_KEY, isStorableSlug } from './companySiteListRouting';
 
 const COL = 'userSettings';
@@ -37,6 +41,36 @@ function listsCol(userId) {
 
 function listDoc(userId, slug) {
   return doc(db, COL, userId, SITE_LISTS_KEY, slug);
+}
+
+// The same two, as paths for the HTTPS fallback below.
+const listColPath = (userId) => `${COL}/${userId}/${SITE_LISTS_KEY}`;
+const listDocPath = (userId, slug) => `${listColPath(userId)}/${slug}`;
+
+// A field name nothing stores, so a listing can ask for ids without
+// downloading every company's rows to find out which slugs exist.
+const NO_FIELDS = ['_idsOnly'];
+
+// `sdk`, falling back to `rest` when the Firestore SDK has crashed.
+//
+// "Save to <company>" writes the company's site list here, and this was the
+// one step of that save with no way round a crashed client: it threw the
+// internal assertion before the settings write it sits in front of ever ran,
+// so the whole save was lost and the user was told the fallback had failed
+// when nothing had tried one. See utils/firestoreClientHealth.
+//
+// The transaction in migrateCompanySiteLists is deliberately not wrapped: it
+// is a read-and-conditional-write with no honest one-request equivalent, and
+// it only runs off a snapshot — which a crashed client never delivers.
+async function viaSdkOrRest(sdk, rest) {
+  if (isClientWedged()) return rest();
+  try {
+    return await sdk();
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    return rest();
+  }
 }
 
 // Live view of every company's list, as the same slug → entry map the
@@ -58,15 +92,22 @@ export function subscribeToCompanySiteLists(userId, onChange, onError) {
 export async function readCompanySiteLists(userId, slugs = null) {
   const out = {};
   if (slugs == null) {
-    const snap = await getDocs(listsCol(userId));
-    snap.forEach((d) => { out[d.id] = d.data(); });
+    await viaSdkOrRest(async () => {
+      const snap = await getDocs(listsCol(userId));
+      snap.forEach((d) => { out[d.id] = d.data(); });
+    }, async () => {
+      for (const { id, data } of await restListDocs(listColPath(userId))) out[id] = data;
+    });
     return out;
   }
   const wanted = [...new Set(slugs)].filter(isStorableSlug);
-  await Promise.all(wanted.map(async (slug) => {
+  await Promise.all(wanted.map((slug) => viaSdkOrRest(async () => {
     const snap = await getDoc(listDoc(userId, slug));
     if (snap.exists()) out[slug] = snap.data();
-  }));
+  }, async () => {
+    const data = await restGetDoc(listDocPath(userId, slug));
+    if (data) out[slug] = data;
+  })));
   return out;
 }
 
@@ -85,52 +126,90 @@ export async function readCompanySiteLists(userId, slugs = null) {
 export async function applySiteListOps(userId, ops) {
   for (const op of ops) {
     if (op.replaceAll) {
-      const map = op.replaceAll;
-      const existing = await getDocs(listsCol(userId));
-      const keep = new Set(Object.keys(map).filter(isStorableSlug));
-      for (const [slug, entry] of Object.entries(map)) {
-        if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
-        await setDoc(listDoc(userId, slug), entry);
-      }
-      for (const d of existing.docs) {
-        if (!keep.has(d.id)) await deleteDoc(d.ref);
-      }
+      await viaSdkOrRest(
+        () => replaceAllViaSdk(userId, op.replaceAll),
+        () => replaceAllViaRest(userId, op.replaceAll),
+      );
       continue;
     }
     if (!isStorableSlug(op.slug)) {
       console.warn('companySiteLists: skipping unstorable slug', op.slug);
       continue;
     }
-    const ref = listDoc(userId, op.slug);
     if (op.paths) {
-      const patch = {};
-      for (const [path, value] of Object.entries(op.paths)) {
-        patch[path] = value == null ? deleteField() : value;
-      }
-      try {
-        await updateDoc(ref, patch);
-      } catch (err) {
-        // No document yet: build the nested shape and create it. Deletes
-        // have nothing to delete from, so they simply drop out.
-        if (err?.code !== 'not-found') throw err;
-        const nested = {};
-        for (const [path, value] of Object.entries(op.paths)) {
-          if (value == null) continue;
-          const parts = path.split('.');
-          let cur = nested;
-          for (let i = 0; i < parts.length - 1; i += 1) {
-            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
-            cur = cur[parts[i]];
-          }
-          cur[parts[parts.length - 1]] = value;
-        }
-        if (Object.keys(nested).length) await setDoc(ref, nested);
-      }
+      await viaSdkOrRest(
+        () => patchViaSdk(listDoc(userId, op.slug), op.paths),
+        // No not-found branch to mirror: a masked PATCH creates the
+        // document when it is absent, which is what the SDK needed two
+        // calls to do.
+        () => restUpdateFields(listDocPath(userId, op.slug), dottedFieldEntries(op.paths)),
+      );
     } else if (op.value == null) {
-      await deleteDoc(ref);
+      await viaSdkOrRest(
+        () => deleteDoc(listDoc(userId, op.slug)),
+        () => restDeleteDoc(listDocPath(userId, op.slug)),
+      );
     } else {
-      await setDoc(ref, op.value);
+      await viaSdkOrRest(
+        () => setDoc(listDoc(userId, op.slug), op.value),
+        () => restSetDoc(listDocPath(userId, op.slug), op.value),
+      );
     }
+  }
+}
+
+// Patch dotted fields inside one company's list.
+async function patchViaSdk(ref, paths) {
+  const patch = {};
+  for (const [path, value] of Object.entries(paths)) {
+    patch[path] = value == null ? deleteField() : value;
+  }
+  try {
+    await updateDoc(ref, patch);
+  } catch (err) {
+    // No document yet: build the nested shape and create it. Deletes
+    // have nothing to delete from, so they simply drop out.
+    if (err?.code !== 'not-found') throw err;
+    const nested = {};
+    for (const [path, value] of Object.entries(paths)) {
+      if (value == null) continue;
+      const parts = path.split('.');
+      let cur = nested;
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = value;
+    }
+    if (Object.keys(nested).length) await setDoc(ref, nested);
+  }
+}
+
+// The whole key was written: store every company in the map and drop any
+// company absent from it.
+async function replaceAllViaSdk(userId, map) {
+  const existing = await getDocs(listsCol(userId));
+  const keep = new Set(Object.keys(map).filter(isStorableSlug));
+  for (const [slug, entry] of Object.entries(map)) {
+    if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
+    await setDoc(listDoc(userId, slug), entry);
+  }
+  for (const d of existing.docs) {
+    if (!keep.has(d.id)) await deleteDoc(d.ref);
+  }
+}
+
+async function replaceAllViaRest(userId, map) {
+  // Ids only: the sweep needs to know which companies are stored, not what
+  // is in them, and their rows are the largest thing this app holds.
+  const existing = await restListDocs(listColPath(userId), { fieldPaths: NO_FIELDS });
+  const keep = new Set(Object.keys(map).filter(isStorableSlug));
+  for (const [slug, entry] of Object.entries(map)) {
+    if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
+    await restSetDoc(listDocPath(userId, slug), entry);
+  }
+  for (const { id } of existing) {
+    if (!keep.has(id)) await restDeleteDoc(listDocPath(userId, id));
   }
 }
 

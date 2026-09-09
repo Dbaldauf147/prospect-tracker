@@ -64,18 +64,30 @@ export const isClientWedged = () => wedged;
 /** The assertion that killed it, for a message that wants to quote it. */
 export const wedgedClientError = () => firstError;
 
-// What to tell someone whose save just landed on this. `saved` says whether
-// the work itself survived (the REST fallback took it) — that is the first
-// thing they want to know, and it changes the instruction from "do it
-// again" to "carry on, but reload".
-export function wedgedClientMessage(saved) {
-  return saved
-    ? 'Saved — but the live database connection in this tab has crashed '
-      + '(a Firebase SDK bug, not your data). This change was saved over a direct connection. '
-      + 'Reload the page to start syncing again; until you do, changes made in other tabs won\'t show up here.'
-    : 'The live database connection in this tab has crashed (a Firebase SDK bug, not your data), '
-      + 'and the fallback save didn\'t get through either. '
-      + 'Reload the page and try again — a backup of your pre-save state was saved locally.';
+// What to tell someone whose save just landed on this.
+//
+// `saved` says whether the work itself survived (the HTTPS fallback took
+// it) — that is the first thing they want to know, and it changes the
+// instruction from "do it again" to "carry on, but reload".
+//
+// `detail` is for the third case, and the reason this isn't a boolean: the
+// client is dead AND the fallback was refused on its own terms (a quota, a
+// rules rejection, a blocked host). That status is the useful half of the
+// message and the SDK crash is the other half, so it says both. A lost save
+// with no detail means no fallback ran at all — which is what an SDK
+// assertion reaching the caller means, since a failed fallback throws its
+// own HTTP error rather than the assertion.
+export function wedgedClientMessage(saved, detail = '') {
+  if (saved) {
+    return 'Saved — but the live database connection in this tab has crashed '
+      + '(a Firebase SDK bug, not your data). This change was written over a direct connection instead. '
+      + 'Reload the page to start syncing again; until you do, changes made in other tabs '
+      + 'or on other devices won\'t show up here.';
+  }
+  return 'This change could not be saved: the live database connection in this tab has crashed '
+    + '(a Firebase SDK bug, not your data). '
+    + (detail ? `The direct connection was refused too — ${detail}. ` : '')
+    + 'Reload the page and try again — a backup of your pre-save state was saved locally.';
 }
 
 // Whether the UI has yet said anything about the crash. A save that still
