@@ -4,7 +4,7 @@ import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getD
 import { db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
 // the analysis timeouts below for why a save needs one.
-import { withTimeout } from './withTimeout.js';
+import { withTimeout, isTimeoutError } from './withTimeout.js';
 
 // Subcollection path for analyses saved against a prospect. Kept
 // separate from the prospect doc so the bulk subscribeToProspects
@@ -368,18 +368,36 @@ function getAnalysisCol(prospectId) {
   return collection(db, SHARED_COL, prospectId, 'analyses');
 }
 
-// Base64 chars per chunk doc. Base64 is ASCII (1 byte/char) so this is also
-// the document's size in bytes, under Firestore's ~1 MiB per-document cap.
+// Base64 chars per chunk doc, largest first. Base64 is ASCII (1 byte/char)
+// so this is also the document's size in bytes, under Firestore's ~1 MiB
+// per-document cap.
 //
-// 700 KiB rather than the 900,000 chars this used to split at: every other
-// chunked store in this app (chunkedDoc, localMirrorSync, opps2Store) settled
-// on 700 KiB, and a ~880 KB document leaves only ~170 KB of headroom for the
-// field names, the document path and the index entries Firestore builds over
-// that string. Matching them costs one extra document per 700 KB and takes a
-// document-size question off the table when a save doesn't come back.
-// Reads are unaffected: `main` records the chunk count that was written, so
-// analyses saved at the old size still reassemble.
-const ANALYSIS_CHUNK_SIZE = 700 * 1024;
+// A ladder rather than one number, because "the database never answered"
+// turned out to have two causes that look identical from the page and have
+// opposite fixes. A browser that cannot reach Firestore at all fails every
+// write, small or large. A connection that carries small writes fine but
+// drops a 700 KB one — a proxy or gateway with a request-body cap, which is
+// the ordinary shape of a corporate network — fails only the workbook, and
+// only because of how it was cut up. The second one is ours to fix: cut it
+// smaller and it goes through. So a stalled upload drops to the next size
+// down and tries again rather than declaring the save impossible.
+//
+// 700 KiB first because that is what every other chunked store in this app
+// settled on (chunkedDoc, localMirrorSync, opps2Store) and it is one
+// document per 700 KB. The lower rungs cost more documents for the same
+// workbook, which is a real cost — but not against a save that cannot
+// happen at all.
+//
+// Reads are unaffected by any of this: `main` records the chunk count that
+// was written, so an analysis saved at any size still reassembles.
+const ANALYSIS_CHUNK_SIZES = [700 * 1024, 200 * 1024, 64 * 1024];
+
+// A few bytes written to the same collection before the workbook, so the
+// two failures above can be told apart while it still matters — by the
+// page, in the message it shows, rather than by whoever reads the console
+// afterwards.
+const ANALYSIS_PROBE_DOC_ID = 'probe';
+const ANALYSIS_PROBE_TIMEOUT_MS = 12_000;
 
 // Ceilings for the round-trips a save makes.
 //
@@ -392,20 +410,19 @@ const ANALYSIS_CHUNK_SIZE = 700 * 1024;
 // Utility Lookup page sat on "Saving 0.6 MB to <company>…" with nothing to
 // click and nothing in the console. getDoc sits the same way when the
 // document isn't cached.
-//
-// Long enough that a slow connection finishes — a 700 KB chunk on a poor
-// link is tens of seconds — and short enough that a wedged one is called
-// out rather than waited on forever.
 const ANALYSIS_READ_TIMEOUT_MS = 20_000;
-// Per chunk, and the chunks go up in parallel — so a portfolio big enough
-// to split into many of them is given proportionally longer before any one
-// of them is called stalled, while the common case (a workbook that fits in
-// one or two documents) finds out inside a minute instead of sitting there.
-const ANALYSIS_WRITE_TIMEOUT_MS = 45_000;
-const ANALYSIS_WRITE_TIMEOUT_MAX_MS = 4 * 60_000;
-const analysisWriteTimeout = (chunkCount) => Math.min(
-  ANALYSIS_WRITE_TIMEOUT_MS + Math.max(0, chunkCount - 1) * 10_000,
+
+// Applied to each chunk write, but scaled by the size of the WHOLE
+// workbook: the chunks go up in parallel and share the link, so what a
+// single one of them is worth waiting for depends on how much is in flight
+// beside it — not on how many pieces the payload was cut into. (Scaling by
+// the count instead meant dropping to smaller chunks bought a longer wait
+// for the same bytes, which is backwards.)
+const ANALYSIS_WRITE_TIMEOUT_MIN_MS = 30_000;
+const ANALYSIS_WRITE_TIMEOUT_MAX_MS = 6 * 60_000;
+const analysisWriteTimeout = (totalChars) => Math.min(
   ANALYSIS_WRITE_TIMEOUT_MAX_MS,
+  Math.max(ANALYSIS_WRITE_TIMEOUT_MIN_MS, 30_000 + (totalChars / (1024 * 1024)) * 20_000),
 );
 
 // Tear the client's connection down and bring it back up.
@@ -495,21 +512,107 @@ const base64LenForBytes = (sizeBytes) => Math.ceil(Number(sizeBytes || 0) / 3) *
 export async function saveIndicativeAnalysis(
   prospectId,
   { fileName, dataBase64, sizeBytes },
-  // `readTimeoutMs` / `writeTimeoutMs` are the module's ceilings, taken as
-  // options so a test can prove they work without sitting through one.
-  { onPhase, readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS, writeTimeoutMs } = {},
+  // The ceilings and the chunk ladder are the module's, taken as options so
+  // a test can prove they work without sitting through one.
+  {
+    onPhase,
+    readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS,
+    writeTimeoutMs,
+    probeTimeoutMs = ANALYSIS_PROBE_TIMEOUT_MS,
+    chunkSizes = ANALYSIS_CHUNK_SIZES,
+  } = {},
 ) {
   const col = getAnalysisCol(prospectId);
   const data = String(dataBase64 || '');
-  const gen = newAnalysisGen();
-  const chunks = [];
-  for (let i = 0; i < data.length; i += ANALYSIS_CHUNK_SIZE) {
-    chunks.push(data.slice(i, i + ANALYSIS_CHUNK_SIZE));
-  }
   // Which step the save is on, so the page can name it. Every step below
   // can be the one that doesn't come back, and "Saving…" doesn't say which.
   const phase = (step, extra) => { try { onPhase?.({ step, ...extra }); } catch { /* never fail a save on its own progress report */ } };
-  const writeMs = writeTimeoutMs ?? analysisWriteTimeout(chunks.length);
+  const writeMs = writeTimeoutMs ?? analysisWriteTimeout(data.length);
+
+  // Can this browser write to this collection AT ALL? A few bytes answers
+  // it in well under a second on any working connection, and the answer
+  // decides what a stalled upload means: with the probe through, the
+  // connection works and it is the SIZE of the write that isn't getting
+  // there; without it, nothing is, and no amount of re-cutting the workbook
+  // will help.
+  phase('probing');
+  const probe = await probeAnalysisWrite(col, probeTimeoutMs);
+  phase('probed', { ok: probe.ok, ms: probe.ms });
+  console.log(probe.ok
+    ? `Save to company · a test write was acknowledged in ${probe.ms}ms`
+    : `Save to company · a test write got no answer in ${probe.ms}ms (${probe.error?.message || 'failed'})`);
+
+  // Largest chunks first, stepping down each time an upload stalls. Only
+  // worth stepping down at all when the probe got through: if a few bytes
+  // don't land, 64 KiB won't either, and three attempts would just be three
+  // times the wait before saying so.
+  const ladder = probe.ok ? chunkSizes : chunkSizes.slice(0, 1);
+  let lastErr = null;
+  for (let attempt = 0; attempt < ladder.length; attempt += 1) {
+    try {
+      await uploadAnalysisGeneration({
+        col, data, fileName, sizeBytes,
+        chunkSize: ladder[attempt],
+        // First attempt goes up in parallel, which is what makes a normal
+        // save quick. Every attempt after it goes one document at a time:
+        // the SDK batches queued mutations into a single request, so four
+        // 200 KB chunks written at once are one 800 KB request — the very
+        // thing the step down was supposed to avoid. Serialising is what
+        // actually makes the request smaller, and by then speed has stopped
+        // being the thing worth optimising for.
+        sequential: attempt > 0,
+        phase, writeMs, readTimeoutMs,
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      // Only a stall is worth re-cutting the workbook for. A rejection
+      // (permissions, a malformed document) says what is wrong and would
+      // say it again at every size.
+      if (!isTimeoutError(err) || attempt === ladder.length - 1) break;
+      const next = ladder[attempt + 1];
+      console.warn(
+        `Analysis upload stalled at ${Math.round(ladder[attempt] / 1024)} KB chunks; `
+        + `retrying at ${Math.round(next / 1024)} KB:`, err.message,
+      );
+      phase('shrinking', { from: ladder[attempt], to: next });
+      // A stall is the SDK waiting on a stream it still believes in, so the
+      // smaller chunks deserve a fresh one to go out on.
+      await kickFirestoreConnection();
+    }
+  }
+  // What the probe learned rides along on the error: it is the difference
+  // between "your connection is dropping large requests" and "this browser
+  // cannot reach the database", and only the caller can say either.
+  if (lastErr) lastErr.probeOk = probe.ok;
+  throw lastErr;
+}
+
+// A few bytes to the analyses collection, to find out whether writing to it
+// works at all. Never throws — the answer is the return value, because both
+// outcomes are information the save wants rather than reasons to stop.
+async function probeAnalysisWrite(col, timeoutMs) {
+  const t0 = Date.now();
+  try {
+    await withTimeout(
+      setDoc(doc(col, ANALYSIS_PROBE_DOC_ID), { at: Date.now() }),
+      timeoutMs,
+      'a test write',
+    );
+    return { ok: true, ms: Date.now() - t0, error: null };
+  } catch (err) {
+    return { ok: false, ms: Date.now() - t0, error: err };
+  }
+}
+
+// One attempt at storing the workbook, at one chunk size, under its own
+// generation. Rejects if any write stalls or fails; the previous analysis
+// is untouched either way, because nothing here writes over the documents
+// the current `main` points at until `main` itself is rewritten last.
+async function uploadAnalysisGeneration({ col, data, fileName, sizeBytes, chunkSize, sequential = false, phase, writeMs, readTimeoutMs }) {
+  const gen = newAnalysisGen();
+  const chunks = [];
+  for (let i = 0; i < data.length; i += chunkSize) chunks.push(data.slice(i, i + chunkSize));
 
   // Started here, deliberately NOT awaited: reading what is already stored
   // and recording this generation are both bookkeeping for the PRUNE at the
@@ -528,12 +631,17 @@ export async function saveIndicativeAnalysis(
   // points at — if any of these writes fails, the previous analysis is
   // still whole and still what readers get.
   let done = 0;
-  phase('uploading', { done, total: chunks.length });
-  await Promise.all(chunks.map((c, i) => withTimeout(
+  phase('uploading', { done, total: chunks.length, chunkSize, sequential });
+  const writeChunk = (c, i) => withTimeout(
     setDoc(doc(col, analysisChunkId(gen, i)), { i, gen, data: c }),
     writeMs,
     `uploading part ${i + 1} of ${chunks.length}`,
-  ).then(() => { done += 1; phase('uploading', { done, total: chunks.length }); })));
+  ).then(() => { done += 1; phase('uploading', { done, total: chunks.length, chunkSize, sequential }); });
+  if (sequential) {
+    for (let i = 0; i < chunks.length; i += 1) await writeChunk(chunks[i], i);
+  } else {
+    await Promise.all(chunks.map(writeChunk));
+  }
   // setDoc without merge so any legacy inline `dataBase64` on the main doc
   // is dropped when re-saving over an older single-doc analysis.
   phase('finalizing');
