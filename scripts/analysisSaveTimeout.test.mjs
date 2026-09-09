@@ -21,8 +21,7 @@ import { register } from 'node:module';
 register('./stubs/loader.mjs', import.meta.url);
 
 const fs = await import('./stubs/firestore.mjs');
-const { saveIndicativeAnalysis } = await import('../src/utils/firestoreSync.js');
-const { setProspectsUser } = await import('../src/utils/firestoreSync.js');
+const { saveIndicativeAnalysis, setProspectsUser, kickFirestoreConnection } = await import('../src/utils/firestoreSync.js');
 const { isTimeoutError } = await import('../src/utils/withTimeout.js');
 
 let passed = 0, failed = 0;
@@ -55,7 +54,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   ok(order.indexOf(`${COL}/main`) === order.length - 1
     || order.lastIndexOf(`${COL}/main`) > order.indexOf(chunkPaths[0]),
     'the metadata doc is written after its chunks');
-  ok(phases.map((p) => p.step).join(',').startsWith('reading,uploading'), 'the steps are reported as they happen');
+  ok(phases.map((p) => p.step).join(',').startsWith('uploading'), 'the steps are reported as they happen');
   ok(phases.some((p) => p.step === 'saved'), 'including the one that means it landed');
 }
 
@@ -91,20 +90,27 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
 // ── A read that never answers must not stop the upload ─────────────────
 {
   fs.reset();
-  // The two bookkeeping reads say what may be DELETED, not what to write.
+  // The two bookkeeping reads say what may be DELETED, not what to write,
+  // so the upload does not wait on them at all. This is the step the page
+  // was found sitting on: "checking what is stored…", forever.
   fs.hangOn(`${COL}/main`, 'getDoc');
   fs.hangOn(`${COL}/pending`, 'getDoc');
   const t0 = Date.now();
   let raised = null;
-  // Only the reads hang; the writes that follow answer normally.
   try { await saveIndicativeAnalysis('p1', payload(10), fast); }
   catch (err) { raised = err; }
+  const elapsed = Date.now() - t0;
   ok(raised === null, 'the save still completes when the bookkeeping reads stall');
   ok(!!fs.store.get(`${COL}/main`), 'and the analysis is stored');
-  ok(Date.now() - t0 < 2000, 'without waiting on the reads that never came back');
-  // With no prune plan, nothing may be deleted by id...
+  // Under the read ceiling, not merely under it plus the upload: the reads
+  // are not on the path at all any more.
+  ok(elapsed < fast.readTimeoutMs, `without waiting on them even once (${elapsed}ms)`);
+  const firstWrite = fs.calls.findIndex((c) => c.op === 'setDoc' && c.path.includes('/chunk-'));
+  const firstRead = fs.calls.findIndex((c) => c.op === 'getDoc');
+  ok(firstWrite >= 0 && firstRead >= 0 && firstWrite < firstRead + 3,
+    'the upload starts alongside the reads rather than behind them');
   await settle();
-  ok(!fs.calls.some((c) => c.op === 'deleteDoc' && c.path.endsWith('/main')), 'the live analysis is never deleted');
+  ok(!fs.calls.some((c) => c.op === 'deleteDoc'), 'and with no prune plan, nothing is deleted by id');
 }
 
 // ── The freeze after the save had already succeeded ────────────────────
@@ -124,6 +130,16 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   await settle();
   ok(fs.calls.some((c) => c.op === 'deleteDoc' && c.path === `${COL}/chunk-old-0`),
     'the cleanup still runs, just not on the critical path');
+}
+
+// ── The lever a retry pulls before trying again ────────────────────────
+{
+  fs.reset();
+  // A stall is the SDK waiting on a stream it still believes in, so a retry
+  // that doesn't close the connection first waits on the same dead stream.
+  const kicked = await kickFirestoreConnection();
+  ok(kicked === true, 'the connection restart reports success');
+  ok(fs.network.calls.join(',') === 'disable,enable', 'and closes the connection before reopening it');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

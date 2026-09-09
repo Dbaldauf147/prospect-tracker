@@ -69,7 +69,7 @@ import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplia
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
-import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis, kickFirestoreConnection } from '../../utils/firestoreSync';
 import { withTimeout, isTimeoutError } from '../../utils/withTimeout.js';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -1105,6 +1105,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // uploaded to Firestore.
   const [savePickerSearch, setSavePickerSearch] = useState(null);
   const [saveStatus, setSaveStatus] = useState({ state: 'idle', message: '' });
+  // How long the save in flight has been running. "Saving…" and "Saving…,
+  // and it is never going to finish" are the same sentence, and the only
+  // question anyone has about a slow save is whether it is still trying —
+  // which is the question that got asked about this one. The clock starts
+  // when the save does and runs across every step, so it reads as one
+  // elapsed time rather than restarting at each phase. Kept out of state
+  // (a ref plus a tick) so the render stays a pure read of the clock.
+  const saveStartedRef = useRef(0);
+  const [, setSaveTick] = useState(0);
+  useEffect(() => {
+    if (saveStatus.state !== 'saving') return undefined;
+    saveStartedRef.current = Date.now();
+    const id = setInterval(() => setSaveTick((t) => t + 1), 1000);
+    // Cleared on the way out of 'saving', so the next save starts its own
+    // clock rather than inheriting the last one's.
+    return () => { clearInterval(id); saveStartedRef.current = 0; };
+  }, [saveStatus.state]);
   // Mirror of saveStatus for the reverse trip — pulling a company's
   // saved Master Analysis back onto the page. Shown inside the Company
   // Look Up panel, next to the Import button that drives it.
@@ -5482,9 +5499,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Firestore at all. Naming the step is what makes the next report
       // ("it stuck on part 2 of 3") worth anything.
       const onPhase = ({ step, done = 0, total = 0 }) => {
-        if (step === 'reading') {
-          setSaveStatus({ state: 'saving', message: `Saving ${sizeMb.toFixed(1)} MB to ${companyLabel}: checking what is stored…` });
-        } else if (step === 'uploading') {
+        if (step === 'uploading') {
           setSaveStatus({
             state: 'saving',
             message: total > 1
@@ -5503,11 +5518,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // died partway — far likelier now that a workbook can run to tens of
       // megabytes — left the company with no analysis at all instead of the
       // previous one.
-      await saveIndicativeAnalysis(prospect.id, {
+      const upload = () => saveIndicativeAnalysis(prospect.id, {
         fileName,
         dataBase64,
         sizeBytes: buffer.byteLength,
       }, { onPhase });
+      try {
+        await upload();
+      } catch (err) {
+        if (!isTimeoutError(err)) throw err;
+        // A stall is the SDK waiting on a stream it still believes in, so
+        // retrying straight away just waits on the same dead stream. Close
+        // the connection, open a fresh one, and give it exactly one more
+        // go: either the second attempt lands or the message below is
+        // honest about having tried.
+        console.warn('Analysis upload stalled; restarting the connection and retrying once:', err.message);
+        setSaveStatus({ state: 'saving', message: `${companyLabel} did not answer — reconnecting and retrying…` });
+        await kickFirestoreConnection();
+        await upload();
+      }
       phase(`uploaded ${sizeMb.toFixed(1)} MB`);
       // Fold the loaded sites into this company's site list, so the "Site
       // list mapped" status (and the Site List Overview) reflect the save
@@ -5614,9 +5643,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setSaveStatus({
         state: 'error',
         message: isTimeoutError(err)
-          ? `Save stalled: ${err.label} got no answer from the database after ${Math.round(err.ms / 1000)}s. `
-            + 'Check the connection and retry — the workbook is queued in this browser meanwhile, '
-            + 'and ⬇ Master Analysis downloads it without saving.'
+          ? `Save stalled: ${err.label} got no answer from the database after ${Math.round(err.ms / 1000)}s, `
+            + 'including one retry on a fresh connection. Something between this browser and Firestore '
+            + '(a VPN, a proxy, an extension blocking Google domains) is dropping the traffic, or the '
+            + 'project is over its daily quota. The workbook is queued in this browser meanwhile, and '
+            + '⬇ Master Analysis downloads it without needing the database.'
           : (err?.message || 'Save failed.'),
       });
     }
@@ -15159,7 +15190,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             background: saveStatus.state === 'success' ? '#DCFCE7' : saveStatus.state === 'error' ? '#FEE2E2' : '#F1F5F9',
             color: saveStatus.state === 'success' ? '#166534' : saveStatus.state === 'error' ? '#991B1B' : '#475569',
             fontFamily: 'inherit',
-          }}>{saveStatus.message}</div>
+          }}>
+            {saveStatus.message}
+            {/* Only once it has been long enough to wonder: a save that
+                takes three seconds doesn't need a stopwatch on it. */}
+            {saveStatus.state === 'saving' && saveStartedRef.current > 0
+              && Date.now() - saveStartedRef.current >= 5000
+              && ` (${Math.round((Date.now() - saveStartedRef.current) / 1000)}s)`}
+          </div>
         )}
       </div>
 
