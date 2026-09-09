@@ -1466,7 +1466,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
-            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage, set in its company popup: ${PE_STAGES.join(' / ')}. Sorts in that order, with unassigned firms at one end.` },
+            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell — it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order, with unassigned firms at one end.` },
             { key: 'newsFeed', label: 'News Feed', align: 'center', tip: 'Yes when "Track acquisition news" is ticked on this firm\'s company popup, which includes it in the weekly acquisition-news email. Sort to group the tracked firms together.' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
@@ -1529,9 +1529,20 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                 const dmFound = (stats.decisionMakerNames || []).length > 0;
                 return (
                   <div key={pe.id} style={{ borderTop: rowIdx === 0 ? 'none' : '1px solid #E2E8F0' }}>
-                    <button
-                      type="button"
+                    {/* A div rather than a <button>: the PE Stage cell holds a
+                        real <select>, and a control inside a button is invalid
+                        HTML that browsers treat inconsistently — in some of
+                        them the dropdown never opens at all. The row keeps the
+                        button's role, focus and keyboard behaviour. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isExpanded}
                       onClick={() => toggle(pe.id)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(pe.id); }
+                      }}
                       style={{ width: '100%', padding: 0, background: isExpanded ? '#F8FAFC' : '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'grid', gridTemplateColumns: GRID, alignItems: 'center' }}
                     >
                       <div
@@ -1867,22 +1878,60 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                       {visibleCols.has('peStage') && (() => {
                         const meta = peStageMeta(pe.peStage);
                         const assigned = meta.stage !== 'Unassigned';
+                        // Set here, not only in the company popup. Moving a
+                        // firm through Discovery → Piloting → Partnership is
+                        // the thing this table is read for, and opening a
+                        // popup per firm to do it meant the board was always
+                        // a little out of date. It writes the same field the
+                        // popup writes, so the stamp that Days in Stage
+                        // counts from is set the same way too (see
+                        // useProspects.updateProspect).
+                        if (!onUpdateProspect) {
+                          return (
+                            <div
+                              title={assigned
+                                ? `PE Stage set to "${meta.stage}" in this firm's company popup`
+                                : 'No PE Stage set on this firm\'s company popup'}
+                              style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
+                            >
+                              <span
+                                style={{
+                                  display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                                  padding: '1px 8px', borderRadius: 999,
+                                  background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
+                                  fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
+                                }}
+                              >{assigned ? meta.stage : 'Unassigned'}</span>
+                            </div>
+                          );
+                        }
                         return (
                           <div
-                            title={assigned
-                              ? `PE Stage set to "${meta.stage}" in this firm's company popup`
-                              : 'No PE Stage set on this firm\'s company popup'}
-                            style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
+                            style={{ padding: '0.4rem 0.4rem', textAlign: 'center', overflow: 'hidden' }}
+                            onClick={e => e.stopPropagation()}
                           >
-                            <span
+                            <select
+                              value={assigned ? meta.stage : ''}
+                              onClick={e => e.stopPropagation()}
+                              onChange={(e) => { e.stopPropagation(); onUpdateProspect(pe.id, { peStage: e.target.value }); }}
+                              title={assigned
+                                ? `${pe.company || 'This firm'} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`
+                                : `No PE Stage set for ${pe.company || 'this firm'}. Pick one here — it saves to the firm's record, the same field the company popup sets.`}
                               style={{
-                                display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
-                                textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
-                                padding: '1px 8px', borderRadius: 999,
+                                maxWidth: '100%', padding: '2px 4px', borderRadius: 999,
                                 background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
+                                fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer',
                                 fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
                               }}
-                            >{assigned ? meta.stage : 'Unassigned'}</span>
+                            >
+                              {/* Blank is a real choice: it takes the firm
+                                  back to Unassigned rather than leaving the
+                                  only way out of a mis-set stage being the
+                                  popup. */}
+                              <option value="">Unassigned</option>
+                              {PE_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+                            </select>
                           </div>
                         );
                       })()}
@@ -1911,7 +1960,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}
                       </div>
-                    </button>
+                    </div>
 
               {isExpanded && (
                 <div style={{ padding: '0.75rem 1rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
