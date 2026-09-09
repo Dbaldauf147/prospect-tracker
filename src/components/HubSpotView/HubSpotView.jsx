@@ -2623,9 +2623,12 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     setAuditState({ done: 0, total: ids.length });
     const rows = [];
     try {
-      // 100 is HubSpot's batch-read cap, and the progress the user watches.
-      for (let i = 0; i < ids.length; i += 100) {
-        const batch = ids.slice(i, i + 100);
+      // 50 is HubSpot's cap for a batch read that asks for property history
+      // (a plain read takes 100; asking for versions halves it), and the
+      // progress the user watches.
+      const BATCH = 50;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const batch = ids.slice(i, i + BATCH);
         const res = await apiFetch('/api/hubspot?action=tag-history', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
