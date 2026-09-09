@@ -25,7 +25,7 @@
 // so a firm reading 0/anything there is exactly a firm listed here.
 
 import { PE_STAGES } from '../data/enums.js';
-import { isOppActive, peFirmAccountNames, peFirmOppRows, portfolioByPeOwner } from './peFirmOpps.js';
+import { isOppActive, peFirmAccountNames, peFirmOppRows, peFirmPortfolio } from './peFirmOpps.js';
 
 // The Type that marks a prospect as a PE firm — same filter the PE
 // Portfolio page lists its firms with.
@@ -62,8 +62,9 @@ export function isWorkablePeStage(stage) {
  * clear the step before the opps have even arrived.
  *
  * Each row: { firm, firmId, stage, pcCount, closedCount }. `pcCount` is how
- * many portfolio companies name this firm as their PE Owner — the material
- * for the conversation, and a zero there is its own kind of gap.
+ * many portfolio companies the firm has — those that name it as their PE
+ * Owner plus those mapped on its own list — the material for the
+ * conversation, and a zero there is its own kind of gap.
  * `closedCount` is how many opps the firm has that are all done with, which
  * is why a firm with a long history can still be sitting here silent.
  *
@@ -73,24 +74,33 @@ export function isWorkablePeStage(stage) {
  */
 export function collectPeFirmsToWork(prospects, oppsRecords) {
   if (!Array.isArray(prospects) || !Array.isArray(oppsRecords)) return null;
-  const portfolios = portfolioByPeOwner(prospects);
   const out = [];
   for (const p of prospects) {
     if (String(p?.type || '').trim() !== PE_FIRM_TYPE) continue;
     const stage = peFirmStage(p?.peStage);
     if (!isWorkablePeStage(stage)) continue;
     const firm = String(p?.company || '').trim();
-    const portfolio = portfolios.get(firm.toLowerCase()) || [];
+    // Both halves of a firm's portfolio: the prospects that name it as their
+    // PE Owner, and the companies mapped on the firm's own list. A company
+    // can be in either alone, and reading one of them is how a firm with
+    // live work lands on a list of silent ones — CD&R sat here while an opp
+    // on Pursuit Aerospace was open, because the firm record says "Clayton,
+    // Dubilier & Rice (CDR)" and the company says "Clayton, Dubilier & Rice".
+    const portfolio = peFirmPortfolio(firm, prospects);
+    const mapped = Array.isArray(p?.portfolioCompanies) ? p.portfolioCompanies : [];
+    const accountNames = peFirmAccountNames(firm, portfolio, mapped);
     // Open opps only. One live deal anywhere across the firm and its
     // portfolio companies means the relationship is being worked; a pile of
     // closed ones means it isn't, however busy it once was.
-    const oppRows = peFirmOppRows(peFirmAccountNames(firm, portfolio), oppsRecords);
+    const oppRows = peFirmOppRows(accountNames, oppsRecords);
     if (oppRows.some(isOppActive)) continue;
     out.push({
       firm: firm || '-',
       firmId: p?.id || null,
       stage,
-      pcCount: portfolio.length,
+      // Counted over both halves, the same way the account names are
+      // gathered, so a company on both lists counts once.
+      pcCount: accountNames.length - 1,
       // Every row here failed the `some(isOppActive)` test above, so all of
       // this firm's opps are closed — the count is the whole history.
       closedCount: oppRows.length,

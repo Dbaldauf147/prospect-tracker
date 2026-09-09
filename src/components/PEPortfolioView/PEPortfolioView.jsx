@@ -22,7 +22,7 @@ import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import {
   CLOSED_STAGES, INVALID_STAGES, accountMatchesCompany, isOppActive,
-  normalizeAccount, peFirmAccountNames, peFirmOppRows,
+  normalizeAccount, peFirmAccountNames, peFirmOppRows, peFirmPortfolio,
 } from '../../utils/peFirmOpps';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
@@ -930,7 +930,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       // Aggregate opps for the PE firm itself + every portfolio company.
       // We re-scan the Opps records so we also catch opps that land
       // directly on the PE firm's account name (not just its PCs).
-      const firmOppRows = peFirmOppRows(peFirmAccountNames(firmName, portfolio), oppsRecords);
+      // Both halves of the portfolio: the prospects that name this firm as
+      // their PE Owner (tolerantly — the firm record and its companies write
+      // the name differently), and the companies mapped on the firm's own
+      // list. Reading only the exact-name owner map is what let a firm with
+      // live work on a portfolio company read 0/0 here.
+      const firmOppRows = peFirmOppRows(
+        peFirmAccountNames(firmName, peFirmPortfolio(firmName, prospects), pe.portfolioCompanies),
+        oppsRecords,
+      );
       const total = firmOppRows.length;
       const active = firmOppRows.filter(isOppActive).length;
       // The individual opp records behind the active/total counts, so the
@@ -1016,7 +1024,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, decisionMakers, keyContacts, oppsRecords, statusByCompany]);
+  }, [peFirms, portfolioByPe, prospects, decisionMakers, keyContacts, oppsRecords, statusByCompany]);
 
   // Has the Top PC had its Master Analysis saved? The question the Top PC
   // column raises next — that company is the one to work, so whether the
