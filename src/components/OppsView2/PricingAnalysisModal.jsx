@@ -6,7 +6,7 @@ import { lineBasisText } from '../../utils/pricingAnalysis';
 // was worked out on.
 //
 // Read-only, and deliberately so: this is what the deal was priced at, not
-// a live calculation. Re-pricing happens on Dropdowns › Services Pricing,
+// a live calculation. Re-pricing happens on Dropdowns › Deal Pricing,
 // which saves a new one over this. Every figure here is the one that was
 // saved — a rate edited since, a service retired since, a count corrected
 // since, none of them move a number on this page. That's the point of a

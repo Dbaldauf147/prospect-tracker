@@ -1,8 +1,9 @@
-// Turning an opportunity into a Services Pricing scenario.
+// Turning an opportunity into a Deal Pricing scenario.
 //
-// The rate card on Dropdowns › Services Pricing prices a scope; this works
-// out what an opp's scope actually IS, and how many sites / accounts /
-// meters to price it against, from what the app already knows:
+// The rate card on Dropdowns › Services Pricing prices a scope, and the Deal
+// Pricing subtab is where one is built; this works out what an opp's scope
+// actually IS, and how many sites / accounts / meters to price it against,
+// from what the app already knows:
 //
 //   services  — the catalogue services the opp's Scope text names, using
 //               the same word-run rule the company card's Services Explored
