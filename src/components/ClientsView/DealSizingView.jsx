@@ -49,6 +49,7 @@ import {
 import { serviceStatusColor, serviceBucket } from '../../utils/serviceStatusColors';
 import {
   CLIENT_COUNT_FIELDS,
+  countsUsed,
   dealSizingWarnings,
   emptyClientScope,
   estimateClient,
@@ -871,29 +872,49 @@ export function DealSizingView({
       // What the estimate ran on, and where each figure came from. A count off
       // the company record reads differently from one typed for this deal,
       // because the first is the whole portfolio and the second is the scope.
-      key: 'counts', label: 'Counts used', defaultWidth: 210,
-      getFilterValue: (row) => Object.keys(row.estimate.counts).join(', '),
+      //
+      // Each chip names the pricing BASIS the count fed — "Per site · 6,176"
+      // rather than "6,176 sites" — because the question this column is read
+      // to answer is what the client was charged on, and the unit noun only
+      // ever said what the client has. Which matters most on a row carrying
+      // both Sites and Sites w/ Mandate: two site counts, and only the one
+      // the services are priced on is doing any work.
+      key: 'counts', label: 'Counts used', defaultWidth: 230,
+      getFilterValue: (row) => countsUsed(row.estimate, bases)
+        .map(c => `${c.label} ${c.unitLabel}`).join(', '),
+      exportValue: (row) => countsUsed(row.estimate, bases)
+        .map(c => `${c.label}: ${c.count.toLocaleString()}${c.used ? '' : ' (not used)'}`)
+        .join('; '),
       render: (row) => {
-        const entries = Object.entries(row.estimate.counts);
-        if (!entries.length) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        const counts = countsUsed(row.estimate, bases);
+        if (!counts.length) return <span style={{ color: '#CBD5E1' }}>—</span>;
         return (
           <span style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-            {entries.map(([unit, n]) => {
-              const typed = row.estimate.countSources[unit] === 'typed';
-              const label = bases.find(b => b.unit === unit)?.unitLabel || unit;
+            {counts.map((c) => {
+              const typed = c.source === 'typed';
+              const where = typed
+                ? `typed for this client's scope`
+                : 'from the company record';
               return (
                 <span
-                  key={unit}
-                  title={typed
-                    ? `${label}: typed for this client's scope.`
-                    : `${label}: from the company record. Type a number in the expanded row to size a smaller rollout.`}
+                  key={c.unit}
+                  title={c.used
+                    ? `${c.label}: ${c.count.toLocaleString()} ${c.unitLabel.toLowerCase()}, ${where}.${typed ? '' : ' Type a number in the expanded row to size a smaller rollout.'}`
+                    // A count nothing is charged on is still worth showing —
+                    // it is what the client has — but saying so is the whole
+                    // point of the column, and a silent chip beside the money
+                    // reads as if it produced some of it.
+                    : `${c.count.toLocaleString()} ${c.unitLabel.toLowerCase()} ${where}, but nothing in this scope is priced ${c.label.toLowerCase()} — this count isn't feeding any figure.`}
                   style={{
                     fontSize: '0.7rem', padding: '0.05rem 0.4rem', borderRadius: 999,
-                    background: typed ? '#EFF6FF' : '#F1F5F9',
-                    color: typed ? '#1E40AF' : '#475569',
-                    border: `1px solid ${typed ? '#BFDBFE' : '#E2E8F0'}`,
+                    whiteSpace: 'nowrap',
+                    background: !c.used ? '#fff' : (typed ? '#EFF6FF' : '#F1F5F9'),
+                    color: !c.used ? '#94A3B8' : (typed ? '#1E40AF' : '#475569'),
+                    border: !c.used
+                      ? '1px dashed #E2E8F0'
+                      : `1px solid ${typed ? '#BFDBFE' : '#E2E8F0'}`,
                   }}
-                >{n.toLocaleString()} {label.toLowerCase()}</span>
+                >{c.label} &middot; {c.count.toLocaleString()}</span>
               );
             })}
           </span>

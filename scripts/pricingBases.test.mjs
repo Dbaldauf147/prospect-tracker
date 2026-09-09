@@ -12,7 +12,7 @@
 // tests are really about.
 import {
   PRICING_BASES, PRICING_BASES_VERSION, pricingBasesTopUp, normalizePricingBases,
-  resolvePricingBases, pricingUnits, basisFor, estimateService,
+  resolvePricingBases, pricingUnits, basisFor, estimateService, rateSentence, unitNoun,
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -95,6 +95,53 @@ const keysOf = list => (list || []).map(b => b.key);
   check('a stamp older than the additions still tops up',
     keysOf(pricingBasesTopUp({ pricingBases: oldList, pricingBasesVersion: 1 }).pricingBases).slice(-2),
     ['per_project', 'per_equipment']);
+}
+
+// ── Per site w/ mandate ───────────────────────────────────────────────
+// The subset of a portfolio a regulation bites on, priced on its own count.
+// The point of it is that it is NOT the site count: a book with 6,176 sites
+// and 300 mandated ones prices two completely different deals, so the two
+// must never share a box.
+{
+  check('it ships as a per-unit basis', basisFor('per_site_mandate'),
+    { key: 'per_site_mandate', label: 'Per site w/ mandate', kind: 'unit', unit: 'sites_mandate', unitLabel: 'Sites w/ Mandate' });
+  check('with a count box of its own, beside Sites rather than inside it',
+    pricingUnits(PRICING_BASES).map(u => u.unit).filter(u => u === 'sites' || u === 'sites_mandate'),
+    ['sites', 'sites_mandate']);
+
+  const meta = { serviceType: 'Recurring', years: '3 years' };
+  const priced = estimateService({
+    entry: { basis: 'per_site_mandate', rate: 400 }, meta, counts: { sites_mandate: 300 }, dealSize: '',
+  });
+  check('300 mandated sites at $400', [priced.fee, priced.units], [120000, 300]);
+
+  // The whole reason it is a separate unit: a site count is not an answer to
+  // how many of them carry a mandate, and pricing it as though it were would
+  // quote twenty times the deal.
+  const sitesOnly = estimateService({
+    entry: { basis: 'per_site_mandate', rate: 400 }, meta, counts: { sites: 6176 }, dealSize: '',
+  });
+  check('a plain site count does not feed it',
+    [sitesOnly.fee, sitesOnly.note], [0, 'No sites w/ mandate entered']);
+
+  // How it reads in a sentence. A multi-word unit label is a noun with
+  // qualifiers after it, so only the noun loses its plural — "per Sites w/
+  // Mandate" read as the label quoted whole rather than as a rate.
+  check('the rate reads as a sentence', rateSentence({ basis: 'per_site_mandate', rate: 400 }),
+    '$400 per site w/ mandate');
+  check('a one-word label is unchanged by that', [unitNoun('Sites'), unitNoun('Equipment')], ['site', 'equipment']);
+  check('and an acronym keeps its case', unitNoun('MWh'), 'MWh');
+
+  // It shipped in version 4, so a list saved before that gets it and a list
+  // saved after — where leaving it out was a choice — does not.
+  const v3List = PRICING_BASES
+    .filter(b => b.key !== 'per_site_mandate')
+    .map(({ key, label, kind, unit, unitLabel }) => ({ key, label, kind, unit, unitLabel }));
+  check('a list saved at v3 gets it, on the end',
+    keysOf(pricingBasesTopUp({ pricingBases: v3List, pricingBasesVersion: 3 }).pricingBases).at(-1),
+    'per_site_mandate');
+  check('and a list already at v4 keeps it out',
+    pricingBasesTopUp({ pricingBases: v3List, pricingBasesVersion: 4 }), null);
 }
 
 // ── Nothing here changes what a saved list means ──────────────────────

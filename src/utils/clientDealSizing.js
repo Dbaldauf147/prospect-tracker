@@ -32,11 +32,19 @@ import {
 import { serviceStatusBucket } from './serviceStatusColors.js';
 
 // Units a client record answers on its own, and the field that answers each.
-// Only two: these are the counts the company card actually collects. Every
-// other unit a scope needs (meters, invoices, MWh) is asked for per client,
-// because nothing in the record knows it.
+// These are the counts the company card actually collects; every other unit a
+// scope needs (meters, invoices, MWh) is asked for per client, because nothing
+// in the record knows it.
+//
+// Sites w/ Mandate is the card's own field too — typed on the card, or
+// stamped from the site list's compliance screening — so a service charged
+// per mandated site prices without anyone re-entering a number the company
+// page already knows. Same rule as the other two: a figure typed against the
+// client beats it, because the portfolio's mandated sites and the ones a
+// deal covers are not the same number.
 export const CLIENT_COUNT_FIELDS = [
   { unit: 'sites', field: 'numberOfSites', label: 'Sites' },
+  { unit: 'sites_mandate', field: 'sitesWithMandate', label: 'Sites w/ Mandate' },
   { unit: 'accounts', field: 'numberOfAccounts', label: 'Accounts' },
 ];
 
@@ -108,6 +116,51 @@ export function clientCounts(client, scope) {
     sources[unit] = 'typed';
   }
   return { counts, sources };
+}
+
+/**
+ * The counts a client's estimate ran on, as rows a cell can print.
+ *
+ * Each row names the pricing BASIS the count fed, not just the unit: "Per
+ * site — 6,176" answers what the client was priced on, where "6,176 sites"
+ * only answered what the client has. Two bases can share a unit, and then
+ * both are named — they are fed by the one count.
+ *
+ * `used` is the honest half of it. A company record answers Sites, Accounts
+ * and Sites w/ Mandate whether or not anything in scope is charged on them,
+ * so a count can sit against a client having priced nothing at all. The
+ * estimate reports which units its lines actually consulted, and a count
+ * outside that set is marked unused rather than left to read as though it
+ * produced some of the money beside it.
+ *
+ * Used rows come first, in the bases' own order within that, so the cell
+ * reads as "what priced this client" and then "what else is on file".
+ */
+export function countsUsed(estimate, bases = PRICING_BASES) {
+  const list = Array.isArray(bases) && bases.length ? bases : PRICING_BASES;
+  const order = new Map();
+  list.forEach((b, i) => { if (b.unit && !order.has(b.unit)) order.set(b.unit, i); });
+  const usedUnits = estimate?.unitsUsed;
+  const rows = Object.entries(estimate?.counts || {}).map(([unit, count]) => {
+    const named = list.filter(b => b.unit === unit);
+    return {
+      unit,
+      count,
+      // Named as the rate card names them. A unit no basis claims any more —
+      // one left behind by a deleted basis — falls back to its own key,
+      // which is at least something to recognise it by.
+      label: named.map(b => b.label).join(' / ') || unit,
+      unitLabel: named[0]?.unitLabel || unit,
+      source: estimate?.countSources?.[unit] === 'typed' ? 'typed' : 'client',
+      // No unitsUsed at all (an older stored estimate) means nothing to
+      // check against, and a count is likelier to have been used than not.
+      used: usedUnits ? usedUnits.has(unit) : true,
+    };
+  });
+  rows.sort((a, b) => (Number(b.used) - Number(a.used))
+    || ((order.get(a.unit) ?? list.length) - (order.get(b.unit) ?? list.length))
+    || a.unit.localeCompare(b.unit));
+  return rows;
 }
 
 /**
