@@ -1171,10 +1171,10 @@ export function DealSizingView({
                         </div>
                       </td>
                       {/* The rate card behind the figures. Without it a row
-                          reading "Est. Fee · 3 yrs" and $550 said nothing
+                          reading "Typed fee · 3 yrs" and $550 said nothing
                           about what the service is actually charged on — and
-                          a typed Est. Fee outranking a per-site rate is
-                          exactly the case worth being able to see from here. */}
+                          a typed fee outranking a per-site rate is exactly
+                          the case worth being able to see from here. */}
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem', verticalAlign: 'top' }}>
                         {(() => {
                           const entry = pricingFor(pricing, line.name, bases);
@@ -1203,7 +1203,7 @@ export function DealSizingView({
                                   that don't divide into each other. */}
                               {line.typed && (
                                 <span style={{ display: 'block', fontSize: '0.7rem', color: '#B45309' }}
-                                  title={`A fee typed into the Est. Year 1 Fee column on Services Pricing outranks the rate above, so ${line.name} is charged that fee here whatever the basis works out to.`}
+                                  title={`A fee is typed against ${line.name} on the rate card, and it outranks the rate above — so it is charged that fee here whatever the basis works out to. It is the Typed fee box in the service's pricing panel, on Dropdowns › Services Pricing.`}
                                 >not charged — typed fee wins</span>
                               )}
                             </span>

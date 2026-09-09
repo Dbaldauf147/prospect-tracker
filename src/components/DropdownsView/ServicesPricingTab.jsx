@@ -147,7 +147,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
 
   // Priced = there's a figure behind it, however it got there: a basis to
-  // work one out, or a fee typed straight into the Typed Fee column.
+  // work one out, or a fee typed straight into the service's Typed fee box.
   const pricedCount = useMemo(
     () => serviceRows.filter(r => {
       const entry = pricingFor(pricing, r.name, bases);

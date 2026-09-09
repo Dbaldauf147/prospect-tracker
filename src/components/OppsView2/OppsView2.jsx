@@ -2001,7 +2001,7 @@ function QuotedAmountCell({
   // read off the rate card on Dropdowns › Services Pricing.
   //
   // The same estimator the Deal Pricing tab runs, so a fee here is the
-  // fee it shows: a typed Est. Fee wins outright, otherwise the basis and
+  // fee it shows: a typed fee wins outright, otherwise the basis and
   // rate are worked against the counts. The only count an opp carries is its
   // Sites, so a service priced per meter or per invoice comes back priced
   // but at nothing, and says which count it was missing rather than showing
@@ -2216,7 +2216,7 @@ function QuotedAmountCell({
                             <strong
                               style={{ color: '#1E293B' }}
                               title={line.typed
-                                ? 'Est. Fee typed on the Services Pricing rate card'
+                                ? 'A fee typed against this service on the Services Pricing rate card'
                                 : 'Worked out from this service\u2019s basis and rate'}
                             >{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</strong>
                           ) : (
