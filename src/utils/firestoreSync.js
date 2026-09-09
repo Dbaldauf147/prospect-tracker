@@ -54,12 +54,20 @@ function getDoc(id) {
   return doc(db, SHARED_COL, id);
 }
 
-export function subscribeToProspects(onChange) {
+// The listener behind the whole roster. `onError` matters as much as
+// `onChange`: when the snapshot fails (rules, an offline browser, an
+// extension blocking firestore.googleapis.com) Firestore calls the error
+// callback ONCE and then drops the listener -- no retry, no later
+// delivery. Logging it and returning was enough to leave the app on
+// "Loading prospects..." for good, so the failure is handed back to the
+// caller to show.
+export function subscribeToProspects(onChange, onError) {
   return onSnapshot(getCol(), (snap) => {
     const prospects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     onChange(prospects);
   }, (err) => {
     console.error('Firestore prospects subscription error:', err);
+    if (onError) onError(err);
   });
 }
 

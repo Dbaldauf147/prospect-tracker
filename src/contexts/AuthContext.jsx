@@ -55,7 +55,16 @@ export function AuthProvider({ children }) {
       // signed out before any data loads.
       if (firebaseUser && !isEmailAllowed(firebaseUser.email)) {
         setAuthError(`${firebaseUser.email} isn't authorized. ${allowlistDescription()}`);
-        try { await signOut(auth); } catch { /* ignore */ }
+        try { await signOut(auth); } catch (err) { console.warn('Sign-out of an unauthorized session failed', err); }
+        // Normally the sign-out above fires this listener again with null
+        // and that pass ends the load. When it fails -- offline, or the
+        // SDK refusing -- there is no second pass, and returning with
+        // `loading` still true left the app on "Loading..." for good, with
+        // neither the login screen nor the reason on it. Ending it here
+        // costs nothing in the ordinary case: the null pass clears the
+        // user a moment later and the login screen shows the error.
+        setUser(null);
+        setLoading(false);
         return;
       }
       // Partition all browser-local IndexedDB reads/writes by user
