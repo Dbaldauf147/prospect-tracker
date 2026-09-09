@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
+import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
@@ -256,29 +256,52 @@ function earliestFirmOppStartISO(firm, oppsRecords, prospects) {
   return best;
 }
 
-// Reads Opps 2 — the canonical opps store. Local IndexedDB first for
-// speed; falls back to the user's Firestore `opps2Data` doc when the
-// local cache is empty (e.g. fresh browser, never opened Opps 2 here
-// yet) so this view doesn't show "No Opps data loaded" right after
-// sign-in on a new machine.
+// Reads Opps 2 — the canonical opps store — from both of the places it
+// lives: the local IndexedDB cache and the user's Firestore `opps2Data`
+// doc. The two are read in PARALLEL and each is painted the moment it
+// lands, newest wins; this is not a "local first, cloud as a fallback"
+// read.
+//
+// The distinction matters because the previous version awaited both
+// (loadOpps2Newest does a Promise.all) before showing anything. A slow
+// or stalled Firestore round trip — the chunked payload is a parent
+// getDoc plus a getDocs over the whole `chunks` subcollection — left
+// this view sitting on zero records and showing "No Opps data loaded"
+// even though the cache had every opp and the Opps tab, which paints
+// its IndexedDB copy without waiting, was showing them fine. That's
+// exactly the "I opened Opps and it still says no data" report.
+//
+// Returns [records, setRecords, read] where `read` says a read actually
+// finished, so an empty list can be told apart from one that hasn't
+// answered yet and the warning banner only fires on the former.
 function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
+  const [read, setRead] = useState(false);
+  // `_updatedAt` of whatever we've applied so far. The two reads race,
+  // and later refreshes overlap earlier ones, so an older payload that
+  // arrives late must not overwrite a newer one already on screen.
+  const appliedAtRef = useRef(-1);
   useEffect(() => {
     let cancelled = false;
-    // Read the canonical Opps 2 store the way the rest of the app does:
-    // the strictly-newer of the local IndexedDB cache and the Firestore
-    // doc, with Firestore's chunked payload reassembled. The inline
-    // reader this replaced only read the doc's `json` field and bailed
-    // when the doc was chunked (large datasets), and it always preferred
-    // local IDB even when Firestore was newer. That let the on-screen PE
-    // Opps table drift from the server-built PE Opps email, which reads
-    // the same (chunk-aware) Firestore doc.
-    const refresh = async () => {
-      try {
-        const data = await loadOpps2Newest(userId);
-        const recs = Array.isArray(data?.records) ? data.records : null;
-        if (!cancelled && recs && recs.length > 0) setRecords(recs);
-      } catch { /* leave records empty on failure */ }
+    appliedAtRef.current = -1;
+    const apply = (data) => {
+      if (cancelled) return;
+      const recs = Array.isArray(data?.records) ? data.records : null;
+      if (!recs || recs.length === 0) return;
+      const at = Number(data._updatedAt) || 0;
+      if (at < appliedAtRef.current) return;
+      appliedAtRef.current = at;
+      setRecords(recs);
+      // Data in hand is proof enough that the store answered — don't
+      // make the banner wait on the other (possibly stalled) source.
+      setRead(true);
+    };
+    const refresh = () => {
+      let settled = 0;
+      const done = () => { settled += 1; if (settled === 2 && !cancelled) setRead(true); };
+      loadOpps2Cache().then(apply, () => {}).then(done, done);
+      (userId ? loadOpps2FromFirestore(userId) : Promise.resolve(null))
+        .then(apply, () => {}).then(done, done);
     };
     refresh();
     // Re-pull when Opps 2 writes its cache (e.g. an inline Sales Partner
@@ -287,7 +310,7 @@ function useOppsRecords(userId) {
     window.addEventListener('opps2-cache-updated', onUpdate);
     return () => { cancelled = true; window.removeEventListener('opps2-cache-updated', onUpdate); };
   }, [userId]);
-  return [records, setRecords];
+  return [records, setRecords, read];
 }
 
 export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
@@ -458,7 +481,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     setSortDir(prev => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
     setSortKey(key);
   }
-  const [oppsRecords, setOppsRecords] = useOppsRecords(user?.uid);
+  const [oppsRecords, setOppsRecords, oppsRead] = useOppsRecords(user?.uid);
 
   // Download a PE firm's mapped portfolio companies (the entries in its
   // Portfolio Companies tab — the same array behind the PC Mapping
@@ -1253,7 +1276,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           firm={oppsFirm}
           setFirm={setOppsFirm}
           firmOptions={peFirmOptions}
-          oppsLoaded={oppsRecords.length > 0}
+          oppsMissing={oppsRead && oppsRecords.length === 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
           onEditField={updateOppField}
@@ -1269,7 +1292,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           query={blackstoneQuery}
           setQuery={setBlackstoneQuery}
           firm={BLACKSTONE_FIRM}
-          oppsLoaded={oppsRecords.length > 0}
+          oppsMissing={oppsRead && oppsRecords.length === 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
           onEditField={updateOppField}
@@ -1402,7 +1425,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
-        {oppsRecords.length === 0 && (
+        {oppsRead && oppsRecords.length === 0 && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
             No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; counts will populate here afterwards.
           </div>
@@ -4031,7 +4054,7 @@ function EditableCell({ value, align, onCommit }) {
 // Opps 2 store — anything with Type = "Private Equity" or Source =
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
-function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
+function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsMissing, prospects, onSelectProspect, onEditField, user }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const firmLabel = firm.trim();
   const ALL_COLUMNS = [
@@ -4266,7 +4289,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
-        {!oppsLoaded && (
+        {oppsMissing && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
             No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; PE opps will populate here afterwards.
           </div>
