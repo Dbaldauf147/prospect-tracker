@@ -17,6 +17,7 @@
 // can exercise it without React.
 
 import { closeReasonOf, parseYear } from './oppsMetrics.js';
+import { lookupCloseNotSold } from '../data/closeNotSoldRules.js';
 
 export const NOT_SOLD = 'Not Sold';
 export const SOLD = 'Sold';
@@ -38,6 +39,36 @@ export const NO_REASON = '(No reason recorded)';
 
 export function reasonOf(r) {
   return closeReasonOf(r) || NO_REASON;
+}
+
+// Same bucket-everything rule for the two columns below: a loss with the
+// field blank is filed under a named bucket rather than dropped, so the
+// breakdown beside a reason always adds up to that reason's losses.
+export const NO_COMPETITION = '(Unspecified)';
+export const UNMAPPED_STATUS = '(Unmapped)';
+
+/** Who else was in the deal — the Competition cell, placeholders cleaned. */
+export function competitionOf(r) {
+  const raw = String(r?.['Competition'] ?? '').trim();
+  const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+  return cleaned || NO_COMPETITION;
+}
+
+/**
+ * How this loss closes out in BFO — Lost, Cancelled by Customer, Cancelled
+ * by Schneider — read through the same (Competition, Reason Not Sold)
+ * mapping the Close Not Solds flow runs on, so the analysis and the
+ * close-out agent can't name two different statuses for one opp.
+ *
+ * A pair with no rule reads as unmapped rather than blank: those are the
+ * rows the Agents page already highlights as needing a Competition or a
+ * Reason before they can be closed, and a silent gap here would hide from
+ * this table exactly the losses that aren't finished being recorded.
+ */
+export function bfoStatusOf(r) {
+  const competition = String(r?.['Competition'] ?? '').trim();
+  const mapped = lookupCloseNotSold(competition, closeReasonOf(r));
+  return mapped?.status || UNMAPPED_STATUS;
 }
 
 /**
@@ -84,7 +115,8 @@ function inWindow(r, fromTs, toTs, yearSet) {
  *   {
  *     lossCount, winCount,
  *     undated,        // losses left out because they carry no Close Date
- *     reasons: [{ reason, count, percent, sources: [{ source, count }] }],
+ *     reasons: [{ reason, count, percent, sources: [{ source, count }],
+ *                 competitions: [{ value, count }], bfoStatuses: [{ value, count }] }],
  *     sources: [{ source, losses, wins, lossRate, percent,
  *                 reasons: [{ reason, count, percent, percentAll }],
  *                 topReason }],
@@ -141,12 +173,25 @@ export function notSoldBreakdown(records, { from = '', to = '', years = [] } = {
   // Which sources each reason shows up in, so a reason row can say where it
   // is concentrated without a second pass.
   const reasonSources = new Map();
+  // And the same for who else was in those deals, and how they close out in
+  // BFO. Both are per-opp facts under a row that is a group of opps, so the
+  // only honest way to show them is the mix: "Only SE (4), RFP (2)" says
+  // something a single value would have to lie about.
+  const reasonCompetitions = new Map();
+  const reasonStatuses = new Map();
+  const tallyInto = (outer, key, value) => {
+    const inner = outer.get(key) || new Map();
+    inner.set(value, (inner.get(value) || 0) + 1);
+    outer.set(key, inner);
+  };
 
   for (const r of losses) {
     const reason = reasonOf(r);
     const source = sourceOf(r);
 
     byReason.set(reason, (byReason.get(reason) || 0) + 1);
+    tallyInto(reasonCompetitions, reason, competitionOf(r));
+    tallyInto(reasonStatuses, reason, bfoStatusOf(r));
 
     const sEntry = bySource.get(source) || { count: 0, reasons: new Map() };
     sEntry.count += 1;
@@ -161,6 +206,12 @@ export function notSoldBreakdown(records, { from = '', to = '', years = [] } = {
   const lossCount = losses.length;
   const share = (n) => (lossCount > 0 ? (n / lossCount) * 100 : 0);
 
+  // Commonest first, then alphabetical — the same order the source list
+  // beside them is ranked in, so all three columns read the same way.
+  const ranked = (tally) => [...(tally || new Map()).entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+
   const reasons = [...byReason.entries()]
     .map(([reason, count]) => ({
       reason,
@@ -169,6 +220,8 @@ export function notSoldBreakdown(records, { from = '', to = '', years = [] } = {
       sources: [...(reasonSources.get(reason) || new Map()).entries()]
         .map(([source, n]) => ({ source, count: n }))
         .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
+      competitions: ranked(reasonCompetitions.get(reason)),
+      bfoStatuses: ranked(reasonStatuses.get(reason)),
     }))
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 

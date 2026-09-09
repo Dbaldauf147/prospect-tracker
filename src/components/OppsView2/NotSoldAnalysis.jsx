@@ -4,7 +4,7 @@ import { DataTable } from '../common/DataTable';
 import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
 import { parseMoney } from '../../utils/oppsMetrics';
 import {
-  notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
+  bfoStatusOf, notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
 } from '../../utils/notSoldAnalysis';
 import styles from './OppsView2.module.css';
 
@@ -17,6 +17,31 @@ const muted = { color: 'var(--color-text-muted, #64748B)' };
 function money(v) {
   const n = parseMoney(v);
   return n != null && n > 0 ? fmtMoneyWhole(Math.round(n)) : '-';
+}
+
+// One row's mix of a per-opp field: the values behind a group of losses,
+// commonest first, with the whole list in the tooltip when it doesn't fit.
+//
+// Three columns on the reason table are this shape — where the losses came
+// from, who else was in them, and how they close out in BFO — because a
+// reason row is a group of opps and every one of those facts belongs to a
+// single opp. Printing one value would be a summary that hides a split:
+// "Price pain" losing four deals to Only SE and two to an RFP is two
+// different problems, and a cell reading just "Only SE" says so wrongly.
+function mixItems(items) {
+  return (items || []).map(i => `${i.value} (${i.count})`).join(', ');
+}
+
+function MixCell({ items }) {
+  if (!items || items.length === 0) return <span style={muted}>-</span>;
+  return (
+    <div
+      title={items.map(i => `${i.value}: ${i.count}`).join('\n')}
+      style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+    >
+      {mixItems(items)}
+    </div>
+  );
 }
 
 // A share-of-losses cell: the number and a bar, so the long tail of
@@ -62,6 +87,9 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
               <th style={{ padding: '0.4rem 0.5rem' }}>Reason</th>
               <th style={{ padding: '0.4rem 0.5rem' }}>Scope</th>
               <th style={{ padding: '0.4rem 0.5rem' }}>Competition</th>
+              {/* The reason table above prints the mix of statuses behind a
+                  row; this is where you find out which loss is which. */}
+              <th style={{ padding: '0.4rem 0.5rem' }}>BFO Status</th>
               <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Quoted $</th>
               <th style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>Close Date</th>
             </tr>
@@ -78,6 +106,7 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
                 <td style={{ padding: '0.4rem 0.5rem' }}>{reasonOf(r)}</td>
                 <td style={{ padding: '0.4rem 0.5rem' }}>{r['Scope'] || '-'}</td>
                 <td style={{ padding: '0.4rem 0.5rem' }}>{r['Competition'] || '-'}</td>
+                <td style={{ padding: '0.4rem 0.5rem' }}>{bfoStatusOf(r)}</td>
                 <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {money(r['Quoted Amount'])}
                 </td>
@@ -220,17 +249,38 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
       render: (row) => <ShareCell percent={row.percent} />,
     },
     {
+      // How these losses close out in Salesforce, off the same
+      // (Competition, Reason Not Sold) mapping the Close Not Solds flow
+      // runs on — so a reason that is half "Lost" and half "Cancelled by
+      // Customer" says which half is which, and one that can't be mapped
+      // at all shows up here as work still owed rather than as a blank.
+      key: 'bfoStatus',
+      label: 'BFO Status',
+      defaultWidth: 260,
+      render: (row) => <MixCell items={row.bfoStatuses} />,
+      // Both of these are derived, so the column filter and the Excel
+      // export have to be told what the cell says — row['bfoStatus'] holds
+      // nothing.
+      getFilterValue: (row) => mixItems(row.bfoStatuses),
+      exportValue: (row) => mixItems(row.bfoStatuses),
+    },
+    {
+      key: 'competition',
+      label: 'Competition',
+      defaultWidth: 240,
+      render: (row) => <MixCell items={row.competitions} />,
+      getFilterValue: (row) => mixItems(row.competitions),
+      exportValue: (row) => mixItems(row.competitions),
+    },
+    {
       key: 'sourceList',
       label: 'Sources',
       defaultWidth: 300,
-      render: (row) => (
-        <div
-          title={row.sources.map(s => `${s.source}: ${s.count}`).join('\n')}
-          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-        >
-          {row.sources.map(s => `${s.source} (${s.count})`).join(', ')}
-        </div>
-      ),
+      render: (row) => <MixCell items={row.sources.map(s => ({ value: s.source, count: s.count }))} />,
+      // Same treatment as the two columns above, which is also what stops
+      // this one exporting blank the way it always had.
+      getFilterValue: (row) => row.sources.map(s => `${s.source} (${s.count})`).join(', '),
+      exportValue: (row) => row.sources.map(s => `${s.source} (${s.count})`).join(', '),
     },
   ], []);
 

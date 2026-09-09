@@ -19,7 +19,8 @@
 // report is unbounded but declared excluded once a window is set — the one
 // case where dropping it is right, and the one case where saying so matters.
 import {
-  notSoldBreakdown, notSoldYears, sourceReasonRows, reasonOf, sourceOf, closeYearOf, NO_REASON,
+  notSoldBreakdown, notSoldYears, sourceReasonRows, reasonOf, sourceOf, closeYearOf,
+  bfoStatusOf, competitionOf, NO_REASON, NO_COMPETITION, UNMAPPED_STATUS,
 } from '../src/utils/notSoldAnalysis.js';
 
 let failures = 0;
@@ -149,6 +150,59 @@ const RECORDS = [
     [empty.lossCount, empty.winCount, empty.reasons.length, empty.sources.length], [0, 0, 0, 0]);
   check('and no window is no window', empty.windowed, false);
   check('no records means no years to offer', notSoldYears([]), []);
+}
+
+// --- the BFO status and competition columns on the reason table ----------
+//
+// A reason row is a group of opps and both of these are per-opp facts, so
+// the row carries the mix rather than a value. Two things are easy to get
+// wrong and both would mislead: a loss whose field is blank has to stay in
+// the mix under a named bucket (or the breakdown stops adding up to the
+// row's own count), and the status has to come off the same (Competition,
+// Reason Not Sold) mapping the Close Not Solds flow uses — one that can't
+// be mapped is a row still owing a Competition, not a row with no status.
+{
+  const recs = [
+    // Same reason, three different competitions — including a placeholder,
+    // which is what an opp closed out without one looks like.
+    { _id: 1, Stage: 'Not Sold', Source: 'Referral', 'Reason Not Sold': 'Price Pain', Competition: 'RFP', 'Close Date': '2026-02-01' },
+    { _id: 2, Stage: 'Not Sold', Source: 'Referral', 'Reason Not Sold': 'Price Pain', Competition: 'Only SE', 'Close Date': '2026-02-02' },
+    { _id: 3, Stage: 'Not Sold', Source: 'Cold Call', 'Reason Not Sold': 'Price Pain', Competition: 'Only SE', 'Close Date': '2026-02-03' },
+    { _id: 4, Stage: 'Not Sold', Source: 'Cold Call', 'Reason Not Sold': 'Price Pain', Competition: '-', 'Close Date': '2026-02-04' },
+    { _id: 5, Stage: 'Not Sold', Source: 'Referral', 'Reason Not Sold': 'Free Service', Competition: 'Only SE', 'Close Date': '2026-02-05' },
+  ];
+  const d = notSoldBreakdown(recs);
+  const price = d.reasons.find(r => r.reason === 'Price Pain');
+
+  check('a blank competition is a named bucket, not a dropped loss',
+    competitionOf({ Competition: '#N/A' }), NO_COMPETITION);
+  check('the competition mix is commonest first',
+    price.competitions.map(c => [c.value, c.count]),
+    [['Only SE', 2], [NO_COMPETITION, 1], ['RFP', 1]]);
+  check('and it adds up to the row it sits on',
+    price.competitions.reduce((n, c) => n + c.count, 0), price.count);
+
+  check('the status is the close-out mapping for the pair',
+    bfoStatusOf({ Competition: 'Only SE', 'Reason Not Sold': 'Price Pain' }), 'Cancelled by Customer');
+  check('a competitive deal on the same reason closes out Lost instead',
+    bfoStatusOf({ Competition: 'RFP', 'Reason Not Sold': 'Price Pain' }), 'Lost');
+  check('a pair with no rule reads as unmapped, not as blank',
+    bfoStatusOf({ Competition: '', 'Reason Not Sold': 'Price Pain' }), UNMAPPED_STATUS);
+  check('so one reason can carry several statuses at once',
+    price.bfoStatuses.map(b => [b.value, b.count]),
+    [['Cancelled by Customer', 2], [UNMAPPED_STATUS, 1], ['Lost', 1]]);
+  check('and the statuses add up to the row too',
+    price.bfoStatuses.reduce((n, b) => n + b.count, 0), price.count);
+
+  const free = d.reasons.find(r => r.reason === 'Free Service');
+  check('a reason lost only to itself is Cancelled by Schneider',
+    free.bfoStatuses.map(b => [b.value, b.count]), [['Cancelled by Schneider', 1]]);
+
+  // The columns narrow with the report: they are built from the losses in
+  // the window, not from every loss on file.
+  const feb2 = notSoldBreakdown(recs, { from: '2026-02-02', to: '2026-02-03' });
+  check('the mixes are of the losses in the window only',
+    feb2.reasons[0].competitions.map(c => [c.value, c.count]), [['Only SE', 2]]);
 }
 
 console.log(failures ? `${failures} failed.` : 'All passed.');
