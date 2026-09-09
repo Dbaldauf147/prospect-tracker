@@ -70,6 +70,7 @@ import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/sit
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
+import { withTimeout, isTimeoutError } from '../../utils/withTimeout.js';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { classifyUtility } from '../../utils/utilityClassify';
@@ -211,6 +212,13 @@ function rowInDivision(row, divisionFilter) {
 // ~2,700-site portfolio lands around 11–12 MB, so this leaves real headroom.
 const MAX_ANALYSIS_MB = 40;
 const MAX_ANALYSIS_BASE64_CHARS = Math.ceil((MAX_ANALYSIS_MB * 1024 * 1024) / 3) * 4;
+
+// Ceiling on the site-list write that follows a saved analysis. Firestore
+// writes resolve on server acknowledgement and never reject when the client
+// can't reach the server, so every await on this path needs one — see
+// utils/withTimeout. One document for one company; if it hasn't landed in
+// this long it isn't going to on this attempt.
+const SITE_LIST_WRITE_TIMEOUT_MS = 60_000;
 
 // Utility accounts (bills) estimated for one site, as text. Halves are
 // real — a property type whose water account is "0 – 1" contributes 0.5 —
@@ -5379,8 +5387,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
     try {
       // Awaited, so the save status can't call the site list done while
-      // the write is still in flight.
-      await updateSettingsPath({ [`companySiteLists.${slug}`]: entry });
+      // the write is still in flight — but under a ceiling, because an
+      // await on Firestore is an await on a promise that may never settle
+      // (see utils/withTimeout). This runs AFTER the analysis has landed,
+      // so a hang here used to leave the page on "Saving…" for a save that
+      // was already safely stored.
+      await withTimeout(
+        updateSettingsPath({ [`companySiteLists.${slug}`]: entry }),
+        SITE_LIST_WRITE_TIMEOUT_MS,
+        'saving the site list',
+      );
       const parts = [];
       if (merged.added) parts.push(`${merged.added.toLocaleString()} added`);
       if (merged.updated) parts.push(`${merged.updated.toLocaleString()} updated`);
@@ -5400,7 +5416,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       };
     } catch (e) {
       console.warn('Could not save company site list:', e);
-      return { note: ' Site list could not be updated.', total: 0, accounts: 0, equipment: 0 };
+      return {
+        note: isTimeoutError(e)
+          ? ' Site list not updated: the database did not acknowledge the write. The analysis itself was saved.'
+          : ' Site list could not be updated.',
+        total: 0,
+        accounts: 0,
+        equipment: 0,
+      };
     }
   }
 
@@ -5450,7 +5473,30 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         });
         return;
       }
-      setSaveStatus({ state: 'saving', message: `Saving ${sizeMb.toFixed(1)} MB to ${prospect.company || 'company'}…` });
+      const companyLabel = prospect.company || 'company';
+      setSaveStatus({ state: 'saving', message: `Saving ${sizeMb.toFixed(1)} MB to ${companyLabel}…` });
+      // Which step the upload is on, on screen. A save has four
+      // server round-trips behind one spinner, and when it stopped moving
+      // the message said only "Saving 0.6 MB to <company>…" — true of every
+      // one of them, and of a browser that had quietly stopped talking to
+      // Firestore at all. Naming the step is what makes the next report
+      // ("it stuck on part 2 of 3") worth anything.
+      const onPhase = ({ step, done = 0, total = 0 }) => {
+        if (step === 'reading') {
+          setSaveStatus({ state: 'saving', message: `Saving ${sizeMb.toFixed(1)} MB to ${companyLabel}: checking what is stored…` });
+        } else if (step === 'uploading') {
+          setSaveStatus({
+            state: 'saving',
+            message: total > 1
+              ? `Saving to ${companyLabel}: uploading part ${Math.min(done + 1, total)} of ${total}…`
+              : `Saving ${sizeMb.toFixed(1)} MB to ${companyLabel}: uploading…`,
+          });
+        } else if (step === 'finalizing') {
+          setSaveStatus({ state: 'saving', message: `Saving to ${companyLabel}: finishing the analysis…` });
+        } else if (step === 'saved') {
+          setSaveStatus({ state: 'saving', message: `Saved the analysis to ${companyLabel}: updating the site list…` });
+        }
+      };
       // No pre-delete: saveIndicativeAnalysis writes the chunks first, the
       // `main` metadata doc last, and prunes any stale tail chunks, so a
       // re-save is already a clean replace. Wiping first meant an upload that
@@ -5461,7 +5507,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         fileName,
         dataBase64,
         sizeBytes: buffer.byteLength,
-      });
+      }, { onPhase });
       phase(`uploaded ${sizeMb.toFixed(1)} MB`);
       // Fold the loaded sites into this company's site list, so the "Site
       // list mapped" status (and the Site List Overview) reflect the save
@@ -5521,9 +5567,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         allRows.reduce((sum, r) => sum + (propertyTypeEquipment(r.__propertyType__) || 0), 0),
       );
       const equipmentTotal = Math.max(loadedEquipment, siteList.equipment || 0);
+      setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}: updating the company record…` });
       if (updateProspect) {
         try {
-          updateProspect(prospect.id, {
+          // Deliberately not awaited: the analysis and the site list are
+          // already stored, and a Firestore write that never acknowledges
+          // must not turn a finished save back into a spinner. Wrapped so a
+          // rejected write is logged rather than surfacing as an unhandled
+          // promise with no context.
+          Promise.resolve(updateProspect(prospect.id, {
             indicativeAnalysisMeta: { fileName, sizeBytes: buffer.byteLength, savedAt: new Date().toISOString() },
             ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
             ...(accountCount > 0 ? { numberOfAccounts: accountCount } : {}),
@@ -5533,7 +5585,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             // field on a stale number from a previous analysis would be
             // worse than saying nothing.
             sitesWithMandate: mandateSites,
-          });
+          })).catch((e) => console.warn('Could not stamp analysis marker on prospect:', e));
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
       phase('stamped the company');
@@ -5554,7 +5606,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
       console.error('Save indicative analysis failed:', err);
-      setSaveStatus({ state: 'error', message: err?.message || 'Save failed.' });
+      // A hang and a failure are different problems and read differently:
+      // the write is queued in the browser and will go out if the
+      // connection comes back, so "failed" would be as misleading as the
+      // spinner that used to sit here forever. Say which step stopped
+      // answering, and point at the download, which needs no database.
+      setSaveStatus({
+        state: 'error',
+        message: isTimeoutError(err)
+          ? `Save stalled: ${err.label} got no answer from the database after ${Math.round(err.ms / 1000)}s. `
+            + 'Check the connection and retry — the workbook is queued in this browser meanwhile, '
+            + 'and ⬇ Master Analysis downloads it without saving.'
+          : (err?.message || 'Save failed.'),
+      });
     }
   }
 
