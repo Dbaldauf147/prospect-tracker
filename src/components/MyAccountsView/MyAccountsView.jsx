@@ -1771,6 +1771,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // trying to create a second copy.
   const [addingTarget, setAddingTarget] = useState('');
   const [addTargetNote, setAddTargetNote] = useState(null);
+  // "Add all" on the same banner — running flag and progress counter.
+  const [addAllRunning, setAddAllRunning] = useState(false);
+  const [addAllProgress, setAddAllProgress] = useState(null);
 
   // The record this target name would collide with, if any: dedupe key
   // first (the same identity the add guard uses), then the view's fuzzy
@@ -1791,14 +1794,76 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return tier === 'Tier 1' || tier === 'Tier 2' || tier === 'Tier 3' || tier === '' || tier === '-';
   }
 
-  async function addTargetToMyAccounts(t) {
+  // The record a new My Accounts row would be built from, shared by the
+  // single "+ Add" and the "Add all" button below so the two can never
+  // disagree about what an added account looks like.
+  function newProspectFromTarget(t) {
+    return {
+      company: (t.company || '').trim(),
+      cdm: cdmName || '',
+      status: '',
+      type: '',
+      geography: '',
+      publicPrivate: '',
+      assetTypes: [],
+      peAum: null,
+      reAum: null,
+      numberOfSites: null,
+      rank: '',
+      tier: t.tier,
+      hqRegion: '',
+      frameworks: [],
+      notes: '',
+      website: '',
+      emailDomain: '',
+    };
+  }
+
+  // What adding one target would actually do, worked out without doing
+  // any of it. Both buttons plan first and then apply, so the bulk one
+  // can tell the user what it is about to change in a single question
+  // instead of asking once per account.
+  function planTargetAdd(t) {
     const company = (t.company || '').trim();
-    if (!company || addingTarget) return;
+    if (!company) return null;
     const existing = findRosterMatch(company);
     const dismissedName = dismissedCompanies.find(d => {
       const lower = (d || '').toLowerCase().trim();
       return lower === company.toLowerCase() || (existing && lower === (existing.company || '').toLowerCase().trim());
-    });
+    }) || null;
+    if (!existing) {
+      return { company, target: t, existing: null, dismissedName, patch: {}, reasons: [], fixes: [], needsMapping: false, mappedNames: [] };
+    }
+    // A record exists, so this is a repair rather than an add.
+    const patch = {};
+    const reasons = [];
+    const fixes = [];
+    if (!matchesCdm(existing.cdm, cdmName)) {
+      reasons.push(existing.cdm ? `is assigned to ${existing.cdm}` : 'has no CDM set');
+      patch.cdm = cdmName || '';
+      fixes.push(`CDM → ${cdmName || '(blank)'}`);
+    }
+    if (!hasResolvedTier(existing)) {
+      reasons.push('has no tier');
+      patch.tier = t.tier || 'Tier 3';
+      fixes.push(`Tier → ${patch.tier}`);
+    }
+    if (dismissedName) {
+      reasons.push('was dismissed');
+      fixes.push('restore it from the dismissed list');
+    }
+    const mappedNames = Array.isArray(targetMap[existing.id])
+      ? targetMap[existing.id]
+      : (targetMap[existing.id] ? [targetMap[existing.id]] : []);
+    const needsMapping = !mappedNames.some(n => (n || '').toLowerCase().trim() === company.toLowerCase());
+    if (needsMapping) fixes.push(`link the Target Accounts name "${company}" to it`);
+    return { company, target: t, existing, dismissedName, patch, reasons, fixes, needsMapping, mappedNames };
+  }
+
+  async function addTargetToMyAccounts(t) {
+    const plan = planTargetAdd(t);
+    if (!plan || addingTarget || addAllRunning) return;
+    const { company, existing, dismissedName, patch, reasons, fixes, needsMapping, mappedNames } = plan;
     setAddTargetNote(null);
     setAddingTarget(company);
     try {
@@ -1806,56 +1871,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (dismissedName) {
           updateSettings({ dismissedCompanies: dismissedCompanies.filter(d => d !== dismissedName) });
         }
-        await onAdd({
-          company,
-          cdm: cdmName || '',
-          status: '',
-          type: '',
-          geography: '',
-          publicPrivate: '',
-          assetTypes: [],
-          peAum: null,
-          reAum: null,
-          numberOfSites: null,
-          rank: '',
-          tier: t.tier,
-          hqRegion: '',
-          frameworks: [],
-          notes: '',
-          website: '',
-          emailDomain: '',
-        });
+        await onAdd(newProspectFromTarget(t));
         setAddTargetNote({ tone: 'ok', text: `Added ${company} to My Accounts.` });
         return;
       }
 
-      // A record exists, so this is a repair rather than an add. Work out
-      // what is keeping it off the list, and say so before changing it —
-      // taking an account off another rep's name is not something to do
-      // silently.
-      const patch = {};
-      const reasons = [];
-      const fixes = [];
-      if (!matchesCdm(existing.cdm, cdmName)) {
-        reasons.push(existing.cdm ? `is assigned to ${existing.cdm}` : 'has no CDM set');
-        patch.cdm = cdmName || '';
-        fixes.push(`CDM → ${cdmName || '(blank)'}`);
-      }
-      if (!hasResolvedTier(existing)) {
-        reasons.push('has no tier');
-        patch.tier = t.tier || 'Tier 3';
-        fixes.push(`Tier → ${patch.tier}`);
-      }
-      if (dismissedName) {
-        reasons.push('was dismissed');
-        fixes.push('restore it from the dismissed list');
-      }
-      const mappedNames = Array.isArray(targetMap[existing.id])
-        ? targetMap[existing.id]
-        : (targetMap[existing.id] ? [targetMap[existing.id]] : []);
-      const needsMapping = !mappedNames.some(n => (n || '').toLowerCase().trim() === company.toLowerCase());
-      if (needsMapping) fixes.push(`link the Target Accounts name "${company}" to it`);
-
+      // Say what the repair changes before changing it — taking an
+      // account off another rep's name is not something to do silently.
       const sameName = (existing.company || '').toLowerCase().trim() === company.toLowerCase();
       const asName = sameName ? '' : ` as "${existing.company}"`;
       const why = reasons.length
@@ -1885,6 +1907,96 @@ Fix that now?
       setAddTargetNote({ tone: 'error', text: `Couldn't add ${company}: ${err?.message || err}` });
     } finally {
       setAddingTarget('');
+    }
+  }
+
+  // "Add all" on the same banner: every chip in one go. Deliberately one
+  // question instead of the single-add confirm per account — it spells
+  // out the whole batch, including the accounts sitting under another
+  // rep's name, so a click can't quietly reassign a book. Settings
+  // (dismissals, target-name links) are accumulated and written ONCE at
+  // the end: a write per account would each rebuild its patch from this
+  // render's settings and undo the one before it.
+  function sampleNames(plans, limit = 12) {
+    const names = plans.slice(0, limit).map(pl => `• ${pl.company}`);
+    const more = plans.length > limit ? `\n…and ${plans.length - limit} more` : '';
+    return names.join('\n') + more;
+  }
+
+  async function addAllTargetsToMyAccounts(list) {
+    if (addAllRunning || addingTarget) return;
+    const plans = (list || []).map(t => planTargetAdd(t)).filter(Boolean);
+    if (plans.length === 0) return;
+    const creates = plans.filter(pl => !pl.existing);
+    const repairs = plans.filter(pl => pl.existing);
+    const reassigns = repairs.filter(pl => pl.patch.cdm !== undefined && pl.existing.cdm);
+
+    const parts = [`Add ${plans.length} Target Accounts ${plans.length === 1 ? 'account' : 'accounts'} to My Accounts?`];
+    if (creates.length > 0) parts.push(`\nCreate ${creates.length} new record${creates.length === 1 ? '' : 's'}:\n${sampleNames(creates)}`);
+    if (repairs.length > 0) parts.push(`\n${repairs.length} already on the tracker — fixed in place (tier, dismissal, target-name link) rather than duplicated:\n${sampleNames(repairs)}`);
+    if (reassigns.length > 0) {
+      const who = reassigns.slice(0, 8).map(pl => `• ${pl.company} (currently ${pl.existing.cdm})`).join('\n');
+      const more = reassigns.length > 8 ? `\n…and ${reassigns.length - 8} more` : '';
+      parts.push(`\nWARNING: ${reassigns.length} ${reassigns.length === 1 ? 'account is' : 'accounts are'} assigned to another CDM and will move to ${cdmName || '(blank)'}:\n${who}${more}`);
+    }
+    if (!confirm(parts.join('\n'))) return;
+
+    setAddTargetNote(null);
+    setAddAllRunning(true);
+    setAddAllProgress({ done: 0, total: plans.length });
+    let dismissedNext = dismissedCompanies;
+    let dismissedChanged = false;
+    let mapNext = { ...targetMap };
+    let mapChanged = false;
+    let added = 0;
+    let repaired = 0;
+    const failures = [];
+    try {
+      for (const pl of plans) {
+        try {
+          if (!pl.existing) {
+            await onAdd(newProspectFromTarget(pl.target));
+            added++;
+          } else {
+            if (Object.keys(pl.patch).length > 0) await onUpdate(pl.existing.id, pl.patch);
+            if (pl.needsMapping) {
+              const current = Array.isArray(mapNext[pl.existing.id])
+                ? mapNext[pl.existing.id]
+                : (mapNext[pl.existing.id] ? [mapNext[pl.existing.id]] : []);
+              mapNext = { ...mapNext, [pl.existing.id]: [...current, pl.company] };
+              mapChanged = true;
+            }
+            repaired++;
+          }
+          if (pl.dismissedName) {
+            dismissedNext = dismissedNext.filter(d => d !== pl.dismissedName);
+            dismissedChanged = true;
+          }
+        } catch (err) {
+          console.error(`Add all: ${pl.company} failed:`, err);
+          failures.push(pl.company);
+        }
+        setAddAllProgress(prev => ({ done: (prev?.done || 0) + 1, total: plans.length }));
+      }
+      const settingsPatch = {};
+      if (dismissedChanged) settingsPatch.dismissedCompanies = dismissedNext;
+      if (mapChanged) settingsPatch.targetMap = mapNext;
+      if (Object.keys(settingsPatch).length > 0) await updateSettings(settingsPatch);
+
+      const done = [];
+      if (added > 0) done.push(`added ${added}`);
+      if (repaired > 0) done.push(`fixed ${repaired} already on the tracker`);
+      const failNote = failures.length > 0 ? ` ${failures.length} failed: ${failures.slice(0, 5).join(', ')}${failures.length > 5 ? '…' : ''}.` : '';
+      setAddTargetNote({
+        tone: failures.length > 0 ? 'error' : 'ok',
+        text: `Add all: ${done.join(', ') || 'nothing to change'}.${failNote}`,
+      });
+    } catch (err) {
+      console.error('Add all to My Accounts failed:', err);
+      setAddTargetNote({ tone: 'error', text: `Add all stopped: ${err?.message || err}` });
+    } finally {
+      setAddAllRunning(false);
+      setAddAllProgress(null);
     }
   }
 
@@ -3683,8 +3795,19 @@ Fix that now?
             )}
             {onlyTarget.length > 0 && (
               <div className={styles.addedBanner}>
-                <div className={styles.addedTitle}>
-                  {onlyTarget.length} on Target Accounts List but NOT on My Accounts
+                <div className={styles.addedTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <span>{onlyTarget.length} on Target Accounts List but NOT on My Accounts</span>
+                  <button
+                    type="button"
+                    onClick={() => addAllTargetsToMyAccounts(onlyTarget)}
+                    disabled={addAllRunning || !!addingTarget}
+                    title="Add every account listed here to My Accounts. Accounts already on the tracker are fixed in place instead of duplicated; you get one summary to confirm first."
+                    style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-accent)', background: addAllRunning ? 'var(--color-surface)' : 'var(--color-accent)', color: addAllRunning ? 'var(--color-text-secondary)' : '#fff', fontSize: '0.7rem', fontWeight: 700, cursor: (addAllRunning || addingTarget) ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >
+                    {addAllRunning
+                      ? `Adding ${addAllProgress ? `${addAllProgress.done}/${addAllProgress.total}` : ''}…`
+                      : `+ Add all (${onlyTarget.length})`}
+                  </button>
                 </div>
                 {addTargetNote && (
                   <div className={styles.addNote} style={{ color: addTargetNote.tone === 'error' ? '#DC2626' : '#15803D' }}>
@@ -3700,7 +3823,7 @@ Fix that now?
                       <button
                         className={styles.addChipBtn}
                         onClick={() => addTargetToMyAccounts(t)}
-                        disabled={!!addingTarget}
+                        disabled={!!addingTarget || addAllRunning}
                         title={`Add ${t.company} to My Accounts`}
                       >{addingTarget === (t.company || '').trim() ? 'Adding…' : '+ Add'}</button>
                     </span>
