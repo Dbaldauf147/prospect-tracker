@@ -1,7 +1,7 @@
 // `getDoc` is aliased: this module already has a local getDoc(id) helper
 // that builds a prospect doc ref, and the two names would collide.
-import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, disableNetwork, enableNetwork } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableNetwork } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
 // the analysis timeouts below for why a save needs one.
 import { withTimeout, isTimeoutError } from './withTimeout.js';
@@ -425,33 +425,103 @@ const analysisWriteTimeout = (totalChars) => Math.min(
   Math.max(ANALYSIS_WRITE_TIMEOUT_MIN_MS, 30_000 + (totalChars / (1024 * 1024)) * 20_000),
 );
 
-// Tear the client's connection down and bring it back up.
+// Make sure the client is not sitting offline.
 //
-// When a save stalls, the SDK is not "offline" — it believes it has a
-// connection and is waiting on a stream that will never answer, which is
-// why the promises neither resolve nor reject. Firestore has no way to ask
-// "is this stream still alive"; disableNetwork() closes the streams and
-// discards that belief (queued writes are kept), and enableNetwork() opens
-// fresh ones. It is the one lever a client has for a wedged transport, so a
-// retry that doesn't pull it is a retry onto the same dead stream.
-//
-// Both calls are local state changes, but they are bounded anyway: this
-// runs on the path taken because something that should have answered
-// didn't. Best-effort throughout — a failure here just means the retry
-// tries its luck on the connection it had.
-export async function kickFirestoreConnection() {
+// This used to be a disableNetwork()/enableNetwork() pair, pulled between
+// retries on the theory that a stalled save is the SDK waiting on a stream
+// it still believes in. It never demonstrably helped, and it has a failure
+// mode worth more than the theory: with the multi-tab persistent cache, a
+// disable that isn't cleanly followed by an enable leaves the whole app
+// offline for the life of the tab — every write pending, forever, which is
+// indistinguishable from the bug it was trying to fix. So only the half
+// that can help is left. enableNetwork() on an already-online client is a
+// no-op, and on a client left offline by anything at all it is the way
+// back.
+export async function ensureFirestoreOnline() {
   try {
-    await withTimeout(disableNetwork(db), 5_000, 'closing the database connection');
     await withTimeout(enableNetwork(db), 5_000, 'reopening the database connection');
     return true;
   } catch (err) {
-    console.warn('Could not restart the Firestore connection:', err?.message || err);
-    // Never leave the client offline because the reopen went wrong: that
-    // would take the rest of the app down with the save. Unawaited on
-    // purpose — this is the path where waiting is what went wrong.
-    enableNetwork(db).catch(() => {});
+    console.warn('Could not confirm the Firestore connection is open:', err?.message || err);
     return false;
   }
+}
+
+// ── Writing without the SDK ────────────────────────────────────────────
+//
+// The Firestore SDK does not speak plain HTTP. It holds long-lived
+// WebChannel streams open and sends writes down them, which is what makes
+// live snapshots work — and is also unusual enough traffic that a proxy, a
+// VPN, or a filtering extension can mangle or drop it while ordinary HTTPS
+// to the same host sails through. When that happens the SDK does not fail:
+// it queues the write and waits forever, which is exactly the shape of this
+// bug.
+//
+// The REST API is a single ordinary POST. It goes through anything that
+// lets HTTPS through, it returns a real HTTP status, and it is subject to
+// the same security rules as the SDK because it carries the same signed ID
+// token. So when the SDK cannot get a byte through, this is both the
+// fallback that may still save the workbook and the only thing in the app
+// that can say WHY — a 429 is a quota, a 403 is rules, a failed fetch is
+// the network.
+const FIRESTORE_REST_TIMEOUT_MS = 30_000;
+
+// Firestore's REST value encoding, for the shapes these documents hold.
+// Numbers are split on integer-ness because the API rejects "1.0" as an
+// integerValue and reads an integer double back as a double.
+function toRestValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toRestValue) } };
+  if (typeof v === 'object') {
+    return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toRestValue(x)])) } };
+  }
+  return { stringValue: String(v) };
+}
+
+const toRestFields = (obj) => Object.fromEntries(
+  Object.entries(obj || {}).map(([k, v]) => [k, toRestValue(v)]),
+);
+
+// Create or overwrite one document by path, over HTTPS. Throws with the
+// status and the server's own message, which is the point: unlike the SDK,
+// this cannot fail silently.
+async function firestoreRestWrite(docPath, data, timeoutMs = FIRESTORE_REST_TIMEOUT_MS) {
+  const projectId = db?.app?.options?.projectId || auth?.app?.options?.projectId;
+  if (!projectId) throw new Error('No Firebase project id available for a REST write');
+  const user = auth?.currentUser;
+  if (!user?.getIdToken) throw new Error('Not signed in, so a REST write cannot be authorised');
+  const token = await withTimeout(Promise.resolve(user.getIdToken()), timeoutMs, 'getting an auth token');
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${docPath}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: toRestFields(data) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    // A blocked host, a killed connection, or the abort above. Named so the
+    // message doesn't read as a database error when it is a network one.
+    const wrapped = new Error(`the request never completed (${err?.name || 'error'}: ${err?.message || err})`);
+    wrapped.networkFailure = true;
+    throw wrapped;
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let detail = body.slice(0, 300);
+    try { detail = JSON.parse(body)?.error?.message || detail; } catch { /* keep the raw body */ }
+    const err = new Error(`HTTP ${res.status}: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  return true;
 }
 
 // Small sibling doc listing the generations whose chunks are on the server
@@ -536,17 +606,25 @@ export async function saveIndicativeAnalysis(
   // there; without it, nothing is, and no amount of re-cutting the workbook
   // will help.
   phase('probing');
+  // Anything at all could have left this client offline — another tab, a
+  // sleep, an earlier failure. enableNetwork() on an online client costs
+  // nothing and is the only way back for one that isn't.
+  await ensureFirestoreOnline();
   const probe = await probeAnalysisWrite(col, probeTimeoutMs);
   phase('probed', { ok: probe.ok, ms: probe.ms });
   console.log(probe.ok
     ? `Save to company · a test write was acknowledged in ${probe.ms}ms`
     : `Save to company · a test write got no answer in ${probe.ms}ms (${probe.error?.message || 'failed'})`);
 
-  // Largest chunks first, stepping down each time an upload stalls. Only
-  // worth stepping down at all when the probe got through: if a few bytes
-  // don't land, 64 KiB won't either, and three attempts would just be three
-  // times the wait before saying so.
-  const ladder = probe.ok ? chunkSizes : chunkSizes.slice(0, 1);
+  // The SDK cannot get a few bytes out. That is not a size problem and no
+  // rung of the ladder will fix it — but it is not necessarily a dead
+  // network either: the SDK's WebChannel streams are the unusual traffic,
+  // and plain HTTPS to the same host very often still works. Try that.
+  if (!probe.ok) return saveAnalysisOverRest({ col, data, fileName, sizeBytes, phase, chunkSizes, probe });
+
+  // Largest chunks first, stepping down each time an upload stalls: a
+  // gateway that drops a 700 KB request will take a 64 KB one.
+  const ladder = chunkSizes;
   let lastErr = null;
   for (let attempt = 0; attempt < ladder.length; attempt += 1) {
     try {
@@ -576,9 +654,6 @@ export async function saveIndicativeAnalysis(
         + `retrying at ${Math.round(next / 1024)} KB:`, err.message,
       );
       phase('shrinking', { from: ladder[attempt], to: next });
-      // A stall is the SDK waiting on a stream it still believes in, so the
-      // smaller chunks deserve a fresh one to go out on.
-      await kickFirestoreConnection();
     }
   }
   // What the probe learned rides along on the error: it is the difference
@@ -586,6 +661,63 @@ export async function saveIndicativeAnalysis(
   // cannot reach the database", and only the caller can say either.
   if (lastErr) lastErr.probeOk = probe.ok;
   throw lastErr;
+}
+
+// The save the SDK could not make, over plain HTTPS.
+//
+// Reached only when a few bytes through the SDK went unanswered. Same
+// documents, same order (chunks first, `main` last), same security rules —
+// the difference is the transport, and the transport is what was failing.
+// One request at a time: this path exists because something in the middle
+// dislikes what the SDK sends, so it is no place to be clever about
+// parallelism.
+//
+// Either it works — in which case the workbook is saved and the page says
+// how — or it fails with a status code, which is the first hard fact this
+// bug has produced: 429 is the project's quota, 403 is the rules, and a
+// request that never completes is the network itself.
+async function saveAnalysisOverRest({ col, data, fileName, sizeBytes, phase, chunkSizes, probe }) {
+  const chunkSize = chunkSizes[chunkSizes.length - 1] || 64 * 1024;
+  const gen = newAnalysisGen();
+  const chunks = [];
+  for (let i = 0; i < data.length; i += chunkSize) chunks.push(data.slice(i, i + chunkSize));
+
+  phase('rest', { total: chunks.length });
+  console.log(`Save to company · the SDK is not getting through; writing ${chunks.length} document(s) over HTTPS instead`);
+  try {
+    let done = 0;
+    for (let i = 0; i < chunks.length; i += 1) {
+      await firestoreRestWrite(`${col.path}/${analysisChunkId(gen, i)}`, { i, gen, data: chunks[i] });
+      done += 1;
+      phase('rest', { done, total: chunks.length });
+    }
+    // `main` last, as ever: a reader that sees it must find every chunk it
+    // names. capturedAt is the client's clock here — serverTimestamp() is a
+    // transform the plain document write doesn't carry — which is a few
+    // milliseconds of drift against a save that would otherwise not exist.
+    await firestoreRestWrite(`${col.path}/${ANALYSIS_DOC_ID}`, {
+      fileName,
+      sizeBytes: Number(sizeBytes) || 0,
+      chunkCount: chunks.length,
+      gen,
+      capturedAt: new Date(),
+    });
+    phase('saved', { viaRest: true });
+    console.log('Save to company · saved over HTTPS');
+    // No prune: the bookkeeping documents are read through the SDK, which
+    // is the thing that isn't answering. The next save that gets through
+    // cleans up, and the sweep covers what it can't name.
+  } catch (err) {
+    // Both roads are blocked, and this one at least came back with a
+    // reason. Carried on the error so the page can print it verbatim
+    // instead of guessing between a quota and a firewall.
+    err.probeOk = false;
+    err.restTried = true;
+    err.restDetail = err.message;
+    err.probeDetail = probe?.error?.message || '';
+    console.error('Save to company · the HTTPS write failed too:', err.message);
+    throw err;
+  }
 }
 
 // A few bytes to the analyses collection, to find out whether writing to it

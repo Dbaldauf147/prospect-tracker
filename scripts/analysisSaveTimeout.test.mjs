@@ -21,7 +21,7 @@ import { register } from 'node:module';
 register('./stubs/loader.mjs', import.meta.url);
 
 const fs = await import('./stubs/firestore.mjs');
-const { saveIndicativeAnalysis, setProspectsUser, kickFirestoreConnection } = await import('../src/utils/firestoreSync.js');
+const { saveIndicativeAnalysis, setProspectsUser, ensureFirestoreOnline } = await import('../src/utils/firestoreSync.js');
 const { isTimeoutError } = await import('../src/utils/withTimeout.js');
 
 let passed = 0, failed = 0;
@@ -37,6 +37,10 @@ const fast = { readTimeoutMs: 50, writeTimeoutMs: 50, probeTimeoutMs: 50 };
 const payload = (chars) => ({ fileName: 'a.xlsx', dataBase64: 'A'.repeat(chars), sizeBytes: Math.floor(chars * 3 / 4) });
 // Let a detached prune (which the save deliberately doesn't await) run.
 const settle = () => new Promise((r) => setTimeout(r, 30));
+// The REST fallback goes through global fetch; each case that stubs it puts
+// the real one back, so a later case can't accidentally depend on it.
+const realFetch = globalThis.fetch;
+const restoreFetch = () => { globalThis.fetch = realFetch; };
 
 // ── A save that works ──────────────────────────────────────────────────
 {
@@ -88,7 +92,9 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   ok(raised.probeOk === true, 'and carries what the test write learned');
   const attempts = new Set(fs.calls.filter((c) => c.op === 'setDoc' && c.path.includes('/chunk-')).map((c) => c.path.split('-')[1]));
   ok(attempts.size === 3, `every rung of the ladder is tried (${attempts.size} attempts)`);
-  ok(fs.network.calls.length >= 2, 'on a fresh connection each time');
+  // No disable/enable churn between rungs: taking the client offline to
+  // "refresh" it is how an app ends up offline for the life of the tab.
+  ok(!fs.network.calls.includes('disable'), 'without ever taking the client offline between rungs');
 }
 
 // ── The save that only fails at 700 KB ─────────────────────────────────
@@ -137,21 +143,23 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   fs.timing.delayMs = 0;
 }
 
-// ── When nothing lands at all, one attempt is enough to say so ─────────
+// ── When nothing lands at all, the ladder is not the answer ────────────
 {
   fs.reset();
-  // The probe fails too: no size of chunk will help, so stepping down the
-  // ladder would only be three times the wait before saying the same thing.
+  // The probe fails too, so no size of chunk will help and re-cutting the
+  // workbook three times would only be three times the wait. The save goes
+  // straight around the SDK instead.
   fs.hangOn(/./, 'setDoc');
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' });
   const t0 = Date.now();
   let raised = null;
   try { await saveIndicativeAnalysis('p1', payload(10), fast); }
   catch (err) { raised = err; }
-  ok(isTimeoutError(raised), 'the save still rejects rather than hanging');
-  ok(raised.probeOk === false, 'and reports that even a test write went unanswered');
-  const attempts = new Set(fs.calls.filter((c) => c.op === 'setDoc' && c.path.includes('/chunk-')).map((c) => c.path.split('-')[1]));
-  ok(attempts.size === 1, 'the ladder is not walked when nothing is getting through');
+  ok(raised === null, 'the save completes by another route');
+  const sdkChunkWrites = fs.calls.filter((c) => c.op === 'setDoc' && c.path.includes('/chunk-'));
+  ok(sdkChunkWrites.length === 0, 'the ladder is not walked when nothing is getting through');
   ok(Date.now() - t0 < 1500, 'so the answer comes quickly');
+  restoreFetch();
 }
 
 // ── A read that never answers must not stop the upload ─────────────────
@@ -199,14 +207,81 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
     'the cleanup still runs, just not on the critical path');
 }
 
-// ── The lever a retry pulls before trying again ────────────────────────
+// ── Never leave the client offline ─────────────────────────────────────
 {
   fs.reset();
-  // A stall is the SDK waiting on a stream it still believes in, so a retry
-  // that doesn't close the connection first waits on the same dead stream.
-  const kicked = await kickFirestoreConnection();
-  ok(kicked === true, 'the connection restart reports success');
-  ok(fs.network.calls.join(',') === 'disable,enable', 'and closes the connection before reopening it');
+  const online = await ensureFirestoreOnline();
+  ok(online === true, 'the online check reports success');
+  // The disable half is gone on purpose: with the multi-tab persistent
+  // cache, a disable not cleanly followed by an enable leaves the whole app
+  // offline for the life of the tab — the very bug it was meant to fix.
+  ok(!fs.network.calls.includes('disable'), 'and never takes the client offline to do it');
+  ok(fs.network.calls.includes('enable'), 'only ever opening the connection');
+}
+
+// ── When the SDK can't get a byte out, go around it ────────────────────
+{
+  fs.reset();
+  // Every SDK write hangs, the probe included: not a size problem, and no
+  // rung of the ladder fixes it. But the SDK's streams are the unusual
+  // traffic — plain HTTPS to the same host is often still fine.
+  fs.hangOn(/./, 'setDoc');
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+  };
+  let raised = null;
+  const chars = 100 * 1024;
+  try { await saveIndicativeAnalysis('p1', payload(chars), fast); }
+  catch (err) { raised = err; }
+  ok(raised === null, 'the save succeeds over HTTPS when the SDK is mute');
+  const chunkReqs = requests.filter((r) => r.url.includes('/chunk-'));
+  const mainReq = requests.find((r) => r.url.endsWith('/main'));
+  ok(chunkReqs.length === Math.ceil(chars / (64 * 1024)), 'every chunk is written as its own request');
+  ok(!!mainReq, 'and the metadata document is written');
+  ok(requests.indexOf(mainReq) === requests.length - 1, 'last, after the chunks it names');
+  ok(mainReq.body.fields.chunkCount.integerValue === String(chunkReqs.length), 'naming the chunk count it wrote');
+  ok(requests.every((r) => r.url.startsWith('https://firestore.googleapis.com/v1/projects/test-project/')),
+    'against the signed-in project');
+  const rebuilt = chunkReqs.map((r) => r.body.fields.data.stringValue).join('');
+  ok(rebuilt === 'A'.repeat(chars), 'and the documents reassemble to the original workbook');
+  restoreFetch();
+}
+
+// ── ...and when that fails too, say what the server said ───────────────
+{
+  fs.reset();
+  fs.hangOn(/./, 'setDoc');
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 429,
+    text: async () => JSON.stringify({ error: { message: 'Quota exceeded.' } }),
+  });
+  let raised = null;
+  try { await saveIndicativeAnalysis('p1', payload(10), fast); }
+  catch (err) { raised = err; }
+  ok(!!raised, 'a save with no way through still fails');
+  ok(raised.restTried === true, 'having tried the plain request');
+  ok(/429/.test(raised.restDetail) && /Quota exceeded/.test(raised.restDetail),
+    'and carries the status and the server\'s own words');
+  // The first hard fact this failure has ever produced: silence from the
+  // SDK says nothing, a status code says which of three things is wrong.
+  ok(raised.status === 429, 'so the page can tell a quota from a firewall');
+  restoreFetch();
+}
+
+// ── A blocked network reads as a blocked network ───────────────────────
+{
+  fs.reset();
+  fs.hangOn(/./, 'setDoc');
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  let raised = null;
+  try { await saveIndicativeAnalysis('p1', payload(10), fast); }
+  catch (err) { raised = err; }
+  ok(raised?.networkFailure === true, 'a request that never completes is marked as a network failure');
+  ok(/Failed to fetch/.test(raised?.restDetail || ''), 'with what the browser said about it');
+  restoreFetch();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
