@@ -232,7 +232,7 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   );
 }
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, prospectingTagDebt = null, prospectingDue = 0, agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false, dailyLogEnabled = true, whatToDoTodayEnabled = true, onToggleDailyLog, onToggleWhatToDoToday, issuesCount = 0, oppsDueCount = null, prospectingTagDebt = null, prospectingDue = 0, prospectingWork = 0, prospectingWorkTitle = '', agentsRunDue = false, prospects = [], contacts = [], onSelectProspect, onSelectContact, onCreateCompany }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -300,6 +300,18 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#127919;</span>
           Prospecting
+          {/* What the counted steps of the ladder are showing as outstanding,
+              added up: services still short of coverage, client renewals with
+              no status, Top PCs with no intro asked for. The same numbers the
+              page prints in red beside those steps, so the badge and the page
+              can't disagree — and the opps step is left out because the Opps
+              item below already carries exactly that count. */}
+          {prospectingWork > 0 && (
+            <span
+              className={styles.navBadge}
+              title={prospectingWorkTitle || `${prospectingWork} prospecting item${prospectingWork === 1 ? '' : 's'} outstanding`}
+            >{prospectingWork > 99 ? '99+' : prospectingWork}</span>
+          )}
           {/* Contact rosters whose tags still aren't fully mapped, one
               apiece — the same count the Prospecting page shows beside its
               Tagged row, and held back the same way until step 1 is clear,

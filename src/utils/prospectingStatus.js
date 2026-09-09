@@ -224,6 +224,9 @@ export function ladderStates({ steps, counts = null, autoClear = null, caughtUpM
     // of offering an undo for a mark that was never made.
     const row = { key: step.key, state, count, tracked };
     if (state === 'caught-up' && !marked && auto === true) row.auto = true;
+    // Whose nav item already carries this step's number, if any — see
+    // countLadderWork at the foot of this file.
+    if (step.badgedOn) row.badgedOn = step.badgedOn;
     out.push(row);
     if (state !== 'caught-up') aboveAllClear = false;
   }
@@ -235,6 +238,35 @@ export function statesByKey(states) {
   const m = {};
   for (const s of (Array.isArray(states) ? states : [])) if (s?.key) m[s.key] = s;
   return m;
+}
+
+// The counted work the ladder is showing as red, step by step: every step
+// with a real count above zero, as { key, count }.
+//
+// Not position-dependent, because the page isn't: a counted step goes red on
+// its own count wherever it sits, and only the hand-marked ones wait their
+// turn (see `dueWhenReached`). The sidebar has to say the same thing the page
+// does or the two disagree in front of the user.
+//
+// A step whose number already sits on another nav item is left out — see
+// `badgedOn` in prospectingPlaybook.js. The opps step is the one that has
+// one: the Opps badge is literally the same count, and two red numbers for
+// one pile of calls reads as two piles.
+export function ladderWorkItems(states) {
+  const out = [];
+  for (const s of (Array.isArray(states) ? states : [])) {
+    if (!s || s.state !== 'work' || s.badgedOn) continue;
+    if (typeof s.count === 'number' && Number.isFinite(s.count) && s.count > 0) {
+      out.push({ key: s.key, count: s.count });
+    }
+  }
+  return out;
+}
+
+// Those counts added up — the number on the Prospecting nav badge. 0 when
+// there is nothing outstanding, so a caller renders nothing.
+export function countLadderWork(states) {
+  return ladderWorkItems(states).reduce((n, i) => n + i.count, 0);
 }
 
 // How many steps the ladder has reached and the user hasn't marked — the
