@@ -240,33 +240,41 @@ export function statesByKey(states) {
   return m;
 }
 
-// The counted work the ladder is showing as red, step by step: every step
-// with a real count above zero, as { key, count }.
+// The counted work the ladder has REACHED — { key, count }, or null.
 //
-// Not position-dependent, because the page isn't: a counted step goes red on
-// its own count wherever it sits, and only the hand-marked ones wait their
-// turn (see `dueWhenReached`). The sidebar has to say the same thing the page
-// does or the two disagree in front of the user.
+// The ladder is walked in order and stops at the first step that isn't
+// caught up, exactly as the dot does: the badge is "what is owed now", and a
+// number raised from a step three rungs down, while the ones above it are
+// still outstanding, sends the user past the warmer work the ladder puts
+// first. So every step above has to be clear before its number is shown.
 //
-// A step whose number already sits on another nav item is left out — see
-// `badgedOn` in prospectingPlaybook.js. The opps step is the one that has
-// one: the Opps badge is literally the same count, and two red numbers for
-// one pile of calls reads as two piles.
-export function ladderWorkItems(states) {
-  const out = [];
+// The step it stops on has to be a counted one with work on it. A
+// hand-marked step that has been reached has no number to show — that is
+// what the dot is for — and a step whose count hasn't landed yet is not
+// something to badge either.
+//
+// A step whose number already sits on another nav item is skipped, too —
+// see `badgedOn` in prospectingPlaybook.js. The opps step is the one that
+// has one: the Opps badge is literally the same count, and two red numbers
+// for one pile of calls reads as two piles.
+export function ladderWork(states) {
   for (const s of (Array.isArray(states) ? states : [])) {
-    if (!s || s.state !== 'work' || s.badgedOn) continue;
+    if (!s || s.state === 'caught-up') continue;
+    // The first thing that isn't clear is the only candidate; whatever it
+    // is, nothing below it is owed yet.
+    if (s.state !== 'work' || s.badgedOn) return null;
     if (typeof s.count === 'number' && Number.isFinite(s.count) && s.count > 0) {
-      out.push({ key: s.key, count: s.count });
+      return { key: s.key, count: s.count };
     }
+    return null;
   }
-  return out;
+  return null;
 }
 
-// Those counts added up — the number on the Prospecting nav badge. 0 when
-// there is nothing outstanding, so a caller renders nothing.
+// That count — the number on the Prospecting nav badge. 0 when nothing is
+// owed yet, so a caller renders nothing.
 export function countLadderWork(states) {
-  return ladderWorkItems(states).reduce((n, i) => n + i.count, 0);
+  return ladderWork(states)?.count || 0;
 }
 
 // How many steps the ladder has reached and the user hasn't marked — the

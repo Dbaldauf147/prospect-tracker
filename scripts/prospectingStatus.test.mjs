@@ -14,7 +14,7 @@
 import {
   categorizeStep, countDueSteps, countRenewalWork, countServiceGaps, isMarkedCaughtUp,
   isRenewalWork, ladderStates, parseCaughtUpMap, readCaughtUpSnapshot, statesByKey,
-  countLadderWork, ladderWorkItems,
+  countLadderWork, ladderWork,
   todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
 import { readSteps } from '../src/utils/prospectingPlaybook.js';
@@ -318,48 +318,53 @@ eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
 
 // --- what the Prospecting nav badge says -----------------------------------
 //
-// The page shows a counted step in red on its own count, wherever it sits in
-// the ladder, so the badge adds those counts up rather than following the
-// ladder's position rule — otherwise the sidebar says "nothing owed" beside a
-// page showing two red rows. The opps step is the exception: the Opps nav
-// item already carries that number.
+// The number is "what is owed now", not "everything outstanding": the ladder
+// is walked in order and stops at the first step that isn't caught up, the
+// same rule the dot follows. A count raised from three rungs down, while the
+// steps above it are still outstanding, sends the user past the warmer work
+// the ladder puts first — which is the whole point of ranking them.
 {
   // The shipped ladder, not the trimmed fixture above: this is about the
   // counted steps further down it (services, PE intros), which that one
   // leaves out.
   const FULL = readSteps(null);
-  const badge = (counts, map = {}, autoClear = null) => countLadderWork(ladder(FULL, counts, map, autoClear));
+  // Everything above the services step cleared: opps and renewals counted to
+  // zero, the two hand-marked steps between them marked today.
+  const ABOVE_CLEAR = { 'contact-mapping': TODAY, 'market-updates': TODAY };
+  const badge = (counts, map = ABOVE_CLEAR, autoClear = null) => countLadderWork(ladder(FULL, counts, map, autoClear));
 
   eq(badge({ ...CLEAR, 'targeted-services': 2, 'pe-intros': 0 }), 2,
-    'two services short of coverage put a 2 on the badge');
-  eq(badge({ ...CLEAR, 'targeted-services': 2, 'pe-intros': 3 }), 5,
-    'and every counted step outstanding adds to it');
+    'with the steps above it clear, two services short of coverage badge a 2');
+  eq(ladderWork(ladder(FULL, { ...CLEAR, 'targeted-services': 2 }, ABOVE_CLEAR))?.key, 'targeted-services',
+    'and the badge names the step the number came from');
   eq(badge(CLEAR), 0, 'a clear ladder badges nothing');
-  eq(badge({ opps: 0, renewals: null }), 0, 'a count still loading is not outstanding work');
 
-  // Position doesn't gate it: the services step is red on the page whether or
-  // not the hand-marked steps above it have been ticked, so it is on the
-  // badge too.
-  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}), 2,
-    'the count shows with the hand-marked steps above it unmarked');
-  eq(badge({ ...CLEAR, 'targeted-services': 2 }, { 'contact-mapping': TODAY, 'market-updates': TODAY }), 2,
-    'and still shows once they are marked');
+  // The rule the user asked for: the previous stages have to be done first.
+  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}), 0,
+    'an unmarked hand-marked step above it holds the number back');
+  eq(badge({ ...CLEAR, 'targeted-services': 2 }, { 'contact-mapping': TODAY }), 0,
+    'and so does the next one down, still unmarked');
+  eq(badge({ opps: 0, renewals: 3, 'targeted-services': 2 }), 3,
+    'renewals outstanding above it show their own number instead');
+  eq(badge({ opps: 0, renewals: null, 'targeted-services': 2 }), 0,
+    'a count still loading above it badges nothing rather than skipping past it');
+
+  // Auto-clearing a step counts as clearing it, like a mark does.
+  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}, { 'contact-mapping': true, 'market-updates': true }), 2,
+    'steps that cleared themselves let the number through');
 
   // The one step left out, and why.
-  eq(badge({ opps: 4, renewals: 0 }), 0,
-    'opps due are badged on the Opps item, so they are not counted twice here');
-  eq(badge({ opps: 4, renewals: 3 }), 3,
-    'the steps beside it still count');
-  eq(ladderWorkItems(ladder(FULL, { opps: 4, renewals: 3 }, {})).map(i => i.key), ['renewals'],
-    'and the items name the steps the number came from');
+  eq(badge({ opps: 4, renewals: 0, 'targeted-services': 2 }), 0,
+    'opps due are badged on the Opps item, so nothing is shown here while they stand');
 
-  // A hand-marked step owes work too, but there is no number to show for it —
-  // that is what the dot is for, and the two are separate readouts.
+  // A hand-marked step the ladder has reached owes work too, but there is no
+  // number for it — that is the dot's job, and the two are separate readouts.
   eq(badge(CLEAR, {}), 0, 'a due hand-marked step puts no number on the badge');
   eq(countDueSteps(ladder(FULL, CLEAR, {})) > 0, true, 'it raises the dot instead');
 
   eq(countLadderWork([]), 0, 'no steps, no badge');
   eq(countLadderWork(null), 0, 'and no states at all is not a crash');
+  eq(ladderWork(null), null, 'nor is asking which step it came from');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
