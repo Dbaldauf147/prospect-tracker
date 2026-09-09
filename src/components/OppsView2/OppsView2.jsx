@@ -119,6 +119,7 @@ import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
+import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
@@ -4584,6 +4585,16 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
               <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
             </div>
           </div>
+          {/* What the two fields above just decided. The Competition /
+              Reason pair is the whole input to the BFO close-out, and this
+              popup is where it gets chosen — so the consequence belongs
+              here, not on the Issues tab three days later when the pair
+              turns out not to map. */}
+          <BfoCloseOutPreview
+            competition={competition}
+            reason={reason}
+            mappedHint={<>The AI assistant enters those when it closes this opp out in BFO.</>}
+          />
           <div>
             <label style={labelStyle}>Notes</label>
             <LastCallLine opp={opp} />
@@ -7569,6 +7580,29 @@ export function OppInfoModal({
                 );
               })
             : renderFieldTable(tabFields)}
+
+          {/* Stage 7 is where Competition and Reason Not Sold are filled
+              in, and that pair decides the BFO Status and Reason outright
+              — so the tab that holds the two inputs shows the answer they
+              produce, live, as they are edited.
+
+              Shown for a Not Sold opp, and for any opp that has started
+              carrying either field (someone pre-filling the close-out).
+              Never for a Sold one: the mapping table covers Not Sold
+              closes only, and a Sold opp records its own kind in Reason
+              Not Sold ("Sold - New Client"), which would read as an
+              unmapped pair when it is nothing of the sort. */}
+          {currentTab === 'stage7' && oppStage.toLowerCase() !== 'sold'
+            && (oppStage.toLowerCase() === 'not sold'
+              || String(opp['Competition'] ?? '').trim()
+              || String(opp['Reason Not Sold'] ?? '').trim()) && (
+            <BfoCloseOutPreview
+              competition={opp['Competition']}
+              reason={opp['Reason Not Sold']}
+              style={{ marginTop: '0.6rem' }}
+              mappedHint={<>The AI assistant enters those when it closes this opp out in BFO.</>}
+            />
+          )}
 
           {/* A stage tab with nothing moved onto it yet says so. Every
               other empty tab has something else to show (Call Notes its
