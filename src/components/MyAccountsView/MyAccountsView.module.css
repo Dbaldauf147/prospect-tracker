@@ -419,6 +419,35 @@
   background: var(--color-accent-hover);
 }
 
+.addChipBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.addNote {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.addNoteClose {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.addNoteClose:hover {
+  opacity: 1;
+}
+
 .missingTitle {
   font-size: var(--font-size-sm);
   font-weight: 600;
