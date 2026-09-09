@@ -16,6 +16,17 @@
 // list listener, an analysis listener that re-targets as the mapped company
 // changes, and persistentMultipleTabManager in src/firebase.js).
 //
+// It was fixed upstream in @firebase/firestore 4.14.1 — "Assertion ID: ca9
+// (pendingResponses less than 0) caused by target creation race condition"
+// — which ships in firebase 12.13.0 and later. This app ran 12.11.0
+// (firestore 4.13.0) and hit it repeatedly; package.json now floors the
+// dependency above the fix, so DON'T take firebase back below 12.13.0.
+//
+// Everything below stays regardless. The crash is one of two ways the SDK
+// stops answering — the other is a mangled WebChannel stream (a proxy, a
+// VPN, a filtering extension), which no SDK release fixes — and a save that
+// can still reach the database over HTTPS is worth having either way.
+//
 // b815 is the aftermath: `AsyncQueue is already failed`. That first
 // assertion escaped inside the SDK's async queue, so the queue is now in a
 // permanent failed state and EVERY later operation — the stale-check read
