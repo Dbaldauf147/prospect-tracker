@@ -255,13 +255,16 @@ export async function loadPeFirms(db, uid, email) {
 }
 
 // ---- PE Stages board (mirror PEStagesTab.exportToExcel) ------------------
-const PE_STAGE_ORDER = ['Discovery', 'Piloting', 'Existing Partnership', 'Not Sold'];
+// Mirrors src/utils/peStages.js — this file ships to the API runtime,
+// which doesn't import from src/. Lead leads, and is what a firm with no
+// stage stored reads as.
+const PE_STAGE_ORDER = ['Lead', 'Discovery', 'Piloting', 'Existing Partnership', 'Not Sold'];
 const PE_STAGE_META = [
+  { stage: 'Lead', accent: '7C3AED', bg: 'F5F3FF', border: 'DDD6FE' },
   { stage: 'Discovery', accent: '2563EB', bg: 'EFF6FF', border: 'BFDBFE' },
   { stage: 'Piloting', accent: 'D97706', bg: 'FFFBEB', border: 'FDE68A' },
   { stage: 'Existing Partnership', accent: '059669', bg: 'ECFDF5', border: 'A7F3D0' },
   { stage: 'Not Sold', accent: 'DC2626', bg: 'FEF2F2', border: 'FECACA' },
-  { stage: 'Unassigned', accent: '64748B', bg: 'F8FAFC', border: 'E2E8F0' },
 ];
 
 // AUM formatting identical to src/utils/formatters.formatAum.
@@ -290,7 +293,7 @@ function addPeStagesSheet(wb, firms) {
     views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
   });
 
-  const stageOf = (f) => (PE_STAGE_ORDER.includes(f.peStage) ? f.peStage : 'Unassigned');
+  const stageOf = (f) => (PE_STAGE_ORDER.includes(f.peStage) ? f.peStage : 'Lead');
   const groups = new Map(PE_STAGE_META.map((m) => [m.stage, []]));
   for (const f of firms) groups.get(stageOf(f)).push(f);
 

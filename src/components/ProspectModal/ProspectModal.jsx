@@ -23,6 +23,7 @@ import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { peStageOf } from '../../utils/peStages';
 import { getServiceCategories, buildServiceBoard, moveServiceToBucket, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { coverageRowStyle } from '../../utils/coverageMark';
@@ -7202,8 +7203,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             {fields.type === 'Private Equity' && (
               <div>
                 <label className={styles.label}>PE Stage</label>
-                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
-                  <option value="">-</option>
+                <select className={styles.select} value={peStageOf(fields.peStage)} onChange={e => set('peStage', e.target.value)}>
                   {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>

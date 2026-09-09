@@ -7,6 +7,7 @@ import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { PE_STAGE_META, PE_DEFAULT_STAGE, peStageOf, peStageMeta } from '../../utils/peStages';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -115,31 +116,6 @@ function resolveCallIn(r) {
     if (Number.isFinite(n)) return n;
   }
   return null;
-}
-
-// One palette for a PE Stage, shared by everything that paints one: the
-// PE Stages board, the Days in Stage board, and the PE Stage column on the
-// Portfolio table. It lived twice, copied between the two boards, and a
-// third copy for the column would have made a drift between them a matter
-// of time.
-const PE_STAGE_META = [
-  { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
-  { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
-  { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
-  { stage: 'Not Sold', accent: '#DC2626', bg: '#FEF2F2', border: '#FECACA' },
-  { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
-];
-
-// A firm's stage as one of the five above — anything unrecognised (blank,
-// or a value retired from PE_STAGES) reads as Unassigned rather than
-// painting an unstyled chip.
-function peStageOf(peStage) {
-  return PE_STAGES.includes(peStage) ? peStage : 'Unassigned';
-}
-
-function peStageMeta(peStage) {
-  const stage = peStageOf(peStage);
-  return PE_STAGE_META.find(m => m.stage === stage) || PE_STAGE_META[PE_STAGE_META.length - 1];
 }
 
 // Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
@@ -612,12 +588,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
-  // "Days in Stage" needs to know when each firm entered its current PE
-  // Stage. Going forward that's stamped on every stage change (see
-  // useProspects.updateProspect). For firms that already had a stage set
-  // before this shipped, "start the clock now": stamp today once so they
-  // begin counting from here instead of showing blank forever. Runs a
-  // single pass per mount once the firms have loaded.
+  // Two one-time passes over the firms, both writing the field the boards
+  // read rather than papering over a blank at render time.
+  //
+  // A firm with no PE Stage stored becomes a Lead. Those firms used to
+  // collect in an "Unassigned" column that sat outside the pipeline; a PE
+  // firm on the roster is a lead until it's worked into something else, so
+  // the stage is now stored as one. updateProspect stamps peStageEnteredAt
+  // on the change, which starts that firm's days-in-stage clock today.
+  //
+  // "Days in Stage" needs that stamp for firms that already had a stage set
+  // before it shipped, too: stamp today once so they begin counting from
+  // here instead of showing blank forever.
+  //
+  // Both run a single pass per mount once the firms have loaded, and both
+  // are idempotent — the write they make is the condition they test for.
   const peStageBackfilledRef = useRef(false);
   useEffect(() => {
     if (peStageBackfilledRef.current || !peFirms.length) return;
@@ -625,7 +610,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     for (const p of peFirms) {
-      if (PE_STAGES.includes(p.peStage) && !p.peStageEnteredAt) {
+      if (!PE_STAGES.includes(p.peStage)) {
+        onUpdateProspect?.(p.id, { peStage: PE_DEFAULT_STAGE });
+      } else if (!p.peStageEnteredAt) {
         onUpdateProspect?.(p.id, { peStageEnteredAt: today });
       }
     }
@@ -1154,9 +1141,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           break;
         case 'peStage': {
           // PE_STAGES order — the same order the Stages board lays its
-          // columns out in. Unassigned ranks below every real stage, so
-          // it lands at one end rather than sorting as "D" for Discovery.
-          const rank = (p) => PE_STAGES.indexOf(p.peStage);
+          // columns out in, so the sort walks the pipeline rather than the
+          // alphabet. A firm with nothing stored ranks as a Lead, the same
+          // stage the boards show it at.
+          const rank = (p) => PE_STAGES.indexOf(peStageOf(p.peStage));
           cmp = rank(a) - rank(b);
           break;
         }
@@ -1193,7 +1181,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             {subtab === 'portfolio'
               ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
               : subtab === 'stages'
-              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>.</>
+              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup, or from the Portfolio table): <code>Lead</code>, <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>. A firm nobody has worked yet is a <code>Lead</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
               : subtab === 'blueOwl'
@@ -1466,7 +1454,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
-            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell — it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order, with unassigned firms at one end.` },
+            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell — it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order. A firm with no stage stored reads as Lead.` },
             { key: 'newsFeed', label: 'News Feed', align: 'center', tip: 'Yes when "Track acquisition news" is ticked on this firm\'s company popup, which includes it in the weekly acquisition-news email. Sort to group the tracked firms together.' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
@@ -1877,21 +1865,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 
                       {visibleCols.has('peStage') && (() => {
                         const meta = peStageMeta(pe.peStage);
-                        const assigned = meta.stage !== 'Unassigned';
                         // Set here, not only in the company popup. Moving a
-                        // firm through Discovery → Piloting → Partnership is
-                        // the thing this table is read for, and opening a
-                        // popup per firm to do it meant the board was always
-                        // a little out of date. It writes the same field the
-                        // popup writes, so the stamp that Days in Stage
-                        // counts from is set the same way too (see
-                        // useProspects.updateProspect).
+                        // firm through Lead → Discovery → Piloting →
+                        // Partnership is the thing this table is read for,
+                        // and opening a popup per firm to do it meant the
+                        // board was always a little out of date. It writes
+                        // the same field the popup writes, so the stamp that
+                        // Days in Stage counts from is set the same way too
+                        // (see useProspects.updateProspect).
                         if (!onUpdateProspect) {
                           return (
                             <div
-                              title={assigned
-                                ? `PE Stage set to "${meta.stage}" in this firm's company popup`
-                                : 'No PE Stage set on this firm\'s company popup'}
+                              title={`PE Stage set to "${meta.stage}" in this firm's company popup`}
                               style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
                             >
                               <span
@@ -1900,9 +1885,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                   textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
                                   padding: '1px 8px', borderRadius: 999,
                                   background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
-                                  fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
                                 }}
-                              >{assigned ? meta.stage : 'Unassigned'}</span>
+                              >{meta.stage}</span>
                             </div>
                           );
                         }
@@ -1911,25 +1895,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             style={{ padding: '0.4rem 0.4rem', textAlign: 'center', overflow: 'hidden' }}
                             onClick={e => e.stopPropagation()}
                           >
+                            {/* No blank option: every PE firm sits at a
+                                stage, and a firm with nothing stored is a
+                                Lead — so backing out of a mis-set stage
+                                means picking Lead, not emptying the field. */}
                             <select
-                              value={assigned ? meta.stage : ''}
+                              value={meta.stage}
                               onClick={e => e.stopPropagation()}
                               onChange={(e) => { e.stopPropagation(); onUpdateProspect(pe.id, { peStage: e.target.value }); }}
-                              title={assigned
-                                ? `${pe.company || 'This firm'} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`
-                                : `No PE Stage set for ${pe.company || 'this firm'}. Pick one here — it saves to the firm's record, the same field the company popup sets.`}
+                              title={`${pe.company || 'This firm'} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
                               style={{
                                 maxWidth: '100%', padding: '2px 4px', borderRadius: 999,
                                 background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
-                                fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer',
-                                fontStyle: assigned ? 'normal' : 'italic', fontWeight: assigned ? 700 : 500,
+                                fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 700,
                               }}
                             >
-                              {/* Blank is a real choice: it takes the firm
-                                  back to Unassigned rather than leaving the
-                                  only way out of a mis-set stage being the
-                                  popup. */}
-                              <option value="">Unassigned</option>
                               {PE_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
                             </select>
                           </div>
@@ -3661,9 +3641,9 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
 }
 
 // PE firms laid out as a Kanban board by engagement stage (peStage):
-// one column per stage — Discovery, Piloting, Existing Partnership, Not Sold,
-// plus an Unassigned column for firms with no stage set — so the user can
-// scan which PE relationships sit at each phase. Cards link back to the
+// one column per stage — Lead, Discovery, Piloting, Existing Partnership,
+// Not Sold — so the user can scan which PE relationships sit at each phase.
+// A firm with no stage stored shows under Lead. Cards link back to the
 // firm's company popup; stage is set per firm in that popup's "PE Stage"
 // dropdown. The whole board (respecting the search filter) exports to
 // Excel via the toolbar button.
@@ -3866,12 +3846,13 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
 // changes); firms with no stamp yet show "—".
 function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
   const [query, setQuery] = useState('');
-  const [hideUnassigned, setHideUnassigned] = useState(false);
+  const [hideLead, setHideLead] = useState(false);
   const STAGE_META = PE_STAGE_META;
   const stageOf = (pe) => peStageOf(pe.peStage);
   const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
   // Days the firm has sat in its current PE Stage. null when there's no
-  // entry date recorded (Unassigned firms, or ones not yet stamped).
+  // entry date recorded (a firm whose stage was never set, or not yet
+  // stamped).
   const daysOf = (pe) => {
     const iso = toISODate(pe.peStageEnteredAt);
     if (!iso) return null;
@@ -3892,8 +3873,10 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
       return dbv - da || (a.company || '').localeCompare(b.company || '');
     });
   }
-  const columns = STAGE_META.filter(m => !(hideUnassigned && m.stage === 'Unassigned'));
-  const unassignedCount = (groups.get('Unassigned') || []).length;
+  // Lead is the widest column on most rosters — everything untriaged sits
+  // there — so it can be folded away to leave the worked stages on screen.
+  const columns = STAGE_META.filter(m => !(hideLead && m.stage === PE_DEFAULT_STAGE));
+  const leadCount = (groups.get(PE_DEFAULT_STAGE) || []).length;
   // Day-badge color ramp — the longer a firm has sat in a stage the more
   // it stands out. Neutral for fresh entries, amber past ~3 months, red
   // past ~6 so a stalled relationship is obvious at a glance.
@@ -3910,8 +3893,8 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          <input type="checkbox" checked={hideUnassigned} onChange={e => setHideUnassigned(e.target.checked)} />
-          Hide Unassigned ({unassignedCount})
+          <input type="checkbox" checked={hideLead} onChange={e => setHideLead(e.target.checked)} />
+          Hide Lead ({leadCount})
         </label>
       </div>
       {firms.length === 0 ? (
@@ -3941,11 +3924,9 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
                     const pcCount = pcCountOf(pe);
                     const days = daysOf(pe);
                     const enteredISO = toISODate(pe.peStageEnteredAt);
-                    const badgeTitle = stage === 'Unassigned'
-                      ? 'No PE Stage set: set one in this firm\'s company popup to start the clock.'
-                      : enteredISO
-                        ? `In ${stage} since ${formatDateDisplay(enteredISO)} · ${days} day${days === 1 ? '' : 's'}`
-                        : 'No entry date recorded yet.';
+                    const badgeTitle = enteredISO
+                      ? `In ${stage} since ${formatDateDisplay(enteredISO)} · ${days} day${days === 1 ? '' : 's'}`
+                      : 'No entry date recorded yet.';
                     return (
                       <button
                         key={pe.id}
