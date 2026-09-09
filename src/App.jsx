@@ -23,6 +23,7 @@ import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { CdmNameModal } from './components/CdmNameModal';
 import { LoginPage } from './components/LoginPage';
+import { AuthLoadingGate } from './components/AuthLoadingGate';
 import { ProspectsLoadError } from './components/ProspectsLoadError';
 import { FilterBar } from './components/FilterBar/FilterBar';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
@@ -65,7 +66,7 @@ const VibeProspecting = lazyView(() => import('./components/VibeProspecting/Vibe
 const EMPTY_OBJ = Object.freeze({});
 
 function App() {
-  const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
+  const { user, isAdmin, loading: authLoading, stalled: authStalled, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { settings, loaded: settingsLoaded, updateSettings, updateSettingsPath } = useUserSettings(user);
 
   // Live ref to settings so the de-dupe migration callback — which can fire
@@ -370,7 +371,7 @@ function App() {
   }, [settings.orgCharts, updateSettings]);
 
   if (authLoading) {
-    return <div className="loading">Loading...</div>;
+    return <AuthLoadingGate stalled={authStalled} />;
   }
 
   if (!user) {

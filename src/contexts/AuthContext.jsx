@@ -4,6 +4,15 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { logAction } from '../utils/auditLog';
 import { ADMIN_EMAIL, isEmailAllowed, allowlistDescription } from '../config/accessControl';
+import { withTimeout, isTimeoutError } from '../utils/withTimeout';
+
+// How long the role lookup gets before the app gives up on it and goes in
+// as a viewer, and how long onAuthStateChanged gets to fire at all before
+// the gate stops pretending it is still loading. Both are generous: they
+// are not there to make a slow network feel fast, only to make sure a
+// network that never answers cannot hold the app on its loading screen.
+const ROLE_TIMEOUT_MS = 10000;
+const AUTH_STALL_MS = 15000;
 
 const AuthContext = createContext(null);
 
@@ -18,30 +27,51 @@ export function AuthProvider({ children }) {
 
   const isAdmin = role === 'admin';
 
-  /** Fetch (or bootstrap) the user's role from Firestore. */
+  /**
+   * Fetch (or bootstrap) the user's role from Firestore.
+   *
+   * Deliberately NOT awaited by the sign-in path any more. Every call in
+   * here can hang rather than fail -- see utils/withTimeout -- and while
+   * `setLoading(false)` sat behind it, a browser that could not reach
+   * Firestore left the app on "Loading..." for the life of the tab. The
+   * role is not needed to render: it starts at 'viewer', every consumer
+   * reads it reactively, and the admin-only actions are guarded
+   * separately, so it can land a moment late without anything being
+   * wrong. It must never decide whether the app opens at all.
+   */
   async function resolveRole(firebaseUser) {
     if (!firebaseUser) {
       setRole('viewer');
       return;
     }
+    // The owner is admin by virtue of the email, which is known here
+    // without asking Firestore anything. Set it first so a database that
+    // never answers cannot cost the owner their own admin rights.
+    const isOwner = firebaseUser.email === ADMIN_EMAIL;
+    if (isOwner) setRole('admin');
+
+    const userRef = doc(db, 'users', firebaseUser.uid);
+
+    if (isOwner) {
+      // Persisting it is bookkeeping for other readers of the document,
+      // not something this session needs, so it is fire-and-forget. It
+      // used to be awaited, which is the hang: setDoc resolves on server
+      // acknowledgement, so offline it stays pending forever rather than
+      // rejecting, and the queued write lands by itself when the network
+      // comes back.
+      setDoc(userRef, { role: 'admin', email: firebaseUser.email }, { merge: true })
+        .catch(err => console.warn('Failed to persist the admin role:', err));
+      return;
+    }
+
     try {
-      const userRef = doc(db, 'users', firebaseUser.uid);
-      const snap = await getDoc(userRef);
-
-      if (firebaseUser.email === ADMIN_EMAIL) {
-        // Auto-promote the owner to admin and persist it
-        setRole('admin');
-        await setDoc(userRef, { role: 'admin', email: firebaseUser.email }, { merge: true });
-        return;
-      }
-
-      if (snap.exists() && snap.data().role) {
-        setRole(snap.data().role);
-      } else {
-        setRole('viewer');
-      }
+      const snap = await withTimeout(getDoc(userRef), ROLE_TIMEOUT_MS, 'the role lookup');
+      setRole(snap.exists() && snap.data().role ? snap.data().role : 'viewer');
     } catch (err) {
-      console.warn('Failed to resolve user role:', err);
+      // Staying 'viewer' is the safe answer either way: a role that
+      // couldn't be read must not be assumed to be a privileged one.
+      if (isTimeoutError(err)) console.warn('Role lookup timed out; continuing as viewer.', err.message);
+      else console.warn('Failed to resolve user role:', err);
       setRole('viewer');
     }
   }
@@ -120,11 +150,27 @@ export function AuthProvider({ children }) {
         console.warn('Failed to set secure storage user scope', err);
       }
       setUser(firebaseUser);
-      await resolveRole(firebaseUser);
       setLoading(false);
+      // Not awaited: see resolveRole. The app is already usable, and the
+      // role updates the views that read it when it arrives.
+      resolveRole(firebaseUser);
     });
     return unsub;
   }, []);
+
+  // onAuthStateChanged firing at all is the one thing above that nothing
+  // else can rescue: until it does, `loading` is true and the app shows a
+  // bare "Loading..." with no way to tell a slow network from an auth SDK
+  // that is never going to call back (a blocked identitytoolkit, a wedged
+  // IndexedDB holding the persisted session). After this long, say so --
+  // an unexplained spinner is the state this app has been left in more
+  // than once, and it gives the person looking at it nothing to report.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!loading) { setStalled(false); return undefined; }
+    const t = setTimeout(() => setStalled(true), AUTH_STALL_MS);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   const googleSignInPendingRef = useRef(false);
 
@@ -210,7 +256,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, createAccount, resetPassword, logout }}>
+    <AuthContext.Provider value={{ user, loading, stalled, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, createAccount, resetPassword, logout }}>
       {children}
     </AuthContext.Provider>
   );
