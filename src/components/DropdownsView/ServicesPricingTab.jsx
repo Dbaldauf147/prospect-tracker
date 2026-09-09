@@ -146,13 +146,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     return new Map(lines.map(l => [l.name, l]));
   }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
 
-  // Priced = there's a figure behind it, however it got there: a basis to
-  // work one out, or a fee typed straight into the service's Typed fee box.
+  // Priced = there's a basis behind it to work a figure out from. It is the
+  // only way a service gets a price now that a fee can't be stated outright.
   const pricedCount = useMemo(
-    () => serviceRows.filter(r => {
-      const entry = pricingFor(pricing, r.name, bases);
-      return !!entry.basis || entry.avgFee !== null;
-    }).length,
+    () => serviceRows.filter(r => !!pricingFor(pricing, r.name, bases).basis).length,
     [serviceRows, pricing, bases],
   );
 
@@ -176,11 +173,6 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         basisLabel: basis?.label || '',
         rate: entry.rate,
         rateHigh: entry.rateHigh,
-        minFee: entry.minFee,
-        // The fee typed outright against this service, as stored. The
-        // column shows the card's own figure rather than what any deal
-        // works out to: this is the card.
-        avgFee: entry.avgFee,
         // The components as stored, and what they come to under the
         // estimate on the Deal Pricing subtab — the panel shows the second,
         // the table's cell shows the first.
@@ -206,7 +198,6 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         feeHigh: est?.priced ? est.feeHigh : null,
         _kind: basis?.kind || '',
         _note: est?.note || '',
-        _typed: !!est?.typed,
         _scoped: inScope.has(name),
       };
     }),
@@ -273,13 +264,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               display={row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={row.avgFee !== null && row.basis
-                ? 'Not in use: a fee is typed against this service, which wins. Clear it in the pricing panel to price off this rate again.'
-                : row.basis
-                  ? (row._kind === 'percent'
-                    ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
-                    : `Dollars — ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
-                  : 'Pick a pricing basis first'}
+              title={row.basis
+                ? (row._kind === 'percent'
+                  ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
+                  : `Dollars — ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
+                : 'Pick a pricing basis first'}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
             />
           ),
@@ -296,9 +285,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               display={row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={row.avgFee !== null && row.basis
-                ? 'Not in use: a fee is typed against this service, which wins. Clear it in the pricing panel to price off these rates again.'
-                : !row.basis
+              title={!row.basis
                   ? 'Pick a pricing basis first'
                   : row.rate === null
                     ? 'Set the Low Rate first — a range needs both ends.'

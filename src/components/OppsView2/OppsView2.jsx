@@ -2000,9 +2000,9 @@ function QuotedAmountCell({
   // What the services in this deal's Scope are worth in their first year,
   // read off the rate card on Dropdowns › Services Pricing.
   //
-  // The same estimator the Deal Pricing tab runs, so a fee here is the
-  // fee it shows: a typed fee wins outright, otherwise the basis and
-  // rate are worked against the counts. The only count an opp carries is its
+  // The same estimator the Deal Pricing tab runs, so a fee here is the fee
+  // it shows: the basis and rate worked against the counts. The only count
+  // an opp carries is its
   // Sites, so a service priced per meter or per invoice comes back priced
   // but at nothing, and says which count it was missing rather than showing
   // a confident $0. A percentage-of-deal service reads the amount being
@@ -2215,9 +2215,7 @@ function QuotedAmountCell({
                           {line.priced ? (
                             <strong
                               style={{ color: '#1E293B' }}
-                              title={line.typed
-                                ? 'A fee typed against this service on the Services Pricing rate card'
-                                : 'Worked out from this service\u2019s basis and rate'}
+                              title="Worked out from this service\u2019s basis and rate"
                             >{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</strong>
                           ) : (
                             <span style={{ color: '#94A3B8' }} title="No price on the Services Pricing tab yet">&mdash;</span>

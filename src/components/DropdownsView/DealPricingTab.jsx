@@ -212,9 +212,6 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
     const noPrice = [];
     for (const name of scen.services) {
       const entry = pricingFor(pricing, name, bases);
-      // A typed fee already answers the question, so it needs no count and
-      // isn't missing a price. Nor does a row carrying its own unit count.
-      if (entry.avgFee !== null) continue;
       const basis = basisFor(entry.basis, bases);
       if (!basis) { noPrice.push(name); continue; }
       if (basis.unit && entry.units === null) needed.add(basis.unit);
@@ -373,7 +370,6 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
         valueHigh: est?.priced ? est.valueHigh : null,
         _kind: basis?.kind || '',
         _note: est?.note || '',
-        _typed: !!est?.typed,
         _scoped: inScope.has(name),
         _pinned: !!pinnedNames?.has(name),
       };
@@ -456,15 +452,6 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           getSortValue: (row) => row.rate,
           render: (row) => {
             const rate = formatRate(row._entry, bases);
-            const typedFee = row._typed;
-            if (typedFee) {
-              return (
-                <span
-                  className={styles.pricingEstTyped}
-                  title="A fee is typed against this service on the Services Pricing subtab, and it wins over any rate."
-                >{formatMoney(row._entry.avgFee)} typed</span>
-              );
-            }
             if (!rate) {
               return (
                 <span className={styles.serviceMutedCell} title="No rate on the card yet — set one on the Services Pricing subtab.">-</span>
@@ -514,11 +501,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
                     </span>
                   )}
                 placeholder={row._unitLabel}
-                title={row._typed
-                  ? (row._unitsOwn
-                    ? `This service's fee is typed on the rate card, and this deal carries ${row.units.toLocaleString('en-US')} of them — the fee is that figure ${row.units.toLocaleString('en-US')} times over. Clear the cell to go back to one.`
-                    : 'This service’s fee is typed on the rate card, which prices one of them. Type how many this deal carries and the fee multiplies; blank is one. The shared count above never reaches a typed fee.')
-                  : row._unitsOwn
+                title={row._unitsOwn
                   ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone — no other deal and no account record moves. Clear the cell to go back to that count.`
                   : row._unitsTyped
                     ? `A standing figure on the rate card: ${row.units.toLocaleString('en-US')} ${unit} on every deal. Type here to charge this estimate on its own number instead.`
@@ -550,17 +533,13 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             ? (
               <span
                 className={styles.serviceMutedCell}
-                title={`Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Set a basis and rate, or type a fee, on the Services Pricing subtab.`}
+                title={`Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Set a basis and a rate on the Services Pricing subtab.`}
               >-</span>
             )
             : (
               <span
-                className={row._typed
-                  ? styles.pricingEstTyped
-                  : (row._scoped ? styles.pricingEstScoped : undefined)}
-                title={row._typed
-                  ? 'The fee typed on the rate card, in the first year'
-                  : (row._note || 'Worked out from the rate card against the counts above')}
+                className={row._scoped ? styles.pricingEstScoped : undefined}
+                title={row._note || 'Worked out from the rate card against the counts above'}
               >{formatMoneyRange(row.fee, row.feeHigh)}</span>
             )),
         };
@@ -572,12 +551,8 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             ? <span className={styles.serviceMutedCell} title={row._note || 'Not priced yet'}>-</span>
             : (
               <span
-                className={row._typed
-                  ? styles.pricingEstTyped
-                  : (row._scoped ? styles.pricingEstScoped : undefined)}
-                title={row._typed
-                  ? 'The typed fee, across the service’s term'
-                  : (row._note || undefined)}
+                className={row._scoped ? styles.pricingEstScoped : undefined}
+                title={row._note || undefined}
               >{formatMoneyRange(row.value, row.valueHigh)}</span>
             )),
         };
@@ -734,7 +709,6 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
               {sharedProjects === null
                 ? 'Projects count above, which is empty — so it comes out at $0 until one of them has a number.'
                 : `Projects count above (${sharedProjects.toLocaleString('en-US')}).`}
-              {' '}A row with a fee typed on the rate card is priced at that fee each, and blank means one.
               {' '}Numbers here belong to this estimate: no other deal and no rate card moves.
             </span>
           </div>
@@ -750,19 +724,11 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             <tbody>
               {projectLines.map(line => {
                 const own = serviceUnits[line.name];
-                const typedFee = line.typed;
                 return (
                   <tr key={line.name}>
                     <td className={styles.projectTableName}>{line.name}</td>
                     <td className={styles.projectTableRate}>
-                      {typedFee
-                        ? (
-                          <span title="Typed against this service on the Services Pricing subtab. It's the fee for one of them, so the count beside it multiplies it.">
-                            {formatMoney(line.entry.avgFee)}
-                            <span className={styles.serviceMutedCell}> typed</span>
-                          </span>
-                        )
-                        : (formatRate(line.entry, bases) || <span className={styles.serviceMutedCell}>No rate set</span>)}
+                      {formatRate(line.entry, bases) || <span className={styles.serviceMutedCell}>No rate set</span>}
                     </td>
                     <td className={styles.projectTableNum}>
                       <input
@@ -772,19 +738,11 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
                         className={own === undefined || own === null || own === ''
                           ? styles.projectTableInput
                           : `${styles.projectTableInput} ${styles.projectTableInputTyped}`}
-                        // A typed-fee row falls back to one, not to the
-                        // shared count: the fee was typed for one job, and
-                        // an account-wide figure has nothing to say about
-                        // how many of them this deal carries.
-                        placeholder={typedFee ? '1' : (line.units === null ? '0' : String(line.units))}
+                        placeholder={line.units === null ? '0' : String(line.units)}
                         value={own === undefined || own === null ? '' : String(own)}
-                        title={typedFee
-                          ? (own === undefined || own === null
-                            ? `How many of this project the deal carries, each at the typed ${formatMoney(line.entry.avgFee)}. Blank is one.`
-                            : `Typed in for this estimate: ${formatMoney(line.entry.avgFee)} each. Clear it to go back to one.`)
-                          : (own === undefined || own === null
-                            ? 'How many of this project the deal carries. Blank falls back to the shared Projects count.'
-                            : 'Typed in for this estimate. Clear it to fall back to the shared Projects count.')}
+                        title={own === undefined || own === null
+                          ? 'How many of this project the deal carries. Blank falls back to the shared Projects count.'
+                          : 'Typed in for this estimate. Clear it to fall back to the shared Projects count.'}
                         onChange={(e) => setServiceUnits(line.name, e.target.value)}
                       />
                     </td>

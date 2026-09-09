@@ -18,7 +18,9 @@
 //            and every saved analysis reads as a range, because a range
 //            that collapses to its bottom end the moment it's added up
 //            would be worse than not having one.
-//   minFee — dollar floor applied to unit- and percentage-based fees
+//   minFee — RETIRED. A dollar floor that used to be applied to unit- and
+//            percentage-based fees. Figures already saved are left alone
+//            but are no longer read — see pricingFor.
 //   units  — how many units THIS service is charged on. Overrides the
 //            estimator's count for that unit, because a service is often
 //            sold on a slice of the account rather than all of it: 819
@@ -29,15 +31,15 @@
 //            being built instead (scenario.serviceUnits, passed to
 //            estimateScope), because 40 of 819 sites is a fact about one
 //            deal and typing it shouldn't re-price every other one.
-//   avgFee — a fee typed straight into the service's Typed fee box on the
-//            rate card: what this service usually sells for. It OVERRIDES
-//            what the basis and rate would work out to, because it is the
-//            more direct statement — someone who types "$40,000" there is
-//            answering the question the rate card exists to answer, and a
-//            model that quietly outvoted them would be useless. Clearing
-//            it hands the row back to the basis. A service can carry only
-//            an avgFee and no basis at all, which is the quick way to
-//            price one: a number, no model behind it.
+//   avgFee — RETIRED. A fee stated outright, which used to replace whatever
+//            the basis and rate worked out to. A price that outranked the
+//            model everywhere turned out to be worth less than a model you
+//            can read: a service quoted this way showed a basis beside a
+//            figure that basis hadn't produced, on every page that priced
+//            it. Figures already saved are left alone but are no longer
+//            read — see pricingFor. Every service prices off its basis and
+//            rates now, so one carrying neither is simply unpriced, and
+//            every page that adds a scope up says so.
 //   setup  — the one-time cost of standing the service up, as a list of
 //            components rather than a single figure: a setup fee is
 //            usually an implementation charge plus a per-something
@@ -493,9 +495,20 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     rateHigh: parseMoney(row?.rateHigh),
-    minFee: parseMoney(row?.minFee),
+    // Retired: a minimum fee used to floor what the basis worked out, and a
+    // typed fee used to replace it outright. Both boxes are gone from the
+    // pricing panel, and both figures stop here — dropped on the way out of
+    // storage rather than deleted from it, so a number somebody saved is
+    // left exactly where it is and simply stops reaching any calculation.
+    // Every service now prices off its basis and its rates, and nothing can
+    // quietly outrank them.
+    //
+    // These two lines are the whole of it: restore the `parseMoney` reads
+    // and put the two boxes back in ServicePricingModal and the pair works
+    // again, on the figures that were always there.
+    minFee: null,
     units: parseMoney(row?.units),
-    avgFee: parseMoney(row?.avgFee),
+    avgFee: null,
     setup: normalizeSetup(row?.setup, bases),
     lines: normalizePricingLines(row?.lines, bases, basis ? basis.key : ''),
     notes: String(row?.notes || ''),

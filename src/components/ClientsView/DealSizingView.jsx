@@ -1171,10 +1171,9 @@ export function DealSizingView({
                         </div>
                       </td>
                       {/* The rate card behind the figures. Without it a row
-                          reading "Typed fee · 3 yrs" and $550 said nothing
-                          about what the service is actually charged on — and
-                          a typed fee outranking a per-site rate is exactly
-                          the case worth being able to see from here. */}
+                          reading "$550 · 3 yrs" said nothing about what the
+                          service is actually charged on, which is the half
+                          that makes the figure checkable. */}
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem', verticalAlign: 'top' }}>
                         {(() => {
                           const entry = pricingFor(pricing, line.name, bases);
@@ -1192,20 +1191,6 @@ export function DealSizingView({
                               <span style={{ display: 'block', color: '#0F172A', fontSize: '0.74rem' }}>
                                 {sentence || <span style={{ color: '#B45309' }}>{basis.label} — no rate set</span>}
                               </span>
-                              {entry.minFee ? (
-                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#64748B' }}
-                                  title="A floor on the rate card: once this service is in scope its fee never comes out below this."
-                                >min {formatMoney(entry.minFee)}</span>
-                              ) : null}
-                              {/* The one case where the basis beside a figure
-                                  is not what produced it. Said here rather
-                                  than left to be inferred from two numbers
-                                  that don't divide into each other. */}
-                              {line.typed && (
-                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#B45309' }}
-                                  title={`A fee is typed against ${line.name} on the rate card, and it outranks the rate above — so it is charged that fee here whatever the basis works out to. It is the Typed fee box in the service's pricing panel, on Dropdowns › Services Pricing.`}
-                                >not charged — typed fee wins</span>
-                              )}
                             </span>
                           );
                         })()}
@@ -1215,20 +1200,8 @@ export function DealSizingView({
                           <CountInput
                             width={92}
                             value={scope.serviceUnits[line.name] ?? ''}
-                            /* A row whose fee was typed on the rate card falls back
-                               to one, not to the shared count: that fee prices ONE
-                               of whatever the service is, and the account-wide
-                               figure never multiplies it (see estimateRecurring).
-                               Offering the count as the placeholder read as a
-                               promise the row wasn't keeping — a site count beside
-                               a fee that isn't per site. Same rule the Projects
-                               panel on Services Pricing prints. */
-                            placeholder={line.typed
-                              ? '1'
-                              : (estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '—')}
-                            title={line.typed
-                              ? `Priced at the fee typed on this service's rate card, once for each of these. Blank means one — the shared ${unitWord(line.unit, bases)} count never multiplies a typed fee.`
-                              : `How many ${unitWord(line.unit, bases)} this service is charged on. Blank prices it against the shared count.`}
+                            placeholder={estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '—'}
+                            title={`How many ${unitWord(line.unit, bases)} this service is charged on. Blank prices it against the shared count.`}
                             onCommit={(typed) => {
                               const next = { ...scope.serviceUnits };
                               if (typed === '') delete next[line.name];

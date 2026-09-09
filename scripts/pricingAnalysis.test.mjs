@@ -29,7 +29,7 @@ const ROWS = [
 const SERVICES = ROWS.map(r => r.name);
 const PRICING = {
   'Bill payment': { basis: 'per_site', rate: 450 },
-  'Audits': { avgFee: 15000 },
+  'Audits': { basis: 'flat', rate: 15000 },
   // Nothing prices this one — it should be named, not silently skipped.
   'CSRD readiness': {},
 };
@@ -50,7 +50,8 @@ function priced(extra = {}) {
   check('and the basis spelled out, not just its key',
     [analysis.lines[0].basis, analysis.lines[0].basisLabel, analysis.lines[0].unitLabel],
     ['per_site', 'Per site', 'Sites']);
-  check('a typed fee says so', [analysis.lines[1].typed, analysis.lines[1].fee], [true, 15000]);
+  check('a flat line carries its rate and its fee',
+    [analysis.lines[1].basisLabel, analysis.lines[1].rate, analysis.lines[1].fee], ['Flat fee', 15000, 15000]);
   check('an unpriced service is named rather than dropped', analysis.unpriced, ['CSRD readiness']);
   check('the totals come with it',
     [analysis.recurringAnnual, analysis.oneTime, analysis.year1Total, analysis.contractValue],
@@ -109,7 +110,11 @@ function priced(extra = {}) {
     lineBasisText({ basisLabel: '% of deal size', kind: 'percent', rate: 3.5 }), '% of deal size · 3.5%');
   check('a flat line reads as one figure',
     lineBasisText({ basisLabel: 'Flat fee', kind: 'flat', rate: 9000 }), 'Flat fee · $9,000');
-  check('a typed fee overrides the lot', lineBasisText({ typed: true, basisLabel: 'Per site' }), 'Typed fee');
+  // Typed fees are retired, but an analysis saved before they were still
+  // carries lines flagged that way and has to keep rendering as it did:
+  // a saved analysis is a record of what was quoted, not a live estimate.
+  check('a line saved as a typed fee still reads that way',
+    lineBasisText({ typed: true, basisLabel: 'Per site' }), 'Typed fee');
   check('an unpriced line has nothing to say', lineBasisText({ basisLabel: '' }), '');
 }
 

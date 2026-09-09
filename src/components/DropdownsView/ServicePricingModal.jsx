@@ -31,50 +31,6 @@ function ReadOnlyField({ label, children, hint, title }) {
   );
 }
 
-// A dollar field in the form grid. Same commit rules as the rate cells in
-// the breakdown below — commits on blur or Enter, reverts on Escape, and an
-// unchanged value writes nothing — so a box clicked into and back out of
-// can't clear a figure.
-function MoneyField({ label, value, hint, placeholder, title, onCommit }) {
-  const initial = value === null || value === undefined ? '' : String(value);
-  const [draft, setDraft] = useState(null);
-  const shown = draft !== null ? draft : initial;
-
-  function commit() {
-    if (draft === null) return;
-    const typed = draft.trim();
-    setDraft(null);
-    if (typed === initial) return;
-    if (typed === '') { onCommit(''); return; }
-    const n = parseMoney(typed);
-    // Not a number: leave what's stored alone rather than clearing it.
-    if (n === null || n < 0) return;
-    onCommit(n);
-  }
-
-  return (
-    <label className={styles.detailField} title={title}>
-      <span className={styles.detailLabel}>{label}</span>
-      <input
-        type="number"
-        min="0"
-        step="100"
-        inputMode="decimal"
-        className={styles.detailInput}
-        placeholder={placeholder}
-        value={shown}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-          else if (e.key === 'Escape') { e.preventDefault(); setDraft(null); e.currentTarget.blur(); }
-        }}
-      />
-      {hint && <span className={styles.pricingModalHint}>{hint}</span>}
-    </label>
-  );
-}
-
 // The order the fee breakdown lists its bases in. Not the order the bases
 // are declared in: this is the order the rows get read in when someone is
 // pricing a deal — the job first, then what it costs to stand up, then the
@@ -193,7 +149,6 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
     () => new Map((row._breakdown || []).map(p => [p.basis, p])),
     [row._breakdown],
   );
-  const typed = row._typed;
   const setupFee = row._setupFee || 0;
 
   // The totals. The two rate columns add up to DOLLARS, not to rates: a
@@ -299,9 +254,10 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
       </div>
 
       <div className={styles.pricingModalHint}>
-        {typed
-          ? 'A fee is typed into the Typed fee box above, and it wins: the lines above are kept but not charged. Clear it to price off these rates again.'
-          : 'The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1 columns are what that comes to under the estimate open on the Deal Pricing subtab. The Total row adds dollars, not rates: its recurring figure is the annual this service bills across every line.'}
+        The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1
+        columns are what that comes to under the estimate open on the Deal Pricing subtab. The
+        Total row adds dollars, not rates: its recurring figure is the annual this service bills
+        across every line.
       </div>
     </>
   );
@@ -385,40 +341,6 @@ export function ServicePricingModal({
                   : 'Set by the first row you fill in on the breakdown below. It is the line the rate card’s own columns show.'}
               </span>
             </label>
-
-            {/* A fee stated outright rather than modelled, for when the
-                answer is "it goes for about forty grand" and there is no
-                rate behind it. It beats the basis on every deal, so it is
-                the field to check first when a fee doesn't match the rates
-                below — which is why it sits next to them rather than in a
-                column at the far right of the table. */}
-            <MoneyField
-              label="Typed fee"
-              value={row.avgFee}
-              placeholder="$"
-              title={row.avgFee !== null && row.avgFee !== undefined
-                ? 'Typed in: this is the fee on every deal, whatever the rates below work out to.'
-                : 'What this service sells for, stated outright.'}
-              hint={row.avgFee !== null && row.avgFee !== undefined
-                ? 'In use: this is the fee, and the rates below are kept but not charged. Clear it to price off them again.'
-                : (hasBasis
-                  ? 'Optional. A figure here overrides the rates below on every deal; blank prices off them.'
-                  : 'A figure here prices the service on its own — no basis, no rate needed.')}
-              onCommit={(v) => onSaveField('avgFee', v)}
-            />
-
-            {/* A floor that quietly overrides the rates below, so it says so
-                rather than sitting there as a bare number. */}
-            <MoneyField
-              label="Minimum fee"
-              value={row.minFee}
-              placeholder="$"
-              title="Floor: the fee never comes out below this once the service is in scope"
-              hint={row.minFee !== null && row.minFee !== undefined && row.minFee !== ''
-                ? `Once this service is in scope its fee never comes out below ${formatMoney(row.minFee)}, whatever the rates below work out to.`
-                : 'Optional. A floor: once the service is in scope its fee never comes out below this.'}
-              onCommit={(v) => onSaveField('minFee', v)}
-            />
 
             {/* The count the per-unit rate multiplies. Read-only: the number
                 belongs to the account being priced, and a figure typed over
