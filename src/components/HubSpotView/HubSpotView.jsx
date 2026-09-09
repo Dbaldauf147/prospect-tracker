@@ -9,6 +9,7 @@ import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../util
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
 import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAuditQueue';
+import { mergeTagEdit } from '../../utils/contactTagReview';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -775,22 +776,50 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   const tagsDropdownRef = useRef(null);
   const [tagsSaveStatus, setTagsSaveStatus] = useState('');
 
+  // The tag string this editor last believed HubSpot held, so a save can tell
+  // what the user CHANGED from what it merely happened to be showing.
+  const savedTagsRef = useRef(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '');
+
+  // A merge, not an overwrite. dans_tags is one string, and this editor is
+  // working from a cached copy of the contact: writing what it shows deletes
+  // anything tagged since that copy was taken. The contact's live tags are
+  // read first and the user's change applied to those (see mergeTagEdit); a
+  // read that fails refuses the write rather than falling back to the cache,
+  // which is the bug itself.
   async function persistTagsString(tagsStr) {
     const cid = contact?.id || contact?.vid;
     if (!cid) return; // new contact — will be saved when user clicks Save
     setTagsSaveStatus('Saving tag…');
     try {
-      const res = await apiFetch(`/api/hubspot?action=update-contact`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
-      });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      let current;
+      try {
+        const readRes = await apiFetch('/api/hubspot?action=contact-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactIds: [String(cid)] }),
+        });
+        const readJson = await readRes.json();
+        current = (readRes.ok && !readJson.error && readJson.tags) ? readJson.tags[String(cid)] : undefined;
+      } catch { current = undefined; }
+      const plan = mergeTagEdit({ base: savedTagsRef.current, intended: tagsStr, current });
+      if (plan.action === 'skip') {
+        throw new Error("couldn't read this contact's current tags from HubSpot, so the change wasn't saved");
+      }
+      const next = plan.action === 'unchanged' ? String(current || '') : plan.tags;
+      if (plan.action === 'write') {
+        const res = await apiFetch(`/api/hubspot?action=update-contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid, properties: { dans_tags: next } }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      }
+      savedTagsRef.current = next;
       try {
         await updateHubspotCache(draft => {
           const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
-          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: next };
         });
       } catch {}
       setTagsSaveStatus('Saved ✓');
