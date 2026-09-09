@@ -469,82 +469,72 @@ function ServiceGapList({ gaps }) {
   );
 }
 
-// How many intros show without expanding. They're ranked warmest first,
-// so the top of the list is the part worth reading anyway.
-const TOP_PC_PREVIEW = 5;
+// How many firms show without expanding. They're ordered by how far the
+// relationship has got, so the top of the list is the part worth reading
+// anyway.
+const PE_FIRM_PREVIEW = 5;
 
-// One intro to ask for: the portfolio company, the firm to ask, and where
-// that company already stands. Both names click through to their record
-// when there is one — a Top PC with no prospect of its own is plain text,
-// which is itself the tell that nobody has opened it yet.
-function TopPcRow({ row, onSelectProspect, byId, last }) {
-  // Company and firm names run long ("TowerBrook Capital Partners (a Blue
-  // Owl co.)"), so each gets its own line and truncates rather than
-  // wrapping mid-name. Title attributes carry the full text either way.
+// The PE Stage palette, matching the PE Portfolio board so a firm is the
+// same colour in both places. Only the three stages this list can show
+// need one — Lead and Not Sold never appear here.
+const PE_STAGE_TINT = {
+  Discovery: { bg: '#EFF6FF', border: '#BFDBFE', ink: '#2563EB' },
+  Piloting: { bg: '#FFFBEB', border: '#FDE68A', ink: '#D97706' },
+  'Existing Partnership': { bg: '#ECFDF5', border: '#A7F3D0', ink: '#059669' },
+};
+
+// One PE firm with a live relationship and nothing on it: the firm, the
+// stage it has reached, and how many portfolio companies it brings to the
+// conversation. The name clicks through to the firm's record.
+function PeFirmRow({ row, onSelectProspect, byId, last }) {
+  const tint = PE_STAGE_TINT[row.stage] || { bg: '#F8FAFC', border: '#E2E8F0', ink: '#64748B' };
   const nameStyle = {
     padding: 0, border: 0, background: 'none', font: 'inherit', textAlign: 'left',
     cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#CBD5E1',
     textUnderlineOffset: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-    display: 'block', maxWidth: '100%',
+    display: 'block', maxWidth: '100%', color: '#1E293B', fontWeight: 700,
   };
   const flatStyle = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block', maxWidth: '100%' };
-  const open = (id) => { const p = byId?.get(id); if (p) onSelectProspect(p); };
-  // Where the status came from matters when it's the reason a company is
-  // (or isn't) on this list — the PE page's own tooltips say the same.
-  const statusTitle = !row.status
-    ? 'This company has no status on the firm\'s portfolio list and no prospect record of its own'
-    : row.statusFromRow
-      ? `Status set on ${row.firm}'s Portfolio Companies list`
-      : `Table View status${row.statusCompany ? ` of ${row.statusCompany}` : ''}`;
+  const open = () => { const p = byId?.get(row.firmId); if (p) onSelectProspect(p); };
   return (
     <div style={{ padding: '4px 0', borderBottom: last ? 'none' : '1px dashed #EEF0FA', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
         <span
-          title="Opportunity Score — the same one the PE Portfolio table ranks by"
+          title={`PE Stage: ${row.stage}. Lead firms and Not Sold ones are left off this list — one hasn’t been opened, the other has answered.`}
           style={{
-            flexShrink: 0, minWidth: 26, textAlign: 'center', padding: '1px 5px', borderRadius: 4,
-            background: '#EEF2FF', color: '#4338CA', fontSize: '0.65rem', fontWeight: 700,
-            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0, padding: '1px 6px', borderRadius: 999,
+            background: tint.bg, border: `1px solid ${tint.border}`, color: tint.ink,
+            fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap',
           }}
-        >
-          {Math.round(row.score)}
-        </span>
-        <div style={{ flex: 1, minWidth: 0, color: '#1E293B', fontWeight: 700 }}>
-          {row.companyId && onSelectProspect
-            ? <button type="button" style={{ ...nameStyle, color: '#1E293B', fontWeight: 700 }} onClick={() => open(row.companyId)} title={`Open ${row.company}`}>{row.company}</button>
-            : <span style={flatStyle} title={`${row.company} — no prospect record yet`}>{row.company}</span>}
+        >{row.stage}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {row.firmId && onSelectProspect
+            ? <button type="button" style={nameStyle} onClick={open} title={`Open ${row.firm}`}>{row.firm}</button>
+            : <span style={{ ...flatStyle, color: '#1E293B', fontWeight: 700 }}>{row.firm}</span>}
         </div>
+        {/* What there is to talk about. A firm with no mapped portfolio
+            companies is its own kind of gap — the call is the same one,
+            but there is nothing yet to ask for an intro INTO. */}
         <span
-          title={statusTitle}
+          title={row.pcCount
+            ? `${row.pcCount} portfolio ${row.pcCount === 1 ? 'company names' : 'companies name'} this firm as their PE Owner`
+            : 'No portfolio companies mapped to this firm yet'}
           style={{
             flexShrink: 0, padding: '0 6px', borderRadius: 999,
             border: '1px solid #E2E8F0', background: '#fff',
             fontSize: '0.62rem', fontWeight: 700,
-            color: row.status ? '#334155' : '#94A3B8',
-            fontStyle: row.status ? 'normal' : 'italic',
+            color: row.pcCount ? '#334155' : '#94A3B8',
+            fontStyle: row.pcCount ? 'normal' : 'italic',
           }}
-        >
-          {row.status || 'Not tracked'}
-        </span>
-      </div>
-      <div style={{ display: 'flex', gap: '0.3rem', paddingLeft: 'calc(26px + 0.8rem)', minWidth: 0, color: '#64748B', fontSize: '0.68rem' }}>
-        <span style={{ flexShrink: 0, color: '#94A3B8' }}>via</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {row.firmId && onSelectProspect
-            ? <button type="button" style={{ ...nameStyle, color: '#475569', fontWeight: 600 }} onClick={() => open(row.firmId)} title={`Open ${row.firm}`}>{row.firm}</button>
-            : <span style={flatStyle}>{row.firm}</span>}
-        </div>
+        >{row.pcCount ? `${row.pcCount} PC${row.pcCount === 1 ? '' : 's'}` : 'No PCs mapped'}</span>
       </div>
     </div>
   );
 }
 
-// The intros still to ask for, under their step. Long lists preview the
-// warmest few and expand on demand, so a 200-firm portfolio doesn't push
-// the rest of the ladder off the page.
-function TopPcIntroList({ rows, expanded, onExpand, onSelectProspect, byId }) {
+function PeFirmList({ rows, expanded, onExpand, onSelectProspect, byId }) {
   if (!rows || rows.length === 0) return null;
-  const shown = expanded ? rows : rows.slice(0, TOP_PC_PREVIEW);
+  const shown = expanded ? rows : rows.slice(0, PE_FIRM_PREVIEW);
   const hidden = rows.length - shown.length;
   return (
     <div style={{ marginTop: 6, fontSize: '0.72rem' }}>
@@ -556,8 +546,8 @@ function TopPcIntroList({ rows, expanded, onExpand, onSelectProspect, byId }) {
         }}
       >
         {shown.map((row, i) => (
-          <TopPcRow
-            key={`${row.firmId || row.firm}:${row.company}`}
+          <PeFirmRow
+            key={row.firmId || row.firm}
             row={row}
             onSelectProspect={onSelectProspect}
             byId={byId}
@@ -704,10 +694,11 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // recomputed here.
   const stateByKey = ladder?.stateByKey || {};
   const today = ladder?.today || todayISO();
-  // The Top PCs not yet at Qualifying, listed under their step. Comes from
-  // the ladder so the rows here and the count beside them are one list.
-  const topPcIntros = ladder?.topPcIntros || null;
-  const [showAllTopPcs, setShowAllTopPcs] = useState(false);
+  // The PE firms with a live relationship and no opportunity on them,
+  // listed under their step. Comes from the ladder so the rows here and the
+  // count beside them are one list.
+  const peFirmsToWork = ladder?.peFirmsToWork || null;
+  const [showAllPeFirms, setShowAllPeFirms] = useState(false);
   // The email campaigns that haven't finished sending, printed under the
   // market-updates step. Comes from the ladder for the same reason the
   // counts do: those rows and that step's Status pill are the same read of
@@ -927,7 +918,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           // only counting it — those rows are tall, so their right-hand
           // cells sit at the top rather than floating in the middle.
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
-            || (step.key === 'pe-intros' && topPcIntros?.length)
+            || (step.key === 'pe-intros' && peFirmsToWork?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
             || (step.key === 'market-updates' && campaignsToFinish?.length);
           return (
@@ -1027,10 +1018,10 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
                 {!editing && step.key === 'pe-intros' && (
-                  <TopPcIntroList
-                    rows={topPcIntros}
-                    expanded={showAllTopPcs}
-                    onExpand={() => setShowAllTopPcs(v => !v)}
+                  <PeFirmList
+                    rows={peFirmsToWork}
+                    expanded={showAllPeFirms}
+                    onExpand={() => setShowAllPeFirms(v => !v)}
                     onSelectProspect={onSelectProspect}
                     byId={prospectById}
                   />

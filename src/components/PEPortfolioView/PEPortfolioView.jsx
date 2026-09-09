@@ -20,6 +20,10 @@ import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
+import {
+  CLOSED_STAGES, INVALID_STAGES, accountMatchesCompany, isOppActive,
+  normalizeAccount, peFirmAccountNames, peFirmOppRows,
+} from '../../utils/peFirmOpps';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
@@ -79,9 +83,6 @@ const CASE_STUDY_INDUSTRIES = [
   { id: 'aerospace_manufacturing', name: 'Aerospace Manufacturing' },
 ];
 
-// Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
-const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
-const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
 // Parse an Opps date cell (ISO or anything Date.parse handles) into a
 // Date, or null when it's blank/unparseable. Mirrors Opps 2's toISODate
@@ -163,40 +164,11 @@ function resolveManagerFromMap(company, map) {
   return '';
 }
 
-// Stricter matcher used only for tying an Opps record's Account to a
-// company name (the PE firm or one of its portfolio companies). The
-// general `companiesMatch` above is deliberately loose so contact/DM
-// lookups catch acronyms and partial names — but that looseness
-// over-counts opportunities: a single shared word (e.g. a portfolio
-// company called "Origin" matching an unrelated "Origin Bank" deal) or a
-// 60%-length substring would inflate a firm's active/total. Here we only
-// accept an exact normalized match or a full multi-word phrase that one
-// account name contains in the other, so the PE Opps count reflects deals
-// that genuinely belong to the firm or its portfolio companies.
-const CO_SUFFIX_RE = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|lp|llp|plc|holdings?)\b\.?/gi;
-function normalizeAccount(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(CO_SUFFIX_RE, ' ')
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-function accountMatchesCompany(companyName, oppAccount) {
-  const a = normalizeAccount(companyName);
-  const b = normalizeAccount(oppAccount);
-  if (!a || !b) return false;
-  if (a === b) return true;
-  const aWords = a.split(' ');
-  const bWords = b.split(' ');
-  const [shortW, longW] = aWords.length <= bWords.length ? [aWords, bWords] : [bWords, aWords];
-  // Require the shorter side to be a multi-word phrase appearing verbatim
-  // (with word boundaries) inside the longer one. A single shared word is
-  // never enough — that's what produced the false-positive opp counts.
-  if (shortW.length < 2) return false;
-  return (' ' + longW.join(' ') + ' ').includes(' ' + shortW.join(' ') + ' ');
-}
+// The Account ↔ company matcher, the stage sets and the portfolio linkage
+// live in utils/peFirmOpps: the Prospecting ladder asks the same question
+// of the same rows ("does this firm have any opps at all?"), and a firm
+// reading 0/0 here while the ladder thinks otherwise is worse than either
+// answer being wrong on its own.
 
 // Drop deals closed (Sold / Not Sold) more than a month ago — the same
 // recency rule peOpps applies, factored out so the firm-scoped PE Opps
@@ -935,28 +907,17 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       // Aggregate opps for the PE firm itself + every portfolio company.
       // We re-scan the Opps records so we also catch opps that land
       // directly on the PE firm's account name (not just its PCs).
-      let active = 0;
-      let total = 0;
+      const firmOppRows = peFirmOppRows(peFirmAccountNames(firmName, portfolio), oppsRecords);
+      const total = firmOppRows.length;
+      const active = firmOppRows.filter(isOppActive).length;
       // The individual opp records behind the active/total counts, so the
       // PE Opps column can show *which* opps are included on hover.
-      const oppsTip = [];
-      const oppsNames = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
-      for (const r of oppsRecords) {
-        const stage = (r['Stage'] || '').trim();
-        if (INVALID_STAGES.has(stage)) continue;
-        const acct = (r['Account'] || '').toLowerCase();
-        if (!acct) continue;
-        if (!oppsNames.some(n => accountMatchesCompany(n, acct))) continue;
-        total++;
-        const isActive = !CLOSED_STAGES.has(stage);
-        if (isActive) active++;
-        oppsTip.push({
-          title: r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)',
-          account: r['Account'] || '',
-          stage,
-          active: isActive,
-        });
-      }
+      const oppsTip = firmOppRows.map(r => ({
+        title: r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)',
+        account: r['Account'] || '',
+        stage: String(r['Stage'] || '').trim(),
+        active: isOppActive(r),
+      }));
 
       // PCs that have converted to Clients.
       const pcClientCount = portfolio.filter(p => p.status === 'Client').length;
