@@ -38,6 +38,7 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { keyContactsNotMet } from '../../utils/metInPerson';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
@@ -610,6 +611,134 @@ function PeFirmList({ rows, expanded, onExpand, onSelectProspect, byId }) {
   );
 }
 
+// The Key contacts nobody has met yet, listed under the visits step.
+//
+// "Plan in person visits" asks who you would see while you are in their
+// city, and until now it asked it with nothing to answer from: the one
+// field that knows anything about it — Met In Person — was two tabs away on
+// the Key Contacts table. These are the Key roster's unmet contacts,
+// grouped by the account a trip would be to, so the step names the visits
+// worth planning rather than only reminding you to plan some.
+//
+// It stays a list and never a count: nothing here says a trip HAS been
+// planned (Met In Person records one that already happened, weeks later),
+// so the step is still marked caught up by hand and still stays grey rather
+// than going red — see prospectingPlaybook.js. A step asking to book travel
+// shouldn't dot the sidebar every morning because there is a name on it.
+const VISIT_ACCOUNT_PREVIEW = 5;
+
+function VisitContactList({ summary, onNavigate, onOpenContact }) {
+  const groups = summary?.groups;
+  const [expanded, setExpanded] = useState(false);
+  if (!groups || groups.length === 0) return null;
+  const shown = expanded ? groups : groups.slice(0, VISIT_ACCOUNT_PREVIEW);
+  const hidden = groups.length - shown.length;
+  const nameStyle = {
+    padding: 0, border: 0, background: 'none', font: 'inherit', textAlign: 'left',
+    color: '#334155', cursor: 'pointer',
+    textDecoration: 'underline', textDecorationColor: '#CBD5E1', textUnderlineOffset: 2,
+  };
+  return (
+    <div style={{ marginTop: 8, fontSize: '0.72rem' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <span
+          title="Contacts on the Key roster (tagged Dan Key Target) without the Met In Person box ticked in the contact popup — the same flag the Key Contacts table's Met In Person column shows. Tick it there or on a name below and they drop off this list."
+          style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
+        >
+          Key contacts not met in person: {summary.total}
+          {summary.accounts > 0 && ` across ${summary.accounts} account${summary.accounts === 1 ? '' : 's'}`}
+        </span>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={onNavigate}
+            style={{
+              padding: 0, border: 0, background: 'none', font: 'inherit',
+              fontSize: '0.68rem', fontWeight: 700, color: '#0A66C2', cursor: 'pointer',
+              textDecoration: 'underline', textDecorationColor: '#BFDBFE', textUnderlineOffset: 2,
+            }}
+          >Open Key Contacts</button>
+        )}
+      </div>
+      <div
+        style={{
+          marginTop: 5, border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff',
+          padding: '0.25rem 0.5rem',
+          maxHeight: expanded ? 260 : 'none', overflowY: expanded ? 'auto' : 'visible',
+        }}
+      >
+        {shown.map((g, i) => (
+          <div
+            key={g.company || '(no company)'}
+            style={{
+              padding: '4px 0', minWidth: 0,
+              borderBottom: i === shown.length - 1 ? 'none' : '1px dashed #F1F5F9',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+              <span style={{
+                fontWeight: 700, color: g.company ? '#1E293B' : '#94A3B8',
+                fontStyle: g.company ? 'normal' : 'italic',
+                minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{g.company || 'No company on the record'}</span>
+              {/* Where the trip would be. A contact with no city on the
+                  record says so rather than leaving the row looking like it
+                  is in the same place as the one above it. */}
+              <span
+                title={g.location
+                  ? `${g.location} — the city and state on these contacts' records`
+                  : 'No city on these contacts’ records'}
+                style={{
+                  flexShrink: 0, padding: '0 6px', borderRadius: 999,
+                  border: '1px solid #E2E8F0', background: g.location ? '#F8FAFC' : '#fff',
+                  fontSize: '0.62rem', fontWeight: 700,
+                  color: g.location ? '#475569' : '#CBD5E1',
+                  fontStyle: g.location ? 'normal' : 'italic',
+                }}
+              >{g.location || 'No city'}</span>
+              <span style={{ flex: 1 }} />
+              <span
+                title={`${g.people.length} Key contact${g.people.length === 1 ? '' : 's'} here you haven’t met`}
+                style={{
+                  flexShrink: 0, fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 700, color: '#94A3B8',
+                }}
+              >{g.people.length}</span>
+            </div>
+            {/* The names themselves, not a "3 contacts" summary: who you
+                would be going to see is the decision, and each one opens
+                the contact popup — where Met In Person is ticked, so the
+                list can be worked off from the row that raised it. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 0.45rem', marginTop: 1, color: '#64748B' }}>
+              {g.people.map((p, j) => (
+                <span key={p.id || `${p.email}-${j}`} style={{ whiteSpace: 'nowrap' }}>
+                  {onOpenContact && p.contact
+                    ? <button type="button" style={nameStyle} onClick={() => onOpenContact(p.contact)} title={`Open ${p.name}`}>{p.name}</button>
+                    : <span>{p.name}</span>}
+                  {j < g.people.length - 1 && <span style={{ color: '#94A3B8' }}>,</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {(hidden > 0 || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          style={{
+            marginTop: 4, padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
+            border: '1px solid #E2E8F0', background: '#fff', color: '#475569',
+            fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+          }}
+        >
+          {expanded ? 'Show fewer' : `Show all ${groups.length} accounts`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // --- Edit mode ------------------------------------------------------------
 //
 // Reordering, retitling and adding steps all live behind one "Edit steps"
@@ -743,6 +872,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // the same campaigns, so the list can't show two still going out beside
   // a row that says the step is clear. `null` until it has loaded.
   const campaignsToFinish = ladder?.campaignsToFinish || null;
+  // The Key contacts nobody has met yet, under the visits step. Built from
+  // the same tag coverage the row above it prints percentages from — that
+  // is already the Key roster, gated once for the whole app — plus the
+  // local Met In Person checkboxes. Null until the coverage lands, which is
+  // what keeps an empty list from reading as "you have met everybody".
+  const visitContacts = useMemo(
+    () => keyContactsNotMet(tagCoverage, settings?.contactMetInPerson || null),
+    [tagCoverage, settings?.contactMetInPerson],
+  );
   // Click-through for that list: id → the record itself, since the page is
   // handed prospects rather than a lookup.
   const prospectById = useMemo(() => {
@@ -770,6 +908,16 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
     const n = setQueuedAuditContacts(contacts);
     if (!n) return;
     try { localStorage.setItem('contacts-view:active-subtab', 'hubspot'); } catch (e) { void e; }
+    onNavigate?.('contacts');
+  }, [onNavigate]);
+
+  // Straight to the Key Contacts table from the visit list, which is where
+  // the same contacts can be sorted by city and their Met In Person column
+  // worked down in bulk. Same one-click trick as the audit above:
+  // `contacts-view:active-subtab` is that page's memory of which subtab was
+  // last open, so setting it saves the user the second click.
+  const openKeyContacts = useCallback(() => {
+    try { localStorage.setItem('contacts-view:active-subtab', 'key'); } catch (e) { void e; }
     onNavigate?.('contacts');
   }, [onNavigate]);
 
@@ -984,7 +1132,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && peFirmsToWork?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
-            || (step.key === 'market-updates' && campaignsToFinish?.length);
+            || (step.key === 'market-updates' && campaignsToFinish?.length)
+            || (step.key === 'visits' && visitContacts?.groups?.length);
           return (
             <div
               key={step.key}
@@ -1082,6 +1231,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                   />
                 )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
+                {/* Who a trip would be for: the Key contacts still unmet,
+                    by the account you would be visiting. */}
+                {!editing && step.key === 'visits' && (
+                  <VisitContactList
+                    summary={visitContacts}
+                    onNavigate={onNavigate ? openKeyContacts : null}
+                    onOpenContact={openContact}
+                  />
+                )}
                 {!editing && step.key === 'pe-intros' && (
                   <PeFirmList
                     rows={peFirmsToWork}

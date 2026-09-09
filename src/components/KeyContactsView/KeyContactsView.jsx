@@ -12,6 +12,7 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { userLsGet } from '../../utils/userLs';
 import { useOppsRecords } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
+import { resolveMetInPerson as resolveMetInPersonWith } from '../../utils/metInPerson';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
@@ -2432,11 +2433,15 @@ function KeyContactsViewInner({
   );
 
   const metInPersonMap = settings?.contactMetInPerson || {};
-  const resolveMetInPerson = useCallback((c) => {
-    const id = String(c?.id || c?.vid || '');
-    if (id && Object.prototype.hasOwnProperty.call(metInPersonMap, id)) return !!metInPersonMap[id];
-    return metInPersonSelector(c);
-  }, [metInPersonMap, metInPersonSelector]);
+  // The rule itself lives in utils/metInPerson.js — the Prospecting page's
+  // visit list reads the same flag, and a page-local copy of "checkbox
+  // first, legacy tag second" is how the two would come to disagree about
+  // who has been met. This page keeps its own legacy selector, since a
+  // roster subtab can be configured with a different one.
+  const resolveMetInPerson = useCallback(
+    (c) => resolveMetInPersonWith(c, metInPersonMap, metInPersonSelector),
+    [metInPersonMap, metInPersonSelector],
+  );
 
   const keyContacts = useMemo(() => {
     const out = [];
