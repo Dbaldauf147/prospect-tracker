@@ -1904,58 +1904,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                       </div>
                       )}
 
-                      {visibleCols.has('peStage') && (() => {
-                        const meta = peStageMeta(pe.peStage);
-                        // Set here, not only in the company popup. Moving a
-                        // firm through Lead → Discovery → Piloting →
-                        // Partnership is the thing this table is read for,
-                        // and opening a popup per firm to do it meant the
-                        // board was always a little out of date. It writes
-                        // the same field the popup writes, so the stamp that
-                        // Days in Stage counts from is set the same way too
-                        // (see useProspects.updateProspect).
-                        if (!onUpdateProspect) {
-                          return (
-                            <div
-                              title={`PE Stage set to "${meta.stage}" in this firm's company popup`}
-                              style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden' }}
-                            >
-                              <span
-                                style={{
-                                  display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
-                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
-                                  padding: '1px 8px', borderRadius: 999,
-                                  background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
-                                }}
-                              >{meta.stage}</span>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div
-                            style={{ padding: '0.4rem 0.4rem', textAlign: 'center', overflow: 'hidden' }}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            {/* No blank option: every PE firm sits at a
-                                stage, and a firm with nothing stored is a
-                                Lead — so backing out of a mis-set stage
-                                means picking Lead, not emptying the field. */}
-                            <select
-                              value={meta.stage}
-                              onClick={e => e.stopPropagation()}
-                              onChange={(e) => { e.stopPropagation(); onUpdateProspect(pe.id, { peStage: e.target.value }); }}
-                              title={`${pe.company || 'This firm'} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
-                              style={{
-                                maxWidth: '100%', padding: '2px 4px', borderRadius: 999,
-                                background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
-                                fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 700,
-                              }}
-                            >
-                              {PE_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
-                            </select>
-                          </div>
-                        );
-                      })()}
+                      {visibleCols.has('peStage') && (
+                        <div
+                          style={{ padding: '0.4rem 0.4rem', textAlign: 'center', overflow: 'hidden' }}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <PeStageCell prospect={pe} onUpdateProspect={onUpdateProspect} />
+                        </div>
+                      )}
 
                       {visibleCols.has('newsFeed') && (() => {
                         // Mirrors the "Track acquisition news" checkbox on the
@@ -2686,6 +2642,12 @@ const HQ_TABS = [
   { key: 'all', label: 'All companies', sheet: 'All Companies' },
 ];
 
+// Whether a PE Overview row is a PE firm, and so has a PE Stage at all.
+// Mirrors the company popup, which only offers the field on this Type.
+function isPeFirmRow(row) {
+  return (row?.type ?? row?._prospect?.type) === 'Private Equity';
+}
+
 function isNamHqRow(row) {
   const raw = row?.hqRegion ?? row?._prospect?.hqRegion ?? '';
   return (normalizeHqRegion(raw) || classifyHqRegion(raw)) === NORTH_AMERICA;
@@ -2972,6 +2934,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       cdm: p.cdm || '',
       clientManager: resolveManagerFromMap(p.company, managerMap),
       type: p.type || '',
+      peStage: p.peStage || '',
       assetTypes: Array.isArray(p.assetTypes) ? p.assetTypes : [],
       tier: p.tier || '',
       geography: p.geography || '',
@@ -3193,6 +3156,19 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         exportValue: (r) => r.clientManager,
         render: (r) => <ClientManagerCell company={r.company} value={r.clientManager} onCommit={setClientManager} /> },
       { key: 'type', label: 'Type', defaultWidth: 150, render: editable({ key: 'type', label: 'Type', type: 'enum', options: typeOptions, allowAddNew: true }) },
+      // PE Stage, the same chip the Portfolio table sets — so a firm's
+      // stage can be moved from whichever tab you're already on. Only
+      // Private Equity companies have one (that's the Type the company
+      // popup gates the field behind), so every other row shows a dash
+      // rather than claiming to be a Lead. Sorts and exports in pipeline
+      // order, with the rows that have no stage at the end.
+      { key: 'peStage', label: 'PE Stage', defaultWidth: 150,
+        getSortValue: (r) => (isPeFirmRow(r) ? PE_STAGES.indexOf(peStageOf(r.peStage)) : PE_STAGES.length),
+        getFilterValue: (r) => (isPeFirmRow(r) ? peStageOf(r.peStage) : ''),
+        exportValue: (r) => (isPeFirmRow(r) ? peStageOf(r.peStage) : ''),
+        render: (r) => (isPeFirmRow(r)
+          ? <PeStageCell prospect={r._prospect} onUpdateProspect={onUpdateProspect} />
+          : <span title="PE Stage applies to companies typed Private Equity" style={{ color: '#CBD5E1' }}>-</span>) },
       // Asset Types — the same multi-tag field Table View shows, edited
       // inline through InlineCell's TagsCell. Its vocabulary is managed on
       // the Dropdowns tab (assetTypeOptions). Read the array off the
@@ -3655,14 +3631,15 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
             // columns at -6, the PC Download + Strategies columns at -7,
             // the Asset Types column at -9, the per-Local-Project-Name
             // Services Sold columns at -10, which then moved to the
-            // Services tab). The Services tab starts on its own key so
-            // widening it out to the bucket columns never disturbs the
-            // layout the user keeps on PE Overview; it went to -2 when
-            // the Services Sold breakdown switched from Local Project
-            // Name to Service Bucket, since every one of those columns
-            // changed key and a saved order would otherwise strand the
-            // new ones at the far right.
-            tableId={isServicesVariant ? 'pe-overview-services-2' : 'pe-blue-owl-companies-10'}
+            // Services tab, and the PE Stage column at -11). The Services
+            // tab starts on its own key so widening it out to the bucket
+            // columns never disturbs the layout the user keeps on PE
+            // Overview; it went to -2 when the Services Sold breakdown
+            // switched from Local Project Name to Service Bucket, since
+            // every one of those columns changed key and a saved order
+            // would otherwise strand the new ones at the far right, and to
+            // -3 for the PE Stage column.
+            tableId={isServicesVariant ? 'pe-overview-services-3' : 'pe-blue-owl-companies-11'}
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}
@@ -4002,6 +3979,50 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
         </div>
       )}
     </>
+  );
+}
+
+// A firm's PE Stage as a coloured chip — a dropdown when the caller can
+// write (both the Portfolio table and PE Overview pass onUpdateProspect),
+// a plain chip when it can't. Setting it here rather than only in the
+// company popup is the point: moving a firm through Lead → Discovery →
+// Piloting → Partnership is what these tables are read for, and opening a
+// popup per firm to do it meant the boards were always a little out of
+// date. It writes the same field the popup writes, so the stamp that Days
+// in Stage counts from is set the same way too (see
+// useProspects.updateProspect).
+function PeStageCell({ prospect, onUpdateProspect }) {
+  const meta = peStageMeta(prospect?.peStage);
+  const name = prospect?.company || 'This firm';
+  const chip = {
+    padding: '1px 8px', borderRadius: 999,
+    background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
+    fontSize: '0.7rem', fontWeight: 700,
+  };
+  if (!onUpdateProspect) {
+    return (
+      <span
+        title={`PE Stage set to "${meta.stage}" in this firm's company popup`}
+        style={{
+          ...chip, display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+        }}
+      >{meta.stage}</span>
+    );
+  }
+  return (
+    <select
+      value={meta.stage}
+      onClick={e => e.stopPropagation()}
+      onChange={(e) => { e.stopPropagation(); onUpdateProspect(prospect.id, { peStage: e.target.value }); }}
+      title={`${name} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
+      style={{ ...chip, maxWidth: '100%', padding: '2px 4px', fontFamily: 'inherit', cursor: 'pointer' }}
+    >
+      {/* No blank option: every PE firm sits at a stage, and a firm with
+          nothing stored is a Lead — so backing out of a mis-set stage
+          means picking Lead, not emptying the field. */}
+      {PE_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+    </select>
   );
 }
 
