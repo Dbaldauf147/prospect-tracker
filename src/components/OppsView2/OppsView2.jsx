@@ -26,6 +26,7 @@ import {
 import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
 import {
   coaItemsForOpp, coaItemsToStore, coaItemStatus, coaDaysWaiting, coaItemsSummary,
+  outstandingCoaItems,
   emptyCoaItem,
 } from '../../utils/coaItems';
 import {
@@ -705,6 +706,28 @@ function hasCompetitionValue(value) {
     .replace(ZERO_WIDTH_RE, '')
     .replace(/\s/g, '')
     .replace(/[-\u2013\u2014\u2212]/g, '') !== '';
+}
+
+// The stage at which the COA exceptions have to be settled. An agreement is
+// out with the customer: anything still needing a COA sign-off is now holding
+// up a signature, not sitting in the future.
+const COA_APPROVALS_DUE_STAGE = 'Agreement Sent';
+
+// "COA approvals needed" flag: the opp is at Agreement Sent but its COA
+// Approval Items aren't all resolved — an item counts as resolved when it has
+// an approved date or has been marked N/A. Returns the outstanding items, so
+// the chip can carry the count and the details banner can name them.
+//
+// The seeded "3% esc" item counts as outstanding until the record answers it
+// (see outstandingCoaItems) — a row carrying only that name is never stored,
+// so an opp with no row for it is one where nobody has dealt with the
+// escalator, which at this stage is exactly the thing worth catching before
+// the agreement comes back signed.
+function coaApprovalsNeeded(row) {
+  if (!row) return [];
+  const stage = String(row['Stage'] ?? '').replace(ZERO_WIDTH_RE, '').trim();
+  if (stage !== COA_APPROVALS_DUE_STAGE) return [];
+  return outstandingCoaItems(row);
 }
 
 // Look up a row value by header name, tolerant to casing / zero-width /
@@ -7439,6 +7462,32 @@ export function OppInfoModal({
               </span>
             </div>
           )}
+          {coaApprovalsNeeded(opp).length > 0 && (() => {
+            // The agreement is with the customer and a COA exception is still
+            // unresolved. Named rather than counted: which exception it is
+            // decides who has to be chased.
+            const outstanding = coaApprovalsNeeded(opp);
+            return (
+              <div style={{
+                margin: '0.25rem 0 0.75rem',
+                padding: '0.6rem 0.8rem',
+                border: '1px solid #FCA5A5', borderRadius: 6,
+                background: '#FEF2F2', fontSize: '0.8rem',
+                color: '#991B1B', lineHeight: 1.4,
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚩</span>
+                <span>
+                  <strong>COA approvals needed.</strong> This opp is at{' '}
+                  <strong>{COA_APPROVALS_DUE_STAGE}</strong> but{' '}
+                  {outstanding.length === 1 ? 'this COA item is' : `these ${outstanding.length} COA items are`}{' '}
+                  neither approved nor marked N/A:{' '}
+                  <strong>{outstanding.map(r => r.item).join(', ')}</strong>. Record the approval
+                  date, or mark the item N/A, on the Stage 6 tab.
+                </span>
+              </div>
+            );
+          })()}
           {qualifyingStageFlagState(opp) === 'active' && (
             // Same rule as the Flags-column 🚩: the Stage is still Lead
             // while Status says a meeting is booked. Shown here too so it's
@@ -13020,6 +13069,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (needsCompetitionFlag(row)) parts.push('Missing Competition');
+      if (coaApprovalsNeeded(row).length) parts.push('COA approvals needed');
       if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
       if (qualifyingStageFlagState(row) === 'active') parts.push('Move to Qualifying');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
@@ -13046,6 +13096,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         let n = 0;
         if (needsUsdFlag(row)) n += 1;
         if (needsCompetitionFlag(row)) n += 1;
+        if (coaApprovalsNeeded(row).length) n += 1;
         if (needsBudgetTimelineFlag(row)) n += 1;
         if (qualifyingStageFlagState(row) === 'active') n += 1;
         if (oppMissingBfoAddress(row)) n += 1;
@@ -13065,6 +13116,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         const missingUsd = needsUsdFlag(row);
         const missingCompetition = needsCompetitionFlag(row);
+        const coaOutstanding = coaApprovalsNeeded(row);
         const missingBudgetTimeline = needsBudgetTimelineFlag(row);
         const qualifyingFlag = qualifyingStageFlagState(row);
         const missingAddr = oppMissingBfoAddress(row);
@@ -13078,7 +13130,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const kickoffDays = kickoffDeadlineFlag(row);
         const stall = oppStageStall(row);
         const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingCompetition && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        if (!missingUsd && !missingCompetition && !coaOutstanding.length && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
             {missingUsd && (
@@ -13092,6 +13144,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 title="This opp is closed but the Competition field is blank or “-”: it's required to close an opp out."
                 style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
               >⚠ Missing Competition</span>
+            )}
+            {coaOutstanding.length > 0 && (
+              <span
+                title={`Stage is Agreement Sent but ${coaOutstanding.length} COA item${coaOutstanding.length === 1 ? '' : 's'} ${coaOutstanding.length === 1 ? 'is' : 'are'} neither approved nor marked N/A: ${coaOutstanding.map(r => r.item).join(', ')}.`}
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ COA approvals needed ({coaOutstanding.length})</span>
             )}
             {missingBudgetTimeline && (
               <span

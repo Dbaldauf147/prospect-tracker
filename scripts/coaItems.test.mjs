@@ -25,6 +25,7 @@
 import {
   DEFAULT_COA_ITEMS, emptyCoaItem, normalizeCoaItems, coaItemsForOpp,
   coaItemsToStore, coaItemStatus, coaDaysWaiting, coaItemsSummary,
+  unsettledCoaItems, outstandingCoaItems,
 } from '../src/utils/coaItems.js';
 
 let failures = 0;
@@ -139,6 +140,45 @@ eq('N/A rows sit outside the approval count',
 eq('an opp with nothing but N/A has no approvals to report',
   coaItemsSummary([naRow('3% esc')], NOW),
   { total: 0, approved: 0, waiting: 0, oldestWaitingDays: null, na: 1 });
+
+// --- what is still to be chased -------------------------------------------
+//
+// Feeds the "COA approvals needed" flag on an opp at Agreement Sent.
+
+eq('an approved row is settled',
+  unsettledCoaItems([row('3% esc', '2026-09-01', '2026-09-05')]), []);
+eq('an N/A row is settled', unsettledCoaItems([naRow('3% esc')]), []);
+eq('a requested row is not settled',
+  unsettledCoaItems([row('3% esc', '2026-09-01')]), [row('3% esc', '2026-09-01')]);
+eq('nor is one nobody has asked for', unsettledCoaItems([row('3% esc')]), [row('3% esc')]);
+eq('the blank form row does not', unsettledCoaItems([emptyCoaItem()]), []);
+eq('only the unsettled ones come back',
+  unsettledCoaItems([
+    row('3% esc', '2026-09-01', '2026-09-05'),
+    naRow('Payment terms'),
+    row('Non-standard terms', '2026-09-02'),
+  ]),
+  [row('Non-standard terms', '2026-09-02')]);
+
+// Per opp, the seeded question counts as unanswered until the record carries
+// a row for it — a row named only "3% esc" is never stored, so its absence IS
+// "nobody has dealt with the escalator", whatever else the opp has stored.
+eq('an opp with nothing stored still owes the default',
+  outstandingCoaItems({}), [row('3% esc')]);
+eq('so does one that stored other items and never answered it',
+  outstandingCoaItems({ _coaItems: [naRow('Payment terms')] }), [row('3% esc')]);
+eq('an approved default settles it',
+  outstandingCoaItems({ _coaItems: [row('3% esc', '2026-09-01', '2026-09-05')] }), []);
+eq('so does marking it N/A',
+  outstandingCoaItems({ _coaItems: [naRow('3% esc')] }), []);
+eq('a request that has not come back is still outstanding',
+  outstandingCoaItems({ _coaItems: [row('3% esc', '2026-09-01')] }),
+  [row('3% esc', '2026-09-01')]);
+eq('stored items come first, the unanswered default after',
+  outstandingCoaItems({ _coaItems: [row('Non-standard terms', '2026-09-02')] }),
+  [row('Non-standard terms', '2026-09-02'), row('3% esc')]);
+eq('everything settled is nothing outstanding',
+  outstandingCoaItems({ _coaItems: [naRow('3% esc'), row('Payment terms', '2026-09-01', '2026-09-04')] }), []);
 
 console.log(failures === 0 ? '\nAll COA item tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

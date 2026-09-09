@@ -122,6 +122,37 @@ export function coaDaysWaiting(row, nowMs = Date.now()) {
 }
 
 /**
+ * The rows of a list still to be settled: an item that is neither approved
+ * nor marked N/A is one somebody still has to chase. Rows with no item name
+ * are the editor's blank form row and are skipped.
+ */
+export function unsettledCoaItems(list) {
+  return normalizeCoaItems(list)
+    .filter(r => r.item && coaItemStatus(r) !== 'approved' && coaItemStatus(r) !== 'na');
+}
+
+/**
+ * What an opp still has to settle: its unsettled stored rows, plus any
+ * DEFAULT item its record has no row for at all.
+ *
+ * The defaults matter because of how little gets stored. "3% esc" is the
+ * question every opp is asked, and a row carrying only that name is dropped
+ * on the way to the record (coaItemsToStore) precisely because nothing has
+ * been recorded about it — so "the record has no 3% esc row" and "nobody has
+ * dealt with the 3% escalator" are the same state, whether the opp has other
+ * items stored or nothing at all. Answering it — an approved date, or the
+ * N/A button — is what settles it.
+ */
+export function outstandingCoaItems(opp) {
+  const stored = normalizeCoaItems(opp?._coaItems);
+  const named = new Set(stored.map(r => r.item.toLowerCase()));
+  const unanswered = DEFAULT_COA_ITEMS
+    .filter(d => !named.has(d.toLowerCase()))
+    .map(item => ({ ...emptyCoaItem(), item }));
+  return unsettledCoaItems([...stored, ...unanswered]);
+}
+
+/**
  * One line for the section header: what is done and what is outstanding.
  *
  * Counts only rows that have been recorded — a seeded row nobody has filled in
