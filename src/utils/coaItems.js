@@ -15,6 +15,12 @@
 //
 // Dates are ISO 'yyyy-mm-dd' — what <input type="date"> gives and takes, and
 // what sorts lexically, so "which is oldest" needs no parsing.
+//
+// A row can also be marked `na`: the exception doesn't apply to this deal.
+// That is a different answer from "not requested yet" — the seeded 3% esc row
+// sits on every opp, and without a way to say "not on this one" the only ways
+// to clear it were to delete the row (which says nothing) or to leave it
+// reading as outstanding forever.
 
 // The item every opp starts with. A new opp shows this row already named, so
 // the common case is two dates and no typing; anything else is typed into the
@@ -37,11 +43,17 @@ export function normalizeCoaItems(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter(r => r && typeof r === 'object')
-    .map(r => ({
-      item: String(r.item ?? '').trim(),
-      requested: String(r.requested ?? '').trim(),
-      approved: String(r.approved ?? '').trim(),
-    }));
+    .map(r => {
+      const row = {
+        item: String(r.item ?? '').trim(),
+        requested: String(r.requested ?? '').trim(),
+        approved: String(r.approved ?? '').trim(),
+      };
+      // Only present when it is set, so a row nobody marked reads on the
+      // record exactly as it always did.
+      if (r.na === true || r.na === 'true') row.na = true;
+      return row;
+    });
 }
 
 /**
@@ -69,7 +81,8 @@ export function coaItemsForOpp(opp) {
  * yet — so an untouched opp stays untouched.
  */
 export function coaItemsToStore(list) {
-  return normalizeCoaItems(list).filter(r => r.requested || r.approved || (r.item && !isSeedName(r.item)));
+  return normalizeCoaItems(list)
+    .filter(r => r.requested || r.approved || (r.na && r.item) || (r.item && !isSeedName(r.item)));
 }
 
 function isSeedName(item) {
@@ -78,8 +91,8 @@ function isSeedName(item) {
 }
 
 /**
- * Where one row stands: 'approved', 'requested' (asked for, still waiting) or
- * 'open' (not asked for yet).
+ * Where one row stands: 'na' (doesn't apply to this deal), 'approved',
+ * 'requested' (asked for, still waiting) or 'open' (not asked for yet).
  *
  * An approved date wins on its own. A COA that came back without anyone
  * recording the request is still approved, and reading it as "not requested"
@@ -87,6 +100,9 @@ function isSeedName(item) {
  * beside it.
  */
 export function coaItemStatus(row) {
+  // Marked N/A wins over the dates: a row that was asked for and then turned
+  // out not to apply is not still waiting on anybody.
+  if (row?.na) return 'na';
   if (String(row?.approved ?? '').trim()) return 'approved';
   if (String(row?.requested ?? '').trim()) return 'requested';
   return 'open';
@@ -110,15 +126,21 @@ export function coaDaysWaiting(row, nowMs = Date.now()) {
  *
  * Counts only rows that have been recorded — a seeded row nobody has filled in
  * is not an outstanding approval, and counting it would put a number on the
- * header of every opp in the book.
+ * header of every opp in the book. Rows marked N/A are counted separately:
+ * they are settled, but they were never approvals.
  */
 export function coaItemsSummary(list, nowMs = Date.now()) {
-  const rows = coaItemsToStore(list);
+  const stored = coaItemsToStore(list);
+  // N/A rows are counted on their own and kept out of the rest: they are not
+  // approvals anyone is chasing, so folding them into the total would make
+  // "2 of 3 approved" the permanent reading of a fully-cleared deal.
+  const na = stored.filter(r => coaItemStatus(r) === 'na').length;
+  const rows = stored.filter(r => coaItemStatus(r) !== 'na');
   const approved = rows.filter(r => coaItemStatus(r) === 'approved').length;
   const waiting = rows.filter(r => coaItemStatus(r) === 'requested');
   const oldest = waiting.reduce((max, r) => {
     const d = coaDaysWaiting(r, nowMs);
     return d != null && (max == null || d > max) ? d : max;
   }, null);
-  return { total: rows.length, approved, waiting: waiting.length, oldestWaitingDays: oldest };
+  return { total: rows.length, approved, waiting: waiting.length, oldestWaitingDays: oldest, na };
 }

@@ -5587,6 +5587,13 @@ function OppTicketLinksSection({ opp, onFieldChange }) {
 // form row (and a seeded row nobody has filled in) is kept on screen but never
 // stored, so an opp nobody has touched carries no COA data.
 //
+// Each row also has an N/A button: the exception doesn't apply to this deal.
+// Most deals don't need the 3% escalator sign-off the table seeds, and the
+// only ways to clear that row were to delete it — which says nothing, and
+// leaves the next reader wondering — or to leave it reading as an approval
+// nobody has asked for yet. Marked rows keep their dates (un-marking puts
+// them back), and are counted apart from the approvals in the header.
+//
 // Keyed by opp id at the call site: the rows are seeded from the record on
 // mount, so without a remount the section would keep showing the previous
 // opp's items after moving to another record.
@@ -5637,9 +5644,14 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
     letterSpacing: '0.03em', color: '#64748B', padding: '0 0.4rem 0.3rem 0', whiteSpace: 'nowrap',
   };
   const td = { padding: '0 0.4rem 0.4rem 0', verticalAlign: 'top' };
+  // An N/A row keeps whatever dates it had — un-marking it puts them back —
+  // but reads as settled rather than as something still to fill in.
+  const naCell = { background: '#F8FAFC', color: '#94A3B8' };
 
   // Where a row stands, as a chip. A request that is still out carries how
   // long it has been out — the number that decides whether to go and chase it.
+  // A row marked N/A has no chip: the pressed N/A button beside it, in this
+  // same cell, is already the status.
   const renderStatus = (row) => {
     const status = coaItemStatus(row);
     if (status === 'approved') {
@@ -5671,13 +5683,18 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
           fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
           color: 'var(--color-text-muted)', fontWeight: 600,
         }}>COA Approval Items</div>
-        {summary.total > 0 && (
+        {(summary.total > 0 || summary.na > 0) && (
           <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
-            {summary.approved} of {summary.total} approved
+            {summary.total > 0 && `${summary.approved} of ${summary.total} approved`}
             {summary.waiting > 0 && (
               <span style={{ color: '#92400E', fontWeight: 600 }}>
                 {' '}· {summary.waiting} waiting
                 {summary.oldestWaitingDays != null ? ` (oldest ${summary.oldestWaitingDays}d)` : ''}
+              </span>
+            )}
+            {summary.na > 0 && (
+              <span style={{ color: '#94A3B8' }}>
+                {summary.total > 0 ? ' · ' : ''}{summary.na} n/a
               </span>
             )}
           </div>
@@ -5712,8 +5729,9 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                   type="date"
                   value={row.requested || ''}
                   onChange={(e) => updateRow(idx, 'requested', e.target.value)}
-                  title="The date the COA exception was sent for approval."
-                  style={{ ...cellInput, width: 'auto' }}
+                  disabled={!!row.na}
+                  title={row.na ? 'Marked N/A — un-mark it to record dates.' : 'The date the COA exception was sent for approval.'}
+                  style={{ ...cellInput, width: 'auto', ...(row.na ? naCell : null) }}
                 />
               </td>
               <td style={td}>
@@ -5721,11 +5739,31 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                   type="date"
                   value={row.approved || ''}
                   onChange={(e) => updateRow(idx, 'approved', e.target.value)}
-                  title="The date it came back approved. Leave blank until it does."
-                  style={{ ...cellInput, width: 'auto' }}
+                  disabled={!!row.na}
+                  title={row.na ? 'Marked N/A — un-mark it to record dates.' : 'The date it came back approved. Leave blank until it does.'}
+                  style={{ ...cellInput, width: 'auto', ...(row.na ? naCell : null) }}
                 />
               </td>
-              <td style={{ ...td, whiteSpace: 'nowrap', paddingTop: '0.4rem' }}>{renderStatus(row)}</td>
+              <td style={{ ...td, whiteSpace: 'nowrap', paddingTop: '0.4rem' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {!row.na && renderStatus(row)}
+                  <button
+                    type="button"
+                    onClick={() => updateRow(idx, 'na', !row.na)}
+                    title={row.na
+                      ? 'This item is marked N/A for this deal. Click to put it back in play.'
+                      : "Mark this item N/A — it doesn't apply to this deal, so nobody is waiting on it."}
+                    aria-pressed={!!row.na}
+                    style={{
+                      fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit', lineHeight: 1,
+                      padding: '0.15rem 0.35rem', borderRadius: 4, cursor: 'pointer',
+                      border: `1px solid ${row.na ? '#64748B' : '#CBD5E1'}`,
+                      background: row.na ? '#64748B' : '#fff',
+                      color: row.na ? '#fff' : '#94A3B8',
+                    }}
+                  >N/A</button>
+                </span>
+              </td>
               <td style={{ ...td, paddingTop: '0.4rem' }}>
                 <button
                   type="button"
