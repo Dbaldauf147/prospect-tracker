@@ -224,6 +224,18 @@ const SITE_LIST_WRITE_TIMEOUT_MS = 60_000;
 // should not cost another minute of spinner.
 const SITE_LIST_WRITE_SHORT_TIMEOUT_MS = 8_000;
 
+// Ceiling on reading the Utility Name Mapping table while a workbook is
+// being built. It comes from IndexedDB, but a browser that has never held
+// the list falls back to its Firestore backup — a getDoc on a document
+// that is by definition not in the local cache, which is the one shape of
+// Firestore call that never settles when the client can't reach the server
+// (see utils/withTimeout). That await sits in the middle of the build,
+// before a byte is uploaded, so a blocked connection didn't make the save
+// slow: it made it never finish, under a status line that had nothing to
+// say about it for twenty minutes. The table enriches three sheets out of
+// thirteen, so it waits this long and the workbook goes on without it.
+const NAME_MAP_READ_TIMEOUT_MS = 15_000;
+
 // Utility accounts (bills) estimated for one site, as text. Halves are
 // real — a property type whose water account is "0 – 1" contributes 0.5 —
 // so the fraction is kept rather than rounded into a number the per-site
@@ -5478,13 +5490,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       mark = now;
     };
     try {
-      const result = await exportMasterAnalysis({ returnBuffer: true, companyName: prospect.company });
+      // The build reports its own stages now. It is the longest single part
+      // of a save on a big portfolio and the only one that used to run
+      // silently, so "Saving to <company>…" sat unchanged over every one of
+      // them — including the one that could hang forever.
+      const result = await exportMasterAnalysis({
+        returnBuffer: true,
+        companyName: prospect.company,
+        onStep: ({ label, index, total }) => setSaveStatus({
+          state: 'saving',
+          message: `Saving to ${prospect.company || 'company'}: ${label} (step ${index} of ${total})…`,
+        }),
+      });
       phase('built the workbook');
       if (!result) {
         setSaveStatus({ state: 'error', message: 'Nothing to save: load sites first.' });
         return;
       }
-      const { buffer, fileName } = result;
+      const { buffer, fileName, nameMapUnavailable } = result;
       const dataBase64 = arrayBufferToBase64(buffer);
       const sizeMb = buffer.byteLength / (1024 * 1024);
       // The analysis is chunked across multiple Firestore docs on save, so
@@ -5660,7 +5683,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const equipmentNote = equipmentTotal > 0
         ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${savedOverRest ? ' (saved over a plain web request — the app\'s usual database connection is not getting through on this network.)' : ''}` });
+      const nameMapNote = nameMapUnavailable
+        ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty — the rest of the analysis is complete.'
+        : '';
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request — the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
@@ -13783,10 +13809,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     });
   }
 
-  async function exportMasterAnalysis({ returnBuffer = false, companyName = null } = {}) {
+  // `onStep` is called before each stage of the build with a plain-English
+  // label and where it sits in the run. Building this workbook is thirteen
+  // sheets across nine stages and it used to report none of them: a save
+  // stuck in here showed "Saving to <company>…" — the message set before
+  // the first line ran — for as long as it was stuck, which is how a build
+  // that was never going to finish looked exactly like one that was nearly
+  // done. Naming the stage is what makes "it stopped on the utility
+  // mapping" something anyone can say.
+  async function exportMasterAnalysis({ returnBuffer = false, companyName = null, onStep = null } = {}) {
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
+    const STEP_TOTAL = 9;
+    let stepIdx = 0;
+    // Awaited, and it yields: setSaveStatus inside an async function only
+    // SCHEDULES a render, and a stage that then runs to completion without
+    // touching the event loop paints nothing until it is done — so every
+    // label would have arrived on screen one stage late, and the label for
+    // a stage that hangs would never have arrived at all. A macrotask tick
+    // per stage buys a paint before the stage starts.
+    const step = async (label) => {
+      stepIdx += 1;
+      if (!onStep) return;
+      onStep({ label, index: stepIdx, total: STEP_TOTAL });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    await step('reading the site data');
     const { Workbook } = await import('exceljs');
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
@@ -13795,6 +13844,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const company = deriveExportCompanyName(companyName);
 
     // 1. Indicative Savings sheets (returns its native-chart descriptors).
+    await step('building the Indicative Savings sheets');
     const indicative = await exportIndicativeSavings({ targetWb: wb });
     const chartInjections = indicative?.chartInjections || [];
 
@@ -13802,6 +13852,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    site list the compliance subtabs use. Site Detail is renamed to
     //    avoid colliding with Indicative Savings' Site Detail sheet.
     //    Scoped to the same Owned / All-sites toggle the subtabs are on.
+    await step('screening the sites for building compliance');
     const complianceResults = screenSites(complianceScopedSites, { ordinances });
     await exportComplianceReportXlsx(complianceResults, {
       targetWb: wb,
@@ -13813,6 +13864,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // 3. Corporate Compliance — company-level portfolio view (site footprint
     //    + California operations), Schneider-formatted.
+    await step('building the Corporate Compliance sheet');
     buildCorporateComplianceSheet(wb, complianceSites, {
       generatedAt: new Date().toLocaleString('en-US'),
       companyName: company,
@@ -13824,6 +13876,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // 4. Compliance Report Methodology — how the estimated fines were derived,
     //    by mandate, plus the per-jurisdiction penalty inputs behind them.
+    await step('building the methodology sheet');
     buildComplianceMethodologySheet(wb, complianceResults, {
       generatedAt: new Date().toLocaleString('en-US'),
       companyName: company,
@@ -13837,9 +13890,28 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    there whether or not that tab has been opened this session. Tabs are
     //    renamed to avoid colliding with Indicative Savings' NAM / Site
     //    Detail sheets.
-    const savedNameMap = await loadListFromIDB(NAME_MAP_LIST_KEY);
+    await step('mapping the sites to their utilities');
+    // Under a ceiling, and not fatal when it is reached: this read reaches
+    // Firestore whenever IndexedDB doesn't already hold the list, and a
+    // Firestore read that can't get out never answers at all rather than
+    // failing (NAME_MAP_READ_TIMEOUT_MS has the rest). Three sheets come
+    // out thinner without the table; the other ten, and the save behind
+    // them, no longer wait on it.
+    let savedNameMap = null;
+    let nameMapUnavailable = false;
+    try {
+      savedNameMap = await withTimeout(
+        loadListFromIDB(NAME_MAP_LIST_KEY),
+        NAME_MAP_READ_TIMEOUT_MS,
+        'reading the Utility Name Mapping table',
+      );
+    } catch (e) {
+      console.warn('Could not read the Utility Name Mapping list for the Master Analysis:', e);
+      nameMapUnavailable = true;
+    }
     const mappingCoverage = await exportUtilityMappingAnalysis(Array.isArray(savedNameMap) ? savedNameMap : [], {
       targetWb: wb,
+      nameMapUnavailable,
       sheetNames: {
         nam: 'Utility Mapping',
         stateBreakdown: 'Utility Mapping by State',
@@ -13865,6 +13937,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    the compliance screening (step 2), the per-site utility mapping
     //    (step 5) and the per-division savings roll-up — onto the division
     //    each site carries.
+    await step('building the Divisions sheet');
     buildDivisionsSheet(wb, summarizeDivisions(
       collectDivisionSiteFacts(complianceResults, mappingCoverage?.siteRows),
       divisionSavings,
@@ -13881,12 +13954,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //    analysis be imported back onto the Utility Lookup page (and
     //    from there onto every subtab) later, from this company's
     //    saved copy.
+    await step('adding the site list');
     addRoundTripSheets(wb);
 
     // Write the merged workbook once, then inject the Indicative Savings
     // native charts (ExcelJS drops charts on re-load, so this must run on
     // the final buffer, last).
+    await step('writing the workbook');
     let buf = await wb.xlsx.writeBuffer();
+    await step('adding the charts');
     for (const injection of chartInjections) {
       buf = await injectLiveLineChart(buf, injection);
     }
@@ -13898,7 +13974,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       ? `${exportCompany}_Master Analysis.xlsx`
       : `Master Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     // Save-to-company mode: hand the workbook back instead of downloading.
-    if (returnBuffer) return { buffer: buf, fileName };
+    // `nameMapUnavailable` rides along so the save's own success line can
+    // say the utility mapping came out empty because the table couldn't be
+    // read — a "Saved to <company>." over three blank sheets is the kind of
+    // success nobody finds out about until they open the file.
+    if (returnBuffer) return { buffer: buf, fileName, nameMapUnavailable };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -13926,7 +14006,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // With `targetWb` the sheets are added to an existing workbook (and nothing
   // is downloaded) — that's how the Master Analysis carries the same
   // analysis; `sheetNames` renames the tabs so they don't collide there.
-  async function exportUtilityMappingAnalysis(nameMapList, { targetWb = null, sheetNames = {} } = {}) {
+  // `nameMapUnavailable` says the mapping table couldn't be READ, which is a
+  // different fact from there being none — and the one the sheet has to
+  // print, because "no utility list is loaded" told a user whose list was
+  // sitting in the database the whole time to go and load it again.
+  async function exportUtilityMappingAnalysis(nameMapList, { targetWb = null, sheetNames = {}, nameMapUnavailable = false } = {}) {
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
@@ -14180,7 +14264,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = `${nameMapRows.length === 0 ? 'No utility list is loaded on the Utility Name Mapping tab, so no site can be mapped or confirmed for interval data yet. ' : ''}${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${coverageLine}. Mapping: ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Interval data: ${totIntervalYes} yes · ${totIntervalNo} no · ${totalSites - totIntervalYes - totIntervalNo} unknown (utility Status blank or not in the mapping list). Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
+      const noMapNote = nameMapRows.length > 0
+        ? ''
+        : nameMapUnavailable
+          ? 'The Utility Name Mapping table could not be read on this device, so no site could be mapped or confirmed for interval data — these three sheets are the only ones affected, and re-running the export once the table loads fills them in. '
+          : 'No utility list is loaded on the Utility Name Mapping tab, so no site can be mapped or confirmed for interval data yet. ';
+      sub.value = `${noMapNote}${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${coverageLine}. Mapping: ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Interval data: ${totIntervalYes} yes · ${totIntervalNo} no · ${totalSites - totIntervalYes - totIntervalNo} unknown (utility Status blank or not in the mapping list). Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
