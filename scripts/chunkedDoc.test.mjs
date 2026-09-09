@@ -94,5 +94,59 @@ check('it needs more than one document', realParts.length > 1, true);
 check('and every one is under Firestore\'s per-document cap',
   realParts.every(p => utf8Len(p) < 1024 * 1024), true);
 
+// --- how the chunks are committed ------------------------------------------
+
+// The second cap, and the one the splitter alone does not satisfy: chunks
+// that each fit a document can still be too much for ONE commit. Firestore
+// refuses a write request over 11 MiB outright, so a 16 MB list — CDP,
+// GRESB — had all of its chunks rejected together while every individual
+// piece was the right size.
+const { planBatches, BATCH_LIMIT, BATCH_MAX_BYTES } = __test__;
+
+// Sum of `sizes` over one [from, to) range.
+function batchBytes(sizes, [from, to]) {
+  let n = 0;
+  for (let i = from; i < to; i++) n += sizes[i];
+  return n;
+}
+
+// Plan `sizes` and assert what every plan has to be true of.
+function plans(label, sizes) {
+  const batches = planBatches(sizes);
+  check(`${label}: every chunk is written exactly once, in order`,
+    batches.flatMap(([from, to]) => Array.from({ length: to - from }, (_, k) => from + k)).join(','),
+    sizes.map((_, i) => i).join(','));
+  // A batch of one is allowed over budget — it cannot be divided further.
+  const overBudget = batches.filter(b => b[1] - b[0] > 1 && batchBytes(sizes, b) > BATCH_MAX_BYTES);
+  check(`${label}: no multi-chunk commit exceeds the request cap`, overBudget.length, 0);
+  check(`${label}: no commit exceeds the write count cap`,
+    batches.some(([from, to]) => to - from > BATCH_LIMIT), false);
+  return batches;
+}
+
+check('nothing to write is no commits', planBatches([]).length, 0);
+check('one chunk is one commit', planBatches([700 * 1024]).length, 1);
+
+// The shape that was losing data: a 16 MB list at 700 KB a chunk.
+const listSizes = new Array(24).fill(700 * 1024);
+const listBatches = plans('16 MB list', listSizes);
+check('a 16 MB list no longer goes up in a single commit', listBatches.length > 1, true);
+
+// Packing stays tight — the fix must not turn one commit into one per chunk.
+check('chunks are packed, not sent one at a time', listBatches.length, 3);
+
+// Uneven pieces (the tail chunk is always short) still pack legally.
+plans('uneven pieces', [700 * 1024, 700 * 1024, 12, 700 * 1024, 3 * 1024 * 1024]);
+
+// Small chunks hit the write-count cap long before the byte cap.
+const many = new Array(BATCH_LIMIT * 2 + 5).fill(64);
+const manyBatches = plans('many tiny chunks', many);
+check('the count cap is what bounds tiny chunks', manyBatches.length, 3);
+
+// A single chunk over the byte budget cannot be split from here, so it is
+// sent alone rather than dropped or bundled.
+const lone = plans('one oversized chunk', [64, 9 * 1024 * 1024, 64]);
+check('an oversized chunk travels alone', lone.length, 3);
+
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

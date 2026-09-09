@@ -46,6 +46,49 @@ const SINGLE_DOC_MAX_BYTES = 900 * 1024;
 // them, and a margin keeps this honest if that ever changes.
 const BATCH_LIMIT = 400;
 
+// The OTHER cap on a commit, and the one that actually bites here: the
+// whole write request may not exceed 11 MiB ("Request payload size exceeds
+// the limit: 11534336 bytes"). Writes per batch is not the binding limit
+// when each write carries 700 KB — sixteen chunks is already over, and the
+// commit is rejected WHOLE, so nothing is written at all.
+//
+// That is this module's own version of the mistake it was written to fix.
+// A list past ~11 MB of JSON — CDP, GRESB, the big compliance exports, the
+// ones it hurts to lose — sent every chunk in one commit, got it refused,
+// and reported nothing: saveListBackup fire-and-forgets, so the list looked
+// backed up and was not. Clearing site data then took it for good.
+//
+// 8 MiB leaves room for document paths, field names and protobuf framing,
+// none of which are in the string length being measured.
+const BATCH_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * How to divide `sizes` (the byte length of each chunk, in order) into
+ * commits: a list of `[from, to)` index ranges, each within BOTH caps.
+ *
+ * A chunk bigger than the byte budget on its own still gets sent — it
+ * cannot be split further from here, and CHUNK_BYTES keeps that from
+ * arising — but it never has company.
+ */
+function planBatches(sizes) {
+  const batches = [];
+  let start = 0;
+  let count = 0;
+  let bytes = 0;
+  for (let i = 0; i < sizes.length; i++) {
+    if (count > 0 && (count >= BATCH_LIMIT || bytes + sizes[i] > BATCH_MAX_BYTES)) {
+      batches.push([start, i]);
+      start = i;
+      count = 0;
+      bytes = 0;
+    }
+    count += 1;
+    bytes += sizes[i];
+  }
+  if (count > 0) batches.push([start, sizes.length]);
+  return batches;
+}
+
 function utf8Len(str) {
   try { return new TextEncoder().encode(str).length; }
   catch { return str.length; }
@@ -123,9 +166,9 @@ export async function writeChunkedDoc(ref, value, { meta = {} } = {}) {
   }
 
   const parts = splitByUtf8Bytes(json, CHUNK_BYTES);
-  for (let start = 0; start < parts.length; start += BATCH_LIMIT) {
+  for (const [from, to] of planBatches(parts.map(utf8Len))) {
     const batch = writeBatch(await getDb());
-    for (let i = start; i < Math.min(start + BATCH_LIMIT, parts.length); i++) {
+    for (let i = from; i < to; i++) {
       batch.set(doc(ref, 'chunks', String(i)), { s: parts[i] });
     }
     await batch.commit();
@@ -206,4 +249,4 @@ export async function deleteChunkedDoc(ref) {
 }
 
 /** Exported for the tests — the byte-accurate splitter is the fiddly part. */
-export const __test__ = { splitByUtf8Bytes, utf8Len, CHUNK_BYTES, SINGLE_DOC_MAX_BYTES };
+export const __test__ = { splitByUtf8Bytes, utf8Len, planBatches, CHUNK_BYTES, SINGLE_DOC_MAX_BYTES, BATCH_LIMIT, BATCH_MAX_BYTES };
