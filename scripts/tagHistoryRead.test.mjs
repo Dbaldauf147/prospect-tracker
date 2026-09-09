@@ -10,7 +10,7 @@
 //     and going over is a 400 that returns nothing, not a truncated answer.
 //   * versions come back newest-first, because the audit walks them in that
 //     order to find the write that took the tags.
-import { handlerForTests as handler, TAG_HISTORY_BATCH } from '../api/hubspot.js';
+import { handlerForTests as handler, TAG_HISTORY_BATCH, fetchRetryingRateLimit } from '../api/hubspot.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -86,6 +86,79 @@ eq(TAG_HISTORY_BATCH, 50, 'a property-history read takes 50 inputs, not the 100 
     ['2026-09-09T14:02:00Z', '2026-07-01T09:00:00Z'],
     'with the versions newest-first, whatever order HubSpot sent them in');
   eq(res.body.rows[0].history[0].sourceId, 'app', 'each carrying what wrote it');
+}
+
+// --- waiting out the rate limiter -----------------------------------------
+//
+// HubSpot answers a burst with a 429 and usually a Retry-After. That is the
+// portal saying "in a moment", not a failure, and dropping the contacts the
+// batch was handed would make a long audit unfinishable on a busy portal.
+{
+  const waits = [];
+  const sleep = async (ms) => { waits.push(ms); };
+  const responses = (...statuses) => {
+    let i = 0;
+    globalThis.fetch = async () => {
+      const status = statuses[Math.min(i++, statuses.length - 1)];
+      return { ok: status < 400, status, headers: { get: () => null }, json: async () => ({ results: [] }) };
+    };
+  };
+
+  responses(429, 200);
+  let res = await fetchRetryingRateLimit('u', {}, { sleep });
+  eq([res.status, waits.length], [200, 1], 'a 429 is waited out and asked again');
+
+  waits.length = 0;
+  responses(429, 429, 200);
+  res = await fetchRetryingRateLimit('u', {}, { sleep });
+  eq([res.status, waits], [200, [500, 1000]], 'and the wait climbs while it keeps saying no');
+
+  waits.length = 0;
+  responses(429);
+  res = await fetchRetryingRateLimit('u', {}, { sleep });
+  eq([res.status, waits.length], [429, 3], 'a limiter that never lets up is reported, not waited on forever');
+
+  waits.length = 0;
+  responses(503, 200);
+  res = await fetchRetryingRateLimit('u', {}, { sleep });
+  eq([res.status, waits.length], [200, 1], "HubSpot's own transient failures are retried on the same terms");
+
+  waits.length = 0;
+  responses(400);
+  res = await fetchRetryingRateLimit('u', {}, { sleep });
+  eq([res.status, waits.length], [400, 0], 'a refusal that will not change is not retried');
+
+  // Retry-After wins over the climbing fallback, and is capped so one huge
+  // value can't park the request past the function's own timeout.
+  waits.length = 0;
+  let n = 0;
+  globalThis.fetch = async () => (n++ === 0
+    ? { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === 'retry-after' ? '2' : null) }, json: async () => ({}) }
+    : { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ results: [] }) });
+  await fetchRetryingRateLimit('u', {}, { sleep });
+  eq(waits, [2000], "HubSpot's own Retry-After is honoured");
+
+  waits.length = 0;
+  n = 0;
+  globalThis.fetch = async () => (n++ === 0
+    ? { ok: false, status: 429, headers: { get: () => '600' }, json: async () => ({}) }
+    : { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ results: [] }) });
+  await fetchRetryingRateLimit('u', {}, { sleep });
+  eq(waits, [15000], 'but a ten-minute Retry-After is capped rather than parking the request');
+}
+
+// --- what the caller is told when the limiter wins ------------------------
+{
+  globalThis.fetch = async () => ({
+    ok: false, status: 429, headers: { get: () => null },
+    json: async () => ({ message: 'There was a problem with the request.' }),
+  });
+  const res = fakeRes();
+  await handler({ query: { action: 'tag-history' }, body: { ids: ['1'] } }, res);
+  eq(res.statusCode, 429, 'a rate-limited read is reported as one');
+  eq(res.body.rateLimited, true, 'flagged, so the page can say what to do about it');
+  eq(/run the audit again/i.test(res.body.error), true,
+    "and told in words that say it is the portal being busy, not the audit being broken");
 }
 
 // --- HubSpot saying no ----------------------------------------------------
