@@ -149,6 +149,11 @@ const SHOW_IMPORT_BUTTONS = false;
 // array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 
+// Where the user has chosen to file a detail field, overriding the
+// built-in routing below. Same shape of preference as the hidden set: one
+// per field, applied to every opp's popup, kept per user.
+const OPP_DETAIL_FIELD_PLACEMENT_KEY = 'opp-detail-field-placement';
+
 // HQ Region choices offered when the New Opp modal creates a new Table
 // View company. Mirrors the option set the MyAccounts / PE Portfolio
 // cells use so regions stay consistent across views.
@@ -219,6 +224,36 @@ function nfatValueMatches(value, type) {
   if (type === 'check') return cur === 'yes' || cur === 'true' || cur === '✓';
   if (type === 'x') return cur === 'no' || cur === 'false' || cur === '✗';
   return false;
+}
+
+// The user's own field-to-tab choices: header -> { tab, step }, where
+// `step` is the subsection within a numbered stage tab (null elsewhere).
+// Stored as a plain object so a hand-edited or half-written entry can't
+// throw; anything that doesn't parse is dropped rather than losing the
+// rest of the map.
+function loadDetailFieldPlacements() {
+  try {
+    const raw = userLsGet(OPP_DETAIL_FIELD_PLACEMENT_KEY);
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return new Map();
+    const out = new Map();
+    for (const [field, v] of Object.entries(obj)) {
+      if (typeof field !== 'string' || !field || !v || typeof v !== 'object') continue;
+      const tab = typeof v.tab === 'string' ? v.tab : '';
+      if (!tab) continue;
+      out.set(field, { tab, step: typeof v.step === 'string' && v.step ? v.step : null });
+    }
+    return out;
+  } catch { return new Map(); }
+}
+
+function saveDetailFieldPlacements(map) {
+  try {
+    const obj = {};
+    for (const [field, v] of map) obj[field] = { tab: v.tab, step: v.step || null };
+    userLsSet(OPP_DETAIL_FIELD_PLACEMENT_KEY, JSON.stringify(obj));
+  } catch (err) { console.warn('opps2: save detail field placement failed', err); }
 }
 
 function loadHiddenDetailFields() {
@@ -6053,6 +6088,9 @@ const OPP_DETAIL_TABS = [
   { key: 'other', label: 'Other' },
 ];
 
+// Every tab key, for validating a stored choice before it's trusted.
+const OPP_DETAIL_TAB_KEYS = new Set(OPP_DETAIL_TABS.map(t => t.key));
+
 // The stage tabs, for the empty-state line and the "is this one of them"
 // checks below.
 const OPP_DETAIL_STAGE_TABS = new Set(['stage3', 'stage4', 'stage5', 'stage6', 'stage7']);
@@ -6109,15 +6147,67 @@ const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
 // order — every subsection is listed, empty ones included, because a
 // stage with nothing on it yet is a place to move fields onto rather than
 // a heading to hide.
-function splitStageTabFields(tabKey, fields) {
+function splitStageTabFields(tabKey, fields, placements) {
   const stages = OPP_DETAIL_STAGE_SUBSECTIONS.get(tabKey);
   if (!stages || stages.length === 0) return null;
   const byStage = new Map(stages.map(s => [s, []]));
   for (const h of fields) {
-    const mapped = OPP_DETAIL_SUBSECTION_BY_FIELD.get(h);
-    byStage.get(mapped && byStage.has(mapped) ? mapped : stages[0]).push(h);
+    // These fields were bucketed into this tab by the same routing the
+    // step comes from, so the step always belongs to this tab; the || is
+    // there so a future caller passing a foreign field lands it on the
+    // opening step instead of throwing.
+    const { step } = oppDetailPlacementFor(h, placements);
+    (byStage.get(step) || byStage.get(stages[0])).push(h);
   }
   return stages.map(stage => ({ stage, fields: byStage.get(stage) }));
+}
+
+// Where a field sits: its tab, plus the step within it when that tab is a
+// numbered stage (null everywhere else). One answer for the whole popup —
+// the split above files rows by it and the move menu ticks the same one,
+// so what the menu says is where the row is.
+//
+// A step the user picked wins over the built-in one. Either can name a
+// step this tab doesn't have — an override left behind by a later move to
+// another tab, a default belonging to a different stage — so both go
+// through the same includes() check and fall to the step the stage opens
+// on.
+function oppDetailPlacementFor(header, placements) {
+  const tab = oppDetailTabFor(header, placements);
+  const steps = OPP_DETAIL_STAGE_SUBSECTIONS.get(tab);
+  if (!steps || steps.length === 0) return { tab, step: null };
+  const placed = placements?.get(header);
+  const wanted = (placed?.tab === tab && placed.step)
+    ? placed.step
+    : OPP_DETAIL_SUBSECTION_BY_FIELD.get(header);
+  return { tab, step: wanted && steps.includes(wanted) ? wanted : steps[0] };
+}
+
+// Every place a field can be filed, in the order the tabs run. A stage
+// tab contributes one entry per step; every other tab is a single
+// destination. Call Notes is left out — it's a log, not a field bucket,
+// and a field parked there would render above a list it has nothing to do
+// with.
+const OPP_DETAIL_FIELD_DESTINATIONS = OPP_DETAIL_TABS
+  .filter(t => t.key !== 'callnotes')
+  .flatMap(t => {
+    const steps = OPP_DETAIL_STAGE_SUBSECTIONS.get(t.key);
+    if (!steps || steps.length === 0) return [{ tab: t.key, tabLabel: t.label, step: null }];
+    return steps.map(step => ({ tab: t.key, tabLabel: t.label, step }));
+  });
+
+// Where a field sits with no user choice in play — what "Reset to
+// default" puts it back to, and what that option names so it's clear
+// where the field is about to land.
+function oppDetailDefaultPlacement(header) {
+  return oppDetailPlacementFor(header, null);
+}
+
+// "Stage 6 · Agreement Sent" / "Scope & Quote" — one readable line for a
+// destination, used in the menu, the moved-confirmation and the tooltips.
+function oppDetailPlacementLabel(tab, step) {
+  const label = OPP_DETAIL_TABS.find(t => t.key === tab)?.label || tab;
+  return step ? `${label} · ${step}` : label;
 }
 
 // Tabs that show whether or not the record has fields for them. Scope &
@@ -6229,9 +6319,16 @@ const OPP_DETAIL_TAB_BY_NORM_FIELD = new Map(
 
 // Which subtab a column belongs in. Falls back to "Other" so user-added
 // and imported columns still show up somewhere.
-function oppDetailTabFor(header) {
+function oppDetailTabFor(header, placements) {
   const norm = String(header || '').trim().toLowerCase();
-  // Stage first: it owns the Overview slot no matter what the column is
+  // The user's own choice first, ahead of every rule below — including
+  // the Stage one. Someone who has moved a field has said where they
+  // want it, and a default that quietly wins back is a move that didn't
+  // take. A tab that no longer exists is ignored rather than trusted,
+  // so a stale entry can't file a field into nothing.
+  const placedTab = placements?.get(header)?.tab;
+  if (placedTab && OPP_DETAIL_TAB_KEYS.has(placedTab)) return placedTab;
+  // Stage next: it owns the Overview slot no matter what the column is
   // labelled, so no other bucket can pick it up.
   if (OPP_DETAIL_STAGE_RE.test(norm)) return 'overview';
   const known = OPP_DETAIL_TAB_BY_FIELD.get(header) || OPP_DETAIL_TAB_BY_NORM_FIELD.get(norm);
@@ -6264,6 +6361,150 @@ function loadOppDetailTab() {
 function saveOppDetailTab(key) {
   try { userLsSet(OPP_DETAIL_TAB_KEY, key); }
   catch (err) { console.warn('opps2: save detail tab failed', err); }
+}
+
+// The "move this field" menu, opened by clicking a field's label in the
+// details popup. Lists every tab, and every step inside the numbered
+// stage tabs, so a field can be filed exactly where the work happens
+// rather than where the built-in routing guessed.
+//
+// Anchored to the label that opened it and rendered in its own portal:
+// the popup clips its field list, and a menu drawn inside it would be cut
+// off on the bottom rows. Flipped above the anchor when there isn't room
+// below, and pinned inside the viewport either way.
+function FieldPlacementMenu({ field, label, anchor, current, isOverridden, onPick, onClose }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  const fallback = oppDetailDefaultPlacement(field);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    const onDown = (e) => { if (!menuRef.current?.contains(e.target)) onClose(); };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onDown, true);
+    };
+  }, [onClose]);
+
+  // Measured after the first paint, when the menu's real height is known
+  // — guessing it would put a long list off-screen on a short window.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el || !anchor) return;
+    const { width, height } = el.getBoundingClientRect();
+    const margin = 8;
+    const below = anchor.bottom + 4;
+    const top = (below + height > window.innerHeight - margin)
+      ? Math.max(margin, anchor.top - height - 4)
+      : below;
+    const left = Math.min(
+      Math.max(margin, anchor.left),
+      Math.max(margin, window.innerWidth - width - margin),
+    );
+    setPos({ top, left });
+  }, [anchor]);
+
+  // One block per tab, so the steps inside a stage read as belonging to
+  // it rather than as nine flat lines that happen to be named alike.
+  const groups = [];
+  for (const d of OPP_DETAIL_FIELD_DESTINATIONS) {
+    const last = groups[groups.length - 1];
+    if (last && last.tab === d.tab) last.items.push(d);
+    else groups.push({ tab: d.tab, tabLabel: d.tabLabel, items: [d] });
+  }
+
+  const itemStyle = (isCurrent) => ({
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, width: '100%', textAlign: 'left',
+    padding: '0.3rem 0.55rem', border: 'none', borderRadius: 4,
+    background: isCurrent ? 'var(--color-bg)' : 'transparent',
+    color: isCurrent ? 'var(--color-accent)' : 'var(--color-text)',
+    fontSize: '0.8rem', fontWeight: isCurrent ? 600 : 400,
+    fontFamily: 'inherit', cursor: 'pointer',
+  });
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={`Move ${label}`}
+      style={{
+        position: 'fixed',
+        top: pos ? pos.top : -9999,
+        left: pos ? pos.left : -9999,
+        zIndex: 9100,
+        minWidth: 232, maxWidth: 300,
+        maxHeight: '60vh', overflowY: 'auto',
+        background: '#fff', color: 'var(--color-text)',
+        border: '1px solid var(--color-border)', borderRadius: 6,
+        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)',
+        padding: '0.4rem',
+      }}
+    >
+      <div style={{
+        padding: '0.15rem 0.55rem 0.4rem',
+        fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.35,
+      }}>
+        Move <strong style={{ color: 'var(--color-text)' }}>{label}</strong> to
+      </div>
+      {groups.map(g => (
+        <div key={g.tab} style={{ marginBottom: '0.15rem' }}>
+          {g.items.length === 1 && !g.items[0].step ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => onPick(g.items[0])}
+              style={itemStyle(current.tab === g.tab)}
+            >
+              <span>{g.tabLabel}</span>
+              {current.tab === g.tab && <span aria-hidden="true">✓</span>}
+            </button>
+          ) : (
+            <>
+              <div style={{
+                padding: '0.3rem 0.55rem 0.1rem',
+                fontSize: '0.68rem', fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+                color: 'var(--color-text-muted)',
+              }}>{g.tabLabel}</div>
+              {g.items.map(d => {
+                const isCurrent = current.tab === d.tab && current.step === d.step;
+                return (
+                  <button
+                    key={d.step}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => onPick(d)}
+                    style={{ ...itemStyle(isCurrent), paddingLeft: '1.1rem' }}
+                  >
+                    <span>{d.step}</span>
+                    {isCurrent && <span aria-hidden="true">✓</span>}
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
+      ))}
+      {/* Only when the field has actually been moved: with nothing to put
+          back, a "reset" that does nothing is a dead option. */}
+      {isOverridden && (
+        <div style={{ borderTop: '1px solid var(--color-border-light)', marginTop: '0.25rem', paddingTop: '0.25rem' }}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => onPick(null)}
+            style={{ ...itemStyle(false), color: 'var(--color-text-muted)' }}
+          >
+            <span>Reset to default ({oppDetailPlacementLabel(fallback.tab, fallback.step)})</span>
+          </button>
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
 }
 
 // Popup that shows the basic info for one opp + a Delete button. Opened
@@ -6315,6 +6556,49 @@ export function OppInfoModal({
       return next;
     });
   }, []);
+  // Where the user has filed each field, the open "move to…" menu, and
+  // the last move made — the confirmation line reads from that, so a
+  // field that has just left the tab you're looking at says where it
+  // went and offers the way back.
+  const [fieldPlacements, setFieldPlacements] = useState(() => loadDetailFieldPlacements());
+  const [moveMenu, setMoveMenu] = useState(null);
+  const [lastMove, setLastMove] = useState(null);
+  const placeDetailField = useCallback((field, dest) => {
+    setFieldPlacements(prev => {
+      const next = new Map(prev);
+      // No dest is "put it back": drop the entry and the built-in
+      // routing takes the field again.
+      if (dest) next.set(field, { tab: dest.tab, step: dest.step || null });
+      else next.delete(field);
+      saveDetailFieldPlacements(next);
+      return next;
+    });
+  }, []);
+  const moveDetailField = useCallback((field, dest) => {
+    setMoveMenu(null);
+    setFieldPlacements(prev => {
+      const before = prev.get(field) || null;
+      setLastMove({
+        field,
+        label: headerLabel(field),
+        to: dest || oppDetailDefaultPlacement(field),
+        before,
+      });
+      const next = new Map(prev);
+      if (dest) next.set(field, { tab: dest.tab, step: dest.step || null });
+      else next.delete(field);
+      saveDetailFieldPlacements(next);
+      return next;
+    });
+  }, []);
+  // Both the open menu and the moved-confirmation belong to the record
+  // they were opened on. Left alone they'd carry over when the popup
+  // switches to another opp, describing a move on a record no longer on
+  // screen.
+  useEffect(() => {
+    setMoveMenu(null);
+    setLastMove(null);
+  }, [opp?._id]);
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
   // the table presents them, so the popup matches the user's mental
@@ -6350,7 +6634,7 @@ export function OppInfoModal({
   // Bucket the columns into subtabs, keeping the table's column order
   // within each one.
   const fieldsByTab = new Map(OPP_DETAIL_TABS.map(t => [t.key, []]));
-  for (const h of orderedFields) fieldsByTab.get(oppDetailTabFor(h)).push(h);
+  for (const h of orderedFields) fieldsByTab.get(oppDetailTabFor(h, fieldPlacements)).push(h);
   const visibleTabs = OPP_DETAIL_TABS.filter(t => (
     fieldsByTab.get(t.key).length > 0 || ALWAYS_ON_TABS.has(t.key)
   ));
@@ -6364,7 +6648,7 @@ export function OppInfoModal({
   // into it (Stage 4 → Qualifying, Quoting), the same way the
   // Days-in-Stage board bands its columns. null on every other tab, which
   // keeps its single table.
-  const stageSubsections = splitStageTabFields(currentTab, tabFields);
+  const stageSubsections = splitStageTabFields(currentTab, tabFields, fieldPlacements);
   const oppStage = String(opp['Stage'] ?? '').trim();
   // Linked call recordings sit with the rest of the day-to-day activity;
   // if this record somehow has no activity columns, they ride on whatever
@@ -6375,6 +6659,7 @@ export function OppInfoModal({
   // Count of currently-hidden rows among the fields the open tab shows,
   // so the "Show N hidden" toggle reflects what's collapsed right here.
   const hiddenCount = tabFields.filter(h => hiddenFields.has(h)).length;
+  const placementOf = (h) => oppDetailPlacementFor(h, fieldPlacements);
   const formatValue = (key, raw) => {
     if (raw == null || raw === '') return '-';
     if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
@@ -6588,13 +6873,37 @@ export function OppInfoModal({
                       }}
                     >{isHidden ? '+' : '×'}</button>
                   </td>
+                  {/* The label is the handle for moving the field:
+                      click it to pick the tab (and step) it should sit
+                      under. A button rather than a click handler on the
+                      cell so it's reachable by keyboard and reads as
+                      something you can press. */}
                   <td style={{
                     padding: '0.45rem 0.5rem 0.45rem 0',
-                    fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                    color: 'var(--color-text-muted)', fontWeight: 600,
                     verticalAlign: 'top',
                     opacity: isHidden ? 0.5 : undefined,
-                  }}>{label}</td>
+                  }}>
+                    <button
+                      type="button"
+                      aria-haspopup="menu"
+                      aria-expanded={moveMenu?.field === h}
+                      onClick={(e) => {
+                        // Measured here, not inside the updater: React
+                        // clears currentTarget once the handler returns,
+                        // and the updater can run after that.
+                        const anchor = e.currentTarget.getBoundingClientRect();
+                        setMoveMenu(cur => (cur?.field === h ? null : { field: h, label, anchor }));
+                      }}
+                      title={`"${label}" is on ${oppDetailPlacementLabel(placementOf(h).tab, placementOf(h).step)} — click to move it`}
+                      style={{
+                        padding: 0, border: 'none', background: 'none',
+                        textAlign: 'left', font: 'inherit',
+                        fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                        color: fieldPlacements.has(h) ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                        fontWeight: 600, cursor: 'pointer',
+                      }}
+                    >{label}</button>
+                  </td>
                   <td style={{
                     padding: '0.45rem 0',
                     color: 'var(--color-text)',
@@ -6715,6 +7024,62 @@ export function OppInfoModal({
         </div>
 
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
+          {/* A moved field usually leaves the tab you moved it from, so
+              the row just disappears. Say where it went, and offer the
+              way back — a mis-click otherwise means hunting through nine
+              tabs for the field you just lost. */}
+          {lastMove && (
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.5rem 0.8rem',
+              border: '1px solid var(--color-border)', borderRadius: 6,
+              background: 'var(--color-bg)', fontSize: '0.78rem',
+              color: 'var(--color-text)', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <strong>{lastMove.label}</strong> moved to{' '}
+                <strong>{oppDetailPlacementLabel(lastMove.to.tab, lastMove.to.step)}</strong>.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  placeDetailField(lastMove.field, lastMove.before);
+                  setLastMove(null);
+                }}
+                style={{
+                  flexShrink: 0, padding: '0.25rem 0.6rem', background: '#fff',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-accent)', cursor: 'pointer',
+                }}
+              >Undo</button>
+              <button
+                type="button"
+                onClick={() => setLastMove(null)}
+                aria-label="Dismiss"
+                title="Dismiss"
+                style={{
+                  flexShrink: 0, width: 20, height: 20, lineHeight: '18px',
+                  padding: 0, background: '#fff',
+                  border: '1px solid var(--color-border)', borderRadius: 4,
+                  fontSize: '0.72rem', fontFamily: 'inherit',
+                  color: 'var(--color-text-muted)', cursor: 'pointer',
+                }}
+              >×</button>
+            </div>
+          )}
+          {moveMenu && (
+            <FieldPlacementMenu
+              field={moveMenu.field}
+              label={moveMenu.label}
+              anchor={moveMenu.anchor}
+              current={placementOf(moveMenu.field)}
+              isOverridden={fieldPlacements.has(moveMenu.field)}
+              onPick={(dest) => moveDetailField(moveMenu.field, dest)}
+              onClose={() => setMoveMenu(null)}
+            />
+          )}
           {needsUsdFlag(opp) && (
             // Same rule as the Flags-column 🚩: deal is Qualifying or
             // later but USD? has no real value. Surfaced here too so it's
