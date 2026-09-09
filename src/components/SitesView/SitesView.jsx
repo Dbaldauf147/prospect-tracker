@@ -5416,8 +5416,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Compliance) — not just the saved export file.
     setPortfolioCompanyName(prospect.company);
     setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
+    // Phase timings to the console. This save has four distinct costs —
+    // building the workbook, uploading it, merging the site list, stamping
+    // the company — and from the outside they are one spinner, so "it took
+    // a while" was never answerable without guessing which one it was.
+    const t0 = performance.now();
+    let mark = t0;
+    const phase = (label) => {
+      const now = performance.now();
+      console.log(`Save to company · ${label}: ${Math.round(now - mark)}ms (${Math.round(now - t0)}ms total)`);
+      mark = now;
+    };
     try {
       const result = await exportMasterAnalysis({ returnBuffer: true, companyName: prospect.company });
+      phase('built the workbook');
       if (!result) {
         setSaveStatus({ state: 'error', message: 'Nothing to save: load sites first.' });
         return;
@@ -5450,12 +5462,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         dataBase64,
         sizeBytes: buffer.byteLength,
       });
+      phase(`uploaded ${sizeMb.toFixed(1)} MB`);
       // Fold the loaded sites into this company's site list, so the "Site
       // list mapped" status (and the Site List Overview) reflect the save
       // instead of staying empty until someone re-uploads the same rows
       // from the company popup. Ahead of the prospect stamp below because
       // the merged list is what Number of Sites is counted from.
       const siteList = await saveSitesAsCompanySiteList(prospect.company);
+      phase('saved the site list');
       // Stamp a lightweight marker on the prospect record so the Company
       // Look Up widget can show "analysis saved" without fetching the
       // (chunked) analysis subcollection for every company it lists.
@@ -5522,6 +5536,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           });
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
+      phase('stamped the company');
       const siteCountNote = siteCount > 0
         ? ` Number of Sites set to ${siteCount.toLocaleString()}.`
         : '';
