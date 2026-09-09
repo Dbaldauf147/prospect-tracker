@@ -10,6 +10,7 @@ import { userLsGet } from '../../utils/userLs';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { peStageOf } from '../../utils/peStages';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -384,10 +385,12 @@ const CHART_TITLES_KEY = 'progress:chart-titles';
 const CHART_VIEWS_KEY = 'progress:chart-views';
 const CHART_PINS_KEY = 'progress:chart-pins';
 
-// PE Stage → snapshot field + chart color. Mirrors the four PE_STAGES on
+// PE Stage → snapshot field + chart color. Mirrors the five PE_STAGES on
 // the PE Portfolio page so this chart tracks the same buckets. The snapshot
-// stores one count per stage plus a rollup total.
+// stores one count per stage plus a rollup total. Weeks captured before
+// Lead existed carry no peLead count and plot it as zero.
 const PE_STAGE_SERIES = [
+  { stage: 'Lead',                 key: 'peLead',                color: '#7C3AED' },
   { stage: 'Discovery',            key: 'peDiscovery',           color: '#3B82F6' },
   { stage: 'Piloting',             key: 'pePiloting',            color: '#F59E0B' },
   { stage: 'Existing Partnership', key: 'peExistingPartnership', color: '#10B981' },
@@ -905,14 +908,18 @@ export function ProgressView({ prospects, settings, cdmName }) {
 
     // PE firms by PE Stage — mirrors the PE Portfolio page, which lists
     // every prospect typed "Private Equity" and buckets it by the peStage
-    // set in its company popup (Discovery / Piloting / Existing Partnership
-    // / Not Sold). No CDM filter here, to match that page's total.
+    // set in its company popup (Lead / Discovery / Piloting / Existing
+    // Partnership / Not Sold). A firm with nothing stored counts as a Lead,
+    // the same as it reads there, so the stages sum to the total instead of
+    // quietly dropping the untriaged firms. No CDM filter here, to match
+    // that page's total.
     const peFirms = prospects.filter(p => p.type === 'Private Equity');
     const peStageCounts = {};
     const peStageDetails = {};
     for (const s of PE_STAGE_SERIES) { peStageCounts[s.key] = 0; peStageDetails[s.key] = []; }
     for (const p of peFirms) {
-      const s = PE_STAGE_SERIES.find(x => x.stage === String(p.peStage || '').trim());
+      const stage = peStageOf(String(p.peStage || '').trim());
+      const s = PE_STAGE_SERIES.find(x => x.stage === stage);
       if (!s) continue;
       peStageCounts[s.key]++;
       peStageDetails[s.key].push(p.company);
