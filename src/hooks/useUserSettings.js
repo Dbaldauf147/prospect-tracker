@@ -4,7 +4,7 @@ import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 import {
-  isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash,
+  isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash,
 } from '../utils/firestoreClientHealth';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
@@ -62,13 +62,28 @@ function refuseIfOverBudget(next) {
 // Unexpected state (ID: b815)…" — which tells the user nothing they can
 // act on and, worse, reads as if their data were the problem. It isn't:
 // the SDK killed its own async queue and the tab has stopped syncing.
-// `saved` says whether the REST fallback still got the write through, and
-// that is the part worth leading with. A lost save always speaks; a saved
-// one says it once, since the notice is about the tab, not the change.
-function reportWedgedClient(saved) {
+//
+// A save that still landed says so once, since the notice is about the tab
+// rather than the change. A save that was LOST always speaks up.
+function reportWedgedSave(saved, detail) {
   const first = shouldAnnounceWedgedClient();
   if (saved && !first) return;
-  alert(wedgedClientMessage(saved));
+  alert(wedgedClientMessage(saved, detail));
+}
+
+// The two ways a save fails once the client is dead, told apart. An
+// assertion reaching this catch means no fallback ran — a fallback that
+// runs and fails throws its own HTTP error, not the assertion — so the
+// message must not claim one was tried. Anything else arriving while the
+// client is known dead IS the fallback's own refusal, and its status is
+// the half of the message worth reading.
+//
+// Returns false for an ordinary failure, which the caller reports as it
+// always has.
+function reportSaveFailure(err) {
+  if (isClientWedgedError(err)) { reportWedgedSave(false); return true; }
+  if (isClientWedged()) { reportWedgedSave(false, err?.message); return true; }
+  return false;
 }
 
 export function useUserSettings(user) {
@@ -197,11 +212,12 @@ export function useUserSettings(user) {
         setSettings(next);
         console.log('Settings saved to Firestore:', Object.keys(updates));
       }
-      if (viaRest) reportWedgedClient(true);
+      if (viaRest) reportWedgedSave(true);
     } catch (err) {
       console.error('Failed to save user settings:', err);
-      if (isClientWedgedError(err)) reportWedgedClient(false);
-      else alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
+      if (!reportSaveFailure(err)) {
+        alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
+      }
     } finally {
       writingRef.current -= 1;
       const pending = pendingRemoteRef.current;
@@ -305,11 +321,10 @@ export function useUserSettings(user) {
         settingsRef.current = next;
         setSettings(next);
       }
-      if (viaRest) reportWedgedClient(true);
+      if (viaRest) reportWedgedSave(true);
     } catch (err) {
       console.error('Failed path-based save:', err);
-      if (isClientWedgedError(err)) reportWedgedClient(false);
-      else alert('Failed to save: ' + err.message);
+      if (!reportSaveFailure(err)) alert('Failed to save: ' + err.message);
     } finally {
       writingRef.current -= 1;
       const pending = pendingRemoteRef.current;
