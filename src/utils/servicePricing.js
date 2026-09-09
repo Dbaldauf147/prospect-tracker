@@ -29,12 +29,12 @@
 //            being built instead (scenario.serviceUnits, passed to
 //            estimateScope), because 40 of 819 sites is a fact about one
 //            deal and typing it shouldn't re-price every other one.
-//   avgFee — a fee typed straight into the Estimated Year 1 Fee column:
-//            what this service usually sells for. It OVERRIDES the basis
-//            and rate would work out to, because it is the more direct
-//            statement — someone who types "$40,000" into the fee column
-//            is answering the question the rate card exists to answer, and
-//            a model that quietly outvoted them would be useless. Clearing
+//   avgFee — a fee typed straight into the service's Typed fee box on the
+//            rate card: what this service usually sells for. It OVERRIDES
+//            what the basis and rate would work out to, because it is the
+//            more direct statement — someone who types "$40,000" there is
+//            answering the question the rate card exists to answer, and a
+//            model that quietly outvoted them would be useless. Clearing
 //            it hands the row back to the basis. A service can carry only
 //            an avgFee and no basis at all, which is the quick way to
 //            price one: a number, no model behind it.
@@ -904,7 +904,7 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
 
 // How a line's fee was arrived at, in a few words: the phrase that goes
 // under the service name wherever an estimate is shown, so a number that
-// moves has a reason on the row. A typed Est. Fee doesn't move; a per-unit
+// moves has a reason on the row. A typed fee doesn't move; a per-unit
 // fee moves with the count it multiplies; a percentage moves with the deal
 // size it's a percentage of.
 //
@@ -912,7 +912,9 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
 // `units`). Returns '' for a service with nothing to say — an unpriced one,
 // whose own `note` says that instead.
 export function feeBasisLabel(line, bases = PRICING_BASES) {
-  if (line?.typed) return line.units > 1 ? `Est. Fee × ${line.units}` : 'Est. Fee';
+  // Named for the box the figure was typed into on the rate card, so a
+  // reader who wants to change it knows what they are looking for.
+  if (line?.typed) return line.units > 1 ? `Typed fee × ${line.units}` : 'Typed fee';
   // The breakdown when the estimate carried one, and the single basis on
   // the entry when the caller handed over something that predates it — a
   // saved analysis line, say, which is an entry and a fee and nothing else.
@@ -1025,9 +1027,10 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
   // annual fee, a project bills the job, and anything with a setup fee bills
   // that once. Which is the two halves added — the same two the contract
   // value keeps apart, because after year one they stop agreeing. It is the
-  // sum of the Estimated Year 1 Fee column plus the Setup Fee column beside
-  // it: setup stays out of the fee column because that cell is editable and
-  // typing into it states the service's fee, not its fee plus its setup.
+  // sum of the Estimated Year 1 Fee column plus the setup beside it: setup
+  // is kept out of the fee itself because a fee typed on the rate card
+  // states what the service costs to run, not what it costs to run plus
+  // what it cost to stand up.
   const year1Total = recurringAnnual + oneTime;
   const year1TotalHigh = recurringAnnualHigh + oneTimeHigh;
   return {

@@ -4,9 +4,9 @@
 //
 // This is deal money: what a service is worth, and what a set of them adds
 // up to over a contract. The rules worth pinning are the ones a reader
-// can't infer from a single number on screen — that a fee typed into the
-// Est. Fee column beats whatever the basis would have worked out, that a
-// minimum fee floors a thin scope but doesn't invent one out of an empty
+// can't infer from a single number on screen — that a fee typed into a
+// service's Typed fee box beats whatever the basis would have worked out,
+// that a minimum fee floors a thin scope but doesn't invent one out of an empty
 // scope, and that recurring and one-off money are kept apart on the way to
 // a contract value.
 import {
@@ -79,8 +79,8 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
     [ranged.fee, ranged.feeHigh], [15000, 15000]);
   check('and it runs across the term', ranged.value, 45000);
 
-  check('the line says how many it priced', feeBasisLabel({ typed: true, units: 3 }), 'Est. Fee × 3');
-  check('and says nothing extra when it priced one', feeBasisLabel({ typed: true, units: null }), 'Est. Fee');
+  check('the line says how many it priced', feeBasisLabel({ typed: true, units: 3 }), 'Typed fee × 3');
+  check('and says nothing extra when it priced one', feeBasisLabel({ typed: true, units: null }), 'Typed fee');
 
   // A typed row no longer asks the bar for a count it can't use.
   const scope = estimateScope({
@@ -210,7 +210,7 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('an unpriced service is named rather than counted as nothing', est.unpriced, ['Data']);
 
   const by = Object.fromEntries(est.lines.map(l => [l.name, feeBasisLabel(l)]));
-  check('a typed fee says so', by['Bill Pay'], 'Est. Fee');
+  check('a typed fee says so', by['Bill Pay'], 'Typed fee');
   check('a per-unit fee shows its rate and the count it multiplied', by.Budgets, '$500 per site × 12');
   check('a percentage says what it is a percentage of', by.Risk, '3% of deal size');
   check('an unpriced service has nothing to say', by.Data, '');
