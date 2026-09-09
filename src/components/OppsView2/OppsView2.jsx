@@ -6087,11 +6087,15 @@ const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
   'Margin Email Date': 'Quoting',
   'Sales Leader Review Date': 'Quoting',
   'Margin Approval Date': 'Quoting',
-  // Stage 6 is one column (Agreement Sent), so both of its fields sit
+  // Stage 6 is one column (Agreement Sent), so every field on it sits
   // there — spelled out rather than left to the fallback so a later
   // second column can't silently pull them along.
   'Target Signature Date': 'Agreement Sent',
   'Verbal': 'Agreement Sent',
+  'Credit approval': 'Agreement Sent',
+  'Credit Approval Date': 'Agreement Sent',
+  'COA Approval': 'Agreement Sent',
+  'Multiple Invoices?': 'Agreement Sent',
 }));
 
 // Split a stage tab's fields across its subsections, keeping the table's
@@ -6140,8 +6144,9 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'BFO Link': 'overview',
   'BFO Company Name': 'overview',
   'BFO Address': 'overview',
-  // What's being sold and for how much, plus everything the quote has to
-  // clear on the way out the door.
+  // What's being sold and for how much. The credit / COA approvals moved
+  // to Stage 6 and the margin sign-off to Stage 4, where each is actually
+  // chased; the margin the quote lands on stays here with the quote.
   'Scope': 'scope',
   'Sites': 'scope',
   'Quoted Amount': 'scope',
@@ -6152,11 +6157,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Chance?': 'scope',
   'Chance': 'scope',
   'Final Margin': 'scope',
-  'Credit approval': 'scope',
-  'Credit Approval Date': 'scope',
-  'COA Approval': 'scope',
   'Entity Outside the US Approval': 'scope',
-  'Multiple Invoices?': 'scope',
   // Dates + nudges that drive the day-to-day working of the opp
   'Start Date': 'activity',
   'Age': 'activity',
@@ -6189,6 +6190,14 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // for, and a verbal is the same commitment one step earlier.
   'Target Signature Date': 'stage6',
   'Verbal': 'stage6',
+  // The credit and COA sign-offs, and how the client wants invoicing, sit
+  // on Stage 6 as well: they're raised and chased while the contract is
+  // being negotiated — the same work as the two ticket links on this tab
+  // — rather than being part of pricing the quote.
+  'Credit approval': 'stage6',
+  'Credit Approval Date': 'stage6',
+  'COA Approval': 'stage6',
+  'Multiple Invoices?': 'stage6',
   // Stage 7 is the close itself: what the deal closed as, when, and
   // against whom. ("Close Year" / "Close Month" join them via the regexes
   // below, since their labels vary by import.)
