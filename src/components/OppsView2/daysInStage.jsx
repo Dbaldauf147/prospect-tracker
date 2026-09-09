@@ -6,6 +6,9 @@
 // `_stageEnteredAt`, `_stageHistory`, `Stage`, `Scope`, `Follow Up`, …).
 import { toISODate, formatDateDisplay, daysFromToday, resolveCallIn } from '../../utils/oppsCallIn';
 import { isPullThroughOpp } from '../../utils/pullThrough';
+// Shared with the Opp details popup, which splits its numbered stage
+// subtabs into the same columns — see src/utils/stageBands.js.
+import { STAGE_BANDS } from '../../utils/stageBands';
 
 // Stages the Days-in-Stage board reports on. Ordered to mirror the
 // pipeline progression so a row stays under one bucket as it moves
@@ -13,20 +16,6 @@ import { isPullThroughOpp } from '../../utils/pullThrough';
 // the board tracks how long active opps are stalling in each step.
 export const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
 export const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
-
-// The numbered sales stages these columns roll up into, in board order.
-// Two board columns can share one stage — Qualifying and Quoting are both
-// Stage 4, Quoted and Contracting both Stage 5 — so the board bands its
-// columns rather than labelling each one. Not Started sits ahead of the
-// numbered stages and carries no band label. `stages` between them must
-// cover TRACKED_STAGES exactly, in the same order.
-const STAGE_BANDS = [
-  { label: '', name: '', stages: ['Not Started'] },
-  { label: 'Stage 3', name: 'Qualify Opportunity', stages: ['Lead'] },
-  { label: 'Stage 4', name: 'Influence and Develop', stages: ['Qualifying', 'Quoting'] },
-  { label: 'Stage 5', name: 'Prepare & Bid', stages: ['Quoted', 'Contracting'] },
-  { label: 'Stage 6', name: 'Negotiate to Win', stages: ['Agreement Sent'] },
-];
 
 const BAND_BY_STAGE = new Map(STAGE_BANDS.flatMap(b => b.stages.map(s => [s, b])));
 
