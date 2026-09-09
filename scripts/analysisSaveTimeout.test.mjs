@@ -33,7 +33,7 @@ function ok(cond, name) {
 // The shared (admin) collection, so paths below are prospects/<id>/analyses.
 setProspectsUser(null, 'baldaufdan@gmail.com');
 const COL = 'prospects/p1/analyses';
-const fast = { readTimeoutMs: 50, writeTimeoutMs: 50 };
+const fast = { readTimeoutMs: 50, writeTimeoutMs: 50, probeTimeoutMs: 50 };
 const payload = (chars) => ({ fileName: 'a.xlsx', dataBase64: 'A'.repeat(chars), sizeBytes: Math.floor(chars * 3 / 4) });
 // Let a detached prune (which the save deliberately doesn't await) run.
 const settle = () => new Promise((r) => setTimeout(r, 30));
@@ -54,7 +54,8 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   ok(order.indexOf(`${COL}/main`) === order.length - 1
     || order.lastIndexOf(`${COL}/main`) > order.indexOf(chunkPaths[0]),
     'the metadata doc is written after its chunks');
-  ok(phases.map((p) => p.step).join(',').startsWith('uploading'), 'the steps are reported as they happen');
+  ok(phases.map((p) => p.step).join(',').startsWith('probing,probed,uploading'),
+    'the steps are reported as they happen, starting with the test write');
   ok(phases.some((p) => p.step === 'saved'), 'including the one that means it landed');
 }
 
@@ -72,7 +73,7 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
 // ── The hang this exists for: a chunk write that never answers ─────────
 {
   fs.reset();
-  // Every chunk write hangs, whatever generation this save picks.
+  // Every chunk write hangs, whatever generation or size it lands under.
   fs.hangOn(/\/chunk-/, 'setDoc');
   const t0 = Date.now();
   let raised = null;
@@ -80,11 +81,77 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
   catch (err) { raised = err; }
   ok(isTimeoutError(raised), 'a write that never answers rejects instead of hanging');
   ok(/uploading part 1 of 1/.test(raised?.message || ''), 'and the rejection names the step that stalled');
-  ok(Date.now() - t0 < 2000, 'within the ceiling, not the life of the tab');
+  ok(Date.now() - t0 < 3000, 'within the ceilings, not the life of the tab');
   ok(!fs.store.has(`${COL}/main`), 'nothing claims the analysis was saved');
-  // The generation is on the pending list, so the next save can clean up
-  // whatever this one did manage to upload.
-  ok((fs.store.get(`${COL}/pending`)?.gens || []).length === 1, 'the abandoned generation is on record for the next save');
+  // The probe went through, so the caller can say the connection works and
+  // it is the upload that doesn't — a different sentence, and a different fix.
+  ok(raised.probeOk === true, 'and carries what the test write learned');
+  const attempts = new Set(fs.calls.filter((c) => c.op === 'setDoc' && c.path.includes('/chunk-')).map((c) => c.path.split('-')[1]));
+  ok(attempts.size === 3, `every rung of the ladder is tried (${attempts.size} attempts)`);
+  ok(fs.network.calls.length >= 2, 'on a fresh connection each time');
+}
+
+// ── The save that only fails at 700 KB ─────────────────────────────────
+{
+  fs.reset();
+  // What a proxy with a request-body cap does: the small writes land, the
+  // big one never answers. Before the ladder this was indistinguishable
+  // from a dead connection, and equally unrecoverable.
+  fs.hangIf((c) => c.op === 'setDoc' && typeof c.data?.data === 'string' && c.data.data.length > 200 * 1024);
+  let raised = null;
+  const chars = 700 * 1024 + 5; // two chunks at the top rung, four at the next
+  try { await saveIndicativeAnalysis('p1', payload(chars), fast); }
+  catch (err) { raised = err; }
+  ok(raised === null, 'the save succeeds by cutting the workbook smaller');
+  const main = fs.store.get(`${COL}/main`);
+  ok(!!main && main.chunkCount === Math.ceil(chars / (200 * 1024)), 'at the first size the connection will carry');
+  // What readers get back has to be the whole workbook, not most of it.
+  const gen = main.gen;
+  const rebuilt = Array.from({ length: main.chunkCount }, (_, i) => fs.store.get(`${COL}/chunk-${gen}-${i}`).data).join('');
+  ok(rebuilt === 'A'.repeat(chars), 'and the stored chunks reassemble to the original');
+}
+
+// ── The step down serialises, or it isn't a smaller request ────────────
+{
+  fs.reset();
+  fs.hangIf((c) => c.op === 'setDoc' && typeof c.data?.data === 'string' && c.data.data.length > 200 * 1024);
+  // Writes take long enough to overlap if they are going to. Counting the
+  // chunk writes only: the bookkeeping write races them by design.
+  fs.timing.delayMs = 5;
+  fs.timing.track = (c) => c.path.includes('/chunk-');
+  await saveIndicativeAnalysis('p1', payload(700 * 1024 + 5), fast);
+  // The SDK batches queued mutations into one request, so chunks written at
+  // once are one big request however small each document is. The rung that
+  // exists to make the request smaller has to write them one at a time.
+  ok(fs.timing.maxInFlight === 1, `the retry writes one document at a time (peak ${fs.timing.maxInFlight})`);
+  fs.timing.delayMs = 0;
+}
+
+// ── ...but the first attempt still goes up in parallel ─────────────────
+{
+  fs.reset();
+  fs.timing.delayMs = 5;
+  fs.timing.track = (c) => c.path.includes('/chunk-');
+  await saveIndicativeAnalysis('p1', payload(700 * 1024 * 2 + 5), fast);
+  ok(fs.timing.maxInFlight > 1, `a normal save uploads in parallel (peak ${fs.timing.maxInFlight})`);
+  fs.timing.delayMs = 0;
+}
+
+// ── When nothing lands at all, one attempt is enough to say so ─────────
+{
+  fs.reset();
+  // The probe fails too: no size of chunk will help, so stepping down the
+  // ladder would only be three times the wait before saying the same thing.
+  fs.hangOn(/./, 'setDoc');
+  const t0 = Date.now();
+  let raised = null;
+  try { await saveIndicativeAnalysis('p1', payload(10), fast); }
+  catch (err) { raised = err; }
+  ok(isTimeoutError(raised), 'the save still rejects rather than hanging');
+  ok(raised.probeOk === false, 'and reports that even a test write went unanswered');
+  const attempts = new Set(fs.calls.filter((c) => c.op === 'setDoc' && c.path.includes('/chunk-')).map((c) => c.path.split('-')[1]));
+  ok(attempts.size === 1, 'the ladder is not walked when nothing is getting through');
+  ok(Date.now() - t0 < 1500, 'so the answer comes quickly');
 }
 
 // ── A read that never answers must not stop the upload ─────────────────

@@ -28,22 +28,55 @@ export const hang = [];
 
 export const hangOn = (match, op) => { hang.push({ match, op }); };
 
+// Hang on whatever a predicate says: the rule that matters for a save is
+// not a path but a SIZE — a gateway that drops a 700 KB request and passes
+// a 64 KB one. Called with { op, path, data }.
+export const hangIf = (predicate) => { hang.push({ predicate }); };
+
 // The connection lever the save pulls before a retry. Recorded, not real.
 export const network = { calls: [] };
 export const disableNetwork = () => { network.calls.push('disable'); return Promise.resolve(); };
 export const enableNetwork = () => { network.calls.push('enable'); return Promise.resolve(); };
+
+// Milliseconds every operation takes to answer, and the high-water mark of
+// how many were in flight at once. Together they show whether writes went
+// up in parallel or one at a time — which is the difference between four
+// 200 KB documents and one 800 KB request, once the SDK batches them.
+// `track` narrows the concurrency count to the calls a test cares about —
+// the chunk writes, say, rather than the bookkeeping write racing beside
+// them.
+export const timing = { delayMs: 0, inFlight: 0, maxInFlight: 0, track: null };
 
 export function reset() {
   calls.length = 0;
   store.clear();
   hang.length = 0;
   network.calls.length = 0;
+  timing.delayMs = 0;
+  timing.inFlight = 0;
+  timing.maxInFlight = 0;
+  timing.track = null;
 }
 
-const hangs = (op, path) => hang.some((rule) => (
-  (!rule.op || rule.op === op)
-  && (rule.match instanceof RegExp ? rule.match.test(path) : rule.match === path)
-));
+// Answer after the configured delay, tracking concurrency while it waits.
+function answer(call, value) {
+  if (!timing.delayMs) return Promise.resolve(value);
+  const counted = !timing.track || timing.track(call);
+  if (counted) {
+    timing.inFlight += 1;
+    timing.maxInFlight = Math.max(timing.maxInFlight, timing.inFlight);
+  }
+  return new Promise((resolve) => setTimeout(() => {
+    if (counted) timing.inFlight -= 1;
+    resolve(value);
+  }, timing.delayMs));
+}
+
+const hangs = (call) => hang.some((rule) => {
+  if (rule.predicate) return !!rule.predicate(call);
+  if (rule.op && rule.op !== call.op) return false;
+  return rule.match instanceof RegExp ? rule.match.test(call.path) : rule.match === call.path;
+});
 
 const NEVER = () => new Promise(() => {});
 
@@ -54,7 +87,7 @@ export const doc = (parent, ...segments) => ({
 
 export function getDoc(ref) {
   calls.push({ op: 'getDoc', path: ref.path });
-  if (hangs(calls[calls.length - 1].op, ref.path)) return NEVER();
+  if (hangs(calls[calls.length - 1])) return NEVER();
   const data = store.get(ref.path);
   return Promise.resolve({
     id: ref.path.split('/').pop(),
@@ -65,21 +98,21 @@ export function getDoc(ref) {
 
 export function setDoc(ref, data) {
   calls.push({ op: 'setDoc', path: ref.path, data });
-  if (hangs(calls[calls.length - 1].op, ref.path)) return NEVER();
+  if (hangs(calls[calls.length - 1])) return NEVER();
   store.set(ref.path, data);
-  return Promise.resolve();
+  return answer(calls[calls.length - 1]);
 }
 
 export function deleteDoc(ref) {
   calls.push({ op: 'deleteDoc', path: ref.path });
-  if (hangs(calls[calls.length - 1].op, ref.path)) return NEVER();
+  if (hangs(calls[calls.length - 1])) return NEVER();
   store.delete(ref.path);
   return Promise.resolve();
 }
 
 export function getDocs(ref) {
   calls.push({ op: 'getDocs', path: ref.path });
-  if (hangs(calls[calls.length - 1].op, ref.path)) return NEVER();
+  if (hangs(calls[calls.length - 1])) return NEVER();
   const prefix = `${ref.path}/`;
   const docs = [...store.entries()]
     .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))

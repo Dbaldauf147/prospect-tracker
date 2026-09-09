@@ -69,7 +69,7 @@ import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplia
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
-import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis, kickFirestoreConnection } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { withTimeout, isTimeoutError } from '../../utils/withTimeout.js';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -5498,8 +5498,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // one of them, and of a browser that had quietly stopped talking to
       // Firestore at all. Naming the step is what makes the next report
       // ("it stuck on part 2 of 3") worth anything.
-      const onPhase = ({ step, done = 0, total = 0 }) => {
-        if (step === 'uploading') {
+      const onPhase = ({ step, done = 0, total = 0, ok = false, to = 0 }) => {
+        if (step === 'probing') {
+          setSaveStatus({ state: 'saving', message: `Saving to ${companyLabel}: checking the database is reachable…` });
+        } else if (step === 'probed' && !ok) {
+          // Said out loud before the upload rather than after it: if a few
+          // bytes didn't land, the minute spent on the workbook is a minute
+          // spent finding out the same thing again.
+          setSaveStatus({ state: 'saving', message: `The database did not answer a test write — trying the upload anyway…` });
+        } else if (step === 'shrinking') {
+          setSaveStatus({
+            state: 'saving',
+            message: `${companyLabel}: the database didn't take the upload in one piece — retrying in ${Math.round(to / 1024)} KB pieces…`,
+          });
+        } else if (step === 'uploading') {
           setSaveStatus({
             state: 'saving',
             message: total > 1
@@ -5518,25 +5530,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // died partway — far likelier now that a workbook can run to tens of
       // megabytes — left the company with no analysis at all instead of the
       // previous one.
-      const upload = () => saveIndicativeAnalysis(prospect.id, {
+      // Retries live inside the save: a stalled upload steps down to
+      // smaller chunk documents on a fresh connection before giving up,
+      // because a gateway that drops a 700 KB request will take a 64 KB one.
+      await saveIndicativeAnalysis(prospect.id, {
         fileName,
         dataBase64,
         sizeBytes: buffer.byteLength,
       }, { onPhase });
-      try {
-        await upload();
-      } catch (err) {
-        if (!isTimeoutError(err)) throw err;
-        // A stall is the SDK waiting on a stream it still believes in, so
-        // retrying straight away just waits on the same dead stream. Close
-        // the connection, open a fresh one, and give it exactly one more
-        // go: either the second attempt lands or the message below is
-        // honest about having tried.
-        console.warn('Analysis upload stalled; restarting the connection and retrying once:', err.message);
-        setSaveStatus({ state: 'saving', message: `${companyLabel} did not answer — reconnecting and retrying…` });
-        await kickFirestoreConnection();
-        await upload();
-      }
       phase(`uploaded ${sizeMb.toFixed(1)} MB`);
       // Fold the loaded sites into this company's site list, so the "Site
       // list mapped" status (and the Site List Overview) reflect the save
@@ -5643,11 +5644,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setSaveStatus({
         state: 'error',
         message: isTimeoutError(err)
-          ? `Save stalled: ${err.label} got no answer from the database after ${Math.round(err.ms / 1000)}s, `
-            + 'including one retry on a fresh connection. Something between this browser and Firestore '
-            + '(a VPN, a proxy, an extension blocking Google domains) is dropping the traffic, or the '
-            + 'project is over its daily quota. The workbook is queued in this browser meanwhile, and '
-            + '⬇ Master Analysis downloads it without needing the database.'
+          ? `Save stalled: ${err.label} got no answer after ${Math.round(err.ms / 1000)}s. `
+            + (err.probeOk
+              // A small write landed and the workbook didn't, at every size
+              // down to 64 KB. That is not this app and not the database:
+              // something on the way out is dropping the request.
+              ? 'A small test write to the same database was acknowledged, so the connection itself works — '
+                + 'it is this upload that is not getting through, at every size down to 64 KB. That points at '
+                + 'a proxy, VPN, firewall or extension between this browser and Google that drops larger requests. '
+                + 'Worth trying: another network (a phone hotspot), or an incognito window with extensions off.'
+              : 'Even a few bytes to the same database went unanswered, so nothing is reaching Firestore from '
+                + 'this browser at the moment — a blocked connection, or the project over its daily quota.')
+            + ' The workbook is queued in this browser meanwhile, and ⬇ Master Analysis downloads it without needing the database.'
           : (err?.message || 'Save failed.'),
       });
     }
