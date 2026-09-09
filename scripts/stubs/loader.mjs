@@ -8,10 +8,21 @@
 const FIRESTORE = new URL('./firestore.mjs', import.meta.url).href;
 const FIREBASE = new URL('./firebase.mjs', import.meta.url).href;
 
-export function resolve(specifier, context, nextResolve) {
+export async function resolve(specifier, context, nextResolve) {
   if (specifier === 'firebase/firestore') return { url: FIRESTORE, shortCircuit: true };
   // Every module under src/ reaches the app's firebase handle by relative
   // path ('../firebase', './firebase.js'), so match on the tail.
   if (/(^|\/)\.\.?\/firebase(\.js)?$/.test(specifier)) return { url: FIREBASE, shortCircuit: true };
-  return nextResolve(specifier, context);
+  try {
+    return await nextResolve(specifier, context);
+  } catch (err) {
+    // Vite resolves an extensionless relative import ('./listBackupSync');
+    // Node does not, so a module under test that writes its imports that
+    // way was simply unimportable from a test. Retry with the extension
+    // rather than making the source file's import style a test concern.
+    if (err?.code === 'ERR_MODULE_NOT_FOUND' && /^\.{1,2}\//.test(specifier) && !/\.[a-z]+$/i.test(specifier)) {
+      return nextResolve(`${specifier}.js`, context);
+    }
+    throw err;
+  }
 }
