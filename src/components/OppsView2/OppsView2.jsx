@@ -6078,10 +6078,16 @@ const OPP_DETAIL_STAGE_SUBSECTIONS = new Map(
 // itself; anything unlisted falls to its tab's first subsection, which is
 // the step the stage opens on.
 const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
-  // Stage 4 runs Qualifying then Quoting. Whether the deal prices in USD
-  // is settled while qualifying it; the margin only goes for review once
-  // there's a number to review, which is the quoting step. Both sides of
-  // the margin pair name the same step so they keep rendering on one row.
+  // Stage 4 spans Qualifying and Quoting. The estimate is worked out
+  // while qualifying, before there is a quote to put against it, and so
+  // is whether the deal prices in USD. The margin only goes for review
+  // once there's a number to review, which is the quoting step. All of
+  // them are named rather than left to the fallback: Qualifying happens
+  // to be the first of the two today, so the fallback would land those in
+  // the right place by accident, and they would move on their own if that
+  // order ever changed. Both sides of the margin pair name the same step
+  // so they keep rendering on one row.
+  [ESTIMATED_FEE_COLUMN]: 'Qualifying',
   'USD?': 'Qualifying',
   'Margin Email Date - Sales Leader Review Date': 'Quoting',
   'Margin Email Date': 'Quoting',
@@ -6175,11 +6181,20 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Notes': 'overview',
   // Stage 4 — Influence and Develop covers both the Qualifying and the
   // Quoting stages (see daysInStage.jsx), which is where the number gets
-  // worked out: whether the deal prices in USD, and the margin going for
-  // sales-leader review and coming back approved. 'Margin Email Date' and
-  // 'Sales Leader Review Date' are the split-out labels some imports carry
-  // for the request date, so they ride along rather than landing on a
-  // different tab than the combined header does.
+  // worked out: what the Services Pricing estimator makes of the scope,
+  // whether the deal prices in USD, and the margin going for sales-leader
+  // review and coming back approved.
+  //
+  // The estimated fee is the figure the estimator produces while the
+  // opportunity is being qualified, ahead of anything quoted to the
+  // client, so it sits here rather than beside the Quoted Amount on Scope
+  // & Quote. Nothing routed it before, so it had been falling through to
+  // Other.
+  //
+  // 'Margin Email Date' and 'Sales Leader Review Date' are the split-out
+  // labels some imports carry for the request date, so they ride along
+  // rather than landing on a different tab than the combined header does.
+  [ESTIMATED_FEE_COLUMN]: 'stage4',
   'USD?': 'stage4',
   'Margin Email Date - Sales Leader Review Date': 'stage4',
   'Margin Email Date': 'stage4',
