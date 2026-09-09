@@ -6078,6 +6078,12 @@ const OPP_DETAIL_STAGE_SUBSECTIONS = new Map(
 // itself; anything unlisted falls to its tab's first subsection, which is
 // the step the stage opens on.
 const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
+  // Stage 4 spans Qualifying and Quoting. The estimate is worked out
+  // while qualifying, before there is a quote to put against it. Named
+  // rather than left to the fallback: Qualifying happens to be the first
+  // of the two today, so the fallback would land it in the right place by
+  // accident, and it would move on its own if that order ever changed.
+  [ESTIMATED_FEE_COLUMN]: 'Qualifying',
   // Stage 6 is one column (Agreement Sent), so every field on it sits
   // there — spelled out rather than left to the fallback so a later
   // second column can't silently pull them along.
@@ -6169,6 +6175,13 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // here, so there's no Notes tab left to leave them on.
   'Next Steps': 'overview',
   'Notes': 'overview',
+  // What the Services Pricing estimator worked this deal's scope out to.
+  // Stage 4 is where that number is arrived at: it's the figure the
+  // estimator produces while the opportunity is being qualified, ahead of
+  // anything quoted to the client, so it sits under Qualifying rather
+  // than beside the Quoted Amount on Scope & Quote. Nothing routed it
+  // before, so it had been falling through to Other.
+  [ESTIMATED_FEE_COLUMN]: 'stage4',
   // How and when it ends, split across the two stages that do that work.
   // Getting a signature agreed is Stage 6 — it's what the negotiation is
   // for, and a verbal is the same commitment one step earlier.
