@@ -7,17 +7,17 @@ import styles from './DropdownsView.module.css';
 
 // One service's pricing, all of it, on one screen.
 //
-// The rate card is fourteen columns behind a horizontal scrollbar, so pricing
-// a single service means scrolling sideways and losing the name off the left
-// edge — and the columns can't say what the cells mean beyond a tooltip.
-// Clicking the row opens this instead: every field that decides what the
-// service is worth, in one place, each with the sentence that explains it,
-// and the arithmetic underneath so the fee can be read against the rate that
-// produced it.
+// The rate card's own columns can't say what a cell means beyond a tooltip,
+// and the fields that are set once per service — the setup components, the
+// minimum fee, a fee typed outright — would each cost the table a column
+// that a hundred and fifty rows never scan. Clicking the row opens this
+// instead: every field that decides what the service is worth, in one place,
+// each with the sentence that explains it, and the arithmetic underneath so
+// the fee can be read against the rate that produced it.
 //
 // Every field writes through the same save path the table cells use, so an
-// edit here and an edit there are the same edit; there is no Save button and
-// nothing to lose by closing the panel.
+// edit here and an edit in a column that still exists are the same edit;
+// there is no Save button and nothing to lose by closing the panel.
 
 // A read-only figure, shown in the same shape as the fields around it so the
 // panel reads as one form rather than a form with facts scattered through it.
@@ -28,6 +28,50 @@ function ReadOnlyField({ label, children, hint, title }) {
       <div className={styles.pricingModalValue}>{children}</div>
       {hint && <span className={styles.pricingModalHint}>{hint}</span>}
     </div>
+  );
+}
+
+// A dollar field in the form grid. Same commit rules as the rate cells in
+// the breakdown below — commits on blur or Enter, reverts on Escape, and an
+// unchanged value writes nothing — so a box clicked into and back out of
+// can't clear a figure.
+function MoneyField({ label, value, hint, placeholder, title, onCommit }) {
+  const initial = value === null || value === undefined ? '' : String(value);
+  const [draft, setDraft] = useState(null);
+  const shown = draft !== null ? draft : initial;
+
+  function commit() {
+    if (draft === null) return;
+    const typed = draft.trim();
+    setDraft(null);
+    if (typed === initial) return;
+    if (typed === '') { onCommit(''); return; }
+    const n = parseMoney(typed);
+    // Not a number: leave what's stored alone rather than clearing it.
+    if (n === null || n < 0) return;
+    onCommit(n);
+  }
+
+  return (
+    <label className={styles.detailField} title={title}>
+      <span className={styles.detailLabel}>{label}</span>
+      <input
+        type="number"
+        min="0"
+        step="100"
+        inputMode="decimal"
+        className={styles.detailInput}
+        placeholder={placeholder}
+        value={shown}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); setDraft(null); e.currentTarget.blur(); }
+        }}
+      />
+      {hint && <span className={styles.pricingModalHint}>{hint}</span>}
+    </label>
   );
 }
 
@@ -184,7 +228,14 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
                     ? `${setupSummary} — billed once, so it lands in year one and in the deal value, never in the annual. Click to edit the components.`
                     : 'Built out of fixed and per-unit components rather than typed as a lump, so it can be taken apart later. Click to add them.'}
                 >
-                  {setupFee > 0 ? formatMoney(setupFee) : <span className={styles.feeGridEmpty}>+ Add</span>}
+                  {/* A setup fee made only of per-unit components comes to
+                      nothing until there are counts to multiply, and this is
+                      the one place the card shows it — so an empty figure
+                      falls back to the recipe rather than reading as "no
+                      setup fee" on a service that has one. */}
+                  {setupFee > 0
+                    ? formatMoney(setupFee)
+                    : (setupSummary || <span className={styles.feeGridEmpty}>+ Add</span>)}
                 </button>
                 <FeeCell value={setupFee > 0 ? setupFee : null} title="A setup fee is one figure, not a range" />
               </div>
@@ -249,7 +300,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
 
       <div className={styles.pricingModalHint}>
         {typed
-          ? 'A fee is typed into the Typed Fee column on the table, and it wins: the lines above are kept but not charged. Clear it there to price off these rates again.'
+          ? 'A fee is typed into the Typed fee box above, and it wins: the lines above are kept but not charged. Clear it to price off these rates again.'
           : 'The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1 columns are what that comes to under the estimate open on the Deal Pricing subtab. The Total row adds dollars, not rates: its recurring figure is the annual this service bills across every line.'}
       </div>
     </>
@@ -304,7 +355,8 @@ export function ServicePricingModal({
             </div>
             <div className={styles.oppPickerSub}>
               What this service is charged on, and what that comes to under the estimate open on the
-              Deal Pricing subtab. Every box saves as you leave it — the same edit as typing in the table.
+              Deal Pricing subtab. Every box saves as you leave it; there is nothing to press and
+              nothing lost by closing the panel.
             </div>
           </div>
           <button type="button" className={styles.detailClose} onClick={onClose} aria-label="Close">×</button>
@@ -334,18 +386,39 @@ export function ServicePricingModal({
               </span>
             </label>
 
-            {/* A minimum fee is a floor that quietly overrides the rates
-                above, so it is shown when one is set and hidden when there
-                isn't — an empty box invites a figure nobody meant to add.
-                The Min Fee column on the table is where it is set. */}
-            {row.minFee !== null && row.minFee !== undefined && row.minFee !== '' && (
-              <ReadOnlyField
-                label="Minimum fee"
-                hint="A floor set on the rate card: once the service is in scope the fee never comes out below this. Change it in the Min Fee column on the table."
-              >
-                {formatMoney(row.minFee)}
-              </ReadOnlyField>
-            )}
+            {/* A fee stated outright rather than modelled, for when the
+                answer is "it goes for about forty grand" and there is no
+                rate behind it. It beats the basis on every deal, so it is
+                the field to check first when a fee doesn't match the rates
+                below — which is why it sits next to them rather than in a
+                column at the far right of the table. */}
+            <MoneyField
+              label="Typed fee"
+              value={row.avgFee}
+              placeholder="$"
+              title={row.avgFee !== null && row.avgFee !== undefined
+                ? 'Typed in: this is the fee on every deal, whatever the rates below work out to.'
+                : 'What this service sells for, stated outright.'}
+              hint={row.avgFee !== null && row.avgFee !== undefined
+                ? 'In use: this is the fee, and the rates below are kept but not charged. Clear it to price off them again.'
+                : (hasBasis
+                  ? 'Optional. A figure here overrides the rates below on every deal; blank prices off them.'
+                  : 'A figure here prices the service on its own — no basis, no rate needed.')}
+              onCommit={(v) => onSaveField('avgFee', v)}
+            />
+
+            {/* A floor that quietly overrides the rates below, so it says so
+                rather than sitting there as a bare number. */}
+            <MoneyField
+              label="Minimum fee"
+              value={row.minFee}
+              placeholder="$"
+              title="Floor: the fee never comes out below this once the service is in scope"
+              hint={row.minFee !== null && row.minFee !== undefined && row.minFee !== ''
+                ? `Once this service is in scope its fee never comes out below ${formatMoney(row.minFee)}, whatever the rates below work out to.`
+                : 'Optional. A floor: once the service is in scope its fee never comes out below this.'}
+              onCommit={(v) => onSaveField('minFee', v)}
+            />
 
             {/* The count the per-unit rate multiplies. Read-only: the number
                 belongs to the account being priced, and a figure typed over

@@ -11,7 +11,6 @@ import {
   estimateScope,
   formatMoney,
   formatRate,
-  formatSetupSummary,
   getServicePricing,
   parseMoney,
   pricingFor,
@@ -42,19 +41,15 @@ const PRICING_TABLE_COLUMNS = [
   // the `rate` key, so every rate already on the card is already in it.
   { key: 'rate',         label: 'Low Annual Recurring Fee',  width: 175 },
   { key: 'rateHigh',     label: 'High Annual Recurring Fee', width: 175 },
-  // What it costs to stand the service up, billed once. Built out of fixed
-  // and per-unit components in its own panel rather than typed as a lump,
-  // so the figure can be taken apart later and the per-unit half follows
-  // whatever counts the deal being priced carries. See SetupFeeModal.
-  { key: 'setup',        label: 'Setup Fee',          width: 160 },
-  { key: 'minFee',       label: 'Min Fee ($)',        width: 110 },
-  // A fee stated outright instead of modelled: what this service usually
-  // sells for. It overrides the basis and rate on every deal, which is why
-  // it lives on the card rather than with an estimate. Keeps the `fee` key
-  // it has always had, so a saved width still fits it.
-  { key: 'fee',          label: 'Typed Fee',          width: 175 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
 ];
+
+// The setup fee, the minimum fee and a fee typed outright are all on the
+// card too, but not as columns: three more of them pushed the notes off the
+// right edge, and none of the three is a figure you scan a hundred and fifty
+// rows of — they are set once per service, when the service is being priced.
+// They live in the pricing panel behind the ⤢ instead, which is where every
+// other field that answers "what is this one service worth" already is.
 
 // Dropdowns › Services Pricing. The rate card over exactly the services the
 // Services subtab lists — the rows come from the same Solutions list, so a
@@ -279,7 +274,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
               title={row.avgFee !== null && row.basis
-                ? 'Not in use: the Typed Fee column has a fee in it, which wins. Clear that cell to price off this rate again.'
+                ? 'Not in use: a fee is typed against this service, which wins. Clear it in the pricing panel to price off this rate again.'
                 : row.basis
                   ? (row._kind === 'percent'
                     ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
@@ -302,7 +297,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
               title={row.avgFee !== null && row.basis
-                ? 'Not in use: the Typed Fee column has a fee in it, which wins. Clear that cell to price off these rates again.'
+                ? 'Not in use: a fee is typed against this service, which wins. Clear it in the pricing panel to price off these rates again.'
                 : !row.basis
                   ? 'Pick a pricing basis first'
                   : row.rate === null
@@ -311,74 +306,6 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                       ? 'Optional. Type the top of the rate range and every fee for this service reads as a range; leave it blank for a single figure.'
                       : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`}
               onCommit={(v) => savePricingField(row.name, 'rateHigh', v)}
-            />
-          ),
-        };
-      // The setup fee is built in its own panel rather than typed here: it
-      // is a list of components, and the cell is the recipe they make —
-      // "$25,000 + $40/site". What that comes to on a given deal is the
-      // Deal Pricing subtab's answer, not the card's. Clicking anywhere in
-      // the cell opens the panel.
-      case 'setup':
-        return {
-          ...base,
-          getSortValue: (row) => row.setup.length,
-          render: (row) => {
-            const summary = formatSetupSummary(row.setup, bases);
-            const has = row.setup.length > 0;
-            return (
-              <button
-                type="button"
-                className={styles.setupCellBtn}
-                onClick={(e) => { e.stopPropagation(); setSetupFor(row.name); }}
-                title={has
-                  ? `${summary} — billed once on every deal this service is in. Click to edit the components.`
-                  : 'No setup fee. Click to add the fixed and per-unit components it is made of.'}
-              >
-                {has
-                  ? <span>{summary}</span>
-                  : <span className={styles.setupCellEmpty}>+ Add</span>}
-              </button>
-            );
-          },
-        };
-      case 'minFee':
-        return {
-          ...base,
-          getSortValue: (row) => row.minFee,
-          render: (row) => (
-            <NumberCell
-              value={row.minFee}
-              display={formatMoney(row.minFee)}
-              placeholder="$"
-              step="100"
-              title="Floor: the fee never comes out below this once the service is in scope"
-              onCommit={(v) => savePricingField(row.name, 'minFee', v)}
-            />
-          ),
-        };
-      // A fee stated outright rather than modelled, for when the answer is
-      // "it goes for about forty grand" and there is no rate behind it. It
-      // beats the basis on every deal, which is why it is a card field and
-      // not something typed against one estimate.
-      case 'fee':
-        return {
-          ...base,
-          getSortValue: (row) => row.avgFee,
-          render: (row) => (
-            <NumberCell
-              value={row.avgFee}
-              display={row.avgFee === null
-                ? ''
-                : <span className={styles.pricingEstTyped}>{formatMoney(row.avgFee)}</span>}
-              placeholder="$"
-              step="100"
-              title={row.avgFee !== null
-                ? 'Typed in: this is the fee on every deal, whatever the basis works out to. Clear it to price off the basis again.'
-                : row.basis
-                  ? 'Optional. Type what this service sells for and it overrides the basis and rate; leave it blank to price off them.'
-                  : 'Type what this service sells for. It prices the service on its own — no basis, no rate needed.'}
-              onCommit={(v) => savePricingField(row.name, 'avgFee', v)}
             />
           ),
         };
