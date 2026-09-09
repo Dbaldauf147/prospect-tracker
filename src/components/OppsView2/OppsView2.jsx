@@ -120,6 +120,7 @@ import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
+import { closedAgoLabel, recentlyClosedOpps, RECENTLY_CLOSED_DAYS } from '../../utils/recentlyClosedOpps';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
@@ -463,6 +464,16 @@ const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
 const NEW_OPPS_REPORT_COLUMNS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
+  'BFO Link', 'BFO Address',
+];
+
+// The "Closed this week" table under it — the same week read the other way.
+// Its columns are the ones a finished deal is read by rather than a starting
+// one: how it ended and why, instead of what the next step is. "Closed" is
+// the two stages that end an opp (see utils/recentlyClosedOpps.js).
+const CLOSED_OPPS_REPORT_COLUMNS = [
+  'Account', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
+  'Close Date', 'Quoted Amount', 'Reason Not Sold', 'Competition',
   'BFO Link', 'BFO Address',
 ];
 
@@ -13432,6 +13443,46 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .map(({ r }) => r);
   }, [records]);
 
+  // The other half of the same week: the opps that finished in it. Sold and
+  // Not Sold both — a loss this week is as much news as a win, and a table
+  // of only the wins would quietly turn a report into a scoreboard.
+  //
+  // Recomputed when the records change rather than on a timer: the day
+  // rolls over while the page is open perhaps once a session, and the list
+  // refreshes on the next data change either way.
+  const recentlyClosed = useMemo(() => recentlyClosedOpps(records), [records]);
+
+  // How long ago it closed, printed beside the date. "3 days ago" is the
+  // thing being asked of this table; the date itself is what you quote
+  // afterwards, so both are on the row.
+  const closedOppsColumns = useMemo(() => {
+    const cols = CLOSED_OPPS_REPORT_COLUMNS.map(key =>
+      columns.find(c => c.key === key) || {
+        key,
+        label: headerLabel(key),
+        defaultWidth: key === 'BFO Address' ? 260 : 160,
+      }
+    );
+    return cols.map(col => (col.key !== 'Close Date' ? col : {
+      ...col,
+      defaultWidth: 190,
+      render: (row) => (
+        <span>
+          {row['Close Date'] || '-'}
+          {typeof row._daysAgo === 'number' && (
+            <span style={{ marginLeft: 6, fontSize: '0.72rem', color: '#64748B' }}>
+              ({closedAgoLabel(row._daysAgo)})
+            </span>
+          )}
+        </span>
+      ),
+      // The rendered cell isn't what the row holds, so filtering and the
+      // Excel export are told what it says.
+      getFilterValue: (row) => String(row['Close Date'] || ''),
+      exportValue: (row) => String(row['Close Date'] || ''),
+    }));
+  }, [columns]);
+
   // The New Opps subtab + emailed digest share one focused column set, in
   // canonical report order. Keys missing from this dataset's headers (e.g.
   // "BFO Address" on a default-headers install) still get a minimal column
@@ -14838,6 +14889,42 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               settings={settings}
               updateSettings={updateSettings}
             />
+          )}
+
+          {/* And what finished in the same week. Its own table rather than
+              rows mixed into the one above: these opps are read for how
+              they ended, not for what to do next, and the two lists have
+              no reason to share a sort or a set of columns. */}
+          {!(loading && !data) && (
+            <>
+              <div className={styles.searchRow} style={{ marginTop: '0.75rem' }}>
+                <span className={styles.resultCount}>
+                  {recentlyClosed.rows.length} opp{recentlyClosed.rows.length === 1 ? '' : 's'} closed in the last {RECENTLY_CLOSED_DAYS} days
+                </span>
+                {/* Said rather than silently done: a Sold or Not Sold opp
+                    with no Close Date can't be placed in a week, and it is
+                    a gap in the record worth seeing. */}
+                {recentlyClosed.undated > 0 && (
+                  <span className={styles.resultCount} style={{ marginLeft: '0.5rem', color: '#92400E' }}>
+                    {recentlyClosed.undated} closed opp{recentlyClosed.undated === 1 ? '' : 's'} not counted — no Close Date
+                  </span>
+                )}
+              </div>
+              <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                Shows opps at Sold or Not Sold whose Close Date is within the last {RECENTLY_CLOSED_DAYS} days, newest first.
+              </div>
+              <DataTable
+                tableId="opps2-closed-recent"
+                columns={closedOppsColumns}
+                rows={recentlyClosed.rows}
+                alwaysVisible={['Account']}
+                enableColumnFilters
+                variableRowHeight
+                emptyMessage={`No opps have closed in the last ${RECENTLY_CLOSED_DAYS} days.`}
+                settings={settings}
+                updateSettings={updateSettings}
+              />
+            </>
           )}
         </>
       )}
