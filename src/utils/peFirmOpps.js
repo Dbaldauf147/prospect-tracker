@@ -49,28 +49,63 @@ export function accountMatchesCompany(companyName, oppAccount) {
 }
 
 /**
- * Every prospect that names a PE firm as its PE Owner, keyed by the
- * lowercased owner name — a firm's portfolio companies as the app actually
- * links them. A prospect can name more than one owner and appears under each.
+ * Does a prospect's PE Owner name this firm?
+ *
+ * Deliberately a bidirectional containment test rather than an exact match,
+ * because the two names are written by hand in two places and rarely agree
+ * to the character: the firm record reads "Clayton, Dubilier & Rice (CDR)"
+ * while its companies say `PE Owner: Clayton, Dubilier & Rice`. Keyed
+ * exactly, neither found the other — and the firm then read as having no
+ * portfolio and no opportunities, however much work was live on it.
+ *
+ * The short side has to be at least four characters to claim the long one,
+ * so a two-letter owner can't sweep up every firm. Same rule the PE Opps
+ * sub-tab has always scoped a firm with.
  */
-export function portfolioByPeOwner(prospects) {
-  const map = new Map();
-  for (const p of (Array.isArray(prospects) ? prospects : [])) {
-    for (const owner of splitPeOwners(p?.peOwner)) {
-      const key = owner.trim().toLowerCase();
-      if (!key) continue;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(p);
-    }
-  }
-  return map;
+export function peOwnerMatchesFirm(peOwnerStr, firm) {
+  const f = String(firm || '').trim().toLowerCase();
+  if (!f) return false;
+  return splitPeOwners(peOwnerStr).some(o => {
+    const t = o.trim().toLowerCase();
+    if (!t) return false;
+    if (t.includes(f)) return true;                   // owner ⊇ firm
+    if (t.length >= 4 && f.includes(t)) return true;  // firm ⊇ owner
+    return false;
+  });
 }
 
-/** The account names one firm's opps can land on: the firm, then its PCs. */
-export function peFirmAccountNames(firm, portfolio = []) {
+/** The prospects that name this firm as their PE Owner. */
+export function peFirmPortfolio(firm, prospects) {
+  if (!String(firm || '').trim()) return [];
+  return (Array.isArray(prospects) ? prospects : []).filter(p => peOwnerMatchesFirm(p?.peOwner, firm));
+}
+
+/**
+ * The account names one firm's opps can land on: the firm itself, the
+ * companies it has MAPPED on its own Portfolio Companies list, and the
+ * prospects that name it as their PE Owner.
+ *
+ * Both portfolio sources, because they are populated independently and
+ * either can be the only one a company appears in — a company mapped on the
+ * firm's list that nobody has given a PE Owner, or a prospect tagged with an
+ * owner that nobody has added to the firm's list. Reading one of them is how
+ * a firm with live work reads as silent.
+ */
+export function peFirmAccountNames(firm, portfolio = [], mappedRows = []) {
   const names = [String(firm || '').trim()];
-  for (const p of portfolio) names.push(String(p?.company || '').trim());
-  return names.filter(Boolean);
+  for (const row of (Array.isArray(mappedRows) ? mappedRows : [])) {
+    names.push(String(row?.companyName || '').trim());
+  }
+  for (const p of (Array.isArray(portfolio) ? portfolio : [])) {
+    names.push(String(p?.company || '').trim());
+  }
+  const seen = new Set();
+  return names.filter((n) => {
+    const key = n.toLowerCase();
+    if (!n || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**

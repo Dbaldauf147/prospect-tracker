@@ -22,7 +22,7 @@
 //      list before the opps arrive would clear the step (and the sidebar's
 //      dot) on work that hasn't been looked at.
 import { collectPeFirmsToWork, isWorkablePeStage, peFirmStage } from '../src/utils/peFirmOutreach.js';
-import { accountMatchesCompany, peFirmOppRows } from '../src/utils/peFirmOpps.js';
+import { accountMatchesCompany, peFirmOppRows, peOwnerMatchesFirm } from '../src/utils/peFirmOpps.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -135,6 +135,44 @@ check('Lead and Not Sold are not',
   const rows = collectPeFirmsToWork(prospects, pcs.map((c, i) => opp(c, closed[i])));
   check('a firm reading 0/7 is listed', names(rows), ['Northgate Private Capital']);
   check('and says how much history it has', rows.map(r => [r.pcCount, r.closedCount]), [[7, 7]]);
+}
+
+// --- the two names a firm goes by ---------------------------------------
+//
+// The firm record and its portfolio companies are typed in different places
+// and rarely agree to the character: "Clayton, Dubilier & Rice (CDR)" on the
+// firm, `PE Owner: Clayton, Dubilier & Rice` on the company. Keyed exactly,
+// neither found the other — so CD&R read as having no portfolio, no opps,
+// and a place on this list while an opp on Pursuit Aerospace was open.
+{
+  const CDR = 'Clayton, Dubilier & Rice (CDR)';
+  check('a shorter owner still names the firm',
+    peOwnerMatchesFirm('Clayton, Dubilier & Rice', CDR), true);
+  check('and a longer one does too',
+    peOwnerMatchesFirm('Clayton, Dubilier & Rice (CDR) LLC', CDR), true);
+  check('a different firm does not', peOwnerMatchesFirm('Blackstone', CDR), false);
+
+  const pursuit = pc('Pursuit Aerospace (a Clayton, Dubilier & Rice co.)', 'Clayton, Dubilier & Rice');
+  const live = [opp('Pursuit Aerospace', 'Qualifying')];
+  check('an open opp on a portfolio company keeps the firm off the list',
+    names(collectPeFirmsToWork([firm(CDR, 'Discovery'), pursuit], live)), []);
+  check('and with nothing open the firm is on it',
+    names(collectPeFirmsToWork([firm(CDR, 'Discovery'), pursuit], [])), [CDR]);
+
+  // The other half of a portfolio: a company mapped on the firm's own
+  // Portfolio Companies list that nobody has given a PE Owner.
+  const mappedOnly = firm(CDR, 'Discovery');
+  mappedOnly.portfolioCompanies = [{ companyName: 'Pursuit Aerospace' }];
+  check('a mapped company counts even with no PE Owner anywhere',
+    names(collectPeFirmsToWork([mappedOnly], live)), []);
+  check('and it counts toward what there is to talk about',
+    collectPeFirmsToWork([mappedOnly], [])[0].pcCount, 1);
+  // A company on both lists is one company, not two.
+  check('the two halves are de-duplicated',
+    collectPeFirmsToWork([mappedOnly, pc('Pursuit Aerospace', CDR)], [])[0].pcCount, 1);
+  // The closed-history count still reads over both halves.
+  check('a closed opp on a mapped company still counts as history',
+    collectPeFirmsToWork([mappedOnly], [opp('Pursuit Aerospace', 'Not Sold')])[0].closedCount, 1);
 }
 
 // --- not knowing yet -----------------------------------------------------
