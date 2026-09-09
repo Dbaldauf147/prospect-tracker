@@ -1,10 +1,12 @@
 // `getDoc` is aliased: this module already has a local getDoc(id) helper
 // that builds a prospect doc ref, and the two names would collide.
 import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableNetwork } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
 // the analysis timeouts below for why a save needs one.
 import { withTimeout, isTimeoutError } from './withTimeout.js';
+// Reads and writes over plain HTTPS, for when the SDK cannot get a byte out.
+import { restSetDoc } from './firestoreRest.js';
 
 // Subcollection path for analyses saved against a prospect. Kept
 // separate from the prospect doc so the bulk subscribeToProspects
@@ -449,80 +451,12 @@ export async function ensureFirestoreOnline() {
 
 // ── Writing without the SDK ────────────────────────────────────────────
 //
-// The Firestore SDK does not speak plain HTTP. It holds long-lived
-// WebChannel streams open and sends writes down them, which is what makes
-// live snapshots work — and is also unusual enough traffic that a proxy, a
-// VPN, or a filtering extension can mangle or drop it while ordinary HTTPS
-// to the same host sails through. When that happens the SDK does not fail:
-// it queues the write and waits forever, which is exactly the shape of this
-// bug.
-//
-// The REST API is a single ordinary POST. It goes through anything that
-// lets HTTPS through, it returns a real HTTP status, and it is subject to
-// the same security rules as the SDK because it carries the same signed ID
-// token. So when the SDK cannot get a byte through, this is both the
-// fallback that may still save the workbook and the only thing in the app
-// that can say WHY — a 429 is a quota, a 403 is rules, a failed fetch is
-// the network.
-const FIRESTORE_REST_TIMEOUT_MS = 30_000;
-
-// Firestore's REST value encoding, for the shapes these documents hold.
-// Numbers are split on integer-ness because the API rejects "1.0" as an
-// integerValue and reads an integer double back as a double.
-function toRestValue(v) {
-  if (v === null || v === undefined) return { nullValue: null };
-  if (typeof v === 'string') return { stringValue: v };
-  if (typeof v === 'boolean') return { booleanValue: v };
-  if (typeof v === 'number') {
-    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
-  }
-  if (v instanceof Date) return { timestampValue: v.toISOString() };
-  if (Array.isArray(v)) return { arrayValue: { values: v.map(toRestValue) } };
-  if (typeof v === 'object') {
-    return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toRestValue(x)])) } };
-  }
-  return { stringValue: String(v) };
-}
-
-const toRestFields = (obj) => Object.fromEntries(
-  Object.entries(obj || {}).map(([k, v]) => [k, toRestValue(v)]),
-);
-
-// Create or overwrite one document by path, over HTTPS. Throws with the
-// status and the server's own message, which is the point: unlike the SDK,
-// this cannot fail silently.
-async function firestoreRestWrite(docPath, data, timeoutMs = FIRESTORE_REST_TIMEOUT_MS) {
-  const projectId = db?.app?.options?.projectId || auth?.app?.options?.projectId;
-  if (!projectId) throw new Error('No Firebase project id available for a REST write');
-  const user = auth?.currentUser;
-  if (!user?.getIdToken) throw new Error('Not signed in, so a REST write cannot be authorised');
-  const token = await withTimeout(Promise.resolve(user.getIdToken()), timeoutMs, 'getting an auth token');
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${docPath}`;
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: toRestFields(data) }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (err) {
-    // A blocked host, a killed connection, or the abort above. Named so the
-    // message doesn't read as a database error when it is a network one.
-    const wrapped = new Error(`the request never completed (${err?.name || 'error'}: ${err?.message || err})`);
-    wrapped.networkFailure = true;
-    throw wrapped;
-  }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    let detail = body.slice(0, 300);
-    try { detail = JSON.parse(body)?.error?.message || detail; } catch { /* keep the raw body */ }
-    const err = new Error(`HTTP ${res.status}: ${detail}`);
-    err.status = res.status;
-    throw err;
-  }
-  return true;
-}
+// The encoding and the fetch live in utils/firestoreRest, which the user
+// settings save shares: the SDK has more than one way to stop delivering
+// bytes (a mangled WebChannel stream here, a crashed async queue there),
+// and both fall back to the same ordinary HTTPS request. The note there
+// explains why the REST API gets through when the SDK does not, and why it
+// is the only thing in the app that can say WHY a save failed.
 
 // Small sibling doc listing the generations whose chunks are on the server
 // but that `main` does not point at: the one currently being written, and
@@ -687,7 +621,7 @@ async function saveAnalysisOverRest({ col, data, fileName, sizeBytes, phase, chu
   try {
     let done = 0;
     for (let i = 0; i < chunks.length; i += 1) {
-      await firestoreRestWrite(`${col.path}/${analysisChunkId(gen, i)}`, { i, gen, data: chunks[i] });
+      await restSetDoc(`${col.path}/${analysisChunkId(gen, i)}`, { i, gen, data: chunks[i] });
       done += 1;
       phase('rest', { done, total: chunks.length });
     }
@@ -695,7 +629,7 @@ async function saveAnalysisOverRest({ col, data, fileName, sizeBytes, phase, chu
     // names. capturedAt is the client's clock here — serverTimestamp() is a
     // transform the plain document write doesn't carry — which is a few
     // milliseconds of drift against a save that would otherwise not exist.
-    await firestoreRestWrite(`${col.path}/${ANALYSIS_DOC_ID}`, {
+    await restSetDoc(`${col.path}/${ANALYSIS_DOC_ID}`, {
       fileName,
       sizeBytes: Number(sizeBytes) || 0,
       chunkCount: chunks.length,
