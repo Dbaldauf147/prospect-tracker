@@ -18,6 +18,7 @@ import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
 import { tierPreferringTargetsList } from '../../utils/tierSource';
+import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import {
@@ -1740,6 +1741,137 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const lower = (companyName || '').toLowerCase().trim();
     if (!lower) return false;
     return dismissedCompanies.some(d => (d || '').toLowerCase().trim() === lower);
+  }
+
+  // "+ Add" on the "on Target Accounts List but NOT on My Accounts"
+  // banner. That banner is computed off allAccounts, which is already
+  // filtered — by CDM, by dismissal, and by "has a tier or an opp" — so a
+  // company can be missing from it while a record for it exists on the
+  // tracker. Handing that case straight to onAdd is what made the button
+  // look dead: the add guard (utils/addProspectGuard) de-dupes by company,
+  // so it handed back the record that already existed, wrote nothing, and
+  // the chip stayed exactly where it was (Bain Capital, sitting under
+  // another rep's CDM, was the reported case). So resolve the company
+  // against the FULL roster first, and when a record is already there,
+  // repair whatever is actually keeping it off My Accounts instead of
+  // trying to create a second copy.
+  const [addingTarget, setAddingTarget] = useState('');
+  const [addTargetNote, setAddTargetNote] = useState(null);
+
+  // The record this target name would collide with, if any: dedupe key
+  // first (the same identity the add guard uses), then the view's fuzzy
+  // matcher, which catches "Bain Capital" vs "Bain Capital Real Estate".
+  function findRosterMatch(company) {
+    const key = companyDedupeKey(company);
+    if (!key) return null;
+    return prospects.find(p => companyDedupeKey(p.company) === key)
+      || prospects.find(p => companiesMatch(p.company, company))
+      || null;
+  }
+
+  // Mirrors the tier resolution in the allAccounts memo: an explicit tier
+  // is kept, and a blank/dash tier is read as Tier 3. Anything else (unset)
+  // is what drops a record out of the view entirely.
+  function hasResolvedTier(prospect) {
+    const tier = prospect?.tier;
+    return tier === 'Tier 1' || tier === 'Tier 2' || tier === 'Tier 3' || tier === '' || tier === '-';
+  }
+
+  async function addTargetToMyAccounts(t) {
+    const company = (t.company || '').trim();
+    if (!company || addingTarget) return;
+    const existing = findRosterMatch(company);
+    const dismissedName = dismissedCompanies.find(d => {
+      const lower = (d || '').toLowerCase().trim();
+      return lower === company.toLowerCase() || (existing && lower === (existing.company || '').toLowerCase().trim());
+    });
+    setAddTargetNote(null);
+    setAddingTarget(company);
+    try {
+      if (!existing) {
+        if (dismissedName) {
+          updateSettings({ dismissedCompanies: dismissedCompanies.filter(d => d !== dismissedName) });
+        }
+        await onAdd({
+          company,
+          cdm: cdmName || '',
+          status: '',
+          type: '',
+          geography: '',
+          publicPrivate: '',
+          assetTypes: [],
+          peAum: null,
+          reAum: null,
+          numberOfSites: null,
+          rank: '',
+          tier: t.tier,
+          hqRegion: '',
+          frameworks: [],
+          notes: '',
+          website: '',
+          emailDomain: '',
+        });
+        setAddTargetNote({ tone: 'ok', text: `Added ${company} to My Accounts.` });
+        return;
+      }
+
+      // A record exists, so this is a repair rather than an add. Work out
+      // what is keeping it off the list, and say so before changing it —
+      // taking an account off another rep's name is not something to do
+      // silently.
+      const patch = {};
+      const reasons = [];
+      const fixes = [];
+      if (!matchesCdm(existing.cdm, cdmName)) {
+        reasons.push(existing.cdm ? `is assigned to ${existing.cdm}` : 'has no CDM set');
+        patch.cdm = cdmName || '';
+        fixes.push(`CDM → ${cdmName || '(blank)'}`);
+      }
+      if (!hasResolvedTier(existing)) {
+        reasons.push('has no tier');
+        patch.tier = t.tier || 'Tier 3';
+        fixes.push(`Tier → ${patch.tier}`);
+      }
+      if (dismissedName) {
+        reasons.push('was dismissed');
+        fixes.push('restore it from the dismissed list');
+      }
+      const mappedNames = Array.isArray(targetMap[existing.id])
+        ? targetMap[existing.id]
+        : (targetMap[existing.id] ? [targetMap[existing.id]] : []);
+      const needsMapping = !mappedNames.some(n => (n || '').toLowerCase().trim() === company.toLowerCase());
+      if (needsMapping) fixes.push(`link the Target Accounts name "${company}" to it`);
+
+      const sameName = (existing.company || '').toLowerCase().trim() === company.toLowerCase();
+      const asName = sameName ? '' : ` as "${existing.company}"`;
+      const why = reasons.length
+        ? `it ${reasons.join(', it ')} — that is why it isn't showing on My Accounts`
+        : `the two names just aren't linked, so it keeps reading as missing`;
+      const ok = confirm(`${company} is already on the tracker${asName}, and ${why}.
+
+Fix that now?
+
+• ${fixes.join('\n• ')}`);
+      if (!ok) return;
+
+      if (Object.keys(patch).length > 0) await onUpdate(existing.id, patch);
+      // One settings write for both changes: separate calls would each
+      // build their patch from this render's settings.
+      const settingsPatch = {};
+      if (dismissedName) settingsPatch.dismissedCompanies = dismissedCompanies.filter(d => d !== dismissedName);
+      if (needsMapping) settingsPatch.targetMap = { ...targetMap, [existing.id]: [...mappedNames, company] };
+      if (Object.keys(settingsPatch).length > 0) await updateSettings(settingsPatch);
+
+      const inactiveNote = INACTIVE_STATUSES.has(existing.status)
+        ? ` It's marked ${existing.status}, so switch the Inactive card above off "Inactive Hidden" to see the row.`
+        : '';
+      setAddTargetNote({ tone: 'ok', text: `${existing.company} is now on My Accounts.${inactiveNote}` });
+    } catch (err) {
+      console.error('Add to My Accounts failed:', err);
+      setAddTargetNote({ tone: 'error', text: `Couldn't add ${company}: ${err?.message || err}` });
+    } finally {
+      setAddingTarget('');
+    }
   }
 
   // Auto-create prospects for opps companies with OPEN opps not already in Table View
@@ -3520,30 +3652,23 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                 <div className={styles.addedTitle}>
                   {onlyTarget.length} on Target Accounts List but NOT on My Accounts
                 </div>
+                {addTargetNote && (
+                  <div className={styles.addNote} style={{ color: addTargetNote.tone === 'error' ? '#DC2626' : '#15803D' }}>
+                    {addTargetNote.text}
+                    <button className={styles.addNoteClose} onClick={() => setAddTargetNote(null)} title="Dismiss">&times;</button>
+                  </div>
+                )}
                 <div className={styles.missingList}>
                   {onlyTarget.map((t, i) => (
                     <span key={i} className={styles.addedChip}>
                       {t.company}
                       <Badge label={t.tier} color={t.tier === 'Tier 1' ? '#DC2626' : '#3B82F6'} />
-                      <button className={styles.addChipBtn} onClick={() => onAdd({
-                        company: t.company,
-                        cdm: cdmName || '',
-                        status: '',
-                        type: '',
-                        geography: '',
-                        publicPrivate: '',
-                        assetTypes: [],
-                        peAum: null,
-                        reAum: null,
-                        numberOfSites: null,
-                        rank: '',
-                        tier: t.tier,
-                        hqRegion: '',
-                        frameworks: [],
-                        notes: '',
-                        website: '',
-                        emailDomain: '',
-                      })} title={`Add ${t.company} to My Accounts`}>+ Add</button>
+                      <button
+                        className={styles.addChipBtn}
+                        onClick={() => addTargetToMyAccounts(t)}
+                        disabled={!!addingTarget}
+                        title={`Add ${t.company} to My Accounts`}
+                      >{addingTarget === (t.company || '').trim() ? 'Adding…' : '+ Add'}</button>
                     </span>
                   ))}
                 </div>
