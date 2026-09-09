@@ -2,6 +2,9 @@
 // that builds a prospect doc ref, and the two names would collide.
 import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+// A ceiling on a Firestore call that might never settle — see the note on
+// the analysis timeouts below for why a save needs one.
+import { withTimeout, isTimeoutError } from './withTimeout.js';
 
 // Subcollection path for analyses saved against a prospect. Kept
 // separate from the prospect doc so the bulk subscribeToProspects
@@ -365,10 +368,36 @@ function getAnalysisCol(prospectId) {
   return collection(db, SHARED_COL, prospectId, 'analyses');
 }
 
-// Base64 chars per chunk doc. Base64 is ASCII (1 byte/char) so this stays
-// comfortably under Firestore's ~1 MiB per-document cap with room for the
-// small field/metadata overhead.
-const ANALYSIS_CHUNK_SIZE = 900_000;
+// Base64 chars per chunk doc. Base64 is ASCII (1 byte/char) so this is also
+// the document's size in bytes, under Firestore's ~1 MiB per-document cap.
+//
+// 700 KiB rather than the 900,000 chars this used to split at: every other
+// chunked store in this app (chunkedDoc, localMirrorSync, opps2Store) settled
+// on 700 KiB, and a ~880 KB document leaves only ~170 KB of headroom for the
+// field names, the document path and the index entries Firestore builds over
+// that string. Matching them costs one extra document per 700 KB and takes a
+// document-size question off the table when a save doesn't come back.
+// Reads are unaffected: `main` records the chunk count that was written, so
+// analyses saved at the old size still reassemble.
+const ANALYSIS_CHUNK_SIZE = 700 * 1024;
+
+// Ceilings for the round-trips a save makes.
+//
+// setDoc resolves on SERVER acknowledgement. A client that cannot reach
+// firestore.googleapis.com — a wedged long-poll, a VPN or proxy, an
+// extension blocking Google domains, or a project over its daily quota
+// (writes come back RESOURCE_EXHAUSTED, which the SDK retries forever) —
+// queues the write locally and leaves that promise pending for the life of
+// the tab. It never rejects, so the caller's try/catch never runs: the
+// Utility Lookup page sat on "Saving 0.6 MB to <company>…" with nothing to
+// click and nothing in the console. getDoc sits the same way when the
+// document isn't cached.
+//
+// Long enough that a slow connection finishes — a 700 KB chunk on a poor
+// link is tens of seconds — and short enough that a wedged one is called
+// out rather than waited on forever.
+const ANALYSIS_READ_TIMEOUT_MS = 20_000;
+const ANALYSIS_WRITE_TIMEOUT_MS = 90_000;
 
 // Small sibling doc listing the generations whose chunks are on the server
 // but that `main` does not point at: the one currently being written, and
@@ -425,7 +454,13 @@ const base64LenForBytes = (sizeBytes) => Math.ceil(Number(sizeBytes || 0) / 3) *
 // the `main` doc holds only metadata + the chunk count. Chunk docs sit
 // alongside `main` (not nested under it) so they're covered by the same
 // /analyses/{analysisId} security rule — no rules change required.
-export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64, sizeBytes }) {
+export async function saveIndicativeAnalysis(
+  prospectId,
+  { fileName, dataBase64, sizeBytes },
+  // `readTimeoutMs` / `writeTimeoutMs` are the module's ceilings, taken as
+  // options so a test can prove they work without sitting through one.
+  { onPhase, readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS, writeTimeoutMs = ANALYSIS_WRITE_TIMEOUT_MS } = {},
+) {
   const col = getAnalysisCol(prospectId);
   const data = String(dataBase64 || '');
   const gen = newAnalysisGen();
@@ -433,42 +468,90 @@ export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64,
   for (let i = 0; i < data.length; i += ANALYSIS_CHUNK_SIZE) {
     chunks.push(data.slice(i, i + ANALYSIS_CHUNK_SIZE));
   }
+  // Which step the save is on, so the page can name it. Every step below
+  // can be the one that doesn't come back, and "Saving…" doesn't say which.
+  const phase = (step, extra) => { try { onPhase?.({ step, ...extra }); } catch { /* never fail a save on its own progress report */ } };
+
   // Two small documents, never the collection: what `main` points at now,
   // and what a previous save may have left unreferenced. Between them they
   // name every chunk this save is allowed to delete, by id, so nothing
   // downloads a stored workbook on the way to writing one.
-  const [mainSnap, pendingSnap] = await Promise.all([
-    fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
-    fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
-  ]);
-  const prevMeta = mainSnap.exists() ? (mainSnap.data() || {}) : {};
-  const pendingRaw = pendingSnap.exists() ? pendingSnap.data() : null;
-  const priorPending = Array.isArray(pendingRaw?.gens) ? pendingRaw.gens : [];
+  //
+  // Bookkeeping only — they say what may be DELETED, not what to write — so
+  // a read that doesn't answer downgrades the save rather than failing it.
+  // Blocking an upload on a prune plan would be the tail wagging the dog.
+  phase('reading');
+  let prevMeta = {};
+  let priorPending = [];
+  let hadPendingDoc = false;
+  let degraded = false;
+  try {
+    const [mainSnap, pendingSnap] = await withTimeout(Promise.all([
+      fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
+      fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
+    ]), readTimeoutMs, 'reading the saved analysis metadata');
+    prevMeta = mainSnap.exists() ? (mainSnap.data() || {}) : {};
+    const pendingRaw = pendingSnap.exists() ? pendingSnap.data() : null;
+    priorPending = Array.isArray(pendingRaw?.gens) ? pendingRaw.gens : [];
+    hadPendingDoc = pendingSnap.exists();
+  } catch (err) {
+    if (!isTimeoutError(err)) throw err;
+    // Nothing is known about what came before, so nothing may be deleted
+    // and the pending list must not be overwritten with a shorter one.
+    // The background sweep below cleans up on ids instead.
+    console.warn('Analysis bookkeeping read timed out; saving without a prune plan:', err.message);
+    degraded = true;
+  }
+
   // Written before the chunks it describes, so a save that dies mid-upload
   // leaves its ids on record for the next one to clean up. That's what the
   // old collection listing bought, at a fraction of the cost.
-  await setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), {
-    gens: [...priorPending, { gen, chunkCount: chunks.length, at: Date.now() }],
-  });
+  if (!degraded) {
+    await withTimeout(setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), {
+      gens: [...priorPending, { gen, chunkCount: chunks.length, at: Date.now() }],
+    }), writeTimeoutMs, 'recording the upload');
+  }
   // Write every chunk first, then the `main` metadata doc LAST, so a live
   // subscriber only reassembles once all referenced chunks exist. Under a
   // fresh generation, so nothing here touches the docs the current `main`
   // points at — if any of these writes fails, the previous analysis is
   // still whole and still what readers get.
-  await Promise.all(chunks.map((c, i) => setDoc(doc(col, analysisChunkId(gen, i)), { i, gen, data: c })));
+  let done = 0;
+  phase('uploading', { done, total: chunks.length });
+  await Promise.all(chunks.map((c, i) => withTimeout(
+    setDoc(doc(col, analysisChunkId(gen, i)), { i, gen, data: c }),
+    writeTimeoutMs,
+    `uploading part ${i + 1} of ${chunks.length}`,
+  ).then(() => { done += 1; phase('uploading', { done, total: chunks.length }); })));
   // setDoc without merge so any legacy inline `dataBase64` on the main doc
   // is dropped when re-saving over an older single-doc analysis.
-  await setDoc(doc(col, ANALYSIS_DOC_ID), {
+  phase('finalizing');
+  await withTimeout(setDoc(doc(col, ANALYSIS_DOC_ID), {
     fileName,
     sizeBytes,
     chunkCount: chunks.length,
     gen,
     capturedAt: serverTimestamp(),
-  });
-  // Only now that `main` names the new generation is the old one
-  // unreferenced. Best-effort: a failure here wastes storage but leaves the
-  // analysis readable, so it must not fail the save.
-  //
+  }), writeTimeoutMs, 'saving the analysis record');
+  phase('saved');
+
+  // The analysis is saved the moment `main` names the new generation —
+  // everything below is bookkeeping about the generation it replaced, and
+  // the caller is not made to wait on it. It used to be awaited, which put
+  // a pile of deletes (each its own server round-trip, each able to hang on
+  // exactly the connection that makes this worth guarding) between a
+  // finished upload and the word "Saved".
+  pruneOldAnalysisChunks({ col, prevMeta, priorPending, gen, degraded, hadPendingDoc })
+    .catch((err) => console.warn('Analysis chunk cleanup failed (old chunks left behind):', err));
+}
+
+// Delete the chunks the save above orphaned, and tidy the pending list.
+// Detached and best-effort: a failure here wastes storage but leaves the
+// analysis readable, so it must never fail — or delay — the save.
+async function pruneOldAnalysisChunks({ col, prevMeta, priorPending, gen, degraded, hadPendingDoc }) {
+  // No prune plan (the bookkeeping reads didn't answer): touch nothing by
+  // id and let the sweep, which reads the collection itself, do the work.
+  if (degraded) { sweepLegacyAnalysisChunks(col, gen); return; }
   // The generation `main` pointed at is described by `main` itself; the
   // rest come off the pending list. An analysis written before generations
   // existed carries no `gen` and its chunks are plain `chunk-<i>`, which
@@ -486,8 +569,8 @@ export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64,
   }
   // First save under the pending-doc scheme for this prospect: its
   // collection may still hold orphans from before, whose ids nothing
-  // recorded. Swept once, in the background — the save is already done.
-  if (!pendingSnap.exists()) sweepLegacyAnalysisChunks(col, gen);
+  // recorded. Swept once — the save is already done.
+  if (!hadPendingDoc) sweepLegacyAnalysisChunks(col, gen);
 }
 
 // Metadata-only read of a saved analysis: fetches just the `main` doc and
