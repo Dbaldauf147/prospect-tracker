@@ -2637,6 +2637,11 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       const BATCH = 50;
       for (let i = 0; i < ids.length; i += BATCH) {
         const batch = ids.slice(i, i + BATCH);
+        // A beat between batches. The endpoint waits out a 429 on its own,
+        // but not asking for one in the first place is what keeps a long
+        // audit from spending its time in backoff — and this is a background
+        // read, so a few hundred milliseconds a batch costs nothing.
+        if (i > 0) await new Promise(r => setTimeout(r, 300));
         const res = await apiFetch('/api/hubspot?action=tag-history', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2650,7 +2655,15 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       setAuditResult(summarizeTagAudit(rows));
     } catch (err) {
       console.error('[tag audit]', err);
-      setAuditError(err?.message || 'The audit could not finish.');
+      // Whatever was read before the failure still answers the question for
+      // those contacts, and on a long audit that can be most of them. Throwing
+      // it away would mean starting over to learn the same thing.
+      if (rows.length > 0) {
+        setAuditResult(summarizeTagAudit(rows));
+        setAuditError(`${err?.message || 'The audit stopped early.'} Showing the ${rows.length.toLocaleString()} contact${rows.length === 1 ? '' : 's'} it read before that.`);
+      } else {
+        setAuditError(err?.message || 'The audit could not finish.');
+      }
     } finally {
       setAuditState(null);
     }

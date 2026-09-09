@@ -2,6 +2,22 @@ import { withAuth } from './_lib/http.js';
 import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
 
 const BASE = 'https://api.hubapi.com';
+
+// A fetch that waits out HubSpot's rate limiter. Returns the final response
+// whatever it is — the caller reads the body and decides — so a request that
+// is still 429 after its retries reports that rather than pretending.
+export async function fetchRetryingRateLimit(url, opts, { attempts = 3, sleep = (ms) => new Promise(r => setTimeout(r, ms)) } = {}) {
+  let res = await fetch(url, opts);
+  for (let i = 0; i < attempts && (res.status === 429 || res.status >= 500); i += 1) {
+    // Retry-After is in seconds when HubSpot sends it; the fallback climbs
+    // 0.5s, 1s, 2s so a brief burst clears without a long stall.
+    const after = Number(res.headers?.get?.('retry-after'));
+    const waitMs = Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 15000) : 500 * (2 ** i);
+    await sleep(waitMs);
+    res = await fetch(url, opts);
+  }
+  return res;
+}
 // HubSpot's cap on a batch read that asks for property history. A plain
 // batch read takes 100 inputs; asking for versions halves it, and going over
 // is a 400 rather than a truncated answer.
@@ -626,6 +642,15 @@ async function handler(req, res) {
     // used to carry, and the only way to tell a deliberate edit from a bulk
     // write that took everything.
     //
+    // HubSpot answers a burst with a 429 and, usually, a Retry-After. One
+    // batch of a long audit hitting that is not a failure — it is the portal
+    // saying "in a moment" — so the read waits and asks again rather than
+    // dropping the contacts it was handed. Bounded, because a wait that never
+    // ends is just a hang: three retries, then the caller is told what
+    // happened and can run the rest again.
+    //
+    // 5xx is retried on the same terms: HubSpot's own transient failures look
+    // identical from here and are over as quickly.
     // Batched by the caller — 50 ids at a time, HubSpot's cap for a batch
     // read that asks for property HISTORY (a plain batch read takes 100, but
     // asking for versions halves it) — so a long audit reports progress
@@ -637,7 +662,7 @@ async function handler(req, res) {
       if (ids.length > TAG_HISTORY_BATCH) {
         return res.status(400).json({ error: `Send at most ${TAG_HISTORY_BATCH} ids per call: that is HubSpot's limit for a property-history read.` });
       }
-      const readRes = await fetch(`${BASE}/crm/v3/objects/contacts/batch/read`, {
+      const readRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/read`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -648,7 +673,13 @@ async function handler(req, res) {
       });
       const json = await readRes.json().catch(() => ({}));
       if (!readRes.ok) {
-        return res.status(readRes.status).json({ error: json?.message || `HubSpot ${readRes.status}` });
+        // A 429 that survived the retries is worth saying plainly: the portal
+        // is busy, nothing is wrong with the audit, and running it again in a
+        // minute picks up where this left off.
+        const error = readRes.status === 429
+          ? 'HubSpot is rate-limiting this portal right now, and kept doing so after three waits. Give it a minute and run the audit again — what it already read is shown below.'
+          : (json?.message || `HubSpot ${readRes.status}`);
+        return res.status(readRes.status).json({ error, rateLimited: readRes.status === 429 });
       }
       const rows = (json.results || []).map((r) => {
         const p = r.properties || {};
