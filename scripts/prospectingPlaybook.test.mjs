@@ -52,7 +52,9 @@ const renamed = readSteps(withSteps([
   { key: 'opps', title: 'Chase the deals I already have' },
   { key: 'cold' },
 ]));
-checkDeep('stored order wins', keys(renamed), ['opps', 'cold']);
+// 'visits' rides along on every read of a stored ladder — see the backfill
+// block at the bottom — so it shows up in these key lists.
+checkDeep('stored order wins', keys(renamed), ['opps', 'visits', 'cold']);
 check('the new title is used', byKey(renamed, 'opps').title, 'Chase the deals I already have');
 check('a retitled built-in keeps its count', typeof byKey(renamed, 'opps').workLabel, 'function');
 check('and its work tooltip', typeof byKey(renamed, 'opps').workTitle, 'function');
@@ -85,7 +87,7 @@ const messy = readSteps(withSteps([
   { key: 'opps', title: 'duplicate' },   // first one wins
   { key: 'ps_x' },                       // custom with no title: nothing to show
 ]));
-checkDeep('junk is dropped, not thrown on', keys(messy), ['opps']);
+checkDeep('junk is dropped, not thrown on', keys(messy), ['opps', 'visits']);
 check('the duplicate did not overwrite', messy[0].title, DEFAULT_STEPS[0].title);
 
 // --- serialize: store only what changed -----------------------------------
@@ -106,7 +108,7 @@ const roundTrip = readSteps(withSteps(serializeSteps([
   { ...stepByKey('opps'), detail: 'my own words' },
   { key: 'ps_new', title: 'Added step', detail: '', view: 'pe' },
 ])));
-checkDeep('order round-trips', keys(roundTrip), ['cold', 'opps', 'ps_new']);
+checkDeep('order round-trips', keys(roundTrip), ['visits', 'cold', 'opps', 'ps_new']);
 check('edited detail round-trips', byKey(roundTrip, 'opps').detail, 'my own words');
 check('the count survives the round trip', typeof byKey(roundTrip, 'opps').workLabel, 'function');
 check('the added step round-trips', byKey(roundTrip, 'ps_new').viewLabel, 'PE Portfolio');
@@ -126,7 +128,7 @@ check('both halves go red once the ladder reaches them',
 
 const preSplit = readSteps(withSteps([{ key: 'opps' }, { key: 'market-updates' }, { key: 'cold' }]));
 checkDeep('a ladder stored before the split gains the mapping step',
-  keys(preSplit), ['opps', 'contact-mapping', 'market-updates', 'cold']);
+  keys(preSplit), ['opps', 'contact-mapping', 'market-updates', 'visits', 'cold']);
 check('and it arrives whole, not as a bare key',
   byKey(preSplit, 'contact-mapping').title, stepByKey('contact-mapping').title);
 check('an edit to the step it split from is untouched',
@@ -134,10 +136,38 @@ check('an edit to the step it split from is untouched',
     .find(s => s.key === 'market-updates').title, 'Mine');
 checkDeep('a ladder that already has both is left alone',
   keys(readSteps(withSteps([{ key: 'contact-mapping' }, { key: 'market-updates' }]))),
-  ['contact-mapping', 'market-updates']);
+  ['contact-mapping', 'market-updates', 'visits']);
 checkDeep('a ladder with neither gets neither: that step was deleted',
-  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'cold']);
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'visits', 'cold']);
 checkDeep('an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
+
+// --- the in-person visits step -------------------------------------------
+// Added to the shipped ladder after people already had a stored one, so it
+// backfills the same way the split does — but it is new work rather than a
+// half of something, so a missing anchor doesn't withhold it.
+check('the shipped ladder plans visits before it goes cold',
+  keys(DEFAULT_STEPS).indexOf('visits') === keys(DEFAULT_STEPS).indexOf('cold') - 1, true);
+check('nothing counts it: it is marked by hand',
+  stepByKey('visits').workLabel, undefined);
+check('and it stays grey rather than dotting the sidebar when reached',
+  stepByKey('visits').dueWhenReached, undefined);
+check('it opens My Accounts', stepByKey('visits').viewLabel, 'My Accounts');
+
+checkDeep('a ladder stored before it gains it above cold outreach',
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }, { key: 'renewals' }]))),
+  ['opps', 'visits', 'cold', 'renewals']);
+check('and it arrives whole, not as a bare key',
+  byKey(readSteps(withSteps([{ key: 'cold' }])), 'visits').title, stepByKey('visits').title);
+checkDeep('with cold outreach deleted it lands at the end',
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }]))),
+  ['opps', 'renewals', 'visits']);
+checkDeep('a ladder that already carries it is left alone',
+  keys(readSteps(withSteps([{ key: 'visits' }, { key: 'opps' }]))), ['visits', 'opps']);
+check('an edit to it survives the backfill',
+  byKey(readSteps(withSteps([{ key: 'visits', title: 'Book the trips' }])), 'visits').title,
+  'Book the trips');
+check('once stored it round-trips like any built-in',
+  JSON.stringify(serializeSteps([stepByKey('visits')])), JSON.stringify([{ key: 'visits' }]));
 
 // --- moving --------------------------------------------------------------
 const three = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];

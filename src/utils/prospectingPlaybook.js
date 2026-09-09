@@ -168,6 +168,23 @@ export const DEFAULT_STEPS = [
     clearTitle: 'Every PE firm past Lead has an opportunity on it, or has been marked Not Sold',
   },
   {
+    key: 'visits',
+    title: 'Plan in person visits',
+    detail: 'Accounts worth a trip. Work out who you would see while you are in their city, and get it on the calendar before it fills.',
+    view: 'accounts',
+    viewLabel: 'My Accounts',
+    // Above cold outreach and below everything else: a visit is the
+    // warmest move on the ladder, but it is the one that has to be booked
+    // rather than done this morning, so it sits after the desk work it
+    // follows from and ahead of the names with no relationship at all.
+    //
+    // Nothing counts it. There is no field that knows a trip is planned —
+    // "Met In Person" records one that already happened — so like cold
+    // outreach it is marked by hand, and it stays grey rather than going
+    // red when the ladder reaches it: a step asking to plan travel should
+    // not dot the sidebar every morning until it is ticked.
+  },
+  {
     key: 'cold',
     title: 'Cold prospect outreach',
     detail: 'Names with no relationship yet. Last, because everything above has a warmer way in.',
@@ -199,29 +216,58 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // the user never edited keeps tracking the default — a later copy fix
 // reaches them instead of being frozen at whatever shipped the day they
 // first dragged a row.
-// One step split into two, for a playbook stored before the split.
+// Steps that joined the shipped ladder after people already had a stored
+// one, put back into it.
 //
 // A stored ladder IS the ladder — a default the array doesn't carry is one
 // the user deleted, and resurrecting those is exactly what this model
-// exists to prevent. "Map and tag your contacts" is the exception, because
-// nobody deleted it: it did not exist. Its work was the tag-coverage half
-// of "Reach out to contacts with market updates", which they kept, so it
-// is put back where it was — immediately above that step. A user who
-// deleted the market-updates step gets neither half, which is what they
-// asked for.
-const SPLIT_FROM = 'market-updates';
-const SPLIT_INTO = 'contact-mapping';
-function applyMarketUpdatesSplit(entries) {
+// exists to prevent. These two are the exception, because nobody deleted
+// them: they did not exist when the ladder was stored, so there is no
+// choice of the user's to honour.
+//
+// Placing them by key rather than appending is the point. The ladder's
+// order is its argument — warmest work first — and a step that lands at
+// the bottom of someone's list is making a different one.
+//
+// The known edge, shared with the split this generalises: delete one of
+// these and the next read puts it back, since a stored array without the
+// key is indistinguishable from one written before the key existed. Only
+// a stored "the user removed this" could tell them apart, and the ladder
+// has nowhere to keep that.
+const BACKFILLED_STEPS = [
+  // "Map and tag your contacts" was carved out of "Reach out to contacts
+  // with market updates" — its work was the tag-coverage half of that
+  // step. So it goes immediately above the step it came from, and a user
+  // who deleted that step gets neither half, which is what they asked for.
+  { key: 'contact-mapping', before: 'market-updates', onlyWithAnchor: true },
+  // "Plan in person visits" is new work rather than a split, so a missing
+  // anchor is no reason to withhold it: above cold outreach where it
+  // belongs, or at the end when cold outreach is gone.
+  { key: 'visits', before: 'cold' },
+];
+
+function insertBackfilled(entries, { key, before, onlyWithAnchor = false }) {
   const keys = entries.map(e => e.key);
-  const at = keys.indexOf(SPLIT_FROM);
-  if (at === -1 || keys.includes(SPLIT_INTO)) return entries;
-  const base = DEFAULTS_BY_KEY.get(SPLIT_INTO);
+  if (keys.includes(key)) return entries;
+  const base = DEFAULTS_BY_KEY.get(key);
   if (!base) return entries;
+  const at = keys.indexOf(before);
+  if (at === -1 && onlyWithAnchor) return entries;
   const next = [...entries];
   // The shipped step, whole: the user has never edited one that didn't
   // exist, so there is nothing of theirs to overlay on it.
-  next.splice(at, 0, { ...base });
+  next.splice(at === -1 ? next.length : at, 0, { ...base });
   return next;
+}
+
+function applyBackfilledSteps(entries) {
+  // An emptied ladder stays empty. `[]` is the user having cleared the
+  // page deliberately (see the storage note at the top), and putting a
+  // step into it would overrule that just as surely as resurrecting a
+  // deleted one — the anchored inserts above can't reach an empty array,
+  // but an unanchored one would append to it.
+  if (!entries.length) return entries;
+  return BACKFILLED_STEPS.reduce(insertBackfilled, entries);
 }
 
 export function readSteps(settings) {
@@ -252,7 +298,7 @@ export function readSteps(settings) {
     step.viewLabel = step.view ? viewLabelFor(step.view, base?.viewLabel) : '';
     out.push(step);
   }
-  return applyMarketUpdatesSplit(out);
+  return applyBackfilledSteps(out);
 }
 
 // The steps as they go into settings: the key, plus only the fields that
