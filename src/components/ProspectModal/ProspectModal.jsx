@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit } from '../../utils/contactTagReview';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -1165,29 +1165,73 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return run.then(settle, () => settle(false));
   }
 
+  // What HubSpot holds for this contact right now. Absent from the answer
+  // means HubSpot has no such contact; a failed read returns undefined, and
+  // both are treated the same way by the merge below — as "don't write".
+  async function fetchLiveTags(cid) {
+    try {
+      const res = await apiFetch('/api/hubspot?action=contact-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: [String(cid)] }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error || !json.tags) return undefined;
+      return json.tags[String(cid)];
+    } catch {
+      return undefined;
+    }
+  }
+
   // Returns true when HubSpot took the tags, false when it refused them —
   // the caller uses that to undo the checkbox it flipped optimistically.
+  //
+  // The write is a MERGE, not an overwrite. dans_tags is one string, so
+  // writing what this popup is showing replaces the contact's whole list —
+  // and this popup was opened with a cached copy of the contact. Anything
+  // tagged since that copy was taken (in HubSpot's own UI, on another
+  // device, in another tab) used to be deleted by the next tick made here.
+  // A tag history audit found that happening to ~85 contacts between March
+  // and September, almost always one tag at a time.
+  //
+  // So the contact's current tags are read immediately before the write and
+  // the user's change is applied to THOSE — see mergeTagEdit. A read that
+  // fails refuses the write rather than falling back to the cached list,
+  // because falling back is precisely the bug.
   async function persistDansTags(tagsStr) {
     const cid = contact.id || contact.vid;
     if (!cid) return true; // new contact — save will include tags on create
     setTagsSaveStatus('Saving tag…');
     try {
-      const res = await apiFetch(`/api/hubspot?action=update-contact`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
-      });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
-      // Update local cache so the main view reflects the change immediately
+      const current = await fetchLiveTags(cid);
+      const plan = mergeTagEdit({ base: savedTagsRef.current, intended: tagsStr, current });
+      if (plan.action === 'skip') {
+        throw new Error("couldn't read this contact's current tags from HubSpot, so the change wasn't saved");
+      }
+      // What HubSpot already holds — the user's click was a no-op against
+      // the live record. Nothing to send, and the popup is right as it is.
+      const next = plan.action === 'unchanged' ? String(current || '') : plan.tags;
+      if (plan.action === 'write') {
+        const res = await apiFetch(`/api/hubspot?action=update-contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid, properties: { dans_tags: next } }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      }
+      // Update local cache so the main view reflects the change immediately.
+      // `next` rather than what this popup was showing: the merge may have
+      // kept tags the cached copy never knew about, and the cache should
+      // carry them too rather than go stale again on the spot.
       try {
         await updateHubspotCache(draft => {
           const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
-          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: next };
         });
       } catch {}
-      savedTagsRef.current = tagsStr;
-      onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
+      savedTagsRef.current = next;
+      onSave({ ...contact, dans_tags: next }, { silent: true });
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
       return true;

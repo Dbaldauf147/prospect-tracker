@@ -12,6 +12,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
+import { planTagEdit } from '../../utils/contactTagReview';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
@@ -1293,6 +1294,25 @@ export function EventsView({
 
   // Add or remove `bulkTag` across every selected contact, writing each
   // change to HubSpot and the local cache (which refreshes the table).
+  // The tags HubSpot holds for these contacts right now, id -> tag string.
+  // An id HubSpot has no contact for is absent rather than empty, so the
+  // caller can tell "no tags" from "no such contact"; null when the read
+  // itself failed.
+  async function fetchLiveContactTags(ids) {
+    try {
+      const res = await apiFetch('/api/hubspot?action=contact-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: ids.map(String) }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error || !json.tags) return null;
+      return new Map(Object.entries(json.tags));
+    } catch {
+      return null;
+    }
+  }
+
   async function applyBulkTag(mode) {
     const tag = bulkTag.trim();
     const ids = [...selectedContactIds].filter(id => contactsById.has(String(id)));
@@ -1301,13 +1321,19 @@ export function EventsView({
     setTagStatus('');
     let changed = 0;
     let failed = 0;
+    let skipped = 0;
+    // dans_tags is one string, so each write below replaces the contact's
+    // whole list. Built from the cached row — which is what this did — a
+    // contact tagged in HubSpot since the last sync loses that tag, and one
+    // the cache has never seen is written as if they had no tags at all.
+    // planTagEdit builds the write from what HubSpot holds right now, and
+    // refuses outright when that can't be read.
+    const live = await fetchLiveContactTags(ids);
     for (const id of ids) {
-      const cur = contactTags(contactsById.get(String(id)));
-      const has = cur.some(t => t.toLowerCase() === tag.toLowerCase());
-      if (mode === 'add' && has) continue;
-      if (mode === 'remove' && !has) continue;
-      const next = mode === 'add' ? [...cur, tag] : cur.filter(t => t.toLowerCase() !== tag.toLowerCase());
-      const nextStr = next.join(';');
+      const plan = planTagEdit(mode, [tag], live ? live.get(String(id)) : undefined);
+      if (plan.action === 'unchanged') continue;
+      if (plan.action === 'skip') { skipped += 1; continue; }
+      const nextStr = plan.tags;
       try {
         const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -1328,14 +1354,19 @@ export function EventsView({
     }
     setTagSaving(false);
     const verb = mode === 'add' ? 'Added' : 'Removed';
+    // A skip is not a failure and not a change: it is a contact whose current
+    // tags could not be read, left alone rather than overwritten. Saying so
+    // is the point — silence would read as "done".
+    const notes = [
+      failed ? `${failed} failed` : '',
+      skipped ? `${skipped} skipped (couldn't read their tags in HubSpot)` : '',
+    ].filter(Boolean).join(' · ');
     setTagStatus(
-      failed
-        ? `${verb} "${tag}" on ${changed} · ${failed} failed`
-        : changed
-          ? `${verb} "${tag}" on ${changed} contact${changed === 1 ? '' : 's'}`
-          : 'No changes needed',
+      changed
+        ? `${verb} "${tag}" on ${changed} contact${changed === 1 ? '' : 's'}${notes ? ` · ${notes}` : ''}`
+        : (notes || 'No changes needed'),
     );
-    setTimeout(() => setTagStatus(''), 4000);
+    setTimeout(() => setTagStatus(''), 5000);
   }
 
   function exportAttendeesCsv() {

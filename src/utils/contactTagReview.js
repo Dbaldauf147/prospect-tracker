@@ -165,6 +165,61 @@ export function planTagEdit(mode, chosenTags, current) {
   return { action: 'write', tags };
 }
 
+/**
+ * What one contact's dans_tags string becomes when a tag editor saves.
+ *
+ * The editors work from a copy of the contact — the popup from the cached
+ * record it was opened with, a table from the row it is rendering — and
+ * dans_tags is a single string, so writing that copy back is a whole-list
+ * overwrite. Anything added to the contact since that copy was taken (in
+ * HubSpot's own UI, on another device, in another tab) is silently deleted
+ * by it. Months of single tags went that way before this existed.
+ *
+ * So a save is not "write what I have", it is "apply what I changed":
+ *
+ *   base      the tags the editor believed HubSpot held
+ *   intended  the tags the editor now shows — base plus/minus the user's clicks
+ *   current   what HubSpot actually holds, read immediately before the write
+ *
+ * The difference between `base` and `intended` is the user's intent; it is
+ * applied to `current`, so a tag nobody touched survives whatever the editor
+ * did or didn't know about it.
+ *
+ * `current` undefined means the read failed or HubSpot has no such contact.
+ * That is a skip, never a write: treating an unreadable contact as "has no
+ * tags" is exactly the overwrite this exists to prevent (see planTagEdit,
+ * which refuses on the same grounds).
+ *
+ * Returns { action: 'write', tags } | { action: 'unchanged' } | { action: 'skip' }.
+ */
+export function mergeTagEdit({ base, intended, current }) {
+  if (current === undefined || current === null) return { action: 'skip' };
+  const split = (v) => String(v || '').split(';').map(t => t.trim()).filter(Boolean);
+  const baseList = split(base);
+  const intendedList = split(intended);
+  const currentList = split(current);
+
+  const baseKeys = new Set(baseList.map(tagKey));
+  const intendedKeys = new Set(intendedList.map(tagKey));
+  // Turned on: in the editor now, not in what it started from.
+  const turnedOn = intendedList.filter(t => !baseKeys.has(tagKey(t)));
+  // Turned off: in what it started from, gone from the editor now.
+  const turnedOff = new Set(baseList.filter(t => !intendedKeys.has(tagKey(t))).map(tagKey));
+
+  const next = currentList.filter(t => !turnedOff.has(tagKey(t)));
+  const have = new Set(next.map(tagKey));
+  for (const t of turnedOn) {
+    // A tag HubSpot already carries under another spelling is already there;
+    // adding the editor's spelling on top would leave the contact holding both.
+    if (have.has(tagKey(t))) continue;
+    have.add(tagKey(t));
+    next.push(t);
+  }
+  const tags = next.join(';');
+  if (tags === currentList.join(';')) return { action: 'unchanged' };
+  return { action: 'write', tags };
+}
+
 // The tag writes a bulk "Mark …" implies, as few calls as they'll fit in.
 //
 // `wanted` says, per contact, which of the chosen tags they should end up
