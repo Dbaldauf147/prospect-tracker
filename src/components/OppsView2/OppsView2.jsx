@@ -6078,6 +6078,15 @@ const OPP_DETAIL_STAGE_SUBSECTIONS = new Map(
 // itself; anything unlisted falls to its tab's first subsection, which is
 // the step the stage opens on.
 const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
+  // Stage 4 runs Qualifying then Quoting. Whether the deal prices in USD
+  // is settled while qualifying it; the margin only goes for review once
+  // there's a number to review, which is the quoting step. Both sides of
+  // the margin pair name the same step so they keep rendering on one row.
+  'USD?': 'Qualifying',
+  'Margin Email Date - Sales Leader Review Date': 'Quoting',
+  'Margin Email Date': 'Quoting',
+  'Sales Leader Review Date': 'Quoting',
+  'Margin Approval Date': 'Quoting',
   // Stage 6 is one column (Agreement Sent), so both of its fields sit
   // there — spelled out rather than left to the fallback so a later
   // second column can't silently pull them along.
@@ -6136,18 +6145,13 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Scope': 'scope',
   'Sites': 'scope',
   'Quoted Amount': 'scope',
-  'USD?': 'scope',
   'Pricing Option': 'scope',
   'Pull Through': 'scope',
   'Quoted On': 'scope',
   'Quoted Date': 'scope',
   'Chance?': 'scope',
   'Chance': 'scope',
-  'Margin Email Date - Sales Leader Review Date': 'scope',
-  'Margin Email Date': 'scope',
-  'Sales Leader Review Date': 'scope',
   'Final Margin': 'scope',
-  'Margin Approval Date': 'scope',
   'Credit approval': 'scope',
   'Credit Approval Date': 'scope',
   'COA Approval': 'scope',
@@ -6168,6 +6172,18 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // here, so there's no Notes tab left to leave them on.
   'Next Steps': 'overview',
   'Notes': 'overview',
+  // Stage 4 — Influence and Develop covers both the Qualifying and the
+  // Quoting stages (see daysInStage.jsx), which is where the number gets
+  // worked out: whether the deal prices in USD, and the margin going for
+  // sales-leader review and coming back approved. 'Margin Email Date' and
+  // 'Sales Leader Review Date' are the split-out labels some imports carry
+  // for the request date, so they ride along rather than landing on a
+  // different tab than the combined header does.
+  'USD?': 'stage4',
+  'Margin Email Date - Sales Leader Review Date': 'stage4',
+  'Margin Email Date': 'stage4',
+  'Sales Leader Review Date': 'stage4',
+  'Margin Approval Date': 'stage4',
   // How and when it ends, split across the two stages that do that work.
   // Getting a signature agreed is Stage 6 — it's what the negotiation is
   // for, and a verbal is the same commitment one step earlier.
