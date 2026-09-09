@@ -4,7 +4,7 @@ import { countCallInDue } from '../utils/oppsCallIn';
 import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
 import { tagsAllMapped } from '../utils/contactRosters';
 import { useSavedCampaigns } from './useSavedCampaigns';
-import { collectTopPcIntros } from '../utils/topPcOutreach';
+import { collectPeFirmsToWork } from '../utils/peFirmOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
 import {
   caughtUpSnapshot,
@@ -29,7 +29,7 @@ import {
 // the user has no way to tell which is lying. Same reasoning as
 // useProspectingTagDebt, which feeds the other two readouts on that page.
 //
-// Returns { steps, counts, autoClear, topPcIntros, campaignsToFinish, work,
+// Returns { steps, counts, autoClear, peFirmsToWork, campaignsToFinish, work,
 // states, stateByKey, today, caughtUpMap, dueCount }.
 export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
@@ -64,9 +64,16 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // page: which step the ladder has reached depends on what sits above it.
   const steps = useMemo(() => readSteps(settings), [settings]);
 
-  // Every PE firm's Top PC that isn't at Qualifying yet. Kept whole rather
-  // than counted, since the page lists these rows under the step.
-  const topPcIntros = useMemo(() => collectTopPcIntros(prospects), [prospects]);
+  // The PE firms with a live relationship and nothing in flight — past
+  // Lead, not Not Sold, and carrying no opportunity on the firm or any of
+  // its portfolio companies. Kept whole rather than counted, since the page
+  // lists these rows under the step. Null until BOTH the prospects and the
+  // opps have landed: an empty list would otherwise read as "no firms to
+  // chase" while the opps that disqualify them were still loading.
+  const peFirmsToWork = useMemo(
+    () => collectPeFirmsToWork(prospects, oppsRecords),
+    [prospects, oppsRecords],
+  );
 
   // The saved email campaigns, read here rather than on the Prospecting
   // page so the page's market-updates row, the rows it prints under it and
@@ -89,8 +96,8 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     opps: oppsRecords ? countCallInDue(oppsRecords) : null,
     renewals: countRenewalWork(issues),
     'targeted-services': countServiceGaps(serviceGaps),
-    'pe-intros': topPcIntros ? topPcIntros.length : null,
-  }), [oppsRecords, issues, serviceGaps, topPcIntros]);
+    'pe-intros': peFirmsToWork ? peFirmsToWork.length : null,
+  }), [oppsRecords, issues, serviceGaps, peFirmsToWork]);
 
   // The steps nothing counts, but that something in the app can still
   // answer for. "Reach out to contacts with market updates" is the batch a
@@ -129,7 +136,7 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     steps,
     counts,
     autoClear,
-    topPcIntros,
+    peFirmsToWork,
     campaignsToFinish,
     states,
     stateByKey: statesByKey(states),
@@ -137,5 +144,5 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     caughtUpMap,
     dueCount: countDueSteps(states),
     work,
-  }), [steps, counts, autoClear, topPcIntros, campaignsToFinish, states, today, caughtUpMap, work]);
+  }), [steps, counts, autoClear, peFirmsToWork, campaignsToFinish, states, today, caughtUpMap, work]);
 }

@@ -157,12 +157,15 @@ export const DEFAULT_STEPS = [
   {
     key: 'pe-intros',
     title: 'Reach out to PE partners about intros for top PCs',
-    detail: 'Warm intros through the PE relationship into their highest-scoring portfolio companies.',
+    detail: 'PE relationships with nothing in flight — past Lead, not written off, and carrying no opportunity yet.',
     view: 'pe',
     viewLabel: 'PE Portfolio',
     workLabel: n => `${n} to ask`,
-    workTitle: n => `${n} Top ${n === 1 ? 'PC is' : 'PCs are'} not at Qualifying yet — an intro still to ask the PE partner for`,
-    clearTitle: 'Every PE firm\'s Top PC is already at Qualifying',
+    // The count is firms, not companies: the work item is a call to the
+    // partner, and a firm with eleven portfolio companies and no opp is
+    // one of those calls, not eleven.
+    workTitle: n => `${n} PE ${n === 1 ? 'firm has' : 'firms have'} a live relationship (Discovery, Piloting or Existing Partnership) and no opportunity on the firm or any of its portfolio companies`,
+    clearTitle: 'Every PE firm past Lead has an opportunity on it, or has been marked Not Sold',
   },
   {
     key: 'cold',

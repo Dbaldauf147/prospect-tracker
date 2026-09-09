@@ -2,8 +2,8 @@
 //
 // Two kinds of step live on that page. Some have a real number behind
 // them — the opps whose Call In has gone negative, the client renewals
-// the Issues tab already tracks, the Top PCs not yet at Qualifying (see
-// topPcOutreach.js) — and those categorize themselves: zero outstanding
+// the Issues tab already tracks, the PE firms with nothing in flight (see
+// peFirmOutreach.js) — and those categorize themselves: zero outstanding
 // items means caught up, anything else is work owed. The rest (contact
 // mapping, market updates, targeted services, cold outreach) have no count
 // anywhere in the app, so the user marks those caught up by hand.
