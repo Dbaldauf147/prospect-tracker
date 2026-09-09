@@ -9,6 +9,7 @@ import { useIssues } from '../../hooks/useIssues';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
+import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { setOppField } from '../../utils/opps2Store';
 
 // Issues tab — a running list of outstanding items that need to be
@@ -146,17 +147,19 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
               {filteredReasonOptions.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
-          <div style={{
-            fontSize: '0.72rem', borderRadius: 4, padding: '0.5rem 0.6rem',
-            background: mapped ? '#ECFDF5' : '#FEF3C7',
-            color: mapped ? '#065F46' : '#92400E',
-          }}>
-            {mapped
-              ? <>Closes out in BFO as Status <strong>{mapped.status}</strong> &middot; Reason <strong>{mapped.reason}</strong>.</>
+          {/* The same preview the close-out popup and Stage 7 show, so
+              one pair can't be described two ways. `hint` carries what
+              this screen adds: whether the pair clears the issue that put
+              the opp on this list. */}
+          <BfoCloseOutPreview
+            competition={competition}
+            reason={reason}
+            hint={mapped
+              ? <>Saving clears this issue.</>
               : competitionHasRules
-                ? <>Pick a Reason Not Sold — each one listed maps to a BFO Status / Reason and clears this issue.</>
-                : <>{competition ? <>No Reason Not Sold maps under <strong>{competition}</strong>, so the opp would stay on this list. Choose a different Competition, or extend the mapping table.</> : <>Choose the Competition first — it decides which Reason Not Sold values can close this opp out in BFO.</>}</>}
-          </div>
+                ? <>Each reason listed maps to a pair and clears this issue.</>
+                : <>The opp stays on this list until the pair maps — choose a different Competition, or extend the mapping table.</>}
+          />
           {error && (
             <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>
           )}
