@@ -459,6 +459,10 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  /* Tier 3 targets can run to dozens of chips — keep the banner from
+     pushing the account table off the screen. */
+  max-height: 190px;
+  overflow-y: auto;
 }
 
 .missingChip {
