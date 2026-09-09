@@ -6057,9 +6057,9 @@ const OPP_DETAIL_TABS = [
 const OPP_DETAIL_STAGE_TABS = new Set(['stage3', 'stage4', 'stage5', 'stage6', 'stage7']);
 
 // Tabs that show whether or not the record has fields for them. Scope &
-// Quote carries the two ticket links, which every opp can have; Call
-// Notes is content in its own right; the stage tabs are being filled in
-// over time and have to be reachable while they're still empty.
+// Quote carries the saved Pricing Option snapshot, which every opp can
+// have; Call Notes is content in its own right; the stage tabs are being
+// filled in over time and have to be reachable while they're still empty.
 const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', ...OPP_DETAIL_STAGE_TABS]);
 
 // Stage is the deal's headline field, so it belongs in Overview and
@@ -6644,10 +6644,11 @@ export function OppInfoModal({
               </span>
             </div>
           )}
-          {/* Contract Service Desk + COA Approval tickets. They sit with the
-              approvals the quote has to clear (COA Approval, Credit
-              approval), which is the work they track. */}
-          {currentTab === 'scope' && (
+          {/* Contract Service Desk + COA Approval tickets. They sit on
+              Stage 6 — Negotiate to Win: both tickets are raised while the
+              contract is being negotiated, alongside Verbal and the Target
+              Signature Date, which is when a rep is chasing them. */}
+          {currentTab === 'stage6' && (
             <OppTicketLinksSection
               key={opp._id}
               opp={opp}
@@ -6815,9 +6816,10 @@ export function OppInfoModal({
 
           {/* A stage tab with nothing moved onto it yet says so. Every
               other empty tab has something else to show (Call Notes its
-              log, Scope & Quote its ticket links); these would be a blank
-              pane that reads as a bug. */}
-          {OPP_DETAIL_STAGE_TABS.has(currentTab) && tabFields.length === 0 && (
+              log, Scope & Quote its Pricing Option snapshot, Stage 6 its
+              ticket links); these would be a blank pane that reads as a
+              bug. */}
+          {OPP_DETAIL_STAGE_TABS.has(currentTab) && currentTab !== 'stage6' && tabFields.length === 0 && (
             <div style={{
               padding: '0.75rem 0.85rem', border: '1px dashed var(--color-border)',
               borderRadius: 6, fontSize: '0.8rem', lineHeight: 1.5,
