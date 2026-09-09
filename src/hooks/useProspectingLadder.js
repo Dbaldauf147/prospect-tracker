@@ -9,6 +9,8 @@ import { readSteps } from '../utils/prospectingPlaybook';
 import {
   caughtUpSnapshot,
   countDueSteps,
+  countLadderWork,
+  ladderWorkItems,
   countRenewalWork,
   countServiceGaps,
   ladderStates,
@@ -27,7 +29,7 @@ import {
 // the user has no way to tell which is lying. Same reasoning as
 // useProspectingTagDebt, which feeds the other two readouts on that page.
 //
-// Returns { steps, counts, autoClear, topPcIntros, campaignsToFinish,
+// Returns { steps, counts, autoClear, topPcIntros, campaignsToFinish, work,
 // states, stateByKey, today, caughtUpMap, dueCount }.
 export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
@@ -108,6 +110,22 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     [steps, counts, autoClear, caughtUpMap, today],
   );
 
+  // What the Prospecting nav badge says: how many items the counted steps
+  // are showing as outstanding, and a tooltip naming them. Built here rather
+  // than in the sidebar because the phrasing belongs to the step — each one
+  // already knows how to say its own number (workTitle) — and because the
+  // badge and the page's Status column then read one computation.
+  const work = useMemo(() => {
+    const items = ladderWorkItems(states);
+    const byKey = new Map(steps.map(s => [s.key, s]));
+    const lines = items.map(({ key, count }) => {
+      const step = byKey.get(key);
+      if (typeof step?.workTitle === 'function') return step.workTitle(count);
+      return `${count} outstanding: ${step?.title || key}`;
+    });
+    return { count: countLadderWork(states), title: lines.join('\n') };
+  }, [states, steps]);
+
   return useMemo(() => ({
     steps,
     counts,
@@ -119,5 +137,6 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     today,
     caughtUpMap,
     dueCount: countDueSteps(states),
-  }), [steps, counts, autoClear, topPcIntros, campaignsToFinish, states, today, caughtUpMap]);
+    work,
+  }), [steps, counts, autoClear, topPcIntros, campaignsToFinish, states, today, caughtUpMap, work]);
 }

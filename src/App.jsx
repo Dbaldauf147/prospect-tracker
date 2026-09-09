@@ -431,6 +431,8 @@ function App() {
         oppsDueCount={oppsDueCount}
         prospectingTagDebt={tagDebt.count}
         prospectingDue={prospectingLadder.dueCount}
+        prospectingWork={prospectingLadder.work.count}
+        prospectingWorkTitle={prospectingLadder.work.title}
         agentsRunDue={agentsRunDue}
         prospects={prospects}
         contacts={effectiveHubspotContacts}

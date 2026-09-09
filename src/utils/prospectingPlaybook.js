@@ -76,6 +76,11 @@ export const DEFAULT_STEPS = [
     // rows the user can see on the Opps tab is otherwise just wrong-looking.
     workTitle: n => `${n} ${n === 1 ? 'opp is' : 'opps are'} due to be called (Call In 0 or less), not counting any marked "No Further Action Today"`,
     clearTitle: 'No opp is due to be called, other than ones marked "No Further Action Today"',
+    // ...which is why this step is left out of the Prospecting nav badge:
+    // the Opps item is already showing that number, and the same calls
+    // counted on two nav items read as two piles of calls. Behaviour, like
+    // the counts: never stored, always re-attached by key.
+    badgedOn: 'Opps',
   },
   // Knowing who they are and writing to them are two different mornings'
   // work, and they used to share one step: the tag-coverage bars and the

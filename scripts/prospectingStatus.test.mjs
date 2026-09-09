@@ -14,6 +14,7 @@
 import {
   categorizeStep, countDueSteps, countRenewalWork, countServiceGaps, isMarkedCaughtUp,
   isRenewalWork, ladderStates, parseCaughtUpMap, readCaughtUpSnapshot, statesByKey,
+  countLadderWork, ladderWorkItems,
   todayISO, RENEWAL_ISSUE_TYPES,
 } from '../src/utils/prospectingStatus.js';
 import { readSteps } from '../src/utils/prospectingPlaybook.js';
@@ -313,6 +314,52 @@ eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
   const settled = [{ Stage: 'Qualifying', 'Follow Up': iso(0), 'No Further Action Today': 'Yes' }];
   eq(countCallInDue(settled), 0, 'marking it settles the badge');
   eq(countDueSteps(fromRecords(settled)), 1, 'and the dot comes back for the next step down');
+}
+
+// --- what the Prospecting nav badge says -----------------------------------
+//
+// The page shows a counted step in red on its own count, wherever it sits in
+// the ladder, so the badge adds those counts up rather than following the
+// ladder's position rule — otherwise the sidebar says "nothing owed" beside a
+// page showing two red rows. The opps step is the exception: the Opps nav
+// item already carries that number.
+{
+  // The shipped ladder, not the trimmed fixture above: this is about the
+  // counted steps further down it (services, PE intros), which that one
+  // leaves out.
+  const FULL = readSteps(null);
+  const badge = (counts, map = {}, autoClear = null) => countLadderWork(ladder(FULL, counts, map, autoClear));
+
+  eq(badge({ ...CLEAR, 'targeted-services': 2, 'pe-intros': 0 }), 2,
+    'two services short of coverage put a 2 on the badge');
+  eq(badge({ ...CLEAR, 'targeted-services': 2, 'pe-intros': 3 }), 5,
+    'and every counted step outstanding adds to it');
+  eq(badge(CLEAR), 0, 'a clear ladder badges nothing');
+  eq(badge({ opps: 0, renewals: null }), 0, 'a count still loading is not outstanding work');
+
+  // Position doesn't gate it: the services step is red on the page whether or
+  // not the hand-marked steps above it have been ticked, so it is on the
+  // badge too.
+  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}), 2,
+    'the count shows with the hand-marked steps above it unmarked');
+  eq(badge({ ...CLEAR, 'targeted-services': 2 }, { 'contact-mapping': TODAY, 'market-updates': TODAY }), 2,
+    'and still shows once they are marked');
+
+  // The one step left out, and why.
+  eq(badge({ opps: 4, renewals: 0 }), 0,
+    'opps due are badged on the Opps item, so they are not counted twice here');
+  eq(badge({ opps: 4, renewals: 3 }), 3,
+    'the steps beside it still count');
+  eq(ladderWorkItems(ladder(FULL, { opps: 4, renewals: 3 }, {})).map(i => i.key), ['renewals'],
+    'and the items name the steps the number came from');
+
+  // A hand-marked step owes work too, but there is no number to show for it —
+  // that is what the dot is for, and the two are separate readouts.
+  eq(badge(CLEAR, {}), 0, 'a due hand-marked step puts no number on the badge');
+  eq(countDueSteps(ladder(FULL, CLEAR, {})) > 0, true, 'it raises the dot instead');
+
+  eq(countLadderWork([]), 0, 'no steps, no badge');
+  eq(countLadderWork(null), 0, 'and no states at all is not a crash');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
