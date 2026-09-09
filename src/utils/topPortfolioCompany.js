@@ -35,6 +35,8 @@
 
 import { classifyHqRegion, NORTH_AMERICA } from './hqRegion.js';
 import { computePortfolioFitScore, siteCountNumber } from './portfolioCompaniesWorkbook.js';
+import { isActiveOppStage, activeStageRank } from './oppStages.js';
+import { accountMatchesCompany } from './companyRenameCascade.js';
 
 // The statuses that take a company out of the running. "Not Sold" is
 // written 'Lost - Not Sold' on the prospect record (see data/enums.js).
@@ -155,6 +157,88 @@ function hqLocationOf(row) {
 }
 
 /**
+ * The portfolio company on this firm that is already being worked: the one
+ * carrying a live opportunity.
+ *
+ * The score-based pick answers "who should I start on". Once there is an open
+ * opp on one of the firm's companies, that question is already answered —
+ * recommending a different company beside live work reads as a to-do the user
+ * has done. So a company with an active opp becomes the firm's Top/Current PC.
+ *
+ * It wins over the region and status filters the scored pick applies, and
+ * deliberately: those filters exist to choose who to START on, and an active
+ * opp is proof the work is under way. A client with an open opp, or a company
+ * headquartered abroad we are quoting anyway, is still what is current on that
+ * firm — filtering it out would leave the column recommending a stranger while
+ * a live deal sat one column over in PE Opps.
+ *
+ * Candidates are the firm's mapped PC rows first, then prospects whose PE
+ * Owner is this firm but which nobody has added to that list yet: an opp on
+ * one of those is still work on a PE-owned company, and the column should say
+ * so rather than wait for the mapping to catch up.
+ *
+ * @returns { companyName, mappedRow, stage, activeOppCount, opps } or null.
+ */
+export function pickCurrentPortfolioCompany({
+  portfolioCompanies = [], portfolioProspects = [], oppsRecords = [],
+} = {}) {
+  const active = (Array.isArray(oppsRecords) ? oppsRecords : [])
+    .filter(r => isActiveOppStage(r?.Stage));
+  if (active.length === 0) return null;
+
+  // Mapped rows lead: they carry the HQ, status and score the column shows,
+  // so when a company is on both lists the mapped spelling is the one used.
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (name, mappedRow) => {
+    const companyName = String(name || '').trim();
+    if (!companyName) return;
+    const key = topPcCompanyKey(companyName);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ companyName, mappedRow });
+  };
+  for (const row of (Array.isArray(portfolioCompanies) ? portfolioCompanies : [])) {
+    addCandidate(row?.companyName, row);
+  }
+  for (const p of (Array.isArray(portfolioProspects) ? portfolioProspects : [])) {
+    addCandidate(p?.company, null);
+  }
+  if (candidates.length === 0) return null;
+
+  let best = null;
+  for (const cand of candidates) {
+    const opps = active
+      .filter(r => accountMatchesCompany(cand.companyName, r?.Account))
+      .map(r => ({
+        title: String(r?.['Opportunity Name'] || r?.Opportunity || r?.Name || '').trim() || '(Unnamed opportunity)',
+        account: String(r?.Account || '').trim(),
+        stage: String(r?.Stage || '').trim(),
+      }));
+    if (opps.length === 0) continue;
+    // The furthest-along opp speaks for the company: a company at Agreement
+    // Sent is more current than one at Lead.
+    const stage = opps.reduce((a, b) => (activeStageRank(b.stage) > activeStageRank(a.stage) ? b : a)).stage;
+    const entry = { companyName: cand.companyName, mappedRow: cand.mappedRow, stage, activeOppCount: opps.length, opps };
+    if (!best || betterCurrent(entry, best)) best = entry;
+  }
+  return best;
+}
+
+// Which of two companies with live work is the more current: the further
+// along the pipeline, then the one with more open opps, then the one the firm
+// has actually mapped, and finally by name so the pick is stable between
+// renders rather than depending on portfolio order.
+function betterCurrent(a, b) {
+  const ra = activeStageRank(a.stage);
+  const rb = activeStageRank(b.stage);
+  if (ra !== rb) return ra > rb;
+  if (a.activeOppCount !== b.activeOppCount) return a.activeOppCount > b.activeOppCount;
+  if (!!a.mappedRow !== !!b.mappedRow) return !!a.mappedRow;
+  return a.companyName.localeCompare(b.companyName) < 0;
+}
+
+/**
  * The highest-scoring eligible portfolio company on one firm.
  *
  * Returns null when the firm has no portfolio mapped or nothing survives
@@ -163,10 +247,17 @@ function hqLocationOf(row) {
  *     total, eligible, skippedRegion, skippedStatus, skippedNoScore }
  * The counts are for the tooltip — a single name with no sense of what it
  * was picked from invites "is that really the top one?".
+ *
+ * `current` (from pickCurrentPortfolioCompany) short-circuits the ranking: a
+ * company already being worked IS the firm's Top/Current PC, and the result
+ * comes back flagged `isCurrent` with the opps behind it. Its score is still
+ * computed when it is a mapped row, so the tooltip reads the same as any other
+ * pick; a company known only as a prospect has no row to score and comes back
+ * with `score: null`.
  */
-export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
+export function pickTopPortfolioCompany(portfolioCompanies, statusIndex, { current = null } = {}) {
   const rows = Array.isArray(portfolioCompanies) ? portfolioCompanies : [];
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !current) return null;
 
   // Same normalization basis as the All PCs tab and the workbook export,
   // over the whole portfolio — see note 1 at the top of this file.
@@ -174,6 +265,29 @@ export function pickTopPortfolioCompany(portfolioCompanies, statusIndex) {
   const maxS = rows.reduce((m, r) => Math.max(m, siteCountNumber(r?.siteCount)), 0);
   const years = rows.map(r => Number(r?.acquisitionYear)).filter(y => y > 0);
   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
+
+  // A company with live work wins outright — see the note on `current` above.
+  if (current) {
+    const row = current.mappedRow || null;
+    const rowStatus = String(row?.status || '').trim();
+    const match = rowStatus ? null : lookupCompanyStatus(statusIndex, current.companyName);
+    const score = row ? computePortfolioFitScore(row, maxE, maxS, yearRange) : null;
+    return {
+      companyName: current.companyName,
+      score: Number.isFinite(score) ? score : null,
+      hqCity: row?.hqCity || '', hqCountry: row?.hqCountry || '', hqLocation: row ? hqLocationOf(row) : '',
+      status: rowStatus || match?.status || '',
+      statusFromRow: !!rowStatus,
+      statusCompany: match?.company && match.company !== current.companyName ? match.company : '',
+      // What makes this the pick, for the tooltip and the cell's marker.
+      isCurrent: true,
+      currentStage: current.stage,
+      activeOppCount: current.activeOppCount,
+      currentOpps: current.opps,
+      mapped: !!row,
+      total: rows.length, eligible: 0, skippedRegion: 0, skippedStatus: 0, skippedNoScore: 0,
+    };
+  }
 
   let best = null;
   let skippedRegion = 0, skippedStatus = 0, skippedNoScore = 0, eligible = 0;

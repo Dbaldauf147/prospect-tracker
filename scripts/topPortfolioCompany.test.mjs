@@ -13,6 +13,7 @@
 //     where nothing else is scored either.
 import {
   pickTopPortfolioCompany,
+  pickCurrentPortfolioCompany,
   buildStatusIndex,
   lookupCompanyStatus,
   topPcCompanyKey,
@@ -355,6 +356,98 @@ const allSites = { companyName: 'Sites Only', sector: '', energyGwh: 0, siteCoun
 const allEnergy = { companyName: 'Energy Only', sector: '', energyGwh: 100, siteCount: 0 };
 eq(computePortfolioFitScore(allSites, 100, 100, null), 30, 'a maxed site count is worth 30 points');
 eq(computePortfolioFitScore(allEnergy, 100, 100, null), 30, 'exactly what a maxed energy figure is worth');
+
+// ---- the CURRENT portfolio company -----------------------------------------
+//
+// A company with a live opp is what is being worked on that firm, so it is the
+// Top/Current PC — ahead of whatever merely scores highest. The traps:
+//
+//   - a closed opp is not current work, and neither is a broken Stage cell;
+//   - the region and status filters must NOT apply here. They exist to pick
+//     who to START on, and filtering out a live deal would leave the column
+//     recommending a stranger while the deal sat one column over;
+//   - a company the user is working may not be on the firm's mapped list yet,
+//     only linked by PE Owner — the column should still say so.
+
+const PORTFOLIO = [
+  { companyName: 'Alpha Foods', sector: 'Retail / Consumer', energyGwh: 10, siteCount: 10, hqCity: 'Boston', hqCountry: 'United States' },
+  { companyName: 'Beta Logistics', sector: 'Retail / Consumer', energyGwh: 100, siteCount: 100, hqCity: 'Dallas', hqCountry: 'United States' },
+];
+const opp = (account, stage) => ({ Account: account, Stage: stage, 'Opportunity Name': `${account} deal` });
+
+eq(pickTopPortfolioCompany(PORTFOLIO, new Map()).companyName, 'Beta Logistics',
+  'with no live work the highest score still wins');
+
+const current = pickCurrentPortfolioCompany({
+  portfolioCompanies: PORTFOLIO,
+  oppsRecords: [opp('Alpha Foods', 'Quoted')],
+});
+eq(current?.companyName, 'Alpha Foods', 'a live opp names the company being worked');
+eq(current?.stage, 'Quoted', 'and the stage it has reached');
+eq(current?.activeOppCount, 1, 'with the opp counted');
+eq(pickTopPortfolioCompany(PORTFOLIO, new Map(), { current }).companyName, 'Alpha Foods',
+  'and it takes the column, ahead of the higher-scoring company');
+eq(pickTopPortfolioCompany(PORTFOLIO, new Map(), { current }).isCurrent, true,
+  'flagged as current so the cell can say why');
+// The score is still computed on the same basis as everywhere else, so the
+// tooltip does not suddenly read differently for a current pick.
+eq(pickTopPortfolioCompany(PORTFOLIO, new Map(), { current }).score,
+  computePortfolioFitScore(PORTFOLIO[0], 100, 100, null),
+  'and still carries the score the All PCs tab shows');
+
+// Closed and broken stages are not live work.
+eq(pickCurrentPortfolioCompany({ portfolioCompanies: PORTFOLIO, oppsRecords: [opp('Alpha Foods', 'Sold')] }), null,
+  'a sold opp is not current work');
+eq(pickCurrentPortfolioCompany({ portfolioCompanies: PORTFOLIO, oppsRecords: [opp('Alpha Foods', 'Not Sold')] }), null,
+  'nor is a lost one');
+eq(pickCurrentPortfolioCompany({ portfolioCompanies: PORTFOLIO, oppsRecords: [opp('Alpha Foods', '#N/A')] }), null,
+  'nor a broken Stage cell');
+eq(pickCurrentPortfolioCompany({ portfolioCompanies: PORTFOLIO, oppsRecords: [] }), null,
+  'and no opps is no current company');
+eq(pickCurrentPortfolioCompany({ portfolioCompanies: PORTFOLIO, oppsRecords: [opp('Someone Else Entirely', 'Quoted')] }), null,
+  'an opp on a company outside the portfolio is not this firm\'s');
+
+// Several live companies: the furthest along speaks for the firm.
+eq(pickCurrentPortfolioCompany({
+  portfolioCompanies: PORTFOLIO,
+  oppsRecords: [opp('Alpha Foods', 'Lead'), opp('Beta Logistics', 'Agreement Sent')],
+})?.companyName, 'Beta Logistics', 'the furthest-along deal wins');
+eq(pickCurrentPortfolioCompany({
+  portfolioCompanies: PORTFOLIO,
+  oppsRecords: [opp('Alpha Foods', 'Quoted'), opp('Alpha Foods', 'Lead'), opp('Beta Logistics', 'Quoted')],
+})?.companyName, 'Alpha Foods', 'and at the same stage, the company with more open opps');
+
+// The filters that pick who to START on must not hide live work.
+const abroad = [{ companyName: 'Alpha Foods', sector: 'Retail / Consumer', energyGwh: 10, siteCount: 10, hqCity: 'Munich', hqCountry: 'Germany' }];
+eq(pickTopPortfolioCompany(abroad, new Map()), null, 'a European-only portfolio has no scored pick');
+eq(pickTopPortfolioCompany(abroad, new Map(), {
+  current: pickCurrentPortfolioCompany({ portfolioCompanies: abroad, oppsRecords: [opp('Alpha Foods', 'Quoted')] }),
+})?.companyName, 'Alpha Foods', 'but a live deal on it is still what is current');
+
+const clientRow = [{ companyName: 'Alpha Foods', sector: 'Retail / Consumer', energyGwh: 10, siteCount: 10, hqCity: 'Boston', hqCountry: 'United States', status: 'Client' }];
+eq(pickTopPortfolioCompany(clientRow, new Map()), null, 'a client is not who to start on');
+eq(pickTopPortfolioCompany(clientRow, new Map(), {
+  current: pickCurrentPortfolioCompany({ portfolioCompanies: clientRow, oppsRecords: [opp('Alpha Foods', 'Quoted')] }),
+})?.companyName, 'Alpha Foods', 'but a live opp on that client is still current work');
+
+// A company linked only by PE Owner, never added to the mapped list.
+const unmapped = pickCurrentPortfolioCompany({
+  portfolioCompanies: PORTFOLIO,
+  portfolioProspects: [{ company: 'Gamma Manufacturing' }],
+  oppsRecords: [opp('Gamma Manufacturing', 'Contracting')],
+});
+eq(unmapped?.companyName, 'Gamma Manufacturing', 'an unmapped PE-owned company still counts');
+eq(unmapped?.mappedRow, null, 'and is marked as having no mapped row');
+const unmappedPick = pickTopPortfolioCompany(PORTFOLIO, new Map(), { current: unmapped });
+eq(unmappedPick.score, null, 'with no row to score');
+eq(unmappedPick.mapped, false, 'so the cell can say it came through the PE Owner');
+// The mapped spelling wins when a company is on both lists, so the column and
+// the firm's own portfolio table read the same name.
+eq(pickCurrentPortfolioCompany({
+  portfolioCompanies: PORTFOLIO,
+  portfolioProspects: [{ company: 'Alpha Foods Inc.' }],
+  oppsRecords: [opp('Alpha Foods', 'Quoted')],
+})?.mappedRow?.companyName, 'Alpha Foods', 'the mapped row is preferred over the prospect');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

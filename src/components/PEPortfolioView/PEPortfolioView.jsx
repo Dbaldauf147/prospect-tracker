@@ -11,7 +11,8 @@ import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, siteCountNumber, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
-import { pickTopPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
+import { pickTopPortfolioCompany, pickCurrentPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
+import { activeStageRank } from '../../utils/oppStages';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
@@ -1006,9 +1007,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         ? 'yes'
         : (caseStudyInProgressNames.length > 0 ? 'in-progress' : 'no');
 
-      // Best portfolio company to work next: highest Opportunity Score
+      // The firm's Top/Current PC. A portfolio company with a live opp is
+      // what is current on this firm and wins outright; with none, it falls
+      // back to the best company to start on — highest Opportunity Score
       // among North America-based PCs we haven't already closed off.
-      const topPc = pickTopPortfolioCompany(pe.portfolioCompanies, statusByCompany);
+      const currentPc = pickCurrentPortfolioCompany({
+        portfolioCompanies: pe.portfolioCompanies,
+        // Prospects whose PE Owner is this firm. An opp on one of these is
+        // work on a PE-owned company even when nobody has added it to the
+        // firm's mapped Portfolio Companies list yet.
+        portfolioProspects: portfolio,
+        oppsRecords,
+      });
+      const topPc = pickTopPortfolioCompany(pe.portfolioCompanies, statusByCompany, { current: currentPc });
 
       out.set(pe.id, {
         topPc,
@@ -1098,10 +1109,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           if (cmp === 0) cmp = (sa.totalOpps || 0) - (sb.totalOpps || 0);
           break;
         case 'topPc': {
-          // Firms with nothing eligible rank below every firm that has a
-          // pick — last descending, first ascending — rather than mixing
-          // in among the genuinely low scores as a zero would.
-          const rank = (st) => (st.topPc ? st.topPc.score : -1);
+          // Firms with live work lead, sorted among themselves by how far
+          // along that work is: the column's whole point is that a company
+          // being worked outranks a company that merely scores well, and a
+          // score of 90 sorting above a deal at Agreement Sent would argue
+          // with the cell beside it. Below them the scored picks by score,
+          // and below those the firms with nothing eligible — rather than
+          // mixing in among the genuinely low scores as a zero would.
+          const rank = (st) => {
+            if (!st.topPc) return -1;
+            if (st.topPc.isCurrent) return 1000 + activeStageRank(st.topPc.currentStage);
+            return st.topPc.score ?? 0;
+          };
           cmp = rank(sa) - rank(sb);
           break;
         }
@@ -1398,7 +1417,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
-              topPc: 'Top PC', topPcAnalysis: 'Top PC Analysis', topPcStatus: 'Top PC Status',
+              topPc: 'Top/Current PC', topPcAnalysis: 'Top/Current PC Analysis', topPcStatus: 'Top/Current PC Status',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               peStage: 'PE Stage', newsFeed: 'News Feed',
             };
@@ -1460,9 +1479,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
-            { key: 'topPc', label: 'Top PC', align: 'left', tip: `The firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
-            { key: 'topPcAnalysis', label: 'Top PC Analysis', align: 'center', tip: 'Whether a Master Analysis has been saved against the Top PC (the workbook the Utility Lookup page saves), and when. Sorts newest save first; Top PCs with nothing saved sort below those, and firms with no Top PC below them.' },
-            { key: 'topPcStatus', label: 'Top PC Status', align: 'center', tip: "The Top PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither — the Top PC filter only excludes companies it can see are closed." },
+            { key: 'topPc', label: 'Top/Current PC', align: 'left', tip: `The portfolio company you are already working — one carrying a live opp — or, when there is none, the firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
+            { key: 'topPcAnalysis', label: 'Top/Current PC Analysis', align: 'center', tip: 'Whether a Master Analysis has been saved against the Top/Current PC (the workbook the Utility Lookup page saves), and when. Sorts newest save first; PCs with nothing saved sort below those, and firms with no Top/Current PC below them.' },
+            { key: 'topPcStatus', label: 'Top/Current PC Status', align: 'center', tip: "The Top/Current PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither — the scored pick only excludes companies it can see are closed, and a company with a live opp is shown whatever its status." },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
@@ -1716,7 +1735,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             <div
                               style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}
                               title={stats.pcMapped
-                                ? `No portfolio company on this firm is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
+                                ? `No portfolio company on this firm has a live opp, and none is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
                                 : 'No portfolio companies mapped on this firm yet — fill in its Portfolio Companies tab.'}
                             >-</div>
                           );
@@ -1731,17 +1750,39 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                           <div
                             style={{ padding: '0.55rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}
                             title={[
-                              `${top.companyName} — Opportunity Score ${top.score}`,
+                              top.score == null
+                                ? `${top.companyName}`
+                                : `${top.companyName} — Opportunity Score ${top.score}`,
                               top.hqLocation ? `HQ: ${top.hqLocation}` : '',
                               top.status
                                 ? `Status: ${top.status}${top.statusFromRow ? ' (set on this firm\'s Portfolio Companies list)' : (top.statusCompany ? ` (from "${top.statusCompany}")` : '')}`
                                 : 'Not tracked as its own prospect',
-                              `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
-                              skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
+                              // Why this company and not the top-scoring one:
+                              // it is the work already under way.
+                              top.isCurrent
+                                ? `Current: ${top.activeOppCount} live opp${top.activeOppCount === 1 ? '' : 's'}${top.currentStage ? ` (furthest along: ${top.currentStage})` : ''}. A company being worked is the firm's Top/Current PC, ahead of the scored pick.`
+                                : `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
+                              top.isCurrent && top.currentOpps?.length
+                                ? top.currentOpps.slice(0, 4).map(o => `• ${o.title}${o.stage ? ` — ${o.stage}` : ''}`).join('\n')
+                                : '',
+                              top.isCurrent && !top.mapped
+                                ? 'Not on this firm\'s mapped Portfolio Companies list — matched through its PE Owner.'
+                                : '',
+                              !top.isCurrent && skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
                               match ? 'Click to open it in the Table View.' : '',
                             ].filter(Boolean).join('\n')}
                             onClick={match ? (e) => { e.stopPropagation(); onSelectProspect?.(match); } : undefined}
                           >
+                            {top.isCurrent && (
+                              <span
+                                aria-label="Currently being worked"
+                                style={{
+                                  flexShrink: 0, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.03em',
+                                  padding: '0.05rem 0.3rem', borderRadius: 3, whiteSpace: 'nowrap',
+                                  background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC',
+                                }}
+                              >LIVE</span>
+                            )}
                             <span
                               style={{
                                 flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -1760,7 +1801,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                           return (
                             <div
                               style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', color: '#CBD5E1' }}
-                              title="No Top PC on this row, so there's no analysis to look for."
+                              title="No Top/Current PC on this row, so there's no analysis to look for."
                             >-</div>
                           );
                         }
@@ -1807,7 +1848,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                           return (
                             <div
                               style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', color: '#CBD5E1' }}
-                              title="No Top PC on this row, so there's no status to show."
+                              title="No Top/Current PC on this row, so there's no status to show."
                             >-</div>
                           );
                         }

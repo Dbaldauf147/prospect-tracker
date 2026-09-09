@@ -22,6 +22,27 @@ export function isActiveOppStage(stage) {
   return !!s && !INVALID_STAGES.has(s) && !CLOSED_STAGES.has(s);
 }
 
+// How far along the pipeline a live stage is, for "which of these opps is
+// furthest along". Ordered as the Days-in-Stage board orders its columns
+// (components/OppsView2/daysInStage.jsx) — pipeline progression, not
+// alphabetical. Repricing sits with Quoted: a re-quote is a quote again.
+// Closed stages are absent on purpose; this ranks the live ones.
+export const ACTIVE_STAGE_RANK = {
+  'Not Started': 1,
+  'Lead': 2,
+  'Qualifying': 3,
+  'Quoting': 4,
+  'Quoted': 5,
+  'Repricing': 5,
+  'Contracting': 6,
+  'Agreement Sent': 7,
+};
+
+/** Where a stage sits in that progression; 0 for anything unrecognised. */
+export function activeStageRank(stage) {
+  return ACTIVE_STAGE_RANK[String(stage || '').trim()] ?? 0;
+}
+
 /** Is this a real stage at all (live or closed), as opposed to a broken cell? */
 export function isRealOppStage(stage) {
   const s = String(stage || '').trim();
