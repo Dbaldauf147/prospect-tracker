@@ -204,18 +204,6 @@
   font-size: var(--font-size-xs);
 }
 
-/* The parser sometimes lands a paragraph of fee prose in the Type column.
-   Clamp it so one such row can't stretch the table; the full text stays in
-   the cell's title. */
-.siaType {
-  display: inline-block;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-}
-
 .siaMuted { color: var(--color-text-muted); }
 
 /* The TAGS block, marked out from the workbook's own columns either side of

@@ -23,6 +23,7 @@ import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
@@ -2294,7 +2295,11 @@ export function PricingView({ settings } = {}) {
         }
         const savedS2cLineItemTags = await dbGet(STORE, S2C_LINE_ITEM_TAGS_KEY);
         if (!cancelled && savedS2cLineItemTags && typeof savedS2cLineItemTags === 'object') {
-          setS2cLineItemTags(savedS2cLineItemTags);
+          // Tags written before the mapping keyed on the Line Item alone are
+          // keyed "line item::type"; fold them over on the way in, or every
+          // one of them would read as untagged. The save effect writes the
+          // migrated shape straight back.
+          setS2cLineItemTags(migrateS2cTags(savedS2cLineItemTags));
         }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
@@ -2316,7 +2321,7 @@ export function PricingView({ settings } = {}) {
           if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
           if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
           if (!savedFeeDefaults && saved.feeDefaults) setFeeDefaults(saved.feeDefaults);
-          if (!savedS2cLineItemTags && saved.s2cLineItemTags) setS2cLineItemTags(saved.s2cLineItemTags);
+          if (!savedS2cLineItemTags && saved.s2cLineItemTags) setS2cLineItemTags(migrateS2cTags(saved.s2cLineItemTags));
           if (!savedOptionsList && saved.linkedToOptionsList && typeof saved.linkedToOptionsList === 'object') {
             setLinkedToOptionsList({
               custom: Array.isArray(saved.linkedToOptionsList.custom) ? saved.linkedToOptionsList.custom : [],
@@ -4823,7 +4828,6 @@ export function PricingView({ settings } = {}) {
           activeOption={activeOption}
           lineItemTags={s2cLineItemTags}
           setLineItemTags={setS2cLineItemTags}
-          effectiveType={effectiveType}
         />
       )}
 

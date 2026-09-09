@@ -4,13 +4,22 @@
 //
 // The tags are curated by hand and outlive the workbook they were made
 // against, so the failures worth pinning are the ones that lose them or hide
-// them: a key built differently from the one the rest of the page uses, a
-// blank tag left behind as a hollow "tagged" entry, and a tagged line item the
-// current workbook no longer carries dropping off the table (invisible, and
-// impossible to clear).
+// them: a blank tag left behind as a hollow "tagged" entry, a tagged line item
+// the current workbook no longer carries dropping off the table (invisible,
+// and impossible to clear), and — the one that actually bit — a key built out
+// of workbook data.
+//
+// The mapping used to be keyed by (Line Item, Type). The Type is whatever the
+// parser found in that column, which on a real SIA is often fee prose carrying
+// the deal's own numbers ("Fee = $25,800 one-time estimate for..."), and it is
+// overridable per row against the workbook's own item ids. So the next SIA
+// produced different keys and the tags silently stopped applying, and clearing
+// the file moved the keys again for line items nobody had touched. It is now
+// keyed by Line Item alone: one service, one answer, covering its Setup row,
+// its Recurring row, every option and every later workbook.
 import {
   S2C_TAG_FIELDS, s2cTagKey, hasAnyTag, setS2cTag, clearS2cTags,
-  collectS2cLineItems, countTagged, s2cTagSuggestions,
+  collectS2cLineItems, countTagged, s2cTagSuggestions, migrateS2cTags,
 } from '../src/utils/s2cTags.js';
 
 let passed = 0, failed = 0;
@@ -25,44 +34,70 @@ function check(label, actual, expected) {
 // ── The three columns, and the key ────────────────────────────────────────
 check('fields', S2C_TAG_FIELDS.map(f => f.key), ['serviceSegment', 'productName', 'deliverable']);
 
-// Must match PricingView's linkedToDefaultKey — a key built differently here
-// tags a pair nothing else on the page can find.
-check('key: lowercased and joined', s2cTagKey('CCM NAM', 'Setup'), 'ccm nam::setup');
-check('key: trims both halves', s2cTagKey('  CCM NAM ', ' Setup '), 'ccm nam::setup');
-check('key: type is part of it', s2cTagKey('CCM NAM', 'Recurring (monthly)') === s2cTagKey('CCM NAM', 'Setup'), false);
+check('key: lowercased', s2cTagKey('CCM NAM'), 'ccm nam');
+check('key: trimmed', s2cTagKey('  CCM NAM '), 'ccm nam');
+check('key: nothing to key', s2cTagKey(''), '');
+check('key: missing name', s2cTagKey(null), '');
+// The point of the rekey: the two billing halves of one service are one
+// answer. Under the old pair key these were two rows to fill in twice.
+check('key: the Setup and Recurring halves share one key',
+  s2cTagKey('CCM NAM') === s2cTagKey('ccm nam '), true);
 
 // ── What counts as tagged ─────────────────────────────────────────────────
 check('hasAnyTag: nothing', hasAnyTag(undefined), false);
 check('hasAnyTag: empty entry', hasAnyTag({}), false);
 check('hasAnyTag: whitespace is not a tag', hasAnyTag({ productName: '   ' }), false);
 check('hasAnyTag: one is enough', hasAnyTag({ deliverable: 'Report' }), true);
+// The remembered spelling rides along on the entry but is not one of the
+// three tags, so it can never make an untagged line item look tagged.
+check('hasAnyTag: a label alone is not a tag', hasAnyTag({ label: 'CCM NAM' }), false);
 
 // ── Setting and clearing ──────────────────────────────────────────────────
 {
-  const a = setS2cTag({}, 'ccm nam::setup', 'serviceSegment', 'Sustainability');
-  check('set: creates the entry', a, { 'ccm nam::setup': { serviceSegment: 'Sustainability' } });
+  const a = setS2cTag({}, 'ccm nam', 'serviceSegment', 'Sustainability');
+  check('set: creates the entry', a, { 'ccm nam': { serviceSegment: 'Sustainability' } });
 
-  const b = setS2cTag(a, 'ccm nam::setup', 'productName', '  ESL  ');
-  check('set: trims on the way in', b['ccm nam::setup'].productName, 'ESL');
-  check('set: leaves the sibling alone', b['ccm nam::setup'].serviceSegment, 'Sustainability');
+  const b = setS2cTag(a, 'ccm nam', 'productName', '  ESL  ');
+  check('set: trims on the way in', b['ccm nam'].productName, 'ESL');
+  check('set: leaves the sibling alone', b['ccm nam'].serviceSegment, 'Sustainability');
 
   // Typing a tag back to blank clears it rather than storing an empty string.
-  const c = setS2cTag(b, 'ccm nam::setup', 'productName', '');
-  check('set: blank removes the field', Object.keys(c['ccm nam::setup']), ['serviceSegment']);
+  const c = setS2cTag(b, 'ccm nam', 'productName', '');
+  check('set: blank removes the field', Object.keys(c['ccm nam']), ['serviceSegment']);
 
   // Clearing the last tag drops the entry — otherwise the map fills with
   // hollow entries that count as tagged everywhere they are counted.
-  const d = setS2cTag(c, 'ccm nam::setup', 'serviceSegment', '   ');
+  const d = setS2cTag(c, 'ccm nam', 'serviceSegment', '   ');
   check('set: last tag out drops the entry', d, {});
-  check('set: and it is not merely empty', 'ccm nam::setup' in d, false);
+  check('set: and it is not merely empty', 'ccm nam' in d, false);
 
   // A no-op returns the original map, so React state doesn't churn.
-  const same = setS2cTag(d, 'nothing::here', 'deliverable', '');
+  const same = setS2cTag(d, 'nothing', 'deliverable', '');
   check('set: clearing what was never set is a no-op', same, d);
 
-  check('clear: removes everything for the pair',
-    clearS2cTags(b, 'ccm nam::setup'), {});
-  check('clear: unknown key is a no-op', clearS2cTags(b, 'nope::nope'), b);
+  check('clear: removes everything for the line item',
+    clearS2cTags(b, 'ccm nam'), {});
+  check('clear: unknown key is a no-op', clearS2cTags(b, 'nope'), b);
+}
+
+// ── The remembered spelling ───────────────────────────────────────────────
+{
+  // The key is lower-cased so it can match across workbooks. Once the SIA is
+  // gone there is nothing else to read a display name off, so tagging records
+  // how the line item was spelled — otherwise removing the file turns a tidy
+  // table of names into a table of lower-case keys.
+  const t = setS2cTag({}, 'ccm nam', 'serviceSegment', 'Sustainability', 'CCM NAM');
+  check('label: recorded when tagging', t, { 'ccm nam': { serviceSegment: 'Sustainability', label: 'CCM NAM' } });
+  check('label: shown on a row with no workbook',
+    collectS2cLineItems({ options: [], tags: t })[0].lineItem, 'CCM NAM');
+  check('label: goes when the last tag goes', setS2cTag(t, 'ccm nam', 'serviceSegment', ''), {});
+  // Entries written before labels existed must fall back, not break.
+  check('label: falls back to the key when never recorded',
+    collectS2cLineItems({ options: [], tags: { 'ccm nam': { serviceSegment: 'X' } } })[0].lineItem, 'ccm nam');
+  // Refreshed on every edit, so a better-spelled workbook updates it.
+  check('label: refreshed by a later edit',
+    setS2cTag(t, 'ccm nam', 'productName', 'ESL', 'CCM NAM (Americas)')['ccm nam'].label,
+    'CCM NAM (Americas)');
 }
 
 // ── Which line items the table lists ──────────────────────────────────────
@@ -85,72 +120,137 @@ const workbook = [
 ];
 
 {
-  const pairs = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
-  check('collect: one row per (Line Item, Type), sorted',
-    pairs.map(p => `${p.lineItem}|${p.type}`), [
-      'Budgets|Recurring (monthly)',
-      'CCM NAM|Recurring (monthly)',
-      'CCM NAM|Setup',
-      'ENERGY STAR Link (RA)|Recurring (monthly)',
-    ]);
-  const ccm = pairs.find(p => p.key === 'ccm nam::recurring (monthly)');
-  check('collect: CTS is the active option only', ccm.activeCts, 3796);
+  const rows = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
+  check('collect: one row per Line Item, sorted',
+    rows.map(r => r.lineItem), ['Budgets', 'CCM NAM', 'ENERGY STAR Link (RA)']);
+  const ccm = rows.find(r => r.key === 'ccm nam');
+  // Both of Option 1's rows for this service, and neither of Option 2's.
+  check('collect: CTS sums the line items rows on the active option', ccm.activeCts, 3796 + 9224);
+  check('collect: rowCount is every workbook row the name spans', ccm.rowCount, 3);
   check('collect: every option it appears on', ccm.options, ['Option 1', 'Option 2']);
+  check('collect: a line item off the active option has no total',
+    rows.find(r => r.key === 'budgets').activeCts, null);
+  check('collect: the workbook spelling is kept for display',
+    rows.find(r => r.key === 'energy star link (ra)').lineItem, 'ENERGY STAR Link (RA)');
 }
 
 {
-  // A pair tagged against a workbook since replaced still gets a row —
+  // A line item tagged against a workbook since replaced still gets a row —
   // otherwise the tags are invisible and can never be cleared.
-  const tags = { 'supplier charges::one time': { productName: 'Pass-through energy' } };
-  const pairs = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
-  const orphan = pairs.find(p => p.key === 'supplier charges::one time');
-  check('collect: a tagged pair the workbook lost still shows', !!orphan, true);
+  const tags = { 'supplier charges': { productName: 'Pass-through energy' } };
+  const rows = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  const orphan = rows.find(r => r.key === 'supplier charges');
+  check('collect: a tagged line item the workbook lost still shows', !!orphan, true);
   check('collect: ...and is marked as not in this workbook', orphan.reachable, false);
+  // And it must not be listed twice once a workbook carrying it loads.
+  check('collect: a tagged line item the workbook has is listed once',
+    collectS2cLineItems({ options: workbook, tags: { 'ccm nam': { productName: 'CCM' } } })
+      .filter(r => r.key === 'ccm nam').length, 1);
+  check('collect: ...reading as reachable', collectS2cLineItems({
+    options: workbook, tags: { 'ccm nam': { productName: 'CCM' } },
+  }).find(r => r.key === 'ccm nam').reachable, true);
 }
 {
   // An entry of three blanks is not a tagged line item and must not drag a
   // row onto the table.
-  const tags = { 'ghost::setup': { serviceSegment: '', productName: '  ' } };
-  const pairs = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
-  check('collect: hollow entries pull in no row',
-    pairs.some(p => p.key === 'ghost::setup'), false);
+  const tags = { ghost: { serviceSegment: '', productName: '  ' } };
+  const rows = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  check('collect: hollow entries pull in no row', rows.some(r => r.key === 'ghost'), false);
 }
 {
   // No workbook yet: the table has nothing to list but still surfaces tags
   // already made, so they can be read and cleared.
-  const tags = { 'ccm nam::setup': { productName: 'CCM' } };
+  const tags = { 'ccm nam': { productName: 'CCM' } };
   check('collect: no workbook, tags still listed',
-    collectS2cLineItems({ tags }).map(p => p.key), ['ccm nam::setup']);
+    collectS2cLineItems({ tags }).map(r => r.key), ['ccm nam']);
   check('collect: nothing at all', collectS2cLineItems(), []);
+  // A row with no name at all can't be keyed and must not become a blank row.
+  check('collect: an unnamed workbook row is skipped', collectS2cLineItems({
+    options: [{ optionNumber: 1, sheetName: 'O', sections: [{ items: [{ description: '  ', cts: 5 }] }] }],
+  }), []);
+}
+
+// ── The mapping survives a different SIA ──────────────────────────────────
+{
+  // The scenario that started this. Same two services, fee prose carrying
+  // different numbers, and a per-row Type override on the first file. Under
+  // the old pair key none of these tags matched the second workbook.
+  const tags = {
+    'demand side response': { serviceSegment: 'Sourcing' },
+    'ccm nam': { serviceSegment: 'Sustainability' },
+  };
+  const first = [{ optionNumber: 1, sheetName: 'Option 1', sections: [{ items: [
+    { description: 'Demand Side Response', type: 'Fee = 3% of revenue split (min. $2,500)' },
+    { description: 'CCM NAM', type: 'Setup' },
+  ] }] }];
+  const second = [{ optionNumber: 1, sheetName: 'Option A', sections: [{ items: [
+    { description: 'Demand Side Response', type: 'Fee = 5% of revenue split (min. $9,900)' },
+    { description: 'CCM NAM', type: 'Recurring (monthly)' },
+  ] }] }];
+  check('cross-SIA: tagged on the first workbook',
+    countTagged(collectS2cLineItems({ options: first, tags }), tags), 2);
+  check('cross-SIA: still tagged on the second, despite different fee prose',
+    countTagged(collectS2cLineItems({ options: second, tags }), tags), 2);
+  check('cross-SIA: and with no workbook at all',
+    countTagged(collectS2cLineItems({ options: [], tags }), tags), 2);
+}
+
+// ── Migrating the stored (Line Item, Type) keys ───────────────────────────
+{
+  // Without this every existing tag would read as untagged — the mapping
+  // would look wiped rather than moved.
+  check('migrate: the two halves merge field by field', migrateS2cTags({
+    'ccm nam::setup': { serviceSegment: 'Sustainability' },
+    'ccm nam::recurring (monthly)': { deliverable: 'Monthly report' },
+  }), { 'ccm nam': { serviceSegment: 'Sustainability', deliverable: 'Monthly report' } });
+
+  // A Type carrying "::" of its own must not cut the Line Item short.
+  check('migrate: only the first :: splits the key',
+    migrateS2cTags({ 'gresb::fee = a::b': { productName: 'GRESB' } }),
+    { gresb: { productName: 'GRESB' } });
+
+  // First non-empty wins, walked in sorted key order, so the answer doesn't
+  // depend on whatever order the map happened to be written in.
+  const clash = { 'x::b type': { serviceSegment: 'Second' }, 'x::a type': { serviceSegment: 'First' } };
+  check('migrate: a conflict resolves deterministically', migrateS2cTags(clash), { x: { serviceSegment: 'First' } });
+  check('migrate: same answer every time', migrateS2cTags({ ...clash }), migrateS2cTags(clash));
+
+  check('migrate: hollow entries migrate to nothing', migrateS2cTags({ 'x::setup': { serviceSegment: '  ' } }), {});
+  check('migrate: the remembered spelling carries across',
+    migrateS2cTags({ 'gresb::setup': { serviceSegment: 'X', label: 'GRESB' } }),
+    { gresb: { serviceSegment: 'X', label: 'GRESB' } });
+  check('migrate: a missing map', migrateS2cTags(null), {});
+  check('migrate: an empty map', migrateS2cTags({}), {});
+
+  // Nothing to do means nothing written back on load.
+  const current = { gresb: { serviceSegment: 'Sustainability' } };
+  check('migrate: an already-migrated map is returned by identity', migrateS2cTags(current) === current, true);
 }
 
 // ── Counting, for the heading ─────────────────────────────────────────────
 {
-  const pairs = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
-  const tags = {
-    'ccm nam::setup': { productName: 'CCM' },
-    'budgets::recurring (monthly)': { serviceSegment: 'Ops' },
-    'ghost::setup': { productName: '   ' },
-  };
-  check('count: tagged pairs only', countTagged(pairs, tags), 2);
-  check('count: nothing tagged', countTagged(pairs, {}), 0);
+  const rows = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
+  const tags = { 'ccm nam': { serviceSegment: 'Ops' }, budgets: { productName: 'Sustainability' } };
+  check('count: tagged line items only', countTagged(rows, tags), 2);
+  check('count: nothing tagged', countTagged(rows, {}), 0);
+  check('count: no rows', countTagged([], tags), 0);
 }
 
-// ── Suggestions ───────────────────────────────────────────────────────────
+// ── What each column offers back ──────────────────────────────────────────
 {
   const tags = {
-    a: { serviceSegment: 'Sustainability' },
-    b: { serviceSegment: 'sustainability' },
-    c: { serviceSegment: 'Ops', deliverable: 'Monthly report' },
-    d: { serviceSegment: '   ' },
+    a: { serviceSegment: 'Sourcing' },
+    b: { serviceSegment: 'sourcing' },
+    c: { serviceSegment: 'Advisory' },
   };
-  check('suggest: deduped case-insensitively, sorted',
-    s2cTagSuggestions(tags, 'serviceSegment'), ['Ops', 'Sustainability']);
-  check('suggest: first spelling wins',
-    s2cTagSuggestions({ a: { productName: 'esl' }, b: { productName: 'ESL' } }, 'productName'), ['esl']);
-  check('suggest: empty column', s2cTagSuggestions(tags, 'productName'), []);
-  check('suggest: no tags at all', s2cTagSuggestions({}, 'deliverable'), []);
+  check('suggest: deduped case-insensitively, sorted, first spelling wins',
+    s2cTagSuggestions(tags, 'serviceSegment'), ['Advisory', 'Sourcing']);
+  check('suggest: empty column', s2cTagSuggestions(tags, 'deliverable'), []);
+  check('suggest: no tags at all', s2cTagSuggestions({}, 'serviceSegment'), []);
+  // The remembered spelling must never leak into a tag column's suggestions.
+  check('suggest: the label is not offered as a tag',
+    s2cTagSuggestions({ a: { label: 'CCM NAM', serviceSegment: 'Ops' } }, 'serviceSegment'), ['Ops']);
 }
 
-console.log(`${passed} passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+if (failed === 0) console.log(`PASS  s2cTags: ${passed} assertions`);
+else { console.error(`\n${failed} failed, ${passed} passed`); process.exit(1); }
