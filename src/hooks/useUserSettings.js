@@ -3,6 +3,9 @@ import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSet
 import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
+import {
+  isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash,
+} from '../utils/firestoreClientHealth';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
 // plain nested object, creating intermediate objects as needed.
@@ -52,6 +55,22 @@ function refuseIfOverBudget(next) {
   return true;
 }
 
+// What a save says when the Firestore SDK has crashed in this tab.
+//
+// The raw error is two nested internal assertions and a minified stack —
+// "Failed to save: FIRESTORE (12.11.0) INTERNAL ASSERTION FAILED:
+// Unexpected state (ID: b815)…" — which tells the user nothing they can
+// act on and, worse, reads as if their data were the problem. It isn't:
+// the SDK killed its own async queue and the tab has stopped syncing.
+// `saved` says whether the REST fallback still got the write through, and
+// that is the part worth leading with. A lost save always speaks; a saved
+// one says it once, since the notice is about the tab, not the change.
+function reportWedgedClient(saved) {
+  const first = shouldAnnounceWedgedClient();
+  if (saved && !first) return;
+  alert(wedgedClientMessage(saved));
+}
+
 export function useUserSettings(user) {
   const [settings, setSettings] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -79,6 +98,12 @@ export function useUserSettings(user) {
       get: () => settingsRef.current,
     });
   }, []);
+
+  // The SDK's internal assertion escapes into its own async queue, so it
+  // reaches the page as an unhandled rejection rather than through any call
+  // of ours. Noticing it there means the next save goes straight to the
+  // HTTPS fallback instead of spending a round-trip finding out.
+  useEffect(() => watchForClientCrash(), []);
 
   useEffect(() => {
     if (!user) { setSettings({}); setLoaded(false); return; }
@@ -125,6 +150,9 @@ export function useUserSettings(user) {
     // and when — used to fold in any snapshot stashed mid-write.
     let written = updates;
     let writtenAt = null;
+    // Whether the write ended up going over plain HTTPS because the SDK
+    // had crashed — the user is told once, after the state has settled.
+    let viaRest = false;
 
     try {
       const result = await saveUserSettings(userIdRef.current, updates, { expectedAt });
@@ -147,6 +175,7 @@ export function useUserSettings(user) {
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
         written = mergedUpdates;
         writtenAt = forced.writtenAt;
+        viaRest = !!forced.viaRest;
         const merged = foldWriteResult(
           { ...remote, ...mergedUpdates },
           optimistic,
@@ -157,6 +186,7 @@ export function useUserSettings(user) {
         setSettings(merged);
       } else {
         writtenAt = result.writtenAt;
+        viaRest = !!result.viaRest;
         // Folded into whatever is current rather than replayed from
         // `optimistic`: edits made while this write was in the air are newer
         // than anything it can say, and rebuilding from the pre-write
@@ -167,9 +197,11 @@ export function useUserSettings(user) {
         setSettings(next);
         console.log('Settings saved to Firestore:', Object.keys(updates));
       }
+      if (viaRest) reportWedgedClient(true);
     } catch (err) {
       console.error('Failed to save user settings:', err);
-      alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
+      if (isClientWedgedError(err)) reportWedgedClient(false);
+      else alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
     } finally {
       writingRef.current -= 1;
       const pending = pendingRemoteRef.current;
@@ -216,6 +248,7 @@ export function useUserSettings(user) {
     // and when — used to fold in any snapshot stashed mid-write.
     let written = pathUpdates;
     let writtenAt = null;
+    let viaRest = false;
 
     try {
       const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
@@ -251,6 +284,7 @@ export function useUserSettings(user) {
         const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true });
         written = mergedPathUpdates;
         writtenAt = forced.writtenAt;
+        viaRest = !!forced.viaRest;
         // Rebuild local state: take the freshest remote, then apply
         // our merged path writes on top.
         const rebuilt = structuredClone(remote);
@@ -263,6 +297,7 @@ export function useUserSettings(user) {
         setSettings(next);
       } else {
         writtenAt = result.writtenAt;
+        viaRest = !!result.viaRest;
         // Same as updateSettings: a path written while this one was in
         // flight is newer than this write's snapshot of the document.
         const next = foldWriteResult(optimistic, optimistic, settingsRef.current);
@@ -270,9 +305,11 @@ export function useUserSettings(user) {
         settingsRef.current = next;
         setSettings(next);
       }
+      if (viaRest) reportWedgedClient(true);
     } catch (err) {
       console.error('Failed path-based save:', err);
-      alert('Failed to save: ' + err.message);
+      if (isClientWedgedError(err)) reportWedgedClient(false);
+      else alert('Failed to save: ' + err.message);
     } finally {
       writingRef.current -= 1;
       const pending = pendingRemoteRef.current;

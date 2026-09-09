@@ -1,5 +1,7 @@
 import { doc, getDoc, setDoc, updateDoc, deleteField, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
+import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
+import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';
 import {
   SITE_LISTS_KEY,
   applySiteListOps,
@@ -68,6 +70,60 @@ export function subscribeToUserSettings(userId, onChange) {
   return () => { unsubDoc(); unsubLists(); };
 }
 
+// ── When the SDK has crashed ───────────────────────────────────────────
+//
+// The Firestore client can kill itself mid-session: an internal assertion
+// escapes into its async queue and from then on every read, write and
+// snapshot in the tab rejects, quoting the original error. The Utility
+// Lookup company mapping is where it surfaced — "Failed to save: FIRESTORE
+// INTERNAL ASSERTION FAILED (ID: b815)" — but nothing about that save
+// caused it and nothing about it can be retried: the client is gone until
+// the page reloads. See utils/firestoreClientHealth.
+//
+// The document itself is perfectly writable over HTTPS, so rather than
+// losing the change, these two go around the corpse. The caller is told the
+// tab needs reloading; the work still lands.
+//
+// The one thing that does not survive is a companySiteLists write: those go
+// to a subcollection through runTransaction, which has no honest one-request
+// equivalent (a transaction is a read and a conditional write). A save
+// carrying site-list ops still fails on a crashed client, and says so.
+const settingsPath = (userId) => `${COL}/${userId}`;
+
+// The settings document for the stale check, read over HTTPS once the SDK
+// can no longer answer. Returns the data, or null when there is no document.
+async function readSettingsDoc(userId, ref) {
+  if (isClientWedged()) return restGetDoc(settingsPath(userId));
+  try {
+    const snap = await getDoc(ref);
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    return restGetDoc(settingsPath(userId));
+  }
+}
+
+// `sdkWrite`, falling back to a field-masked REST PATCH of the same paths.
+// Masked rather than a whole-document write: a settings document holds
+// everything the user has, and a save that replaced it with the handful of
+// keys in flight would be far worse than the crash it is working around.
+async function writeSettingsFields(userId, fieldEntries, sdkWrite) {
+  if (isClientWedged()) {
+    await restUpdateFields(settingsPath(userId), fieldEntries);
+    return { viaRest: true };
+  }
+  try {
+    await sdkWrite();
+    return { viaRest: false };
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    await restUpdateFields(settingsPath(userId), fieldEntries);
+    return { viaRest: true };
+  }
+}
+
 // Write with an optional staleness check.
 //
 //   opts.expectedAt       - the _lastWriteAt the caller thinks is current.
@@ -86,11 +142,11 @@ export async function saveUserSettings(userId, updates, opts = {}) {
 
   if (!force && expectedAt != null) {
     try {
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const remoteAt = Number(snap.data()?._lastWriteAt || 0);
+      const remote = await readSettingsDoc(userId, ref);
+      if (remote) {
+        const remoteAt = Number(remote._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, snap.data(), ops) };
+          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
         }
       }
     } catch (err) {
@@ -105,8 +161,16 @@ export async function saveUserSettings(userId, updates, opts = {}) {
 
   const writtenAt = Date.now();
   if (ops.length) await applySiteListOps(userId, ops);
-  await setDoc(ref, { ...rest, _lastWriteAt: writtenAt }, { merge: true });
-  return { stale: false, writtenAt };
+  const written = { ...rest, _lastWriteAt: writtenAt };
+  // Whole keys, not dotted paths: a settings key is free to contain a dot
+  // (orgCharts entries are keyed by name), and splitting one would write to
+  // a nested field nothing reads.
+  const { viaRest } = await writeSettingsFields(
+    userId,
+    keyFieldEntries(written),
+    () => setDoc(ref, written, { merge: true }),
+  );
+  return { stale: false, writtenAt, viaRest };
 }
 
 // The remote settings document with the site lists a write touches folded
@@ -175,11 +239,11 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
 
   if (!force && expectedAt != null) {
     try {
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const remoteAt = Number(snap.data()?._lastWriteAt || 0);
+      const remote = await readSettingsDoc(userId, ref);
+      if (remote) {
+        const remoteAt = Number(remote._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, snap.data(), ops) };
+          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
         }
       }
     } catch (err) {
@@ -200,30 +264,38 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
     updates[path] = value == null ? deleteField() : value;
   }
 
-  try {
-    await updateDoc(ref, updates);
-  } catch (err) {
-    // updateDoc fails if the document does not exist yet; fall back to a full
-    // setDoc by building a nested object from the dot paths.
-    if (err?.code === 'not-found') {
-      const nested = { _lastWriteAt: writtenAt };
-      for (const [path, value] of Object.entries(rest)) {
-        if (value == null) continue;
-        const parts = path.split('.');
-        let cur = nested;
-        for (let i = 0; i < parts.length - 1; i++) {
-          if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
-          cur = cur[parts[i]];
-        }
-        cur[parts[parts.length - 1]] = value;
-      }
-      await setDoc(ref, nested);
-    } else {
-      throw err;
-    }
-  }
+  // The REST patch these paths become if the SDK can't take them. Written
+  // from `rest` rather than `updates`, since deleteField() is an SDK
+  // sentinel — over HTTPS a delete is the path being in the update mask
+  // and absent from the body, which a null value spells.
+  const fieldEntries = dottedFieldEntries({ ...rest, _lastWriteAt: writtenAt });
 
-  return { stale: false, writtenAt };
+  const { viaRest } = await writeSettingsFields(userId, fieldEntries, async () => {
+    try {
+      await updateDoc(ref, updates);
+    } catch (err) {
+      // updateDoc fails if the document does not exist yet; fall back to a full
+      // setDoc by building a nested object from the dot paths.
+      if (err?.code === 'not-found') {
+        const nested = { _lastWriteAt: writtenAt };
+        for (const [path, value] of Object.entries(rest)) {
+          if (value == null) continue;
+          const parts = path.split('.');
+          let cur = nested;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+            cur = cur[parts[i]];
+          }
+          cur[parts[parts.length - 1]] = value;
+        }
+        await setDoc(ref, nested);
+      } else {
+        throw err;
+      }
+    }
+  });
+
+  return { stale: false, writtenAt, viaRest };
 }
 
 export async function initUserSettings(userId) {

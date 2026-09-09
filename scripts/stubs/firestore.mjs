@@ -28,6 +28,15 @@ export const hang = [];
 
 export const hangOn = (match, op) => { hang.push({ match, op }); };
 
+// Operations that REJECT. Same rule shape as `hang`, plus the error to
+// throw. The Firestore SDK can crash its own async queue — after that every
+// call rejects with an internal assertion for the life of the tab — and a
+// fallback that only runs on that error can't be tested without a way to
+// raise it.
+export const failures = [];
+
+export const failOn = (match, error, op) => { failures.push({ match, error, op }); };
+
 // Hang on whatever a predicate says: the rule that matters for a save is
 // not a path but a SIZE — a gateway that drops a 700 KB request and passes
 // a 64 KB one. Called with { op, path, data }.
@@ -49,6 +58,7 @@ export const timing = { delayMs: 0, inFlight: 0, maxInFlight: 0, track: null };
 
 export function reset() {
   calls.length = 0;
+  failures.length = 0;
   store.clear();
   hang.length = 0;
   network.calls.length = 0;
@@ -80,6 +90,11 @@ const hangs = (call) => hang.some((rule) => {
 
 const NEVER = () => new Promise(() => {});
 
+const failureFor = (call) => failures.find((rule) => {
+  if (rule.op && rule.op !== call.op) return false;
+  return rule.match instanceof RegExp ? rule.match.test(call.path) : rule.match === call.path;
+})?.error;
+
 export const collection = (_db, ...segments) => ({ path: segments.join('/') });
 export const doc = (parent, ...segments) => ({
   path: [parent?.path, ...segments].filter(Boolean).join('/'),
@@ -88,6 +103,8 @@ export const doc = (parent, ...segments) => ({
 export function getDoc(ref) {
   calls.push({ op: 'getDoc', path: ref.path });
   if (hangs(calls[calls.length - 1])) return NEVER();
+  const failure = failureFor(calls[calls.length - 1]);
+  if (failure) return Promise.reject(failure);
   const data = store.get(ref.path);
   return Promise.resolve({
     id: ref.path.split('/').pop(),
@@ -99,6 +116,8 @@ export function getDoc(ref) {
 export function setDoc(ref, data) {
   calls.push({ op: 'setDoc', path: ref.path, data });
   if (hangs(calls[calls.length - 1])) return NEVER();
+  const failure = failureFor(calls[calls.length - 1]);
+  if (failure) return Promise.reject(failure);
   store.set(ref.path, data);
   return answer(calls[calls.length - 1]);
 }
@@ -120,8 +139,23 @@ export function getDocs(ref) {
   return Promise.resolve({ docs });
 }
 
-// Unused by the analysis save, but imported by the module under test.
-export const updateDoc = (ref, data) => setDoc(ref, data);
+// Unused by the analysis save, but imported by the modules under test.
+export function updateDoc(ref, data) {
+  calls.push({ op: 'updateDoc', path: ref.path, data });
+  if (hangs(calls[calls.length - 1])) return NEVER();
+  const failure = failureFor(calls[calls.length - 1]);
+  if (failure) return Promise.reject(failure);
+  store.set(ref.path, { ...(store.get(ref.path) || {}), ...data });
+  return answer(calls[calls.length - 1]);
+}
 export const writeBatch = () => ({ set() {}, update() {}, delete() {}, commit: () => Promise.resolve() });
 export const onSnapshot = () => () => {};
+// The sentinel updateDoc() takes to mean "remove this field".
+export const deleteField = () => ({ __deleteField: true });
+export const runTransaction = (_db, fn) => fn({
+  get: (ref) => getDoc(ref),
+  set: (ref, data) => { setDoc(ref, data); },
+  update: (ref, data) => { updateDoc(ref, data); },
+  delete: (ref) => { deleteDoc(ref); },
+});
 export const serverTimestamp = () => ({ __serverTimestamp: true });
