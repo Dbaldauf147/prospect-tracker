@@ -1,6 +1,12 @@
 import { withAuth } from './_lib/http.js';
 import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
 
+// The tag rules the pages write by, imported rather than restated: a restore
+// that planned its writes differently from the editors would be a second
+// implementation of the exact thing that lost the tags in the first place.
+// (contactTagReview.js is pure — no browser APIs — so it loads here too.)
+import { planTagEdit, tagKey, MET_IN_PERSON_TAG } from '../src/utils/contactTagReview.js';
+
 const BASE = 'https://api.hubapi.com';
 
 // A fetch that waits out HubSpot's rate limiter. Returns the final response
@@ -702,6 +708,99 @@ async function handler(req, res) {
         };
       });
       return res.json({ rows, requested: ids.length, returned: rows.length });
+    }
+
+    // Put tags back that a write took off a contact — the other half of the
+    // tag history audit.
+    //
+    // `restores` is [{ id, tags }] straight off the audit's findings, but the
+    // audit's reading of a contact may be minutes or hours old by the time
+    // anyone acts on it, so it is not what gets written. Each contact's tags
+    // are read NOW and the missing ones added to those, through the same
+    // planTagEdit the editors use: a tag put back by hand since the audit is
+    // not written twice, a tag added since is not lost to the restore, and a
+    // contact whose tags can't be read is skipped rather than overwritten.
+    //
+    // `dryRun` does everything except the write and reports what it would
+    // do. That is how this is meant to be used first.
+    if (action === 'restore-tags') {
+      const dryRun = req.body?.dryRun !== false;
+      const restores = Array.isArray(req.body?.restores) ? req.body.restores : [];
+      const wanted = new Map();
+      for (const r of restores) {
+        const id = String(r?.id || '').trim();
+        if (!id) continue;
+        // "Met In Person" is not in HubSpot's dans_tags enumeration — it was
+        // removed, and every write here strips it (normalizeDansTagsForHubSpot).
+        // Asking to restore it would be a write HubSpot refuses, so it is
+        // dropped here and reported rather than attempted.
+        const tags = (Array.isArray(r?.tags) ? r.tags : [])
+          .map(t => String(t || '').trim())
+          .filter(t => t && tagKey(t) !== tagKey(MET_IN_PERSON_TAG));
+        if (tags.length === 0) continue;
+        wanted.set(id, [...(wanted.get(id) || []), ...tags]);
+      }
+      const ids = [...wanted.keys()];
+      if (ids.length === 0) return res.status(400).json({ error: 'Nothing to restore.' });
+      if (ids.length > 100) return res.status(400).json({ error: 'Restore at most 100 contacts per call.' });
+
+      // What HubSpot holds right now, for exactly these contacts.
+      const current = new Map();
+      const readRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/read`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: ['dans_tags'], inputs: ids.map(id => ({ id })) }),
+      });
+      const readJson = await readRes.json().catch(() => ({}));
+      if (!readRes.ok) {
+        return res.status(readRes.status).json({
+          error: readRes.status === 429
+            ? 'HubSpot is rate-limiting this portal right now. Nothing was written; try again in a minute.'
+            : (readJson?.message || `HubSpot ${readRes.status}`),
+        });
+      }
+      for (const r of (readJson.results || [])) current.set(String(r.id), r.properties?.dans_tags || '');
+
+      const plans = [];
+      for (const id of ids) {
+        // Absent from the read means HubSpot has no such contact: skip, never
+        // write. planTagEdit refuses on the same grounds.
+        const plan = planTagEdit('add', wanted.get(id), current.get(id));
+        plans.push({
+          id,
+          adding: wanted.get(id),
+          from: current.get(id) ?? null,
+          to: plan.action === 'write' ? plan.tags : (current.get(id) ?? null),
+          action: plan.action,
+        });
+      }
+      const toWrite = plans.filter(p => p.action === 'write');
+      if (dryRun) {
+        return res.json({ dryRun: true, plans, willWrite: toWrite.length });
+      }
+
+      // One batch update rather than a call per contact: 85 writes at once is
+      // the difference between a restore that finishes and one the rate
+      // limiter interrupts halfway through.
+      let written = 0;
+      const errors = [];
+      for (let i = 0; i < toWrite.length; i += 100) {
+        const chunk = toWrite.slice(i, i + 100);
+        const writeRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/update`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inputs: chunk.map(p => ({ id: p.id, properties: normalizeContactPropertiesForHubSpot({ dans_tags: p.to }) })),
+          }),
+        });
+        const writeJson = await writeRes.json().catch(() => ({}));
+        if (!writeRes.ok) {
+          errors.push(writeJson?.message || `HubSpot ${writeRes.status}`);
+          continue;
+        }
+        written += (writeJson.results || []).length;
+      }
+      return res.json({ dryRun: false, plans, written, skipped: plans.filter(p => p.action === 'skip').length, errors });
     }
 
     if (action === 'sequences') {

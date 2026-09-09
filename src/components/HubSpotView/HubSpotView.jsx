@@ -2698,6 +2698,78 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     }
   }
 
+  // --- Putting the lost tags back -----------------------------------------
+  //
+  // Two steps, always in this order: a dry run that reports exactly what
+  // would be written, then the write itself behind a confirmation. The
+  // endpoint re-reads each contact and adds only what is still missing, so
+  // what the audit found being hours old cannot cost anyone a tag; the plan
+  // shown here comes from that same read.
+  const [restorePlan, setRestorePlan] = useState(null); // { plans, willWrite }
+  const [restoreState, setRestoreState] = useState('');  // 'planning' | 'writing'
+  const [restoreResult, setRestoreResult] = useState('');
+  const [restoreError, setRestoreError] = useState('');
+
+  // What the audit says to put back, as the endpoint wants it. Only rows that
+  // lost something, and never more than one call's worth.
+  const restoreInput = useMemo(() => (auditResult?.rows || [])
+    .filter(r => r.removed?.length)
+    .map(r => ({ id: r.id, tags: r.removed })), [auditResult]);
+
+  async function planRestore() {
+    if (restoreState) return;
+    setRestoreError('');
+    setRestoreResult('');
+    setRestorePlan(null);
+    setRestoreState('planning');
+    try {
+      const res = await apiFetch('/api/hubspot?action=restore-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true, restores: restoreInput }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) throw new Error(json?.error || `HubSpot ${res.status}`);
+      setRestorePlan(json);
+    } catch (err) {
+      console.error('[tag restore] plan', err);
+      setRestoreError(err?.message || 'Could not work out what to restore.');
+    } finally {
+      setRestoreState('');
+    }
+  }
+
+  async function writeRestore() {
+    if (restoreState || !restorePlan?.willWrite) return;
+    const n = restorePlan.willWrite;
+    const ok = window.confirm(
+      `Put tags back on ${n} contact${n === 1 ? '' : 's'} in HubSpot?\n\n`
+      + 'Each one is re-read first and only the missing tags are added, so nothing tagged since the audit is lost. This writes to HubSpot.',
+    );
+    if (!ok) return;
+    setRestoreError('');
+    setRestoreState('writing');
+    try {
+      const res = await apiFetch('/api/hubspot?action=restore-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false, restores: restoreInput }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) throw new Error(json?.error || `HubSpot ${res.status}`);
+      const parts = [`Put tags back on ${(json.written || 0).toLocaleString()} contact${json.written === 1 ? '' : 's'}`];
+      if (json.skipped) parts.push(`${json.skipped} skipped (HubSpot has no such contact)`);
+      if (json.errors?.length) parts.push(`${json.errors.length} batch error${json.errors.length === 1 ? '' : 's'}: ${json.errors.join('; ')}`);
+      setRestoreResult(`${parts.join(' · ')}. Sync Now to pull the tags back into this page.`);
+      setRestorePlan(null);
+    } catch (err) {
+      console.error('[tag restore] write', err);
+      setRestoreError(err?.message || 'The restore could not finish.');
+    } finally {
+      setRestoreState('');
+    }
+  }
+
   function downloadTagAuditCsv() {
     if (!auditResult?.rows?.length) return;
     const blob = new Blob([tagAuditCsv(auditResult.rows)], { type: 'text/csv;charset=utf-8' });
@@ -2822,6 +2894,72 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 {auditResult.rows.length > 200 && (
                   <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: '0.3rem' }}>
                     Showing the 200 worst-hit — the CSV has all {auditResult.rows.length.toLocaleString()}.
+                  </div>
+                )}
+
+                {/* Putting them back. Deliberately two clicks with the plan in
+                    between: this is the one control here that writes to
+                    HubSpot, and a restore built on a stale finding is how the
+                    tags were lost to begin with. */}
+                <div style={{ marginTop: '0.6rem', paddingTop: '0.5rem', borderTop: '1px solid #E2E8F0', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={planRestore}
+                    disabled={!!restoreState || restoreInput.length === 0}
+                    title="Read each of these contacts again and work out exactly which tags are still missing. Writes nothing."
+                    style={{
+                      padding: '0.35rem 0.8rem', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.78rem',
+                      fontWeight: 600, border: '1px solid #CBD5E1', background: '#fff',
+                      color: restoreState ? '#94A3B8' : '#334155', cursor: restoreState ? 'wait' : 'pointer',
+                    }}
+                  >{restoreState === 'planning' ? 'Checking…' : `Plan restore (${restoreInput.length})`}</button>
+                  {restorePlan && (
+                    <button
+                      type="button"
+                      onClick={writeRestore}
+                      disabled={!!restoreState || !restorePlan.willWrite}
+                      style={{
+                        padding: '0.35rem 0.8rem', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.78rem',
+                        fontWeight: 700, border: '1px solid #B91C1C',
+                        background: restorePlan.willWrite ? '#B91C1C' : '#F1F5F9',
+                        color: restorePlan.willWrite ? '#fff' : '#94A3B8',
+                        cursor: restoreState ? 'wait' : (restorePlan.willWrite ? 'pointer' : 'default'),
+                      }}
+                    >{restoreState === 'writing' ? 'Writing…' : `Write ${restorePlan.willWrite} to HubSpot`}</button>
+                  )}
+                  {restorePlan && (
+                    <span style={{ fontSize: '0.72rem', color: '#475569' }}>
+                      {restorePlan.willWrite.toLocaleString()} to write
+                      {restorePlan.plans.filter(p => p.action === 'unchanged').length > 0 && <> · {restorePlan.plans.filter(p => p.action === 'unchanged').length} already back</>}
+                      {restorePlan.plans.filter(p => p.action === 'skip').length > 0 && <> · {restorePlan.plans.filter(p => p.action === 'skip').length} not in HubSpot</>}
+                    </span>
+                  )}
+                </div>
+                {restoreError && <div style={{ fontSize: '0.74rem', color: '#B91C1C', marginTop: '0.35rem' }}>{restoreError}</div>}
+                {restoreResult && <div style={{ fontSize: '0.74rem', color: '#166534', marginTop: '0.35rem' }}>{restoreResult}</div>}
+                {restorePlan?.plans?.some(p => p.action === 'write') && (
+                  <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, marginTop: '0.4rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                      <thead>
+                        <tr style={{ background: '#F8FAFC', textAlign: 'left' }}>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Contact</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Tags now</th>
+                          <th style={{ padding: '0.3rem 0.5rem' }}>Would become</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {restorePlan.plans.filter(p => p.action === 'write').slice(0, 200).map(p => {
+                          const row = auditResult.rows.find(r => String(r.id) === String(p.id));
+                          return (
+                            <tr key={p.id} style={{ borderTop: '1px solid #F1F5F9' }}>
+                              <td style={{ padding: '0.3rem 0.5rem' }}>{row?.name || row?.email || p.id}</td>
+                              <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{p.from || '—'}</td>
+                              <td style={{ padding: '0.3rem 0.5rem', color: '#166534' }}>{p.to}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </>
