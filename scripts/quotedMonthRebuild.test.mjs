@@ -20,6 +20,7 @@
 
 import {
   stageAsOf, monthEndMs, sameQuotedValues, capturedAtMonthEnd, rebuildOwnsMonth,
+  rebuildMatchesLive, REBUILT_FIELDS,
 } from '../src/utils/quotedMonthRebuild.js';
 
 let failures = 0;
@@ -127,6 +128,35 @@ check('a changed figure is not',
 check('a figure that has gone missing is not',
   sameQuotedValues(stored, { ...stored, bfoPipe: undefined }) === false);
 check('nothing stored never matches', sameQuotedValues(null, stored) === false);
+
+// --- a rebuild that is really just today's pipeline -----------------------
+//
+// The rebuild reads today's Opps and subtracts what it can date to after the
+// month end. Nine days into a month, with no Quoted On dates and no stage
+// moves to go on, there is nothing to subtract and the "month end" comes out
+// as today's figures — which is what made August and September plot the same
+// four numbers. It can't be corrected from the data, but it can be flagged.
+
+eq('the rebuild produces the four opp figures, not bfoPipe',
+  REBUILT_FIELDS, ['weak', 'ok', 'expected', 'agreements']);
+
+const liveNow = { weak: 402, ok: 402, expected: 329, agreements: 311, bfoPipe: 3186 };
+check('a rebuild identical to the live month is flagged',
+  rebuildMatchesLive({ weak: 402, ok: 402, expected: 329, agreements: 311, _rebuilt: true }, liveNow));
+check('bfoPipe is ignored: the rebuild never produces one',
+  rebuildMatchesLive({ weak: 402, ok: 402, expected: 329, agreements: 311, bfoPipe: 2928 }, liveNow));
+check('one figure apart is a genuine reconstruction',
+  rebuildMatchesLive({ weak: 402, ok: 402, expected: 329, agreements: 253 }, liveNow) === false);
+check('a figure the live month does not have is not a match',
+  rebuildMatchesLive({ weak: 402, ok: 402, expected: 329, agreements: 311, extra: 1 },
+    { weak: 402, ok: 402, expected: 329 }) === false);
+check('a figure missing from the rebuild is not a match',
+  rebuildMatchesLive({ weak: 402, ok: 402, expected: 329 }, liveNow) === false);
+check('an empty rebuild matches nothing',
+  rebuildMatchesLive({ _rebuilt: true }, { _auto: true }) === false);
+check('no live month means nothing to match against',
+  rebuildMatchesLive({ weak: 402 }, null) === false);
+check('no rebuild means nothing to flag', rebuildMatchesLive(null, liveNow) === false);
 
 console.log(failures === 0 ? '\nAll quoted month rebuild tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

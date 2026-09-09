@@ -501,6 +501,16 @@
   font-style: italic;
 }
 
+/* Holds the Quoted Projections status chips (pinned month, rebuilt-month
+   warning) at the left of the edit row, so several can sit side by side. */
+.quotedNotes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-right: auto;
+}
+
 .quotedPinNote {
   font-size: 0.68rem;
   font-weight: 600;
@@ -509,6 +519,18 @@
   border-radius: var(--radius-md);
   padding: 0.1rem 0.4rem;
   margin-right: auto;
+  cursor: help;
+}
+
+/* A rebuilt month that came out identical to the live month: red rather than
+   amber, since the figure is not a month-end reading at all. */
+.quotedSameAsLiveNote {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b91c1c;
+  background: #fee2e2;
+  border-radius: var(--radius-md);
+  padding: 0.1rem 0.4rem;
   cursor: help;
 }
 
