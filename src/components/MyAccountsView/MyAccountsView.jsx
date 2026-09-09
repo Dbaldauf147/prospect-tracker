@@ -3393,14 +3393,23 @@ Fix that now?
     return [selectColumn, ...columns];
   }, [columns, selectedIds]);
 
-  // Selectable ids among the currently filtered/visible rows, and how many
-  // of them are already selected — drives the select-all-visible toggle.
+  // Selectable ids among the rows actually on screen, and how many of them
+  // are already selected — drives the select-all-visible toggle. When the
+  // table's own column-header filters are active, tableVisibleRows is that
+  // post-filter subset; when they're not, DataTable reports back the whole
+  // filteredAccounts set it was handed, so this tracks the screen either
+  // way. Falls back to filteredAccounts before the first report.
   const selectableVisibleIds = useMemo(
-    () => (filteredAccounts || []).filter(isBulkSelectable).map(r => r.id),
-    [filteredAccounts]
+    () => (tableVisibleRows || filteredAccounts || []).filter(isBulkSelectable).map(r => r.id),
+    [tableVisibleRows, filteredAccounts]
   );
+  const visibleIdSet = useMemo(() => new Set(selectableVisibleIds), [selectableVisibleIds]);
   const selectedVisibleCount = selectableVisibleIds.filter(id => selectedIds.has(id)).length;
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length;
+  // Rows picked before the current filters that the user can no longer see.
+  // A bulk edit would still hit them, so the count is surfaced with a way
+  // to drop them.
+  const selectedHiddenCount = selectedIds.size - selectedVisibleCount;
 
   function toggleSelectAllVisible() {
     setSelectedIds(prev => {
@@ -3409,6 +3418,9 @@ Fix that now?
       else for (const id of selectableVisibleIds) next.add(id);
       return next;
     });
+  }
+  function keepOnlyVisibleSelection() {
+    setSelectedIds(prev => new Set([...prev].filter(id => visibleIdSet.has(id))));
   }
   function clearSelection() { setSelectedIds(new Set()); }
 
@@ -3940,11 +3952,23 @@ Fix that now?
             onChange={toggleSelectAllVisible}
             style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
           />
-          Select all ({selectableVisibleIds.length})
+          Select all visible ({selectableVisibleIds.length})
         </label>
         <span style={{ fontSize: '0.7rem', fontWeight: 600, color: selectedIds.size ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
           {selectedIds.size} selected
         </span>
+        {selectedHiddenCount > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+            ({selectedHiddenCount} not shown by the current filters)
+            <button
+              onClick={keepOnlyVisibleSelection}
+              title="Drop the selected rows that the current column filters hide"
+              style={{ padding: '0.15rem 0.45rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+            >
+              Keep visible only
+            </button>
+          </span>
+        )}
         <select
           value={bulkField}
           onChange={e => { setBulkField(e.target.value); setBulkValue(''); }}
