@@ -1,4 +1,4 @@
-// Where the Services Pricing estimator's working scenario lives between
+// Where the Deal Pricing estimator's working scenario lives between
 // visits.
 //
 // The rate card is in settings and syncs across devices; this is the other

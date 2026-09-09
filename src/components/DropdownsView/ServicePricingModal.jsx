@@ -209,7 +209,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
                 ? 'A flat figure that bills every year, whatever the service’s Type says'
                 : (b.unitLabel
                   ? `Charged per ${b.unitLabel.toLowerCase().replace(/s$/, '')}`
-                  : (percent ? 'A cut of the deal size typed into the estimator' : 'A flat figure'))}
+                  : (percent ? 'A cut of the deal size typed on the Deal Pricing subtab' : 'A flat figure'))}
               >
                 {b.label}
               </span>
@@ -249,8 +249,8 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
 
       <div className={styles.pricingModalHint}>
         {typed
-          ? 'A fee is typed into the Est. Year 1 Fee column on the table, and it wins: the lines above are kept but not charged. Clear it there to price off these rates again.'
-          : 'The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1 columns are what that comes to on the scenario open behind this panel. The Total row adds dollars, not rates: its recurring figure is the annual this service bills across every line.'}
+          ? 'A fee is typed into the Typed Fee column on the table, and it wins: the lines above are kept but not charged. Clear it there to price off these rates again.'
+          : 'The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1 columns are what that comes to under the estimate open on the Deal Pricing subtab. The Total row adds dollars, not rates: its recurring figure is the annual this service bills across every line.'}
       </div>
     </>
   );
@@ -304,7 +304,7 @@ export function ServicePricingModal({
             </div>
             <div className={styles.oppPickerSub}>
               What this service is charged on, and what that comes to under the estimate open on the
-              tab behind. Every box saves as you leave it — the same edit as typing in the table.
+              Deal Pricing subtab. Every box saves as you leave it — the same edit as typing in the table.
             </div>
           </div>
           <button type="button" className={styles.detailClose} onClick={onClose} aria-label="Close">×</button>
@@ -328,7 +328,7 @@ export function ServicePricingModal({
                   ? (row._unit
                     ? `The line this service leads with, and the one the Units box below counts for. Charged per ${unitNoun.replace(/s$/, '')}.`
                     : percent
-                      ? 'The line this service leads with. A cut of the deal size typed into the estimator.'
+                      ? 'The line this service leads with. A cut of the deal size typed on the Deal Pricing subtab.'
                       : 'The line this service leads with. A flat figure, whatever the account’s size.')
                   : 'Set by the first row you fill in on the breakdown below. It is the line the rate card’s own columns show.'}
               </span>
@@ -350,8 +350,8 @@ export function ServicePricingModal({
             {/* The count the per-unit rate multiplies. Read-only: the number
                 belongs to the account being priced, and a figure typed over
                 it here prices the service against something the estimate
-                behind this panel isn't. It still says where it came from,
-                because the Year 1 column is meaningless without it. */}
+                on the Deal Pricing subtab isn't. It still says where it came
+                from, because the Year 1 column is meaningless without it. */}
             <ReadOnlyField
               label={row._unitLabel ? `Units (${unitNoun})` : 'Units'}
               hint={!row._unit
@@ -359,12 +359,12 @@ export function ServicePricingModal({
                   ? `${row.basisLabel} isn’t priced per unit, so there’s nothing to count.`
                   : 'Pick a per-unit basis first.')
                 : row.units === null
-                  ? `No ${unitNoun} to price against — put a figure in the ${row._unitLabel || 'units'} box in the estimator.`
+                  ? `No ${unitNoun} to price against — put a figure in the ${row._unitLabel || 'units'} box on the Deal Pricing subtab.`
                   : row._unitsOwn
-                    ? 'Set against this service for this estimate, whatever the shared count says. Clear it in the Units column on the table.'
+                    ? 'Set against this service for this estimate, whatever the shared count says. Clear it in the Units column on the Deal Pricing subtab.'
                     : row._unitsTyped
-                      ? 'A standing figure on the rate card, in the Units column on the table.'
-                      : `From the ${row._unitLabel} box in the estimator.`}
+                      ? 'A standing figure on the rate card.'
+                      : `From the ${row._unitLabel} box on the Deal Pricing subtab.`}
             >
               {!row._unit || row.units === null
                 ? <span className={styles.serviceMutedCell}>-</span>
@@ -389,10 +389,16 @@ export function ServicePricingModal({
         </div>
 
         <div className={styles.basesFooter}>
-          <label className={styles.pricingModalScope} title="Include this service in the deal estimate on the tab behind">
-            <input type="checkbox" checked={row._scoped} onChange={onToggleScope} />
-            In scope for this estimate
-          </label>
+          {/* Only where the scope is actually editable. Opened off the rate
+              card there is no estimate to tick this service into — that is
+              the Deal Pricing subtab's job — and a checkbox that wrote to
+              one from here would be an edit nobody asked for. */}
+          {onToggleScope && (
+            <label className={styles.pricingModalScope} title="Include this service in the deal estimate on the Deal Pricing subtab">
+              <input type="checkbox" checked={row._scoped} onChange={onToggleScope} />
+              In scope for this estimate
+            </label>
+          )}
           <span className={styles.basesFooterSpacer} />
           <button type="button" className={styles.importOppBtn} onClick={onClose}>Done</button>
         </div>

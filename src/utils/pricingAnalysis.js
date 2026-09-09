@@ -1,6 +1,6 @@
 // A deal estimate, frozen onto the opp it was built for.
 //
-// The estimator on Dropdowns › Services Pricing works out what a scope is
+// The estimator on Dropdowns › Deal Pricing works out what a scope is
 // worth against the rate card as it stands today. Save it to an opp and it
 // stops being a live calculation: the rows, the rates, the counts they were
 // priced against and what each came to are copied out whole. A rate edited

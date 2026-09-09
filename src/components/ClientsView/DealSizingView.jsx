@@ -1,8 +1,8 @@
 // Deal Sizing — what each existing client would be worth, service by service.
 //
 // The rate card and the estimator have both existed for a while on
-// Dropdowns › Services Pricing, and between them they answer "what would this
-// scope cost someone". They answer it once, for a hypothetical account you
+// Dropdowns — the card on Services Pricing, the estimator on Deal Pricing —
+// and between them they answer "what would this scope cost someone". They answer it once, for a hypothetical account you
 // type counts into. The question a CDM actually works from is the other way
 // round: given the book of clients I already have, which ones are worth what,
 // and for which services?

@@ -390,7 +390,7 @@ const DEFAULT_HEADERS = [
   // the Follow Up Notes popup because it's a date being negotiated
   // rather than a drawing preference.
   'Target Signature Date',
-  // What the Services Pricing estimator worked this deal's scope out to,
+  // What the Deal Pricing estimator worked this deal's scope out to,
   // saved from there. Read-only here: the figure and the working behind it
   // are a copy taken when it was saved (see utils/pricingAnalysis).
   ESTIMATED_FEE_COLUMN,
@@ -1999,7 +1999,7 @@ function QuotedAmountCell({
   // What the services in this deal's Scope are worth in their first year,
   // read off the rate card on Dropdowns › Services Pricing.
   //
-  // The same estimator the Services Pricing tab runs, so a fee here is the
+  // The same estimator the Deal Pricing tab runs, so a fee here is the
   // fee it shows: a typed Est. Fee wins outright, otherwise the basis and
   // rate are worked against the counts. The only count an opp carries is its
   // Sites, so a service priced per meter or per invoice comes back priced
@@ -2215,7 +2215,7 @@ function QuotedAmountCell({
                             <strong
                               style={{ color: '#1E293B' }}
                               title={line.typed
-                                ? 'Est. Fee typed on the Services Pricing tab'
+                                ? 'Est. Fee typed on the Services Pricing rate card'
                                 : 'Worked out from this service\u2019s basis and rate'}
                             >{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</strong>
                           ) : (
@@ -2374,11 +2374,11 @@ function PricingOptionCell({ value, onClear }) {
   );
 }
 
-// Estimated Fee cell. The figure is whatever the Services Pricing
-// estimator saved here; clicking it opens the working behind it — which
-// services were in the deal, what each was priced on, and what they came
-// to. Read-only, because it's a snapshot: re-pricing happens on the
-// Services Pricing tab, which saves a new one over it.
+// Estimated Fee cell. The figure is whatever the Deal Pricing estimator
+// saved here; clicking it opens the working behind it — which services
+// were in the deal, what each was priced on, and what they came to.
+// Read-only, because it's a snapshot: re-pricing happens on the Deal
+// Pricing tab, which saves a new one over it.
 //
 // A row with no saved analysis still shows its Estimated Fee if one is
 // there (an older save, a pasted figure) — it just has nothing to open,
@@ -2390,8 +2390,8 @@ function EstimatedFeeCell({ value, analysis, onOpen }) {
       <span
         style={{ color: shown ? 'inherit' : 'var(--color-text-muted)' }}
         title={shown
-          ? 'No saved working behind this figure. Import the opp on Dropdowns › Services Pricing and save the estimate to attach one.'
-          : 'Set from Dropdowns › Services Pricing: import this opp, tick the services, then Save to opp.'}
+          ? 'No saved working behind this figure. Import the opp on Dropdowns › Deal Pricing and save the estimate to attach one.'
+          : 'Set from Dropdowns › Deal Pricing: import this opp, tick the services, then Save to opp.'}
       >{shown || '-'}</span>
     );
   }
@@ -6610,7 +6610,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Notes': 'overview',
   // Stage 4 — Influence and Develop covers both the Qualifying and the
   // Quoting stages (see daysInStage.jsx), which is where the number gets
-  // worked out: what the Services Pricing estimator makes of the scope,
+  // worked out: what the Deal Pricing estimator makes of the scope,
   // whether the deal prices in USD, and the margin going for sales-leader
   // review and coming back approved.
   //
@@ -10757,8 +10757,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
   // _id of the opp whose saved pricing analysis is open, resolved against
-  // the live records the same way, so a re-save from the Services Pricing
-  // tab shows through without closing and reopening the popup.
+  // the live records the same way, so a re-save from the Deal Pricing tab
+  // shows through without closing and reopening the popup.
   const [analysisOppId, setAnalysisOppId] = useState(null);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.

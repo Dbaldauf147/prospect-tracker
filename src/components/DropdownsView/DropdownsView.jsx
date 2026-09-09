@@ -16,6 +16,7 @@ import {
 } from '../../utils/dropdownListsStore';
 import { QuestionsTab } from './QuestionsTab';
 import { ServicesPricingTab } from './ServicesPricingTab';
+import { DealPricingTab } from './DealPricingTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
@@ -1036,7 +1037,7 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   );
 }
 
-// `prospects` is read only by the Services Pricing subtab, to answer how many
+// `prospects` is read only by the Deal Pricing subtab, to answer how many
 // sites and accounts an imported opp's company has. Optional: the tab falls
 // back to the opp's own columns and the company's saved site list, so the
 // page still works if it's ever rendered without them.
@@ -1047,14 +1048,16 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // renders outside the AuthProvider, and with no uid the estimate below
   // simply isn't remembered.
   const { user } = useAuth() || {};
-  // The Services Pricing subtab's working estimate: which services are
-  // ticked, how many sites / accounts / meters the account has, and the deal
-  // size percentage-based fees take their cut of. Held here rather than in
-  // the subtab so stepping over to Services to fix a rate and coming back
-  // doesn't throw a half-built estimate away, and seeded from what the last
-  // visit left behind so leaving the page or reloading it doesn't either.
-  // The subtab is what writes it (see pricingEstimateStore) — this reads
-  // back the scenario half of the same record.
+  // The Deal Pricing subtab's working estimate: which services are ticked,
+  // how many sites / accounts / meters the account has, and the deal size
+  // percentage-based fees take their cut of. Held here rather than in the
+  // subtab so stepping over to Services Pricing to fix a rate and coming
+  // back doesn't throw a half-built estimate away, and seeded from what the
+  // last visit left behind so leaving the page or reloading it doesn't
+  // either. Deal Pricing is what writes it (see pricingEstimateStore) —
+  // this reads back the scenario half of the same record, and hands it to
+  // Services Pricing read-only so a rate can be read against the deal it is
+  // being quoted on.
   const [pricingScenario, setPricingScenario] = useState(
     () => loadPricingEstimate(user?.uid)?.scenario || { services: [], counts: {}, serviceUnits: {}, dealSize: '' },
   );
@@ -1168,7 +1171,8 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     [settings?.hiddenServices],
   );
   const hiddenCount = hiddenServices.size;
-  // What the Services Pricing subtab lists. Same rows as the Services table
+  // What the Services Pricing and Deal Pricing subtabs list. Same rows as the
+  // Services table
   // — so a service added, renamed or re-filed there is priced under its new
   // identity without a second edit — minus the hidden ones: a service that's
   // out of the Opps Scope picker can't be in a deal, so pricing it is moot.
@@ -1625,6 +1629,15 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           className={activeTab === 'pricing' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('pricing')}
         >Services Pricing <span className={styles.subtabCount}>{pricingServiceRows.length}</span></button>
+        {/* One deal at a time, priced off the card the subtab before it
+            keeps. The count is what's ticked into the scope rather than how
+            many services exist, because that is the number this tab is
+            about. */}
+        <button
+          type="button"
+          className={activeTab === 'deal' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('deal')}
+        >Deal Pricing <span className={styles.subtabCount}>{pricingScenario?.services?.length || 0}</span></button>
         <button
           type="button"
           className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
@@ -1849,6 +1862,15 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
         </>
       ) : activeTab === 'pricing' ? (
         <ServicesPricingTab
+          settings={settings}
+          updateSettings={updateSettings}
+          serviceRows={pricingServiceRows}
+          // Read-only here: the rate card shows what a rate comes to under
+          // the deal open next door, but only that tab edits it.
+          scenario={pricingScenario}
+        />
+      ) : activeTab === 'deal' ? (
+        <DealPricingTab
           settings={settings}
           updateSettings={updateSettings}
           serviceRows={pricingServiceRows}
