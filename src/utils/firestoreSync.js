@@ -1,10 +1,10 @@
 // `getDoc` is aliased: this module already has a local getDoc(id) helper
 // that builds a prospect doc ref, and the two names would collide.
-import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, disableNetwork, enableNetwork } from 'firebase/firestore';
 import { db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
 // the analysis timeouts below for why a save needs one.
-import { withTimeout, isTimeoutError } from './withTimeout.js';
+import { withTimeout } from './withTimeout.js';
 
 // Subcollection path for analyses saved against a prospect. Kept
 // separate from the prospect doc so the bulk subscribeToProspects
@@ -397,7 +397,45 @@ const ANALYSIS_CHUNK_SIZE = 700 * 1024;
 // link is tens of seconds — and short enough that a wedged one is called
 // out rather than waited on forever.
 const ANALYSIS_READ_TIMEOUT_MS = 20_000;
-const ANALYSIS_WRITE_TIMEOUT_MS = 90_000;
+// Per chunk, and the chunks go up in parallel — so a portfolio big enough
+// to split into many of them is given proportionally longer before any one
+// of them is called stalled, while the common case (a workbook that fits in
+// one or two documents) finds out inside a minute instead of sitting there.
+const ANALYSIS_WRITE_TIMEOUT_MS = 45_000;
+const ANALYSIS_WRITE_TIMEOUT_MAX_MS = 4 * 60_000;
+const analysisWriteTimeout = (chunkCount) => Math.min(
+  ANALYSIS_WRITE_TIMEOUT_MS + Math.max(0, chunkCount - 1) * 10_000,
+  ANALYSIS_WRITE_TIMEOUT_MAX_MS,
+);
+
+// Tear the client's connection down and bring it back up.
+//
+// When a save stalls, the SDK is not "offline" — it believes it has a
+// connection and is waiting on a stream that will never answer, which is
+// why the promises neither resolve nor reject. Firestore has no way to ask
+// "is this stream still alive"; disableNetwork() closes the streams and
+// discards that belief (queued writes are kept), and enableNetwork() opens
+// fresh ones. It is the one lever a client has for a wedged transport, so a
+// retry that doesn't pull it is a retry onto the same dead stream.
+//
+// Both calls are local state changes, but they are bounded anyway: this
+// runs on the path taken because something that should have answered
+// didn't. Best-effort throughout — a failure here just means the retry
+// tries its luck on the connection it had.
+export async function kickFirestoreConnection() {
+  try {
+    await withTimeout(disableNetwork(db), 5_000, 'closing the database connection');
+    await withTimeout(enableNetwork(db), 5_000, 'reopening the database connection');
+    return true;
+  } catch (err) {
+    console.warn('Could not restart the Firestore connection:', err?.message || err);
+    // Never leave the client offline because the reopen went wrong: that
+    // would take the rest of the app down with the save. Unawaited on
+    // purpose — this is the path where waiting is what went wrong.
+    enableNetwork(db).catch(() => {});
+    return false;
+  }
+}
 
 // Small sibling doc listing the generations whose chunks are on the server
 // but that `main` does not point at: the one currently being written, and
@@ -459,7 +497,7 @@ export async function saveIndicativeAnalysis(
   { fileName, dataBase64, sizeBytes },
   // `readTimeoutMs` / `writeTimeoutMs` are the module's ceilings, taken as
   // options so a test can prove they work without sitting through one.
-  { onPhase, readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS, writeTimeoutMs = ANALYSIS_WRITE_TIMEOUT_MS } = {},
+  { onPhase, readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS, writeTimeoutMs } = {},
 ) {
   const col = getAnalysisCol(prospectId);
   const data = String(dataBase64 || '');
@@ -471,46 +509,19 @@ export async function saveIndicativeAnalysis(
   // Which step the save is on, so the page can name it. Every step below
   // can be the one that doesn't come back, and "Saving…" doesn't say which.
   const phase = (step, extra) => { try { onPhase?.({ step, ...extra }); } catch { /* never fail a save on its own progress report */ } };
+  const writeMs = writeTimeoutMs ?? analysisWriteTimeout(chunks.length);
 
-  // Two small documents, never the collection: what `main` points at now,
-  // and what a previous save may have left unreferenced. Between them they
-  // name every chunk this save is allowed to delete, by id, so nothing
-  // downloads a stored workbook on the way to writing one.
-  //
-  // Bookkeeping only — they say what may be DELETED, not what to write — so
-  // a read that doesn't answer downgrades the save rather than failing it.
-  // Blocking an upload on a prune plan would be the tail wagging the dog.
-  phase('reading');
-  let prevMeta = {};
-  let priorPending = [];
-  let hadPendingDoc = false;
-  let degraded = false;
-  try {
-    const [mainSnap, pendingSnap] = await withTimeout(Promise.all([
-      fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
-      fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
-    ]), readTimeoutMs, 'reading the saved analysis metadata');
-    prevMeta = mainSnap.exists() ? (mainSnap.data() || {}) : {};
-    const pendingRaw = pendingSnap.exists() ? pendingSnap.data() : null;
-    priorPending = Array.isArray(pendingRaw?.gens) ? pendingRaw.gens : [];
-    hadPendingDoc = pendingSnap.exists();
-  } catch (err) {
-    if (!isTimeoutError(err)) throw err;
-    // Nothing is known about what came before, so nothing may be deleted
-    // and the pending list must not be overwritten with a shorter one.
-    // The background sweep below cleans up on ids instead.
-    console.warn('Analysis bookkeeping read timed out; saving without a prune plan:', err.message);
-    degraded = true;
-  }
+  // Started here, deliberately NOT awaited: reading what is already stored
+  // and recording this generation are both bookkeeping for the PRUNE at the
+  // end. Neither is needed to write a new generation, and awaiting them put
+  // two server round-trips in front of the first uploaded byte — which is
+  // exactly where a save was found sitting, on "checking what is stored…",
+  // when the browser could not reach Firestore at all. The upload starts
+  // immediately now; the prune uses whatever this has learned by the time
+  // the upload finishes, and cleans up on its own terms if it learned
+  // nothing.
+  const bookkeeping = readAnalysisBookkeeping(col, gen, chunks.length, { readTimeoutMs, writeTimeoutMs: writeMs });
 
-  // Written before the chunks it describes, so a save that dies mid-upload
-  // leaves its ids on record for the next one to clean up. That's what the
-  // old collection listing bought, at a fraction of the cost.
-  if (!degraded) {
-    await withTimeout(setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), {
-      gens: [...priorPending, { gen, chunkCount: chunks.length, at: Date.now() }],
-    }), writeTimeoutMs, 'recording the upload');
-  }
   // Write every chunk first, then the `main` metadata doc LAST, so a live
   // subscriber only reassembles once all referenced chunks exist. Under a
   // fresh generation, so nothing here touches the docs the current `main`
@@ -520,7 +531,7 @@ export async function saveIndicativeAnalysis(
   phase('uploading', { done, total: chunks.length });
   await Promise.all(chunks.map((c, i) => withTimeout(
     setDoc(doc(col, analysisChunkId(gen, i)), { i, gen, data: c }),
-    writeTimeoutMs,
+    writeMs,
     `uploading part ${i + 1} of ${chunks.length}`,
   ).then(() => { done += 1; phase('uploading', { done, total: chunks.length }); })));
   // setDoc without merge so any legacy inline `dataBase64` on the main doc
@@ -532,7 +543,7 @@ export async function saveIndicativeAnalysis(
     chunkCount: chunks.length,
     gen,
     capturedAt: serverTimestamp(),
-  }), writeTimeoutMs, 'saving the analysis record');
+  }), writeMs, 'saving the analysis record');
   phase('saved');
 
   // The analysis is saved the moment `main` names the new generation —
@@ -541,8 +552,45 @@ export async function saveIndicativeAnalysis(
   // a pile of deletes (each its own server round-trip, each able to hang on
   // exactly the connection that makes this worth guarding) between a
   // finished upload and the word "Saved".
-  pruneOldAnalysisChunks({ col, prevMeta, priorPending, gen, degraded, hadPendingDoc })
+  bookkeeping
+    .then((bk) => pruneOldAnalysisChunks({ col, gen, ...bk }))
     .catch((err) => console.warn('Analysis chunk cleanup failed (old chunks left behind):', err));
+}
+
+// What the prune needs to know, gathered alongside the upload rather than
+// in front of it: the generation `main` points at, and the generations a
+// previous save left unreferenced. Between them they name every chunk this
+// save may delete, by id, so nothing has to list (and download) the
+// collection to find out.
+//
+// Also records this save's own generation on the `pending` doc, so an
+// upload that dies partway leaves its chunk ids on record for the next save
+// to clean up. That write no longer strictly precedes the chunks it
+// describes — it races them — which costs the cleanup nothing in practice
+// and buys the upload a round-trip it never had to wait for.
+//
+// Never rejects: a stalled read means no prune plan, which is a storage
+// cost, not a failed save.
+async function readAnalysisBookkeeping(col, gen, chunkCount, { readTimeoutMs, writeTimeoutMs }) {
+  try {
+    const [mainSnap, pendingSnap] = await withTimeout(Promise.all([
+      fsGetDoc(doc(col, ANALYSIS_DOC_ID)),
+      fsGetDoc(doc(col, ANALYSIS_PENDING_DOC_ID)),
+    ]), readTimeoutMs, 'reading the saved analysis metadata');
+    const prevMeta = mainSnap.exists() ? (mainSnap.data() || {}) : {};
+    const pendingRaw = pendingSnap.exists() ? pendingSnap.data() : null;
+    const priorPending = Array.isArray(pendingRaw?.gens) ? pendingRaw.gens : [];
+    await withTimeout(setDoc(doc(col, ANALYSIS_PENDING_DOC_ID), {
+      gens: [...priorPending, { gen, chunkCount, at: Date.now() }],
+    }), writeTimeoutMs, 'recording the upload');
+    return { prevMeta, priorPending, hadPendingDoc: pendingSnap.exists(), degraded: false };
+  } catch (err) {
+    // Nothing is known about what came before, so nothing may be deleted by
+    // id and the pending list must not be overwritten with a shorter one.
+    // The sweep, which reads the collection itself, cleans up instead.
+    console.warn('Analysis bookkeeping did not complete; saving without a prune plan:', err?.message || err);
+    return { prevMeta: {}, priorPending: [], hadPendingDoc: false, degraded: true };
+  }
 }
 
 // Delete the chunks the save above orphaned, and tidy the pending list.

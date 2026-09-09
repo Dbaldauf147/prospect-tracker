@@ -28,10 +28,16 @@ export const hang = [];
 
 export const hangOn = (match, op) => { hang.push({ match, op }); };
 
+// The connection lever the save pulls before a retry. Recorded, not real.
+export const network = { calls: [] };
+export const disableNetwork = () => { network.calls.push('disable'); return Promise.resolve(); };
+export const enableNetwork = () => { network.calls.push('enable'); return Promise.resolve(); };
+
 export function reset() {
   calls.length = 0;
   store.clear();
   hang.length = 0;
+  network.calls.length = 0;
 }
 
 const hangs = (op, path) => hang.some((rule) => (
