@@ -14,7 +14,7 @@
 import { summaryForOpp, mergeIntoNotes } from './callRecordingsStore';
 import { loadOppsFromCache } from './oppsCache';
 import { setOppFields } from './opps2Store';
-import { nextStepLinesFromCall, appendNextSteps, callOnOppPatch } from './nextSteps';
+import { callOnOppPatch } from './nextSteps';
 import { withLastCallStamp } from './lastCallOnOpp';
 import { apiFetch } from './apiFetch';
 
@@ -45,33 +45,26 @@ export async function pushSummaryToOpp({ uid, recordingId, record, persist }) {
     patch['Last Spoke'] = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
   }
 
-  // The call's follow-ups, onto the opp's Next Steps checklist — the
-  // column Opps 2 shows as "Notes", which is where the rep actually
-  // works from. The summary block above lands in the Memo field and is
-  // prose about the call; this is the list of what to do next.
-  const steps = appendNextSteps(
-    opp['Next Steps'], opp['_nextStepsWaiting'], nextStepLinesFromCall(record),
-  );
-  if (steps.added > 0) {
-    patch['Next Steps'] = steps.text;
-    patch['_nextStepsWaiting'] = steps.waiting;
-  }
-
-  // One write: the steps and their Waiting On array are index-aligned,
-  // and an opp holding one without the other reads every step below
-  // the break against the wrong Waiting On. The call reference goes in
-  // the same write — it is what the Notes popup names as the last
-  // conversation, and it explains the steps sitting under it.
+  // The call's follow-ups deliberately do NOT go onto the opp's Next
+  // Steps checklist — the column Opps 2 shows as "Notes". They are what
+  // one conversation said, not a list somebody has decided to work off,
+  // and merging them in left a deal's checklist full of lines nobody
+  // typed with no way to tell which were which. They stay on the call
+  // record and are read back per call by the Follow Up Notes popup's
+  // Calls tab. What this pushes is the prose block, into the Memo field.
+  //
+  // The call reference goes in the same write: it is what the Notes
+  // popup names as the last conversation on the deal.
   await setOppFields(uid, oppId, withLastCallStamp(patch, opp, record));
-  return persist(recordingId, {
-    pushedToOppAt: new Date().toISOString(),
-    nextStepsPushed: steps.added,
-  });
+  return persist(recordingId, { pushedToOppAt: new Date().toISOString() });
 }
 
 /**
- * What the opp learns from a call mapped to it: the call's next steps,
- * and the call itself.
+ * What the opp learns from a call mapped to it: which call it was.
+ *
+ * The call's follow-ups used to land on the opp's Next Steps checklist
+ * here too, and no longer do — see callOnOppPatch. They stay on the call
+ * record, and the Follow Up Notes popup's Calls tab reads them back.
  *
  * Runs at both moments that can make those facts true — tagging a call
  * that already has follow-ups, and summarising one that was tagged
@@ -84,11 +77,13 @@ export async function pushSummaryToOpp({ uid, recordingId, record, persist }) {
  * prose into the Memo field and is opt-in for exactly that reason,
  * while these are the facts of the mapping and are what was asked for.
  *
- * Returns how many next steps were added — zero when the call hasn't
- * been summarised yet, or when the opp already had every one of them.
- * The reference is still stamped in that case.
+ * Returns 0 — the count of steps added, kept in the shape for the
+ * callers that report it, and now never anything else.
  */
-export async function recordCallOnOpp({ uid, recordingId, record, persist }) {
+// `recordingId` / `persist` are no longer read — nothing about the call
+// record changes now that the steps stay on it — but callers still pass
+// the same options object as the other push above.
+export async function recordCallOnOpp({ uid, record }) {
   const oppId = record?.oppId;
   if (!oppId) return 0;
 
@@ -99,12 +94,11 @@ export async function recordCallOnOpp({ uid, recordingId, record, persist }) {
   // The steps and the reference together, through the same helper the
   // Opps page's "Calls to map" queue uses — mapping a call means the
   // same thing whichever page it was mapped from.
-  const { patch, added } = callOnOppPatch(opp, record);
+  const { patch } = callOnOppPatch(opp, record);
   if (Object.keys(patch).length === 0) return 0;
 
   await setOppFields(uid, oppId, patch);
-  if (added > 0) await persist(recordingId, { nextStepsPushed: added });
-  return added;
+  return 0;
 }
 
 /**

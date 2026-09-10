@@ -219,21 +219,19 @@ export function UntaggedCalls({ opps = [], onTagged }) {
 
   /**
    * Tagging a call here does what tagging it on the Call Recordings page
-   * does: it says which deal the call belongs to, AND it puts what the
-   * call produced onto that deal.
+   * does: it says which deal the call belongs to, and names it as that
+   * deal's last conversation.
    *
-   * Until now this queue only wrote the tag. The follow-ups stayed on the
-   * call record, so a call mapped from the Opps page — the page whose
-   * whole point is the checklist — was the one way of mapping a call that
-   * left the checklist untouched, and the difference was invisible: same
-   * button, same wording, different outcome.
+   * It does NOT copy the call's follow-ups onto the opp's Next Steps —
+   * see callOnOppPatch. They stay on the call record and are read back
+   * per call by the Follow Up Notes popup's Calls tab, so the checklist
+   * holds what the user put on it.
    *
    * The write onto the opp goes through the parent, because this page
    * holds the opps dataset in state and saves it back on every change; a
    * write straight to the store would be overwritten by the next cell
    * edit. When there is no parent handler the tag still saves — the
-   * mapping is the thing the user asked for, and the Call Recordings
-   * page's own push covers the steps on the next summarise.
+   * mapping is the thing the user asked for.
    */
   async function onTag(call, opp) {
     const saved = await settle(call, tagOppPatch(opp, {
@@ -243,19 +241,14 @@ export function UntaggedCalls({ opps = [], onTagged }) {
     if (!saved || !onTagged) return;
     const account = opp['Account'] || 'the opp';
     try {
-      const added = await onTagged(opp._id, saved);
-      setNote(added > 0
-        ? `${added} next step${added === 1 ? '' : 's'} from “${saved.name || 'that call'}” added to ${account}.`
-        : `Tagged to ${account}. No next steps yet — summarize the call and they’ll follow.`);
-      // Same stamp the Call Recordings page writes, so its card can say
-      // this call's steps already landed rather than offering to push
-      // them again.
-      if (added > 0) await saveCallRecord(uid, saved.id, { nextStepsPushed: added }, saved);
+      await onTagged(opp._id, saved);
+      setNote(`“${saved.name || 'That call'}” tagged to ${account}. Its next steps are in the Calls tab of that opp's notes.`);
     } catch (err) {
-      // The tag itself is saved; only the copy onto the opp failed. Say
-      // which, so the user doesn't re-tag chasing a step that landed.
+      // The tag itself is saved; only the reference onto the opp failed.
+      // Say which, so the user doesn't re-tag a call that is already
+      // mapped chasing something that did land.
       setNote('');
-      setError(`Tagged to ${account}, but its next steps didn’t reach the opp: ${err?.message || err}`);
+      setError(`Tagged to ${account}, but the opp couldn’t be stamped with it: ${err?.message || err}`);
     }
   }
 
