@@ -139,7 +139,8 @@ export function CallNextStepsLog({ oppId }) {
       <div style={emptyStyle}>
         No call recordings are mapped to this deal yet. Tag one from{' '}
         <strong>Calls to map</strong> above the opps table, or on the Call Recordings page —
-        its follow-ups land on this deal’s Next Steps and are logged here.
+        whatever it said to do next is listed here, call by call. It stays here rather than
+        being copied onto the Notes tab, which holds what you put on it.
       </div>
     );
   }

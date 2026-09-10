@@ -101,182 +101,33 @@ export function nextStepLinesFromCall(record) {
   return out;
 }
 
-/**
- * The steps every already-mapped opp never received, as one patch per opp.
- *
- * The live path appends a call's follow-ups when the call is tagged, and
- * again when it is summarised — which does nothing for the calls mapped
- * before either of those existed. Their follow-ups are still sitting on
- * the call records, attached to the opp by a mapping the user already
- * made, and the opp's checklist has never seen them.
- *
- * Per opp, its calls are replayed OLDEST FIRST through the same
- * `appendNextSteps` the live path uses, so this can only produce what
- * tagging those calls in date order would have: the same lines, in the
- * same order, deduped the same way. Calls with no follow-ups contribute
- * nothing, and an opp that already has every line comes back with no
- * patch at all — which is what makes running it twice a no-op.
- *
- * Undated calls are replayed last. A call with no date can't be shown to
- * belong anywhere in the order, and putting it at the end is the reading
- * that doesn't push a dated call's steps down the list.
- *
- *   records — stored call records (array, or the id-keyed map)
- *   opps    — the Opps 2 records
- *
- *   { patches: { [oppId]: patch }, opps, steps, calls }
- *
- * `opps` counts the opps that would change, `steps` the lines they would
- * gain, and `calls` the mapped calls those lines came from — so a caller
- * can say what it is about to write into a checklist the user works off
- * BEFORE writing it.
- */
-export function backfillNextStepPatches(records, opps) {
-  const list = Array.isArray(records) ? records : Object.values(records || {});
-  const byOpp = new Map();
-  for (const record of list) {
-    const oppId = String(record?.oppId || '').trim();
-    if (!oppId) continue;
-    if (!byOpp.has(oppId)) byOpp.set(oppId, []);
-    byOpp.get(oppId).push(record);
-  }
-
-  const patches = {};
-  let changed = 0, steps = 0, calls = 0;
-  for (const opp of (Array.isArray(opps) ? opps : [])) {
-    const id = String(opp?._id || '').trim();
-    const mapped = id ? byOpp.get(id) : null;
-    if (!mapped || mapped.length === 0) continue;
-
-    let text = opp['Next Steps'];
-    let waiting = opp['_nextStepsWaiting'];
-    let added = 0, from = 0;
-    for (const record of oldestFirst(mapped)) {
-      // One call at a time rather than one flattened list, so a call that
-      // contributes nothing new can be told from one that does — the
-      // count is what the confirm dialog is quoting.
-      const out = appendNextSteps(text, waiting, nextStepLinesFromCall(record));
-      if (out.added === 0) continue;
-      text = out.text;
-      waiting = out.waiting;
-      added += out.added;
-      from += 1;
-    }
-    if (added === 0) continue;
-
-    patches[id] = { 'Next Steps': text, _nextStepsWaiting: waiting };
-    changed += 1;
-    steps += added;
-    calls += from;
-  }
-
-  return { patches, opps: changed, steps, calls };
-}
-
-// Mapped calls in the order the live path would have seen them. Undated
-// calls keep their relative order and sit at the end.
-function oldestFirst(records) {
-  return records
-    .map((record, i) => {
-      const t = new Date(record?.recordedAt || 0).getTime();
-      return { record, i, at: Number.isFinite(t) && t > 0 ? t : null };
-    })
-    .sort((a, b) => {
-      if (a.at == null && b.at == null) return a.i - b.i;
-      if (a.at == null) return 1;
-      if (b.at == null) return -1;
-      return a.at - b.at || a.i - b.i;
-    })
-    .map(x => x.record);
-}
-
-/**
- * New steps appended to an opp's existing list.
- *
- * Append-only, and never a replacement. The Next Steps list is a
- * checklist the user works off and edits — a re-push that rewrote it
- * would delete steps they had reworded or added by hand, which is a
- * worse failure than a duplicate. Steps already on the list are skipped
- * instead, so pushing the same call twice adds nothing and re-pushing
- * after a re-summarise adds only what is new.
- *
- * New lines go at the END, which is also what keeps the Waiting On array
- * honest: every existing step keeps its index, and the appended ones get
- * blank entries of their own.
- *
- *   { text, waiting, added, skipped }
- *
- * `text` and `waiting` come back unchanged (same string, same array
- * identity) when there is nothing to add, so a caller can skip the write
- * entirely rather than stamping an opp for an edit that changed nothing.
- */
-export function appendNextSteps(existingText, existingWaiting, lines) {
-  const incoming = (Array.isArray(lines) ? lines : []).filter(Boolean);
-  const waiting = Array.isArray(existingWaiting) ? existingWaiting : [];
-  if (incoming.length === 0) {
-    return { text: String(existingText ?? ''), waiting, added: 0, skipped: 0 };
-  }
-
-  const existingLines = textToBulletItems(existingText);
-  const have = new Set(existingLines.map(stepKey));
-  const fresh = [];
-  let skipped = 0;
-  for (const line of incoming) {
-    const key = stepKey(line);
-    if (!key || have.has(key)) { skipped += 1; continue; }
-    have.add(key);
-    fresh.push(encodeNoteLine(line));
-  }
-  if (fresh.length === 0) {
-    return { text: String(existingText ?? ''), waiting, added: 0, skipped };
-  }
-
-  const text = [...existingLines.map(encodeNoteLine), ...fresh].join('\n');
-  // Padded to the existing line count before the new blanks are added:
-  // an opp whose waiting array is short (or absent) must not have the
-  // new steps' blanks land against older lines.
-  const padded = existingLines.map((_, i) => String(waiting[i] || ''));
-  return {
-    text,
-    waiting: [...padded, ...fresh.map(() => '')],
-    added: fresh.length,
-    skipped,
-  };
-}
-
 // ---- what one opp learns from one call --------------------------------
 
 /**
- * The whole patch a mapped call puts on its opp: the follow-ups it adds
- * to the checklist, and the reference saying it is that deal's last
- * conversation.
+ * The whole patch a mapped call puts on its opp: the reference saying it
+ * is that deal's last conversation, and nothing else.
  *
- * Both halves belong to the same fact — "this call belongs to this deal"
- * — and both have to land in one write, because the steps and their
- * Waiting On array are index-aligned. Composed here rather than at each
- * call site because there is now more than one place a call can be
- * mapped: the Call Recordings page, where the audio is, and the "Calls
- * to map" queue on the Opps page, where the deal is. Two copies of this
- * is exactly the drift that would leave the same action doing different
- * things depending on which page it was taken from.
+ * It used to append the call's follow-ups to the opp's Next Steps as
+ * well. That checklist is what the Opps table shows as "Notes" and what
+ * the Follow Up Notes popup opens on, and a deal with a few mapped calls
+ * filled it with lines nobody typed — a call's follow-ups aren't a
+ * to-do list somebody has decided to work off, they're what one
+ * conversation said. Once merged in they couldn't be told apart from a
+ * hand-written note either: Next Steps is plain text with an
+ * index-aligned Waiting On array and carries no provenance.
+ *
+ * So a call's follow-ups now stay on the call record, where they are
+ * kept forever, and the Follow Up Notes popup's Calls tab reads them
+ * back per call, newest first (see callNextStepsLog.js). The checklist
+ * holds what the user put on it.
  *
  *   { patch, added }
  *
- * `patch` is empty when there is nothing to write — no new steps, and a
- * stamp the opp already carries — so a caller can skip the write rather
- * than stamping an opp for an edit that changed nothing. `added` is how
- * many next steps the checklist gained, which is what a caller reports
- * back to the user.
+ * `patch` is empty when the opp already carries this stamp, so a caller
+ * can skip the write rather than stamping an opp for an edit that
+ * changed nothing. `added` stays in the shape for the callers that
+ * report a count back to the user, and is now always 0.
  */
 export function callOnOppPatch(opp, record) {
-  const steps = appendNextSteps(
-    opp?.['Next Steps'], opp?.['_nextStepsWaiting'], nextStepLinesFromCall(record),
-  );
-  const patch = steps.added > 0
-    ? { 'Next Steps': steps.text, _nextStepsWaiting: steps.waiting }
-    : {};
-  // The reference goes on even when there are no steps to add: a call
-  // mapped before it was summarised has nothing to say about what to do
-  // next, but it is still the last conversation on that deal.
-  return { patch: withLastCallStamp(patch, opp, record), added: steps.added };
+  return { patch: withLastCallStamp({}, opp, record), added: 0 };
 }

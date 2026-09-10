@@ -12312,8 +12312,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
   /**
    * What an opp learns from a call just mapped to it in the "Calls to
-   * map" queue: the call's follow-ups onto its Next Steps checklist, and
-   * the reference naming it as that deal's last conversation.
+   * map" queue: the reference naming it as that deal's last conversation.
+   *
+   * The call's follow-ups are NOT copied onto its Next Steps checklist —
+   * see callOnOppPatch. They stay on the call record and are read back
+   * per call by the Follow Up Notes popup's Calls tab.
    *
    * The Call Recordings page has done this since tagging existed, but it
    * writes through `setOppFields`, which reloads and resaves the whole
@@ -12323,10 +12326,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
    * setData, stamped like any other edit so the cross-device merge still
    * resolves it field by field.
    *
-   * Returns how many steps the checklist gained — zero when the call
-   * hasn't been summarised yet (nothing to add) or when the opp already
-   * had every line. The reference still lands in that case, which is
-   * what the Notes popup reads to say which call the steps came from.
+   * Returns 0 — the count of steps the checklist gained, kept in the
+   * shape for the caller that reports it back, and now never anything
+   * else.
    */
   const recordCallOnOpp = useCallback((oppId, record) => {
     const opp = (dataRef.current?.records || []).find(r => String(r?._id) === String(oppId));
