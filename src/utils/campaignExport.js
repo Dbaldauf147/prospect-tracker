@@ -16,6 +16,7 @@
 import { campaignSendStats, isCampaignActive, campaignOutreachLabel } from './campaignOutreach.js';
 import { stripDashes } from './exportSanitize.js';
 import { campaignSubjects } from './campaignSubjects.js';
+import { followUpInfo, followUpLabel } from './campaignFollowUp.js';
 
 // One CSV cell. Quoted only where it has to be, doubled quotes inside.
 export function csvCell(v) {
@@ -67,7 +68,7 @@ export function eventStatusLabel(v) {
 
 export const CAMPAIGN_CONTACT_HEADERS = [
   'Campaign', 'Subjects', 'Sent To', 'Name', 'Company', 'Recipients',
-  'Sent Date', 'Delivery', 'Status',
+  'Sent Date', 'First Sent', 'Sends', 'Follow-up', 'Delivery', 'Status',
   'Clicks', 'First Click', 'Last Click',
   'Replied By', 'Reply Date', 'Bounce Date', 'Out of Office Date',
   'Event Status',
@@ -96,6 +97,7 @@ export const CAMPAIGN_CONTACT_HEADERS = [
  * tooltip explains that, in a spreadsheet it just reads as a contradiction.
  */
 export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null } = {}) {
+  const followUp = followUpInfo(c);
   return [
     campaignOutreachLabel(campaign),
     // Every line the campaign matches on, so a row's send can be traced back
@@ -106,6 +108,14 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
     c?.company || '',
     c?.recipientCount || 1,
     csvDate(c?.sentDate),
+    // How many emails this address has had under the campaign's subject lines
+    // and whether any of them was a chase — the Follow-up column, in the two
+    // forms a spreadsheet can filter on. All three stay blank where the answer
+    // isn't known (never sent, or a snapshot saved before it was counted)
+    // rather than printing a 1 nobody counted.
+    followUp.known ? csvDate(followUp.firstSentDate) : '',
+    followUp.known ? followUp.sendCount : '',
+    followUpLabel(c),
     delivery,
     contactStatusLabel(c),
     tracking ? tracking.clickCount : '',
