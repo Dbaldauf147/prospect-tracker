@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_HOLD } from '../../utils/metInPerson';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit } from '../../utils/contactTagReview';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
@@ -864,16 +865,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   }
   // Checked state for the known tags
   const [checkedTags, setCheckedTags] = useState(() => checkedTagsFrom(rawTags));
-  // "Met In Person" is its own checkbox, stored locally (never in HubSpot).
-  // Prefer the saved local value; for contacts that haven't been touched
-  // yet, fall back to the legacy HubSpot tag so anyone already tagged shows
-  // up checked.
+  // "Met In Person" is its own dropdown, stored locally (never in HubSpot):
+  // Yes, No, or Hold off. Prefer the saved local answer; for contacts that
+  // haven't been touched yet, fall back to the legacy HubSpot tag so anyone
+  // already tagged reads as Yes. Everyone else is No, the default.
+  //
+  // The stored value is read through the shared rule rather than by hand so
+  // the popup can't disagree with the Key Contacts column or the visit
+  // ladder about the same contact — including on the booleans the old
+  // checkbox wrote, which are still most of the map.
   const metCid = contact.id || contact.vid;
-  const [metInPerson, setMetInPerson] = useState(() => {
-    const stored = metCid != null ? contactMetInPerson[metCid] : undefined;
-    if (stored !== undefined) return !!stored;
-    return parsedTags.some(t => t.toLowerCase() === metLower);
-  });
+  const [metInPerson, setMetInPerson] = useState(() => (
+    metInPersonState(
+      { id: metCid },
+      metCid != null ? contactMetInPerson : null,
+      () => parsedTags.some(t => t.toLowerCase() === metLower),
+    )
+  ));
   // "Invited to Louisville" — another local-only flag (never in HubSpot).
   const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
     metCid != null ? !!contactInvitedToLouisville[metCid] : false
@@ -1358,14 +1366,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     updateTagRecord(tag, (cur) => withTagStatus(cur, cur.status === status ? '' : status));
   }
 
-  function toggleMetInPerson() {
-    setMetInPerson(prev => {
-      const next = !prev;
-      // Local-only — persisted to Firestore settings, never pushed to HubSpot.
-      const cid = contact.id || contact.vid;
-      if (cid != null && onSaveMetInPerson) onSaveMetInPerson(cid, next);
-      return next;
-    });
+  function chooseMetInPerson(next) {
+    setMetInPerson(next);
+    // Local-only — persisted to Firestore settings, never pushed to HubSpot.
+    const cid = contact.id || contact.vid;
+    if (cid != null && onSaveMetInPerson) onSaveMetInPerson(cid, next);
   }
 
   function toggleInvitedToLouisville() {
@@ -1711,15 +1716,40 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${metInPerson ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: metInPerson ? '#F0F9FF' : '#fff' }}>
-            <input
-              type="checkbox"
-              checked={metInPerson}
-              onChange={toggleMetInPerson}
-              style={{ accentColor: '#0078D4', width: '16px', height: '16px', cursor: 'pointer' }}
-            />
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: metInPerson ? '#0369A1' : '#374151' }}>Met In Person</span>
-          </label>
+          {/* Three answers rather than a tick: "hold off" is somebody we
+              have deliberately parked, which a checkbox could only record
+              as the same thing it recorded for somebody nobody had reached
+              — and the visit ladder asked about them again every week.
+              Yes reads blue like the flag beside it, hold off greys out. */}
+          {(() => {
+            const met = metInPerson === MET_YES;
+            const held = metInPerson === MET_HOLD;
+            const border = met ? '#7DD3FC' : held ? '#CBD5E1' : '#E2E8F0';
+            const background = met ? '#F0F9FF' : held ? '#F1F5F9' : '#fff';
+            const color = met ? '#0369A1' : held ? '#64748B' : '#374151';
+            return (
+              <label
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', padding: '0.45rem 0.7rem', border: `1px solid ${border}`, borderRadius: '8px', background }}
+                title="Yes once you have sat down with them. Hold off parks them: still not met, but off the Prospecting page's list of Key contacts to go and see."
+              >
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color }}>Met In Person</span>
+                <select
+                  value={metInPerson}
+                  onChange={(e) => chooseMetInPerson(e.target.value)}
+                  aria-label="Met In Person"
+                  style={{
+                    padding: '0.2rem 0.35rem', border: `1px solid ${border}`, borderRadius: '6px',
+                    fontSize: '0.78rem', fontFamily: 'inherit', fontWeight: 600,
+                    background: '#fff', color, cursor: 'pointer',
+                  }}
+                >
+                  {MET_STATE_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+            );
+          })()}
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${invitedToLouisville ? '#7DD3FC' : '#E2E8F0'}`, borderRadius: '8px', background: invitedToLouisville ? '#F0F9FF' : '#fff' }}>
             <input
               type="checkbox"
@@ -5482,11 +5512,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [settings.contactTeamNames, updateSettings]);
 
   // "Met In Person" is stored locally (never in HubSpot). Persist the
-  // explicit true/false so unchecking a contact that still carries the
-  // legacy HubSpot tag sticks instead of falling back to "checked".
+  // explicit answer so a contact set to No — or parked on Hold off — sticks
+  // instead of falling back to the legacy HubSpot tag.
+  //
+  // Normalized on the way in so the older callers that still hand this a
+  // boolean write one of the three answers rather than a second shape for
+  // the same map to hold.
   const handleSaveContactMetInPerson = useCallback((contactId, met) => {
     const current = settings.contactMetInPerson || {};
-    const next = { ...current, [contactId]: !!met };
+    const next = { ...current, [contactId]: normalizeMetState(met) ?? MET_YES };
     updateSettings({ contactMetInPerson: next });
   }, [settings.contactMetInPerson, updateSettings]);
 

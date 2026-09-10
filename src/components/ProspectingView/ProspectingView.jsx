@@ -644,12 +644,23 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
     <div style={{ marginTop: 8, fontSize: '0.72rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
         <span
-          title="Contacts on the Key roster (tagged Dan Key Target) without the Met In Person box ticked in the contact popup — the same flag the Key Contacts table's Met In Person column shows. Tick it there or on a name below and they drop off this list."
+          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No — the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
           style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
         >
           Key contacts not met in person: {summary.total}
           {summary.accounts > 0 && ` across ${summary.accounts} account${summary.accounts === 1 ? '' : 's'}`}
         </span>
+        {/* Said out loud rather than just left off: a list that quietly
+            shrinks when somebody is parked is a count you can't reconcile
+            against the roster. */}
+        {summary.onHold > 0 && (
+          <span
+            title="Key contacts whose Met In Person answer is “Hold off”. Still not met — they're just not on the list of people to go and see."
+            style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
+          >
+            · {summary.onHold} on hold
+          </span>
+        )}
         {onNavigate && (
           <button
             type="button"
