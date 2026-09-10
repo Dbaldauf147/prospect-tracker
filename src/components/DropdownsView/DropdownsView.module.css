@@ -2808,7 +2808,20 @@
    the deal, a retrofit and the annual that keeps it running. The two rate
    columns are typed; the two Year 1 columns are worked out. Laid out on a
    grid rather than as a <table> so every column line stays put whether a
-   cell is showing a figure, an input or a dash. */
+   cell is showing a figure, an input or a dash.
+
+   Ruled both ways. Seven columns of numbers with nothing drawn between them
+   make the eye count across to work out which column a figure is in, and
+   four of these columns are typed into — a rule beside the box is what says
+   where one rate ends and the next begins. The lines go on the CELLS rather
+   than on the row, so they run the full height of whatever the row holds.
+
+   Every cell in the four typed columns carries the same box, in all three
+   of its states: the button at rest, the input being typed into, and the
+   worked-out figure beside them share one padding, one font and one
+   text edge, and neither the hover outline nor the editing outline is a
+   border — both are inset shadows, which take no space. A rate that shifted
+   a pixel when you clicked it would say the panel was two layouts. */
 .feeGrid {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 6px);
@@ -2817,25 +2830,31 @@
 }
 
 /* Every row carries the same template rather than a subgrid, so the columns
-   line up on browsers that don't have subgrid too. */
+   line up on browsers that don't have subgrid too. Cells stretch to the row
+   rather than centring in it, so a cell's rule is the row's full height and
+   the vertical lines meet end to end. */
 .feeGridHead,
 .feeGridRow,
 .feeGridTotal {
   display: grid;
-  grid-template-columns: minmax(6.5rem, 1.3fr) repeat(6, minmax(3.9rem, 1fr));
-  align-items: center;
+  grid-template-columns: minmax(7rem, 1.4fr) repeat(6, minmax(4.2rem, 1fr));
+  align-items: stretch;
 }
 
 /* The band is on the row, not on the cells, so it runs unbroken behind
    seven columns of varying content. */
 .feeGridHead {
-  align-items: end;
   background: var(--color-bg-subtle, #f6f7f9);
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Headings sit on the baseline of the band whether they take one line or
+   two, and over the same right edge as the figures beneath them. */
 .feeGridHead > span {
-  padding: 0.35rem 0.4rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0.4rem 0.5rem;
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.2;
@@ -2845,6 +2864,7 @@
 }
 
 .feeGridHead > span:first-child {
+  justify-content: flex-start;
   text-align: left;
 }
 
@@ -2864,31 +2884,53 @@
   align-items: center;
   gap: 0.3rem;
   min-width: 0;
-  padding: 0.3rem 0.4rem;
+  padding: 0.32rem 0.5rem;
   font-size: 0.72rem;
+  line-height: 1.25;
   color: var(--color-text);
+}
+
+/* The one box the three states of a rate column share. Same padding, same
+   font, same right edge, no border on any of them — so the figure does not
+   move as a cell goes from resting to hovered to being typed into, and the
+   worked-out columns line up with the typed ones to the pixel. */
+.feeGridCellBtn,
+.feeGridInput,
+.feeGridFigure {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.32rem 0.5rem;
+  border: 0;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 0.74rem;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* A rate cell at rest. A button rather than a permanently-open input:
    eighteen live number boxes in one panel is a wall, and the ones with
    nothing in them would read as boxes waiting to be filled in. */
 .feeGridCellBtn {
-  width: 100%;
-  padding: 0.3rem 0.4rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   background: transparent;
   color: var(--color-text);
-  font: inherit;
-  font-size: 0.74rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
   cursor: text;
 }
 
+/* Inset, so hovering draws a box without moving the figure inside it. */
 .feeGridCellBtn:hover:not(:disabled) {
-  border-color: var(--color-border);
   background: var(--color-bg, #fff);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.feeGridCellBtn:focus-visible {
+  outline: none;
+  background: var(--color-bg, #fff);
+  box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 
 .feeGridCellBtn:disabled {
@@ -2896,29 +2938,33 @@
 }
 
 .feeGridInput {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0.25rem 0.35rem;
-  border: 1px solid var(--color-accent);
-  border-radius: 4px;
   background: #fff;
   color: var(--color-text);
-  font-family: inherit;
-  font-size: 0.74rem;
-  text-align: right;
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .feeGridInput:focus {
   outline: none;
 }
 
-/* A worked-out figure. Right-aligned against the rates above it so the
+/* The spinner would sit on top of a right-aligned figure and push it left
+   the moment the cell was clicked into — the one thing this column can't
+   afford. Type the number; nobody nudges a rate a cent at a time. */
+.feeGridInput::-webkit-outer-spin-button,
+.feeGridInput::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* A worked-out figure. Right-aligned against the rates beside it so the
    column reads as one set of numbers. */
 .feeGridFigure {
-  padding: 0.3rem 0.4rem;
-  font-size: 0.74rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   color: var(--color-text-secondary);
-  text-align: right;
 }
 
 .feeGridEmpty {
@@ -2933,7 +2979,9 @@
 }
 
 .feeGridTotal > span:first-child {
-  padding: 0.35rem 0.4rem;
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
   font-size: 0.72rem;
   color: var(--color-text);
 }
@@ -2941,6 +2989,36 @@
 .feeGridTotal .feeGridFigure {
   font-weight: 700;
   color: var(--color-text);
+}
+
+/* The column rules, last so they win over the borders the cells above reset.
+   Every cell but the first in its row gets a left edge, and the header's is
+   the full-strength line: it is the top of the column, and the four typed
+   columns hang off it. */
+.feeGridHead > * + *,
+.feeGridRow > * + *,
+.feeGridTotal > * + * {
+  border-left: 1px solid var(--color-border-subtle, #eef0f3);
+}
+
+.feeGridHead > * + * {
+  border-left-color: var(--color-border);
+}
+
+/* The three pairs. Setup low/high, recurring low/high, year one low/high —
+   each pair is one figure read two ways, and the header says so in words
+   nobody reads twice. A firmer rule where a pair starts says it in the
+   ruling instead, so the eye lands in the right pair before it reads a
+   heading at all. */
+.feeGridHead > *:nth-child(4),
+.feeGridHead > *:nth-child(6),
+.feeGridRow > *:nth-child(2),
+.feeGridRow > *:nth-child(4),
+.feeGridRow > *:nth-child(6),
+.feeGridTotal > *:nth-child(2),
+.feeGridTotal > *:nth-child(4),
+.feeGridTotal > *:nth-child(6) {
+  border-left-color: var(--color-border);
 }
 
 /* The In Scope tick, in the footer rather than the grid: it belongs to the
