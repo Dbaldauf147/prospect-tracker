@@ -350,7 +350,7 @@ export function ServicePricingModal({
                     : percent
                       ? 'The line this service leads with. A cut of the deal size typed on the Deal Pricing subtab.'
                       : 'The line this service leads with. A flat figure, whatever the account’s size.')
-                  : 'Set by the first row you fill in on the breakdown below. It is the line the rate card’s own columns show.'}
+                  : 'The line this service leads with — the one the rate card’s own columns show. Pick it here, or leave it: the first row you fill in on the breakdown below sets it.'}
               </span>
             </label>
 

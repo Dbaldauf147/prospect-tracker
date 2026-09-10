@@ -744,6 +744,13 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
       : [{ basis: value, rate: primaryRate, rateHigh: parseMoney(row.rateHigh) }];
     const extras = normalizePricingLines(row.lines, bases, blank ? '' : value);
     row = writePricingLines(row, [...primary, ...extras], bases);
+    // A basis picked before any rate is typed is still a choice, and it has
+    // to survive the write. writePricingLines clears the basis along with
+    // the lines when there are none left — which is right when the lines
+    // are what named it, and wrong when the user just picked it off the
+    // dropdown on a service nothing is priced on yet. Without this, the
+    // most obvious way to start pricing a service silently does nothing.
+    if (!blank && !row.basis) row.basis = value;
   }
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
