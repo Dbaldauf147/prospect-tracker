@@ -1,8 +1,17 @@
 // Per-country deregulation reference used by the Indicative Savings
 // export to score international (non-US/Canada) sites. Three buckets
 // per country — Electric Power, Gas, Power Rate Optimization — each
-// one of: 'Deregulated', 'Some deregulation', 'Unlikely', or
-// 'No opportunity'.
+// one of: 'Deregulated', 'Some deregulation', 'Unlikely',
+// 'No opportunity', or 'Not served'.
+//
+// 'Not served' is the odd one out: the other four describe the market,
+// this one describes us. A market we will not buy energy in earns no
+// savings whatever its own structure — Russia's power market is
+// genuinely deregulated, and calling it 'Unlikely' or 'No opportunity'
+// to zero the savings would put a false claim about that market into a
+// client-facing export. It renders in the maps' grey (no-opportunity)
+// band and is named for what it is wherever the statuses are spelled
+// out.
 //
 // "Deregulated" / "Some deregulation" on Electric Power or Gas →
 // commodity-savings motion applies (2 - 4 % on annual spend).
@@ -14,6 +23,16 @@
 // earn reg-rate savings on top.
 
 import { countryNameFromIso3 } from './countryIso3.js';
+
+/**
+ * A market we will not buy energy in, whatever its own structure.
+ *
+ * Set on all three buckets for such a country: the commodity motion
+ * reads Electric Power / Gas and the regulated-rate motion reads Power
+ * Rate Optimization, so leaving any of them deregulated would still
+ * quote savings we can't deliver.
+ */
+export const NOT_SERVED = 'Not served';
 
 export const COUNTRY_DEREGULATION = {
   'Afghanistan': { region: 'Central Asia', electric: 'Unlikely', gas: 'Unlikely', powerRateOptimization: 'Deregulated' },
@@ -141,7 +160,10 @@ export const COUNTRY_DEREGULATION = {
   'Qatar': { region: 'Middle East', electric: 'No opportunity', gas: 'No opportunity', powerRateOptimization: 'No opportunity' },
   'Republic of the Congo': { region: 'Africa', electric: 'Unlikely', gas: 'Unlikely', powerRateOptimization: 'No opportunity' },
   'Romania': { region: 'Europe', electric: 'Deregulated', gas: 'Deregulated', powerRateOptimization: 'Deregulated' },
-  'Russia': { region: 'Europe/Asia', electric: 'Deregulated', gas: 'Deregulated', powerRateOptimization: 'Deregulated' },
+  // Not served rather than not deregulated — see NOT_SERVED above. All
+  // three buckets, so neither the commodity motion nor the reg-rate one
+  // can quote a number against a Russian site.
+  'Russia': { region: 'Europe/Asia', electric: NOT_SERVED, gas: NOT_SERVED, powerRateOptimization: NOT_SERVED },
   'Rwanda': { region: 'Africa', electric: 'Unlikely', gas: 'No opportunity', powerRateOptimization: 'No opportunity' },
   'Saudi Arabia': { region: 'Middle East', electric: 'Unlikely', gas: 'No opportunity', powerRateOptimization: 'Unlikely' },
   'Senegal': { region: 'Africa', electric: 'Unlikely', gas: 'No opportunity', powerRateOptimization: 'No opportunity' },
@@ -193,6 +215,9 @@ const SAVINGS_BAND = {
   'Some deregulation': { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
   'Unlikely':          { range: '',       lowPct: null, highPct: null },
   'No opportunity':    { range: '',       lowPct: null, highPct: null },
+  // No band, and no European "TBD" either: TBD says a range is coming,
+  // and for a market we won't buy in none is.
+  [NOT_SERVED]:        { range: '',       lowPct: null, highPct: null },
 };
 
 // European markets don't carry a committed commodity-savings range yet,
@@ -321,6 +346,12 @@ export function countryGasSavings(rawCountry) {
   const d = countryDeregulation(rawCountry);
   if (!d) return null;
   return { status: d.gas, ...savingsBandFor(d.gas, d.region) };
+}
+
+/** True when we will not buy energy in this country at all. */
+export function isCountryNotServed(rawCountry) {
+  const d = countryDeregulation(rawCountry);
+  return !!d && d.electric === NOT_SERVED;
 }
 
 // True when the country's Power Rate Optimization column is
