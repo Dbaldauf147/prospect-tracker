@@ -23,6 +23,13 @@
 //      service has to be tellable from one who simply hasn't been offered it.
 //      Sizing work a client already pays for as new business is how a book
 //      quietly doubles.
+//   5. Setting a status FROM the page. The Set Status column writes the
+//      company card's Services Explored map — the one field this page writes
+//      at all — so what it writes has to be exactly what the card would have
+//      stored: a cleared status is the ENTRY REMOVED, not a dash left behind,
+//      or the service is pinned blank instead of falling back to its opps.
+//      And one cell speaking for a scope of several services has to be able
+//      to say they disagree rather than pick one of them to report.
 //   4. What "nothing" means. A client with no services picked is not a
 //      client worth $0 — it is a client nobody has sized. The roll-up counts
 //      those apart so an untouched book doesn't read as a worthless one.
@@ -45,6 +52,10 @@ import {
   normalizeClientScope,
   rollUpDealSizing,
   scopeIsEmpty,
+  scopeEffectiveStatus,
+  scopeManualStatus,
+  withServiceStatus,
+  MIXED_STATUS,
 } from '../src/utils/clientDealSizing.js';
 
 let failures = 0;
@@ -474,6 +485,70 @@ check('edit: clearing a scope with nothing picked leaves it alone',
 // is what stops the cleared rows being stored as scopes that say nothing.
 check('edit: a cleared scope with nothing else in it is empty',
   scopeIsEmpty(clearServices({ services: ['A'], serviceUnits: { A: 400 } })), true);
+
+// --- setting a status from the sizing page --------------------------------
+//
+// CARD above is the fixture: Bill pay Sold, Retrofit Quoting, Levy Not Sold,
+// and Meter audit carrying the card's own "-", which is how it stores "no
+// status" and must read as one here too.
+
+// A status the card doesn't carry but a sold opp does. The page reads both,
+// and only one of them is this column's to write.
+const STATUS_OPPS = new Map([['Meter audit', 'Sold']]);
+
+check('status: a scope of one reads what the card says',
+  scopeEffectiveStatus(CARD, ['Bill pay']), 'Sold');
+check('status: a scope whose services disagree reads Mixed',
+  scopeEffectiveStatus(CARD, ['Bill pay', 'Retrofit']), MIXED_STATUS);
+check('status: a scope where they agree reads the one status',
+  scopeEffectiveStatus(CARD, ['Bill pay', 'Bill pay']), 'Sold');
+check('status: the card\'s own "-" is no status at all',
+  scopeEffectiveStatus(CARD, ['Meter audit']), '');
+check('status: a scope of nothing has nothing to say',
+  scopeEffectiveStatus(CARD, []), '');
+check('status: an opp-derived status is what the cell shows',
+  scopeEffectiveStatus(CARD, ['Meter audit'], STATUS_OPPS), 'Sold');
+// The distinction the cell's border draws: a typed status is clearable here,
+// one derived from an opp is not — clearing would leave the opp still saying
+// Sold on the next read.
+// (No opps argument: the manual reading is the card's map and nothing else.)
+check('status: but the manual reading of that same scope is empty',
+  scopeManualStatus(CARD, ['Meter audit']), '');
+check('status: a typed status reads as manual',
+  scopeManualStatus(CARD, ['Bill pay']), 'Sold');
+
+check('status: setting one service leaves the others alone',
+  withServiceStatus(CARD.servicesExplored, ['Meter audit'], 'Quoted'),
+  { 'Bill pay': 'Sold', Retrofit: 'Quoting', Levy: 'Not Sold', 'Meter audit': 'Quoted' });
+check('status: setting a scope writes every service in it',
+  withServiceStatus(CARD.servicesExplored, ['Bill pay', 'Levy'], 'N/A'),
+  { 'Bill pay': 'N/A', Retrofit: 'Quoting', Levy: 'N/A', 'Meter audit': '-' });
+// "- (auto)" is the card's own wording for "no override": the entry goes, so
+// the service falls back to whatever a matching opp says. Storing a dash
+// would pin it blank and the fallback would never run.
+check('status: clearing removes the entry rather than storing a dash',
+  withServiceStatus(CARD.servicesExplored, ['Bill pay'], '-'),
+  { Retrofit: 'Quoting', Levy: 'Not Sold', 'Meter audit': '-' });
+check('status: an empty status clears it too',
+  withServiceStatus(CARD.servicesExplored, ['Bill pay'], ''),
+  { Retrofit: 'Quoting', Levy: 'Not Sold', 'Meter audit': '-' });
+// Mixed is the cell's reading of a disagreement, never a value to write — a
+// select that could submit it would set several services to one answer while
+// claiming to leave them as they were.
+check('status: Mixed is never written',
+  withServiceStatus(CARD.servicesExplored, ['Bill pay', 'Retrofit'], MIXED_STATUS),
+  CARD.servicesExplored);
+check('status: a card with no map yet gets one',
+  withServiceStatus(undefined, ['Meter audit'], 'Sold'), { 'Meter audit': 'Sold' });
+// The write never mutates the record it was handed: the caller passes the
+// result straight to updateProspect, and state edited in place is state that
+// doesn't re-render.
+check('status: the card\'s own map is left untouched',
+  (() => {
+    withServiceStatus(CARD.servicesExplored, ['Bill pay'], 'N/A');
+    return CARD.servicesExplored;
+  })(),
+  { 'Bill pay': 'Sold', Retrofit: 'Quoting', Levy: 'Not Sold', 'Meter audit': '-' });
 
 console.log(failures === 0 ? '\nAll deal-sizing tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

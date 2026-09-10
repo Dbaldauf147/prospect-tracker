@@ -19,11 +19,18 @@
 //     estimateScope (src/utils/servicePricing.js) via clientDealSizing.js, so
 //     a rate edited on the pricing page moves these numbers and there is no
 //     second engine to keep in step.
-//   • It does not touch the company record. A scope is a what-if — it is not
-//     a Service Explored status, and writing one would put speculative work
-//     into the field the rest of the app reads as history. Scopes live in
-//     their own per-client map beside the Client Manager and Status the
-//     Clients tab already stores.
+//   • It does not write the SCOPE to the company record. A scope is a what-if
+//     — it is not a Service Explored status, and writing one would put
+//     speculative work into the field the rest of the app reads as history.
+//     Scopes live in their own per-client map beside the Client Manager and
+//     Status the Clients tab already stores.
+//
+//     The Set Status column is the deliberate exception, and it is the other
+//     direction: it writes a status you have decided on, to the same map the
+//     company card's own grid writes, because sizing a book is exactly when
+//     it becomes obvious that a client already buys something — and saying so
+//     used to mean opening the card in another tab. What it writes is a
+//     ruling, never the scope.
 //   • It does not claim to be a forecast. Nothing here knows whether the
 //     client wants the service. It is a sizing exercise, and the header says
 //     so, because a column of large numbers is very easy to start believing.
@@ -47,6 +54,7 @@ import {
   loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
 } from '../../utils/clientManagerStore';
 import { serviceStatusColor, serviceBucket } from '../../utils/serviceStatusColors';
+import { SERVICE_STATUSES } from '../../data/enums';
 import {
   CLIENT_COUNT_FIELDS,
   countsUsed,
@@ -63,8 +71,12 @@ import {
   planClearServices,
   rollUpDealSizing,
   scopeIsEmpty,
+  scopeEffectiveStatus,
+  scopeManualStatus,
   scopeStatusCounts,
   scopeStatuses,
+  withServiceStatus,
+  MIXED_STATUS,
   withService,
   withoutService,
   clearServices,
@@ -432,21 +444,41 @@ function CountInput({ value, placeholder, onCommit, width = 96, title }) {
 const panelReset = { display: 'block', width: '100%', maxWidth: '100%', whiteSpace: 'normal', overflow: 'visible' };
 const cellReset = { maxWidth: 'none', overflow: 'visible', textOverflow: 'clip' };
 
-// What the company card says about a service, as a chip. Same palette the
-// card's own Services Explored grid and the Opps Scope picker use, so a
-// service reads the same colour wherever it is shown.
-function StatusPill({ status, title }) {
-  if (!status) return null;
-  const { bg, color } = serviceStatusColor(status);
+// A service status, set from here. The page reads the company card's Services
+// Explored map all over — it is what decides whether a scope is new business
+// at all — and this is the one control that writes it back.
+//
+// Painted the colour of the status it is showing, so a column of them reads
+// like the pills they sit beside rather than like a form. Same vocabulary and
+// the same "- (auto)" as the company card's own grid: an empty override is
+// not a status called "-", it is the service falling back to whatever a
+// matching opp says, and the border says which of the two you are looking at.
+function ServiceStatusSelect({ value, manual, disabled, title, onPick, minWidth = 96 }) {
+  const mixed = value === MIXED_STATUS;
+  const { bg, color } = mixed ? {} : serviceStatusColor(value);
   return (
-    <span
+    <select
+      value={mixed ? MIXED_STATUS : (value || '-')}
+      disabled={disabled}
       title={title}
+      onClick={e => e.stopPropagation()}
+      onChange={e => { e.stopPropagation(); onPick(e.target.value); }}
       style={{
-        display: 'inline-block', fontSize: '0.66rem', fontWeight: 700, whiteSpace: 'nowrap',
-        padding: '0.05rem 0.4rem', borderRadius: 999,
-        background: bg || '#F1F5F9', color: color || '#475569',
+        minWidth, maxWidth: '100%', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
+        padding: '2px 3px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer',
+        border: `1px solid ${manual && !mixed ? '#3B82F6' : '#CBD5E1'}`,
+        background: disabled ? '#F8FAFC' : (bg || '#fff'),
+        color: disabled ? '#CBD5E1' : (color || '#475569'),
       }}
-    >{status}</span>
+    >
+      {/* Only ever the reading of a scope whose services disagree, so it is
+          listed to be shown and never to be chosen — picking it would have to
+          mean setting several services to different things at once. */}
+      {mixed && <option value={MIXED_STATUS} disabled>Mixed</option>}
+      {SERVICE_STATUSES.map(st => (
+        <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
+      ))}
+    </select>
   );
 }
 
@@ -600,6 +632,36 @@ export function DealSizingView({
     (row) => (row?.client?.id != null ? savedAnalyses.get(row.client.id) || null : null),
     [savedAnalyses],
   );
+
+  // What the Set Status cell is looking at: the services it would write to,
+  // the status they read as today, and whether that status was typed or came
+  // off an opp. The services are the ones the estimate priced — a scope name
+  // the catalog has since retired is not a service to hang a status on.
+  const statusFor = useCallback((row) => {
+    const names = row.estimate.services;
+    const oppStages = oppStagesByClient.get(row.client);
+    return {
+      names,
+      effective: scopeEffectiveStatus(row.client, names, oppStages),
+      manual: scopeManualStatus(row.client, names),
+    };
+  }, [oppStagesByClient]);
+
+  // Put a status on the company card for services in a client's scope — the
+  // Set Status column (the whole scope at once) and the picker beside each
+  // service in an expanded row (one of them) both land here.
+  //
+  // The only thing on this page that writes to the company record, and it
+  // writes the one field the page already reads. Worth knowing what it does
+  // to the numbers: a scope the card has ruled on isn't new business, so the
+  // moment any status lands on it the row stops being sized and its money
+  // leaves the totals at the top. That is the existing rule doing its job —
+  // the cells say so before you use them.
+  const setServiceStatus = useCallback((client, names, status) => {
+    if (!client?.id || typeof updateProspect !== 'function') return;
+    const next = withServiceStatus(client.servicesExplored, names, status);
+    updateProspect(client.id, { servicesExplored: next });
+  }, [updateProspect]);
 
   const scopeFor = useCallback(
     (company) => normalizeClientScope(scopeMap[normClientName(company)]) || emptyClientScope(),
@@ -986,6 +1048,51 @@ export function DealSizingView({
       },
     },
     {
+      // The other half of the column before it: that one says what the card
+      // already holds, this one is how you say it. Sizing a book is exactly
+      // when it becomes obvious that a client already buys something, and
+      // until now saying so meant opening the company card in another tab.
+      //
+      // One control for the whole scope, because that is what a row is. A
+      // scope whose services disagree reads "Mixed" and is set service by
+      // service in the expanded row — one cell cannot honestly show four
+      // different answers, and it should not quietly flatten them either.
+      key: 'setStatus', label: 'Set Status', defaultWidth: 150,
+      getSortValue: (row) => statusFor(row).effective || '',
+      getFilterValue: (row) => (row.serviceCount ? (statusFor(row).effective || 'Not explored') : ''),
+      exportValue: (row) => (row.serviceCount ? statusFor(row).effective : ''),
+      render: (row) => {
+        if (!row.serviceCount) {
+          return (
+            <span
+              style={{ color: '#CBD5E1' }}
+              title="Nothing is scoped for this client, so there is no service to set a status against."
+            >—</span>
+          );
+        }
+        const { names, effective, manual } = statusFor(row);
+        const canEdit = !!row.client?.id && typeof updateProspect === 'function';
+        const many = names.length > 1;
+        const scopeWords = many
+          ? `all ${names.length} services in this scope (${names.join(', ')})`
+          : `“${names[0]}”`;
+        return (
+          <ServiceStatusSelect
+            value={effective}
+            manual={!!manual && manual !== MIXED_STATUS}
+            disabled={!canEdit}
+            minWidth={110}
+            title={!canEdit
+              ? 'No company record behind this client, so there is nowhere to save a status.'
+              : effective === MIXED_STATUS
+                ? `The ${names.length} services in this scope have different statuses. Expand the row to set them one at a time — picking here would overwrite all of them with one answer.`
+                : `Sets the company card's Services Explored status for ${scopeWords}. Any status at all means this scope is no longer new business, so the row stops being sized and its money leaves the totals. “- (auto)” clears what was typed and falls back to whatever a matching opp says.`}
+            onPick={(next) => setServiceStatus(row.client, names, next)}
+          />
+        );
+      },
+    },
+    {
       // Whether there is a Master Analysis behind this client — the workbook
       // the Utility Lookup page saves with "Save to <company>" — and when it
       // was written. It sits next to the company card because it answers the
@@ -1098,7 +1205,7 @@ export function DealSizingView({
           )
       ),
     },
-  ], [expandedIds, onSelectProspect, bases, analysisFor]);
+  ], [expandedIds, onSelectProspect, bases, analysisFor, statusFor, setServiceStatus, updateProspect]);
 
   const renderExpansion = useCallback((row) => {
     const { estimate, scope, client, company } = row;
@@ -1160,9 +1267,18 @@ export function DealSizingView({
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem 0.35rem 0', verticalAlign: 'top' }}>
                         <div style={{ display: 'block', fontWeight: 600, color: '#0F172A', whiteSpace: 'normal' }}>
                           {line.name}{' '}
-                          <StatusPill
-                            status={exploredStatus(client, line.name, oppStagesByClient.get(client))}
-                            title={`The company card says this service is "${exploredStatus(client, line.name, oppStagesByClient.get(client))}" for ${company}. That is history, not part of this estimate — but a service they already buy is not new business.`}
+                          {/* The status this service carries on the company
+                              card, and where it is set for a scope holding
+                              several — the column outside can only speak for
+                              the whole row. */}
+                          <ServiceStatusSelect
+                            value={exploredStatus(client, line.name, oppStagesByClient.get(client))}
+                            manual={!!scopeManualStatus(client, [line.name])}
+                            disabled={!client?.id || typeof updateProspect !== 'function'}
+                            title={!client?.id || typeof updateProspect !== 'function'
+                              ? 'No company record behind this client, so there is nowhere to save a status.'
+                              : `What the company card says about ${line.name} for ${company}, and where to change it. That is history rather than part of this estimate — but a service they already buy is not new business, so a status here takes this scope out of the totals. “- (auto)” falls back to whatever a matching opp says.`}
+                            onPick={(next) => setServiceStatus(client, [line.name], next)}
                           />
                         </div>
                         <div style={{ display: 'block', fontSize: '0.7rem', whiteSpace: 'normal', color: line.priced ? '#64748B' : '#B45309' }}>
@@ -1323,7 +1439,7 @@ export function DealSizingView({
         )}
       </div>
     );
-  }, [bases, pricing, patchScope, saveScope, oppStagesByClient]);
+  }, [bases, pricing, patchScope, saveScope, oppStagesByClient, setServiceStatus, updateProspect]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: '0.9rem 1.25rem 2rem' }}>
@@ -1337,11 +1453,13 @@ export function DealSizingView({
         Pick services against a client and the estimate builds itself from that client&rsquo;s own Sites and Accounts —
         no re-keying. Rates come from <strong>Dropdowns › Services Pricing</strong>, so a rate edited there moves every
         figure here. This is a sizing exercise, not a forecast: nothing here knows whether the client wants the service.
-        Scopes are saved per client and never write to the company record&rsquo;s Services Explored &mdash; but what that
-        record already says is shown beside them, on the row and against each service, so you can see what a client
-        already buys before you size it again &mdash; and a client whose card already has a status against a scoped
-        service (sold, in flight, turned down or N/A) shows no figures at all, because that is not new business to
-        size. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
+        Scopes are saved per client and are never written to the company record. What that record already says is
+        shown beside them, on the row and against each service, so you can see what a client already buys before you
+        size it again &mdash; and a client whose card already has a status against a scoped service (sold, in flight,
+        turned down or N/A) shows no figures at all, because that is not new business to size. The
+        <strong> Set Status</strong> column is the one thing here that writes back: it puts a status on the card&rsquo;s
+        <strong> Services Explored</strong> for the whole scope, or service by service in an expanded row &mdash; which
+        also means it takes that client out of the totals. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
         left out, here as everywhere else &mdash; nobody is working them, so their money does not belong in these totals.
       </div>
 

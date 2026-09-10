@@ -540,3 +540,83 @@ export function clearServices(scope) {
   next.serviceUnits = {};
   return next;
 }
+
+// --- setting a status from the sizing page ---------------------------------
+//
+// The page reads the company card's Services Explored map to say what has
+// already been ruled on (see exploredStatus above), and now writes it too:
+// the Set Status column, and the picker beside each service in an expanded
+// row, put a status on the card without leaving the page.
+//
+// This is a deliberate exception to "it does not touch the company record",
+// and only that one field. A scope is still a what-if and is still never
+// written anywhere — what these write is the same hand-set status the card's
+// own grid and the Opps Scope picker write, keyed by service name, to the one
+// map all three read back from. Sizing a book is exactly when it becomes
+// obvious that a client already buys something, and the alternative was
+// opening the company card in another tab to say so.
+
+/** What the Set Status cell shows when the scope's services disagree. */
+export const MIXED_STATUS = 'Mixed';
+
+// The one status a list of them agrees on: '' when they are all blank,
+// MIXED_STATUS the moment two of them differ. One cell speaks for a whole
+// scope, so it has to be able to say that the scope does not speak with one
+// voice — picking one of the statuses to show would be picking which of the
+// services the reader is told about.
+function sharedStatus(values) {
+  let shared = null;
+  for (const value of values) {
+    const status = String(value ?? '').trim();
+    const clean = status && status !== '-' ? status : '';
+    if (shared === null) shared = clean;
+    else if (shared !== clean) return MIXED_STATUS;
+  }
+  return shared || '';
+}
+
+/**
+ * The status a whole scope reads as, opp-derived statuses included — the
+ * value the Set Status cell shows, the same way the company card's own grid
+ * shows the effective status rather than only what was typed.
+ */
+export function scopeEffectiveStatus(client, names, oppStages = null) {
+  return sharedStatus((names || []).map(name => exploredStatus(client, name, oppStages)));
+}
+
+/**
+ * The HAND-SET status a whole scope carries — the map this writes, with
+ * nothing derived from an opp folded in.
+ *
+ * What it is for is telling an override from an automatic status: a cell
+ * showing "Sold" because somebody typed it is a cell whose "- (auto)" does
+ * something, and one showing "Sold" because a sold opp names the service is
+ * not.
+ */
+export function scopeManualStatus(client, names) {
+  const map = client?.servicesExplored || {};
+  return sharedStatus((names || []).map(name => map[name]));
+}
+
+/**
+ * The Services Explored map to write when a status is set against a list of
+ * services.
+ *
+ * An empty status (or the card's own "-") REMOVES the entry rather than
+ * storing a dash — the same way the company card and the Opps Scope picker
+ * store it, so a service falls back to whatever its opps say rather than
+ * being pinned to a blank. MIXED_STATUS is the cell's own reading of a
+ * disagreement, never a value to write, so it is returned unchanged.
+ */
+export function withServiceStatus(current, names, status) {
+  const value = String(status ?? '').trim();
+  if (value === MIXED_STATUS) return { ...(current || {}) };
+  const next = { ...(current || {}) };
+  for (const name of names || []) {
+    const key = String(name || '').trim();
+    if (!key) continue;
+    if (!value || value === '-') delete next[key];
+    else next[key] = value;
+  }
+  return next;
+}
