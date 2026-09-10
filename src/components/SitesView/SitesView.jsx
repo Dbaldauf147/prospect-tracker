@@ -34,6 +34,7 @@ import {
 import { isCaliforniaSite } from '../../utils/siteRegion';
 import {
   siteEditableColumns, coerceSiteValue, applySiteColumnEdit, describeSiteEdit,
+  siteCellEditors, describeSiteCellEdit,
 } from '../../utils/siteMassEdit';
 import { mergeIntoSiteList } from '../../utils/siteListMerge';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
@@ -466,6 +467,122 @@ function isStateCodeCountry(rawCountry) {
 // Free-form text is allowed too — picking from the list is just a
 // shortcut, not a constraint, since the source data sometimes has
 // regional / co-op suppliers that aren't on the bundled list.
+// One cell of the Utility Lookup table, typed into directly.
+//
+// The table is an uploaded spreadsheet with a page's worth of derivation on
+// top, and until now the only way to correct a value in it was Mass edit —
+// which is aimed at a column across many sites — or re-uploading the file,
+// which throws away every per-row decision made since. Reading a table and
+// spotting that ONE site has the wrong property type is the more common
+// thing, so a cell can be double-clicked and retyped.
+//
+// What it writes is the uploaded column behind the cell, never the cell's own
+// derived value: the page re-derives the utility, the rate, the estimate and
+// the compliance screen from that column on the next render, so the edit
+// moves everything downstream of it exactly as a corrected spreadsheet would
+// have. Which cells qualify is siteCellEditors' answer, not this component's.
+//
+// Double-click rather than a click: this table is read far more than it is
+// edited, and a single click opening an input under every reader's cursor is
+// how a value gets changed by somebody who meant to select it. Escape
+// cancels, Enter and clicking away commit — the spreadsheet contract, since
+// that is what this looks like.
+function EditableSiteCell({
+  siteName, editable, editing, edited, seedValue, onStartEdit, onCancel, onCommit, children,
+}) {
+  if (editing) {
+    return (
+      <SiteCellInput
+        editable={editable}
+        initial={seedValue}
+        onCommit={onCommit}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  const where = describeSiteCellEdit(editable, siteName);
+  const title = edited
+    ? `Set by hand${edited.previous ? ` (was “${edited.previous}”)` : ' (was blank)'}. Double-click to edit ${where} again.`
+    : `Double-click to edit ${where}. It writes the uploaded column, so everything derived from it moves too.`;
+  return (
+    <span
+      onDoubleClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+      title={title}
+      style={{
+        display: 'block', width: '100%', cursor: 'text',
+        // Only a hand-edited cell is marked. Marking every editable one
+        // would put a border on most of a forty-column table and say
+        // nothing, and what a reader wants to know here is which figures
+        // came from the file and which came from a person.
+        ...(edited ? { borderLeft: '2px solid #60A5FA', paddingLeft: 4, marginLeft: -6, background: '#EFF6FF' } : null),
+      }}
+    >{children}</span>
+  );
+}
+
+// The input itself, mounted only while a cell is open. Its own component so
+// the draft starts from the cell's value without an effect to copy it in —
+// opening the editor mounts this, and mounting is when a draft is seeded.
+//
+// Escape cancels; Enter and clicking away commit — the spreadsheet contract,
+// since that is what this table looks like. The commit runs once: blur fires
+// on its own after Enter, and again as the commit unmounts the input.
+function SiteCellInput({ editable, initial, onCommit, onCancel }) {
+  const [draft, setDraft] = useState(initial);
+  const doneRef = useRef(false);
+
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCommit(draft);
+  };
+  const cancel = () => { doneRef.current = true; onCancel(); };
+
+  const shared = {
+    autoFocus: true,
+    value: draft,
+    onChange: (e) => setDraft(e.target.value),
+    onBlur: commit,
+    onClick: (e) => e.stopPropagation(),
+    onDoubleClick: (e) => e.stopPropagation(),
+    onKeyDown: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    },
+    style: {
+      width: '100%', boxSizing: 'border-box', padding: '1px 4px',
+      border: '1px solid var(--color-accent)', borderRadius: 4,
+      fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: 'var(--color-text)',
+    },
+  };
+
+  // A closed list where the page only understands a closed list — the same
+  // rule mass edit follows, so a value typed here can't mean less than one
+  // picked there. The blank option is how a cell is cleared.
+  if (editable.options) {
+    const options = draft && !editable.options.includes(draft)
+      // What is already in the cell, when the list doesn't offer it: without
+      // it, opening the picker on an unrecognised value would silently
+      // propose to change it to whatever happens to sit first.
+      ? [draft, ...editable.options]
+      : editable.options;
+    // Picking commits, rather than picking and then clicking away: a
+    // dropdown's selection IS the answer, and leaving it open afterwards
+    // waiting for a blur is how a chosen value doesn't get saved.
+    return (
+      <select
+        {...shared}
+        onChange={(e) => { setDraft(e.target.value); if (!doneRef.current) { doneRef.current = true; onCommit(e.target.value); } }}
+      >
+        <option value="">(blank)</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  }
+  return <input type="text" {...shared} />;
+}
+
 function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   const [draft, setDraft] = useState(initialValue || '');
   const [hover, setHover] = useState(0);
@@ -1507,6 +1624,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   };
   // Which supplier cell is currently in edit mode. `${rowId}_${commodity}` or null.
   const [editingSupplier, setEditingSupplier] = useState(null);
+  // ---- Cell edit (one value, one site) ---------------------------------
+  // Which cell is open for typing: `${rowId}|${columnKey}`, or null. Only one
+  // at a time — this is a table, not a form, and two open inputs would be two
+  // pending writes to the same file.
+  const [editingCell, setEditingCell] = useState(null);
+  // What has been set by hand in this session: `${rowId}|${header}` → the
+  // value that was there before. Held for the marker on the cell and the
+  // "was …" in its tooltip, which is the difference between a figure that
+  // came out of the upload and one somebody typed.
+  //
+  // Not persisted, deliberately. The VALUE is saved — it goes into the
+  // uploaded rows and survives a reload like every other edit on this page —
+  // and a highlight that outlived the session would be claiming to know
+  // which cells a colleague touched last week, which it doesn't.
+  const [cellEdits, setCellEdits] = useState(() => new Map());
+  const [cellEditError, setCellEditError] = useState('');
+
   // ---- Mass edit (one column, many sites) ------------------------------
   // Off by default: the checkbox column and the toolbar are only earned
   // once the user says they're editing, and this page is dense enough
@@ -3204,6 +3338,49 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ),
     [sitesData, siteFieldMapping, siteNameColumn],
   );
+  // Which table columns can be typed into, and what each writes. Keyed by the
+  // column key the table renders, because most mapped fields are shown under
+  // the page's own label rather than the file's header.
+  const cellEditors = useMemo(
+    () => siteCellEditors(editableSiteColumns, siteFieldMapping),
+    [editableSiteColumns, siteFieldMapping],
+  );
+
+  // Write one cell and persist, the same path a mass edit takes: coerce,
+  // write into the uploaded rows, save, then swap state so the page
+  // re-derives. The row is resolved by identity rather than by its position
+  // in the table — a filter or a sort between the file and the screen is
+  // exactly what makes a row index mean a different row.
+  const commitCellEdit = useCallback(async (rowId, editable, raw) => {
+    setEditingCell(null);
+    const target = cleanSitesData[rowId];
+    if (!target || !editable?.header) return;
+    const coerced = coerceSiteValue(editable, raw);
+    if (!coerced.ok) { setCellEditError(coerced.error); return; }
+    const previous = target[editable.header];
+    const { rows: next, changed } = applySiteColumnEdit(
+      sitesData, new Set([target]), editable.header, coerced.value,
+    );
+    // Typing the value that is already there is not an edit: no write, no
+    // save, and no marker claiming a person changed something.
+    if (!changed) return;
+    setCellEditError('');
+    try {
+      // Saved before the state swap, matching the mass edit: a write that
+      // fails must not leave the page showing an edit the next reload
+      // won't have.
+      await saveListToIDB(SITES_STORAGE_KEY, next);
+      setSitesData(next);
+      setCellEdits(prev => {
+        const map = new Map(prev);
+        map.set(`${rowId}|${editable.header}`, { previous: String(previous ?? '').trim() });
+        return map;
+      });
+    } catch (err) {
+      setCellEditError(`Couldn’t save that edit: ${err?.message || err}`);
+    }
+  }, [cleanSitesData, sitesData]);
+
   const massColumn = useMemo(
     () => editableSiteColumns.find(c => c.header === massHeader) || null,
     [editableSiteColumns, massHeader],
@@ -4144,6 +4321,61 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ];
   }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride]);
 
+  // The same columns, with the editable ones openable for typing.
+  //
+  // A wrapper around each cell rather than a rewrite of it: what the table
+  // shows is derived and formatted (a rate, an estimate flag, a coloured
+  // pill), and the edit is of the raw column behind it — so the cell keeps
+  // rendering exactly as it did and gains a way in. Done out here rather
+  // than inside the columns memo above so the derivation and the editing
+  // stay separable: that memo is about what a value means, this is about
+  // changing it.
+  const editableColumns = useMemo(() => {
+    if (!columns.length || cellEditors.size === 0) return columns;
+    const dateHeaders = new Set(
+      [electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride].filter(Boolean),
+    );
+    // What the input opens on. The stored cell, except for the contract
+    // dates: those arrive from Excel as serial numbers, and seeding an
+    // editor with "45689" asks somebody to retype a date they cannot read.
+    const seedFor = (editable, stored) => {
+      if (stored == null || stored === '') return '';
+      if (dateHeaders.has(editable.header) || stored instanceof Date) {
+        const d = stored instanceof Date ? stored : parseSourceDate(stored);
+        if (d && Number.isFinite(d.getTime())) {
+          return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+        }
+      }
+      return String(stored);
+    };
+    return columns.map(col => {
+      const editable = cellEditors.get(col.key);
+      if (!editable) return col;
+      return {
+        ...col,
+        render: (row) => {
+          const source = cleanSitesData[row.id];
+          const cellKey = `${row.id}|${col.key}`;
+          return (
+            <EditableSiteCell
+              siteName={source && siteNameColumn ? String(source[siteNameColumn] ?? '').trim() : ''}
+              editable={editable}
+              editing={editingCell === cellKey}
+              edited={cellEdits.get(`${row.id}|${editable.header}`) || null}
+              seedValue={seedFor(editable, source ? source[editable.header] : '')}
+              onStartEdit={() => { setCellEditError(''); setEditingCell(cellKey); }}
+              onCancel={() => setEditingCell(null)}
+              onCommit={(v) => commitCellEdit(row.id, editable, v)}
+            >{col.render(row)}</EditableSiteCell>
+          );
+        },
+      };
+    });
+  }, [
+    columns, cellEditors, editingCell, cellEdits, cleanSitesData, siteNameColumn, commitCellEdit,
+    electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride,
+  ]);
+
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
     return [
@@ -4178,8 +4410,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // too, so the frozen block is the checkbox AND the name: pinning only
   // the name would let it scroll over the boxes it belongs to.
   const tableColumns = useMemo(() => {
-    if (!massEditOn || !columns.length) return columns;
-    return [...columns, {
+    if (!massEditOn || !editableColumns.length) return editableColumns;
+    return [...editableColumns, {
       key: '__select__',
       label: '',
       defaultWidth: 34,
@@ -4205,7 +4437,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // anything about the site.
       exportValue: () => '',
     }];
-  }, [columns, massEditOn, selectedSiteIds]);
+  }, [editableColumns, massEditOn, selectedSiteIds]);
 
   // Actual vs estimated split across the portfolio for the on-page
   // summary panel. Actual = value came from a column in the source
@@ -15948,6 +16180,32 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 sites picked with nothing on screen saying so. */}
             {!massEditOn && selectedSiteIds.size > 0 && ` (${selectedSiteIds.size} selected)`}
           </button>
+        )}
+        {/* Cell editing has no button — it is a gesture on the table — so
+            this is the only thing that says it is there. Beside Mass edit
+            because the two are the same edit at different scales, and a
+            reader who wants one usually wants to know about the other. */}
+        {sitesData.length > 0 && (
+          <span
+            style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}
+            title="Double-click a cell in the table to retype it. It writes the uploaded column behind that cell, so the utility, rate, cost and compliance figures derived from it move with it. Utility, rate, market and the property-type estimates are computed, so they aren't editable — change what they read from instead."
+          >
+            or double-click any cell to edit it
+          </span>
+        )}
+        {cellEditError && (
+          <span
+            style={{ fontSize: '0.72rem', color: '#B91C1C', fontWeight: 600 }}
+            role="status"
+          >
+            {cellEditError}{' '}
+            <button
+              type="button"
+              onClick={() => setCellEditError('')}
+              title="Dismiss"
+              style={{ background: 'transparent', border: 'none', color: '#B91C1C', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.8rem', lineHeight: 1, padding: '0 2px' }}
+            >&times;</button>
+          </span>
         )}
       </div>
 

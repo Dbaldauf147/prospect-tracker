@@ -203,3 +203,87 @@ export function describeSiteEdit(column, value, count) {
   const where = column?.sub ? `${column.label} (column “${column.sub}”)` : column?.label;
   return `Set ${where} to ${shown} on ${count} selected site${count === 1 ? '' : 's'}?`;
 }
+
+// --- editing one cell ------------------------------------------------------
+//
+// The same write, aimed at a single site: the Utility Lookup table's cells
+// are typed into directly, and what they set is the uploaded column behind
+// them. Mass edit answers "sixty sites are missing this"; this answers "that
+// one is wrong", which is the more common thing to find while reading the
+// table — and re-uploading the spreadsheet to fix one cell throws away every
+// decision made on the page since.
+//
+// What can be edited is exactly what mass edit can edit (siteEditableColumns
+// above): the mapped fields and the pass-through columns, never the site name
+// and never a derived value. The map below is the last piece of that — the
+// table shows most mapped fields under its own column key ("Property Type",
+// not "Bldg_Use_Code"), so a cell has to be resolved back to the column its
+// value actually comes from.
+
+/**
+ * Table column key → the mapped field it is derived from.
+ *
+ * Only the columns the table renders derived. A pass-through column IS its
+ * header, so it needs no entry; a computed column (utility, ISO, rate,
+ * market, the property-type estimates, the cost totals) has no source cell to
+ * write and must not get one — the next recompute would overwrite it.
+ *
+ * The suppliers are the deliberate omission: those cells already have their
+ * own editor, which matches what is typed against the bundled supplier list
+ * and remembers the choice per site.
+ */
+export const SITE_CELL_EDIT_FIELDS = {
+  companyName: 'companyName',
+  division: 'division',
+  city: 'city',
+  country: 'country',
+  lookup_state: 'state',
+  propertyType: 'propertyType',
+  segment: 'segment',
+  ownership: 'ownership',
+  siteDescription: 'siteDescription',
+  propertySize: 'propertySize',
+  electric_consumption: 'electric',
+  gas_consumption: 'gas',
+  electricCost: 'electricCost',
+  gasCost: 'gasCost',
+  electricStart: 'electricStart',
+  electricEnd: 'electricEnd',
+  gasStart: 'gasStart',
+  gasEnd: 'gasEnd',
+};
+
+/**
+ * Which of the table's columns can be typed into, keyed by the column key the
+ * table renders them under.
+ *
+ *   editableColumns — siteEditableColumns(...) for this upload
+ *   mapping         — { fieldKey: header }, the page's active column mapping
+ *
+ * Pass-through columns go in under their header (which is their column key),
+ * and the derived ones under the table's key for them. A derived column whose
+ * field isn't mapped to a real header of this upload is simply absent: there
+ * is nothing to write to, and offering the edit would be offering to type
+ * into a column that doesn't exist.
+ */
+export function siteCellEditors(editableColumns, mapping = {}) {
+  const byHeader = new Map();
+  const out = new Map();
+  for (const col of editableColumns || []) {
+    if (!col?.header) continue;
+    byHeader.set(col.header, col);
+    out.set(col.header, col);
+  }
+  for (const [columnKey, field] of Object.entries(SITE_CELL_EDIT_FIELDS)) {
+    const header = mapping?.[field];
+    const col = header ? byHeader.get(header) : null;
+    if (col) out.set(columnKey, col);
+  }
+  return out;
+}
+
+/** "Property Type (column “Bldg_Use”) on Maple Grove" — one cell, named. */
+export function describeSiteCellEdit(column, siteName) {
+  const where = column?.sub ? `${column.label} (column “${column.sub}”)` : column?.label;
+  return siteName ? `${where} on ${siteName}` : String(where || '');
+}

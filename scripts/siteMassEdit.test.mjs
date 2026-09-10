@@ -2,6 +2,11 @@
 // Node — no test framework (the project has none). Run:
 //   node scripts/siteMassEdit.test.mjs
 //
+// The same write also backs typing into a single cell of the table, so
+// what is guarded here covers both: the mass bar and the cell editor
+// resolve a column through the same functions and write through the same
+// one.
+//
 // The edit writes into the uploaded site rows, which every derived
 // number on that page is computed from. So the cases that matter are the
 // ones about not touching what wasn't selected, and about the value
@@ -9,6 +14,7 @@
 // number, a closed-list value spelled the way the normalizers expect).
 import {
   SITE_EDIT_FIELDS, siteEditableColumns, coerceSiteValue, applySiteColumnEdit, describeSiteEdit,
+  siteCellEditors, describeSiteCellEdit, SITE_CELL_EDIT_FIELDS,
 } from '../src/utils/siteMassEdit.js';
 import { normalizeSegment, normalizeElectricUom, normalizeGasUom } from '../src/utils/utilityRates.js';
 import { PROPERTY_TYPE_OPTIONS } from '../src/data/propertyTypeEstimates.js';
@@ -156,6 +162,75 @@ const file = () => ([
   eq(describeSiteEdit({ label: 'City', sub: '' }, '', 1),
     'Set City to (blank) on 1 selected site?',
     'blanking says so, and one site is singular');
+}
+
+// --- which of the TABLE's cells can be typed into -------------------------
+//
+// The mass bar picks a column by name; a cell has to be resolved the other
+// way round — from the column key the table renders it under back to the
+// uploaded header behind it. Most mapped fields are shown under the page's
+// own label ("Property Type"), not the file's header, so without this the
+// only editable cells would be the pass-through ones.
+{
+  const cols = siteEditableColumns(HEADERS, MAPPING, ['Facility']);
+  const editors = siteCellEditors(cols, MAPPING);
+
+  eq(editors.get('propertyType')?.header, 'Building Type',
+    'a derived cell resolves to the column it is derived from');
+  eq(editors.get('electric_consumption')?.header, 'Annual kWh',
+    'so does the consumption cell, whatever unit the table shows it in');
+  eq(editors.get('Internal Ref')?.header, 'Internal Ref',
+    'a pass-through cell is its own column');
+  // The header cell of a mapped column is editable too, under its header:
+  // the table shows both, and typing into either means the same edit.
+  eq(editors.get('Building Type')?.header, 'Building Type',
+    'and a mapped column is still editable under its own header');
+
+  ok(!editors.has('Facility'),
+    'the site name column stays unavailable — the mass bar’s rule, not a second one');
+  // Computed columns have no source cell. Offering one would take an edit
+  // that the next render overwrites, which is worse than not offering it.
+  for (const computed of ['electric_rate', 'electric_market', 'iso', 'totalCost', 'estAccounts', 'gac_opportunity']) {
+    ok(!editors.has(computed), `the computed ${computed} cell is not editable`);
+  }
+  // The suppliers have their own editor, which matches what is typed
+  // against the bundled supplier list — a plain text box beside it would
+  // be a second, worse way to set the same thing.
+  ok(!editors.has('electric_supplier'), 'the supplier cell keeps its own editor');
+
+  eq(editors.get('propertyType')?.options?.length, PROPERTY_TYPE_OPTIONS.length,
+    'a cell on a closed-list field offers the same list the mass bar does');
+  eq(editors.get('electric_consumption')?.type, 'number',
+    'and a numeric cell is still numeric');
+}
+
+{
+  // A field the upload never mapped has nothing to write to, so its cell
+  // is not editable — the table shows it derived from nothing.
+  const cols = siteEditableColumns(['Facility', 'Building Type'], { siteName: 'Facility', propertyType: 'Building Type' }, ['Facility']);
+  const editors = siteCellEditors(cols, { siteName: 'Facility', propertyType: 'Building Type' });
+  ok(editors.has('propertyType'), 'the mapped field is editable');
+  ok(!editors.has('ownership'), 'an unmapped field is not');
+  eq(siteCellEditors([], {}).size, 0, 'no upload, no editable cells');
+}
+
+{
+  // Every key in the map has to be a field the mass bar knows, or it
+  // resolves to nothing and the cell is silently uneditable.
+  const known = new Set(SITE_EDIT_FIELDS.map(f => f.key));
+  for (const [columnKey, field] of Object.entries(SITE_CELL_EDIT_FIELDS)) {
+    ok(known.has(field), `${columnKey} maps to a known field (${field})`);
+  }
+}
+
+// --- what a cell's tooltip says -------------------------------------------
+{
+  eq(describeSiteCellEdit({ label: 'Property Type', sub: 'Building Type' }, 'Maple Grove'),
+    'Property Type (column “Building Type”) on Maple Grove',
+    'the tooltip names the column being written and the site it is on');
+  eq(describeSiteCellEdit({ label: 'Internal Ref', sub: '' }, ''),
+    'Internal Ref',
+    'a pass-through column on an unnamed row is just the column');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
