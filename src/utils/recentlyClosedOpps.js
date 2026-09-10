@@ -10,6 +10,13 @@
 // still in flight, which is what every other reader of this data treats
 // them as.
 //
+// And it means an opp that exists in BFO: a row with no BFO Opportunity
+// Name is not a deal that closed, it is a line somebody kept on the sheet.
+// The New Opps table above this one has always applied that rule to what it
+// shows; this half of the same week now applies it too, so the two lists
+// answer for the same set of opps rather than one of them quietly counting
+// rows the other never had.
+//
 // The window is a Close Date one, read at local midnight, so "7 days" is
 // seven calendar days rather than a rolling 168 hours that moves with the
 // time of day the page is opened. A close dated in the future isn't in the
@@ -22,6 +29,7 @@
 // can exercise it without React.
 
 import { parseDateMs } from './oppsMetrics.js';
+import { bfoFieldMissing } from './bfoFields.js';
 
 export const RECENTLY_CLOSED_DAYS = 7;
 
@@ -55,9 +63,15 @@ export function daysSinceClose(record, nowMs = Date.now()) {
 /**
  * Opps closed within the window, newest close first.
  *
- * Returns { rows, undated }:
+ * Returns { rows, undated, unnamed }:
  *   rows     the closed opps inside the window, each carrying `_daysAgo`
  *   undated  closed opps left out because they carry no usable Close Date
+ *   unnamed  closed opps left out because they have no BFO Opportunity Name
+ *
+ * The BFO name is checked FIRST, so `undated` counts only opps that would
+ * otherwise belong here. It is a data-quality nag — "this closed deal has
+ * no Close Date" — and a nag that also counts rows nobody was ever going to
+ * see is a number that can't be worked down to zero.
  *
  * Ties on the same day fall back to account name, so the order is stable
  * rather than however the records happened to arrive.
@@ -65,8 +79,12 @@ export function daysSinceClose(record, nowMs = Date.now()) {
 export function recentlyClosedOpps(records, { days = RECENTLY_CLOSED_DAYS, nowMs = Date.now() } = {}) {
   const rows = [];
   let undated = 0;
+  let unnamed = 0;
   for (const r of (records || [])) {
     if (!isClosedStage(r?.['Stage'])) continue;
+    // 'BFO Link' is the stored key for what the table labels "BFO
+    // Opportunity Name" — a name, not a URL (see HEADER_LABEL_OVERRIDES).
+    if (bfoFieldMissing(r?.['BFO Link'])) { unnamed += 1; continue; }
     const ago = daysSinceClose(r, nowMs);
     if (ago === null) { undated += 1; continue; }
     if (ago < 0 || ago > days) continue;
@@ -74,7 +92,7 @@ export function recentlyClosedOpps(records, { days = RECENTLY_CLOSED_DAYS, nowMs
   }
   rows.sort((a, b) => a._daysAgo - b._daysAgo
     || String(a['Account'] || '').localeCompare(String(b['Account'] || '')));
-  return { rows, undated };
+  return { rows, undated, unnamed };
 }
 
 /** "today", "yesterday", "3 days ago" — how a row's age reads in the table. */

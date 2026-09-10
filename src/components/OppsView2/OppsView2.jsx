@@ -124,6 +124,9 @@ import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
 import { closedAgoLabel, recentlyClosedOpps, RECENTLY_CLOSED_DAYS } from '../../utils/recentlyClosedOpps';
+// Shared with the closed-this-week table's own filter, so "has a BFO
+// Opportunity Name" means one thing on this page.
+import { bfoFieldMissing } from '../../utils/bfoFields';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
@@ -1341,13 +1344,6 @@ function businessDaysSince(rawISO) {
 // the cell otherwise carries a number — treat them as blank rather
 // than as a parseable string.
 const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
-
-// True when a BFO field holds no real value — blank, "-", or an "#N/A"
-// variant. Lowercased so casing doesn't matter.
-function bfoFieldMissing(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
-}
 
 // Combined days an opp has spent across the Lead + Qualifying + Quoting
 // stages: historical durations captured in `_stageHistory` plus the live
@@ -15162,9 +15158,23 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     {recentlyClosed.undated} closed opp{recentlyClosed.undated === 1 ? '' : 's'} not counted — no Close Date
                   </span>
                 )}
+                {/* Left out by the rule rather than by a gap in the data, so
+                    it reads as a note and not as a warning — but it is said,
+                    because a table that silently drops rows is one nobody
+                    can reconcile against the sheet. */}
+                {recentlyClosed.unnamed > 0 && (
+                  <span
+                    className={styles.resultCount}
+                    style={{ marginLeft: '0.5rem' }}
+                    title={`Closed opps with no BFO Opportunity Name are left out, the same way the New Opps table above leaves them out: a row that doesn't exist in BFO isn't a deal that closed.`}
+                  >
+                    {recentlyClosed.unnamed} left out — no BFO Opportunity Name
+                  </span>
+                )}
               </div>
               <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-                Shows opps at Sold or Not Sold whose Close Date is within the last {RECENTLY_CLOSED_DAYS} days, newest first.
+                Shows opps at Sold or Not Sold that have a BFO Opportunity Name and whose Close Date is
+                within the last {RECENTLY_CLOSED_DAYS} days, newest first.
               </div>
               <DataTable
                 tableId="opps2-closed-recent"
