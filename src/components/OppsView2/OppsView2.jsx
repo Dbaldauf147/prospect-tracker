@@ -69,6 +69,9 @@ import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../u
 import { NotSoldAnalysis } from './NotSoldAnalysis';
 import { PricingAnalysisModal } from './PricingAnalysisModal';
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '../../utils/pricingAnalysis';
+import {
+  QUOTED_VARIANCE_COLUMN, quotedVariance, formatQuotedVariance, quotedVarianceTone,
+} from '../../utils/quotedVariance';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -136,7 +139,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -395,9 +398,15 @@ const DEFAULT_HEADERS = [
   // rather than a drawing preference.
   'Target Signature Date',
   // What the Deal Pricing estimator worked this deal's scope out to,
-  // saved from there. Read-only here: the figure and the working behind it
-  // are a copy taken when it was saved (see utils/pricingAnalysis).
+  // saved from there — or the Deal Size entered when the opp moved to
+  // Lead, whichever was written last. Read-only here: when a working is
+  // attached, the figure and the working are a copy taken when it was
+  // saved (see utils/pricingAnalysis).
   ESTIMATED_FEE_COLUMN,
+  // How the actual SIA quote landed against that estimate. Computed from
+  // the two cells either side of it, so it needs nothing stored of its
+  // own and follows whichever of them moved last.
+  QUOTED_VARIANCE_COLUMN,
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -631,7 +640,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
-  'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN,
+  'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN, QUOTED_VARIANCE_COLUMN,
   'Margin Approval Date', 'Credit Approval Date'];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
@@ -2464,6 +2473,38 @@ function EstimatedFeeCell({ value, analysis, onOpen }) {
         cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
       }}
     >{shown || '-'}</button>
+  );
+}
+
+// Estimated vs. Actual Quoted cell. Computed from the two cells either
+// side of it — the Estimated Fee and the Quoted Amount an SIA option
+// wrote — so it stores nothing of its own and follows whichever of them
+// moved last.
+//
+// Blank until an SIA is actually attached. Before that the Quoted Amount
+// still holds the estimate the Lead popup put there, and comparing a
+// number with itself would print a confident 0% against a deal nobody has
+// quoted yet.
+function QuotedVarianceCell({ opp }) {
+  const v = quotedVariance(opp);
+  if (!v) {
+    return (
+      <span
+        style={{ color: 'var(--color-text-muted)' }}
+        title={opp?.['_pricingOption']
+          ? 'Needs both a figure in Estimated Fee and a readable Quoted Amount to compare.'
+          : 'No SIA option is saved to this opp yet, so there is no actual quote to compare the estimate against.'}
+      >-</span>
+    );
+  }
+  const tone = quotedVarianceTone(v);
+  const color = tone === 'over' ? '#15803D' : tone === 'under' ? '#B91C1C' : 'var(--color-text)';
+  return (
+    <span
+      style={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}
+      title={`Estimated ${formatPricingMoney(v.estimated)} · quoted ${formatPricingMoney(v.quoted)}.`
+        + ` The quote came in ${tone === 'over' ? 'above' : tone === 'under' ? 'below' : 'exactly at'} the estimate.`}
+    >{formatQuotedVariance(v)}</span>
   );
 }
 
@@ -6588,6 +6629,9 @@ const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
   // order ever changed. Both sides of the margin pair name the same step
   // so they keep rendering on one row.
   [ESTIMATED_FEE_COLUMN]: 'Qualifying',
+  // The comparison only exists once an SIA has been quoted, which is the
+  // step after the estimate it measures.
+  [QUOTED_VARIANCE_COLUMN]: 'Quoted',
   'USD?': 'Qualifying',
   'Margin Email Date - Sales Leader Review Date': 'Quoting',
   'Margin Email Date': 'Quoting',
@@ -6747,6 +6791,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   // labels some imports carry for the request date, so they ride along
   // rather than landing on a different tab than the combined header does.
   [ESTIMATED_FEE_COLUMN]: 'stage4',
+  [QUOTED_VARIANCE_COLUMN]: 'stage4',
   'USD?': 'stage4',
   'Margin Email Date - Sales Leader Review Date': 'stage4',
   'Margin Email Date': 'stage4',
@@ -12859,6 +12904,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               />
             );
           }
+          if (h === QUOTED_VARIANCE_COLUMN) {
+            return <QuotedVarianceCell opp={row} />;
+          }
           if (h === 'Last Spoke') {
             // Business days since the Last Client Heard From Us date —
             // mirrors the Call In logic above, honoring a sheet-imported
@@ -14555,6 +14603,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               // stack stays uncluttered with no-op snapshots.
               if (quotedAmount !== String(opp['Quoted Amount'] ?? '').trim()) {
                 updateOppField(opp._id, 'Quoted Amount', quotedAmount);
+              }
+              // The figure the user lands on here is this deal's estimate
+              // of record, so it goes into Estimated Fee as well as the
+              // Deal Size cell. Both used to be the same cell, which is
+              // why attaching an SIA later — it rewrites Quoted Amount —
+              // erased the estimate instead of giving it something to be
+              // measured against.
+              const estimate = formatQuotedAmount(quotedAmount);
+              if (estimate && estimate !== String(opp[ESTIMATED_FEE_COLUMN] ?? '').trim()) {
+                updateOppField(opp._id, ESTIMATED_FEE_COLUMN, estimate);
+                // Latest estimate wins, and a Deal Pricing working saved
+                // against the OLD figure would leave the cell showing one
+                // number and opening a breakdown that adds up to another.
+                if (opp[ANALYSIS_FIELD]) deleteOppField(opp._id, ANALYSIS_FIELD);
               }
               setLeadQuotedPromptId(null);
             }}
