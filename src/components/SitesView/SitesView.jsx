@@ -67,6 +67,7 @@ import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
+import { fillHeaderFor, describeColumnFill, FILL_HEADERS } from '../../utils/siteColumnFill';
 import { bulkMapDraft, bulkMapSummary } from '../../utils/propertyTypeBulkMap';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
@@ -594,7 +595,7 @@ function complianceKeyOf(name) {
 // asks for its own value to tell the two apart.
 const BULK_CLEAR = '__clear__';
 
-function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn, siteCount = 0, onFixMapping }) {
+function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn, siteCount = 0, onFixMapping, onFillAll, filling = false }) {
   // Local draft so the table can be filled in before anything is
   // committed; seeded with whatever is already mapped.
   const [draft, setDraft] = useState(() => {
@@ -607,6 +608,10 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
   // as any single row is edited: from there on the snapshot describes a
   // table that no longer exists, and restoring it would undo that edit too.
   const [beforeBulk, setBeforeBulk] = useState(null);
+  // The one property type to give every site, when the file carries none to
+  // map. Kept out of `draft`: it isn't a mapping, it's a value written into
+  // the uploaded rows.
+  const [fillType, setFillType] = useState('');
 
   function setOne(key, target) {
     setBeforeBulk(null);
@@ -724,6 +729,58 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
                 }}
               >Map Property Type column</button>
             )}
+          </div>
+        )}
+
+        {/* The other way out, for a file that simply has no property type to
+            map: give every site the same one. Offered here because this is
+            the state where the table above can't help — mapping needs values
+            in the file, and there are none. It writes a real Property Type
+            column into the uploaded rows, so everything downstream reads it
+            exactly as it would have read the column on the spreadsheet. */}
+        {items.length > 0 && bulk.sites === 0 && onFillAll && siteCount > 0 && (
+          <div style={{ margin: '0.5rem 1.1rem 0', padding: '0.55rem 0.75rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#F8FAFC' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0F172A' }}>
+              Or give every site the same property type
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.15rem', lineHeight: 1.45 }}>
+              For a portfolio that is all one building type, or one close enough to estimate from.
+              This writes a <strong>{mappedColumn || FILL_HEADERS.propertyType}</strong> column into
+              your {siteCount.toLocaleString()} uploaded site{siteCount === 1 ? '' : 's'} — the same
+              as if the spreadsheet had arrived with it — so the estimates, the exports and this
+              table all read it from there. You can still change individual sites afterwards with
+              Mass edit.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.45rem', flexWrap: 'wrap' }}>
+              <select
+                value={fillType}
+                onChange={(e) => setFillType(e.target.value)}
+                aria-label="Property type to give every site"
+                style={{
+                  flex: '1 1 220px', minWidth: 0, padding: '0.3rem 0.4rem', borderRadius: 6,
+                  fontFamily: 'inherit', fontSize: '0.78rem', border: '1px solid #CBD5E1',
+                  background: '#fff', color: fillType ? '#0F172A' : '#94A3B8', cursor: 'pointer',
+                }}
+              >
+                <option value="">Choose a type…</option>
+                {PROPERTY_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!fillType || filling}
+                onClick={() => onFillAll(fillType)}
+                style={{
+                  flexShrink: 0, padding: '0.3rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
+                  fontWeight: 700, fontFamily: 'inherit', whiteSpace: 'nowrap',
+                  border: '1px solid #009530', background: fillType && !filling ? '#009530' : '#E2E8F0',
+                  color: fillType && !filling ? '#fff' : '#94A3B8',
+                  borderColor: fillType && !filling ? '#009530' : '#CBD5E1',
+                  cursor: fillType && !filling ? 'pointer' : 'default',
+                }}
+              >{filling ? 'Applying…' : `Apply to all ${siteCount.toLocaleString()} sites`}</button>
+            </div>
           </div>
         )}
 
@@ -1463,6 +1520,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const [massHeader, setMassHeader] = useState('');
   const [massValue, setMassValue] = useState('');
   const [massBusy, setMassBusy] = useState(false);
+  // A whole-portfolio property type fill in flight — see
+  // fillPropertyTypeForAllSites.
+  const [propertyTypeFilling, setPropertyTypeFilling] = useState(false);
   // { type: 'success' | 'error', message } — the outcome of the last
   // apply, kept on screen because the edit itself is invisible on a
   // table scrolled away from the rows that changed.
@@ -3172,6 +3232,49 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       else for (const id of selectableSiteIds) next.add(id);
       return next;
     });
+  }
+
+  // Give every loaded site the same property type, creating the column when
+  // the upload never had one.
+  //
+  // Mass Edit can't reach this case — it only offers columns the file
+  // actually carries — and the mapping table can only map values some site
+  // already has, so a portfolio that arrives with no Property Type column
+  // falls through both. Same write, save and re-derive path as a mass edit;
+  // the only new part is that the column may not exist yet.
+  //
+  // Every row in the upload is written, not just the cleaned/filtered ones:
+  // the page reads its headers off the first row, and a junk row skipped
+  // here would leave the new column missing from it.
+  async function fillPropertyTypeForAllSites(value) {
+    const type = String(value || '').trim();
+    if (propertyTypeFilling || !type || sitesData.length === 0) return;
+    const { header, created } = fillHeaderFor(
+      propertyTypeOverride, Object.keys(sitesData[0]), FILL_HEADERS.propertyType,
+    );
+    if (!header) return;
+    if (!window.confirm(describeColumnFill({
+      label: 'Property Type', value: type, count: sitesData.length, header, created,
+    }))) return;
+
+    setPropertyTypeFilling(true);
+    try {
+      const { rows: next } = applySiteColumnEdit(sitesData, new Set(sitesData), header, type);
+      // Saved before the state swap, matching the mass edit: a write that
+      // fails must not leave the page showing an edit the next reload
+      // won't have.
+      await saveListToIDB(SITES_STORAGE_KEY, next);
+      setSitesData(next);
+      // Point the page at the column for this session. A reload re-derives
+      // the mapping from the persisted headers by pattern, and the created
+      // name is one the detector matches — so nothing else needs storing.
+      setPropertyTypeOverride(header);
+      setPropertyTypeModalOpen(false);
+    } catch (err) {
+      setUploadError(`Couldn't set the property type: ${err?.message || 'unknown error'}`);
+    } finally {
+      setPropertyTypeFilling(false);
+    }
   }
 
   // Write the chosen value into the chosen column on every selected site,
@@ -15488,6 +15591,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           value={propertyTypeMap}
           mappedColumn={propertyTypeOverride || ''}
           siteCount={allRows.length}
+          onFillAll={fillPropertyTypeForAllSites}
+          filling={propertyTypeFilling}
           onFixMapping={() => { setPropertyTypeModalOpen(false); openUpdateColumnMapping(); }}
           onClose={() => setPropertyTypeModalOpen(false)}
           onSave={(draft) => {
