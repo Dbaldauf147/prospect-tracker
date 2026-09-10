@@ -67,6 +67,7 @@ import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
+import { bulkMapDraft, bulkMapSummary } from '../../utils/propertyTypeBulkMap';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
 import { saveIndicativeAnalysis, getIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
@@ -588,6 +589,11 @@ function complianceKeyOf(name) {
 // support. Unmapped rows are simply left alone — a site with no
 // resolvable property type still imports, it just gets no
 // consumption / account estimates.
+// A bulk target of "" already means "leave unmapped" per row, and "" is
+// also what the bulk dropdown shows when it is idle — so clearing every row
+// asks for its own value to tell the two apart.
+const BULK_CLEAR = '__clear__';
+
 function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
   // Local draft so the table can be filled in before anything is
   // committed; seeded with whatever is already mapped.
@@ -596,6 +602,31 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
     for (const it of items) if (value[it.key]) seed[it.key] = value[it.key];
     return seed;
   });
+  // The draft as it was before the last "set all", so one mis-picked bulk
+  // target doesn't cost a table somebody filled in by hand. Cleared as soon
+  // as any single row is edited: from there on the snapshot describes a
+  // table that no longer exists, and restoring it would undo that edit too.
+  const [beforeBulk, setBeforeBulk] = useState(null);
+
+  function setOne(key, target) {
+    setBeforeBulk(null);
+    setDraft((d) => ({ ...d, [key]: target }));
+  }
+
+  // Set every row at once — the point of it is a file whose types all mean
+  // the same thing (or all mean nothing, and belong in N/A).
+  function setAll(choice) {
+    if (!choice) return;
+    setBeforeBulk(draft);
+    setDraft(bulkMapDraft(items, choice === BULK_CLEAR ? '' : choice));
+  }
+
+  function undoBulk() {
+    setDraft(beforeBulk || {});
+    setBeforeBulk(null);
+  }
+
+  const bulk = bulkMapSummary(items);
   const chosen = Object.values(draft).filter(Boolean).length;
   // Types marked N/A, and how many sites carry them — the consequence is
   // worth stating before the mapping is applied.
@@ -649,6 +680,46 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
           </div>
         </div>
 
+        {/* Set every row at once. Outside the scrolling table on purpose: a
+            file with thirty property types would scroll it out of reach,
+            which is exactly the file it exists for. */}
+        {items.length > 0 && (
+          <div style={{ padding: '0.5rem 1.1rem', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <label htmlFor="pt-bulk-target" style={{ fontSize: '0.72rem', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>
+              Set all {bulk.types} {bulk.types === 1 ? 'type' : 'types'}
+              {bulk.sites > 0 ? ` (${bulk.sites.toLocaleString()} site${bulk.sites === 1 ? '' : 's'})` : ''} to:
+            </label>
+            <select
+              id="pt-bulk-target"
+              value=""
+              onChange={(e) => setAll(e.target.value)}
+              title="Apply one property type to every row in this table — useful when a file's types all mean the same thing, or all mean nothing"
+              style={{
+                flex: '1 1 220px', minWidth: 0, padding: '0.3rem 0.4rem', borderRadius: 6, fontFamily: 'inherit',
+                fontSize: '0.78rem', border: '1px solid #CBD5E1', background: '#fff', color: '#0F172A', cursor: 'pointer',
+              }}
+            >
+              <option value="">Choose a type…</option>
+              <option value={PROPERTY_TYPE_EXCLUDED}>{PROPERTY_TYPE_EXCLUDED_LABEL}</option>
+              {PROPERTY_TYPE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+              <option value={BULK_CLEAR}>(leave every type unmapped)</option>
+            </select>
+            {/* Only after a bulk apply, and only until a row is touched by
+                hand — see beforeBulk. Cheaper than a confirm dialog and
+                worth more: the mistake is visible in the table behind it. */}
+            {beforeBulk && (
+              <button
+                type="button"
+                onClick={undoBulk}
+                title="Put the table back the way it was before the last “set all”"
+                style={{ padding: '0.3rem 0.6rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >↩ Undo set all</button>
+            )}
+          </div>
+        )}
+
         <div style={{ overflowY: 'auto', flex: 1, padding: '0.4rem 1.1rem 0.8rem' }}>
           {items.length === 0 && (
             <div style={{ padding: '1.4rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
@@ -680,7 +751,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
                   <td style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' }}>
                     <select
                       value={draft[it.key] || ''}
-                      onChange={(e) => setDraft((d) => ({ ...d, [it.key]: e.target.value }))}
+                      onChange={(e) => setOne(it.key, e.target.value)}
                       aria-label={`Map "${it.raw}" to a property type`}
                       style={{
                         width: '100%', padding: '0.3rem 0.4rem', borderRadius: 6, fontFamily: 'inherit',
