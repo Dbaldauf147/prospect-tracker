@@ -594,7 +594,7 @@ function complianceKeyOf(name) {
 // asks for its own value to tell the two apart.
 const BULK_CLEAR = '__clear__';
 
-function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
+function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn, siteCount = 0, onFixMapping }) {
   // Local draft so the table can be filled in before anything is
   // committed; seeded with whatever is already mapped.
   const [draft, setDraft] = useState(() => {
@@ -680,6 +680,53 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
           </div>
         </div>
 
+        {/* Every type listed, none of them used by a single loaded site.
+            The table above reads as a finished job in that state — "13 of 13
+            mapped", every row with a target — while nothing on the page will
+            change no matter what is picked, because the rows being mapped
+            are leftovers from earlier uploads. Say so, and say which of the
+            two reasons it is: no column mapped to Property Type at all, or a
+            column that is mapped but carries none of these values. */}
+        {items.length > 0 && bulk.sites === 0 && (
+          <div
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.6rem',
+              margin: '0.6rem 1.1rem 0', padding: '0.55rem 0.75rem',
+              background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 6,
+              color: '#92400E', fontSize: '0.75rem', lineHeight: 1.45,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '0.9rem', lineHeight: 1.2 }}>⚠</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong>No loaded site uses any of these property types.</strong>{' '}
+              {mappedColumn ? (
+                <>The <strong>{mappedColumn}</strong> column is mapped to Property Type, but none of
+                  the {siteCount.toLocaleString()} loaded site{siteCount === 1 ? '' : 's'} carries any
+                  of the values below.</>
+              ) : (
+                <>No column in your file is mapped to <strong>Property Type</strong>, so none of
+                  the {siteCount.toLocaleString()} loaded site{siteCount === 1 ? '' : 's'} has one at all.</>
+              )}
+              {' '}The {items.length} {items.length === 1 ? 'type' : 'types'} below are kept from
+              earlier uploads — they apply again the moment a file that uses them is loaded, but
+              changing them now moves nothing on this page. Until a property type reaches these
+              sites they get no estimated electricity, gas, cost, account or equipment figures.
+            </div>
+            {onFixMapping && (
+              <button
+                type="button"
+                onClick={onFixMapping}
+                title="Re-open the column mapping against the loaded sites and point Property Type at a column from the file."
+                style={{
+                  flexShrink: 0, padding: '0.25rem 0.6rem', border: '1px solid #F59E0B',
+                  background: '#fff', color: '#92400E', borderRadius: 6, fontSize: '0.72rem',
+                  fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >Map Property Type column</button>
+            )}
+          </div>
+        )}
+
         {/* Set every row at once. Outside the scrolling table on purpose: a
             file with thirty property types would scroll it out of reach,
             which is exactly the file it exists for. */}
@@ -745,6 +792,11 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose }) {
                     <div style={{ fontWeight: 600, color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#94A3B8' : '#1E293B', wordBreak: 'break-word' }}>{it.raw}</div>
                     <div style={{ fontSize: '0.68rem', color: draft[it.key] === PROPERTY_TYPE_EXCLUDED ? '#B45309' : '#94A3B8' }}>
                       {it.count} {it.count === 1 ? 'site' : 'sites'}
+                      {/* Said per row as well as in the banner: with some
+                          rows in use and some not, the banner stays silent
+                          and a bare "0 sites" is the only clue that this
+                          row came from a different file. */}
+                      {it.count === 0 ? ' · not in this file' : ''}
                       {draft[it.key] === PROPERTY_TYPE_EXCLUDED ? ' · no usage estimated' : ''}
                     </div>
                   </td>
@@ -15434,6 +15486,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         <PropertyTypeMappingModal
           items={propertyTypeMappingItems}
           value={propertyTypeMap}
+          mappedColumn={propertyTypeOverride || ''}
+          siteCount={allRows.length}
+          onFixMapping={() => { setPropertyTypeModalOpen(false); openUpdateColumnMapping(); }}
           onClose={() => setPropertyTypeModalOpen(false)}
           onSave={(draft) => {
             // Merge rather than replace: mappings for values not in this
