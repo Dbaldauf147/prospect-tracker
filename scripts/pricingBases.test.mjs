@@ -141,7 +141,43 @@ const keysOf = list => (list || []).map(b => b.key);
     keysOf(pricingBasesTopUp({ pricingBases: v3List, pricingBasesVersion: 3 }).pricingBases).at(-1),
     'per_site_mandate');
   check('and a list already at v4 keeps it out',
-    pricingBasesTopUp({ pricingBases: v3List, pricingBasesVersion: 4 }), null);
+    pricingBasesTopUp({ pricingBases: v3List, pricingBasesVersion: 4 }).pricingBases, undefined);
+}
+
+// ── Retiring a built-in basis ─────────────────────────────────────────
+//
+// The top-up only ever added, which is right for a basis the user deleted
+// themselves. A built-in that is RETIRED is the other case: nobody chose to
+// keep it, and without this it would live on in every saved list forever.
+{
+  check('per user is gone from the built-ins',
+    keysOf(PRICING_BASES).includes('per_user'), false);
+
+  const withUser = [
+    ...PRICING_BASES.map(({ key, label, kind, unit, unitLabel }) => ({ key, label, kind, unit, unitLabel })),
+    { key: 'per_user', label: 'Per user', kind: 'unit', unit: 'users', unitLabel: 'Users' },
+  ];
+  const after = pricingBasesTopUp({ pricingBases: withUser, pricingBasesVersion: 4 });
+  check('a list saved with it loses it', keysOf(after.pricingBases).includes('per_user'), false);
+  check('and keeps everything else, in place',
+    keysOf(after.pricingBases), keysOf(PRICING_BASES));
+  check('stamped so it only happens once', after.pricingBasesVersion, PRICING_BASES_VERSION);
+  check('running it again does nothing',
+    pricingBasesTopUp({ pricingBases: after.pricingBases, pricingBasesVersion: after.pricingBasesVersion }), null);
+
+  // Their own basis on the same unit is theirs, not the retired built-in —
+  // and a list with nothing to drop is not rewritten at all, only stamped.
+  const own = [...withUser.filter(b => b.key !== 'per_user'),
+    { key: 'per_seat', label: 'Per seat', kind: 'unit', unit: 'users', unitLabel: 'Users' }];
+  check('a list with nothing retired in it is left untouched',
+    pricingBasesTopUp({ pricingBases: own, pricingBasesVersion: 4 }).pricingBases, undefined);
+
+  // …and one that does have something to drop keeps their basis through it.
+  const bothKinds = [...withUser,
+    { key: 'per_seat', label: 'Per seat', kind: 'unit', unit: 'users', unitLabel: 'Users' }];
+  const kept = keysOf(pricingBasesTopUp({ pricingBases: bothKinds, pricingBasesVersion: 4 }).pricingBases);
+  check('a basis they added themselves survives the retirement beside it',
+    [kept.includes('per_seat'), kept.includes('per_user')], [true, false]);
 }
 
 // ── Nothing here changes what a saved list means ──────────────────────

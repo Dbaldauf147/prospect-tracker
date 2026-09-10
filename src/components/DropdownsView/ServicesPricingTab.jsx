@@ -1,7 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { PricingBasesModal } from './PricingBasesModal';
-import { SetupFeeModal } from './SetupFeeModal';
 import { ServicePricingModal } from './ServicePricingModal';
 import { BasisCell, NotesCell, NumberCell } from './pricingCells';
 import {
@@ -19,7 +18,7 @@ import {
   PRICING_BASES_VERSION,
   setPricingField,
   setPricingLine,
-  setPricingSetup,
+  setPricingSetupLine,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
 
@@ -119,19 +118,18 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     updateSettings?.({ servicePricing: setPricingLine(pricing, name, basisKey, patch, bases) });
   }
 
+  // The other half of the same row: what this service charges once, up
+  // front, on one basis. Same shape, same save path, because setup is
+  // priced on the same bases the recurring fee is.
+  function savePricingSetupLine(name, basisKey, patch) {
+    updateSettings?.({ servicePricing: setPricingSetupLine(pricing, name, basisKey, patch, bases) });
+  }
+
   // The service whose pricing panel is open, by name. Null when nothing is
   // open. Clicking a row opens it: the table is eleven columns wide, so
   // pricing one service otherwise means scrolling sideways with the name
   // off the left edge.
   const [pricingPanelFor, setPricingPanelFor] = useState(null);
-
-  // The service whose setup fee is open in the panel, by name. Null when
-  // the panel is closed, which is nearly always.
-  const [setupFor, setSetupFor] = useState(null);
-  function saveSetup(name, components) {
-    updateSettings?.({ servicePricing: setPricingSetup(pricing, name, components, bases) });
-    setSetupFor(null);
-  }
 
   // What every service comes to under the estimate on the Deal Pricing
   // subtab. Nothing in the table shows these — they are one deal's numbers
@@ -173,11 +171,13 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         basisLabel: basis?.label || '',
         rate: entry.rate,
         rateHigh: entry.rateHigh,
-        // The components as stored, and what they come to under the
-        // estimate on the Deal Pricing subtab — the panel shows the second,
-        // the table's cell shows the first.
-        setup: entry.setup,
+        // The setup lines as stored, and what they come to under the
+        // estimate on the Deal Pricing subtab — the panel's rate columns
+        // show the first, its Year 1 columns the second.
+        setupLines: entry.setupLines,
+        _setupBreakdown: est?.setupBreakdown || [],
         _setupFee: est?.setup ?? 0,
+        _setupFeeHigh: est?.setupHigh ?? 0,
         // Every basis this service is charged on and what each comes to, so
         // the pricing panel can show the fee as the sum of its lines rather
         // than as one number with a single basis behind it.
@@ -364,9 +364,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         />
       )}
 
-      {/* One service's pricing on one screen. Rendered before the setup
-          panel so that, when the setup builder is opened from in here, it
-          stacks on top and closing it comes back to this. */}
+      {/* One service's pricing on one screen. */}
       {pricingPanelFor && (() => {
         const row = rows.find(r => r.name === pricingPanelFor)
           // A row filtered out by the search box is still a row the user
@@ -378,33 +376,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           <ServicePricingModal
             row={row}
             bases={bases}
-            // The setup builder answers Escape while it's open; without this
-            // both panels would close on the one key press.
-            escapeCloses={!setupFor}
             onSaveField={(field, value) => savePricingField(row.name, field, value)}
             onSaveLine={(basisKey, patch) => savePricingLine(row.name, basisKey, patch)}
-            onEditSetup={() => setSetupFor(row.name)}
+            onSaveSetupLine={(basisKey, patch) => savePricingSetupLine(row.name, basisKey, patch)}
             onClose={() => setPricingPanelFor(null)}
-          />
-        );
-      })()}
-
-      {setupFor && (() => {
-        const row = rows.find(r => r.name === setupFor) || allRows.find(r => r.name === setupFor);
-        const basis = basisFor(row?.basis, bases);
-        return (
-          <SetupFeeModal
-            serviceName={setupFor}
-            setup={row?.setup || []}
-            bases={bases}
-            counts={counts}
-            // A component charged on the same unit the service is follows
-            // the count the deal being priced carries, exactly as the
-            // estimate does.
-            ownUnit={basis?.unit || null}
-            ownUnits={row?.units ?? null}
-            onSave={(components) => saveSetup(setupFor, components)}
-            onClose={() => setSetupFor(null)}
           />
         );
       })()}

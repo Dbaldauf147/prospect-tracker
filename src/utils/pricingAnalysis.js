@@ -72,8 +72,10 @@ export function buildPricingAnalysis({
     valueHigh: num(line.valueHigh) ?? num(line.value),
     // The one-time setup fee this line carried, already inside the totals
     // below. Recorded per line because a first year that runs ahead of the
-    // annual fee has a reason, and the reason is on the row.
+    // annual fee has a reason, and the reason is on the row. Both ends of
+    // it, since setup is quoted as a range like everything beside it.
     setup: num(line.setup) ?? 0,
+    setupHigh: num(line.setupHigh) ?? num(line.setup) ?? 0,
     // Every basis the service was charged on, when it was charged on more
     // than one. The columns above report the headline line, which is all
     // there ever was to report before a service could carry several — so a
@@ -108,6 +110,7 @@ export function buildPricingAnalysis({
     // The setup slice of oneTime, so a saved analysis can say what the
     // standing-up cost was without re-deriving it from the lines.
     setup: num(totals?.setup) ?? 0,
+    setupHigh: num(totals?.setupHigh) ?? num(totals?.setup) ?? 0,
     year1Total: num(totals?.year1Total) ?? 0,
     contractValue: num(totals?.contractValue) ?? 0,
     recurringAnnualHigh: num(totals?.recurringAnnualHigh) ?? num(totals?.recurringAnnual) ?? 0,
@@ -163,8 +166,10 @@ export function normalizePricingAnalysis(raw) {
       value: num(l.value),
       valueHigh: num(l.valueHigh) ?? num(l.value),
       // An analysis saved before setup fees existed carries none, which is
-      // what it was: nothing.
+      // what it was: nothing. One saved before setup carried a range reads
+      // as the single figure it was, exactly as the fee beside it does.
       setup: num(l.setup) ?? 0,
+      setupHigh: num(l.setupHigh) ?? num(l.setup) ?? 0,
       // An analysis saved before a service could be priced on several bases
       // carries none of these, which is what it was: one line, already
       // spelled out in the columns above.
@@ -195,6 +200,7 @@ export function normalizePricingAnalysis(raw) {
     recurringAnnual: num(raw.recurringAnnual) ?? 0,
     oneTime: num(raw.oneTime) ?? 0,
     setup: num(raw.setup) ?? 0,
+    setupHigh: num(raw.setupHigh) ?? num(raw.setup) ?? 0,
     year1Total: num(raw.year1Total) ?? 0,
     contractValue: num(raw.contractValue) ?? 0,
     recurringAnnualHigh: num(raw.recurringAnnualHigh) ?? num(raw.recurringAnnual) ?? 0,

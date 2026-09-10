@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  PRICING_BASES, formatMoney, formatSetupSummary, parseMoney,
-} from '../../utils/servicePricing';
+import { PRICING_BASES, formatMoney, parseMoney } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
 
 // One service's pricing, all of it, on one screen.
@@ -42,23 +40,18 @@ const BREAKDOWN_ORDER = [
   'per_meter', 'per_equipment', 'per_mwh', 'pct_deal',
 ];
 
-// Setup has a row of its own rather than a basis: it is one-time money, so
-// it never has a recurring end, and it is already built out of components
-// in its own panel. The row shows what those come to and opens that panel.
-const SETUP_ROW = '__setup__';
-
+// Setup used to have a row of its own, built out of components in a panel
+// of its own. It has columns now instead: setup is charged on the same
+// bases the recurring fee is — flat, per site, a cut of the deal — so it
+// belongs on the SAME row as the recurring rate it sits beside, where what
+// a line costs to stand up and what it costs to run can be read against
+// each other and add into one Year 1 figure.
 function breakdownRows(bases) {
   const rank = (key) => {
     const at = BREAKDOWN_ORDER.indexOf(key);
     return at === -1 ? BREAKDOWN_ORDER.length : at;
   };
-  const ordered = [...bases].sort((a, b) => rank(a.key) - rank(b.key));
-  // Setup sits directly under the project line, where the user put it: the
-  // two are the one-time half of the quote and they read together.
-  const at = ordered.findIndex(b => rank(b.key) > rank('per_project'));
-  const rows = ordered.map(b => ({ kind: 'basis', basis: b }));
-  rows.splice(at === -1 ? rows.length : at, 0, { kind: 'setup', basis: null });
-  return rows;
+  return [...bases].sort((a, b) => rank(a.key) - rank(b.key));
 }
 
 // One rate cell. Shows the figure, edits as a bare number, commits on blur
@@ -133,82 +126,84 @@ function FeeCell({ value, title }) {
 /**
  * What this service is charged on, line by line.
  *
- * One row per pricing basis plus a row for setup, and a service can carry a
- * figure on as many of them as it is actually sold on — a per-site fee and
- * a cut of the deal, a retrofit and the annual that keeps it running. The
- * two rate columns are what you type; the two Year 1 columns are what those
- * rates come to under the scenario the tab behind is set to.
+ * One row per pricing basis, and a service can carry a figure on as many of
+ * them as it is actually sold on — a per-site fee and a cut of the deal, a
+ * retrofit and the annual that keeps it running.
+ *
+ * Four rate columns, in the order the money arrives: what the line costs to
+ * STAND UP, low and high, then what it costs to RUN every year, low and
+ * high. Setup is priced on the same bases the recurring side is, so the two
+ * halves of a line sit on one row rather than in separate tables — $40 a
+ * site to onboard beside $450 a site to run, and the pair of them adding
+ * into the Year 1 columns on the right, which are what those rates come to
+ * under the scenario the tab behind is set to.
  */
-function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
-  // What the setup fee is made of, in words — "$25,000 + $40/site". The
-  // figure alone is a number nobody can check, and the components live in
-  // their own panel, so the row that shows the total carries the recipe.
-  const setupSummary = formatSetupSummary(row.setup, bases);
+function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
   const rows = useMemo(() => breakdownRows(bases), [bases]);
   const priced = useMemo(
     () => new Map((row._breakdown || []).map(p => [p.basis, p])),
     [row._breakdown],
   );
-  const setupFee = row._setupFee || 0;
+  // The setup half of the same map: what each setup line came to under this
+  // scenario, so the row can show the fee its rate produced.
+  const setupPriced = useMemo(
+    () => new Map((row._setupBreakdown || []).map(p => [p.basis, p])),
+    [row._setupBreakdown],
+  );
+  const setupRates = useMemo(
+    () => new Map((row.setupLines || []).map(l => [l.basis, l])),
+    [row.setupLines],
+  );
 
-  // The totals. The two rate columns add up to DOLLARS, not to rates: a
-  // per-site rate and a percentage have no sum, but the annual they earn
+  // The totals. The four rate columns add up to DOLLARS, not to rates: a
+  // per-site rate and a percentage have no sum, but the money they earn
   // between them does, and that is the figure anyone reading a total wants.
+  const setupFee = row._setupFee || 0;
+  const setupFeeHigh = row._setupFeeHigh || 0;
   const year1 = row.fee === null ? null : row.fee + setupFee;
-  const year1High = row.feeHigh === null ? null : row.feeHigh + setupFee;
+  const year1High = row.feeHigh === null ? null : row.feeHigh + setupFeeHigh;
 
   return (
     <>
       <div className={styles.feeGrid} role="table" aria-label={`Fee breakdown for ${row.name}`}>
         <div className={styles.feeGridHead} role="row">
-          <span role="columnheader" />
-          <span role="columnheader">Low recurring fee</span>
-          <span role="columnheader">High recurring fee</span>
+          <span role="columnheader">Fee Component</span>
+          <span role="columnheader">Setup Low</span>
+          <span role="columnheader">Setup High</span>
+          <span role="columnheader">Low Annual Recurring</span>
+          <span role="columnheader">High Annual Recurring</span>
           <span role="columnheader">Year 1 Low</span>
           <span role="columnheader">Year 1 High</span>
         </div>
 
-        {rows.map((r) => {
-          if (r.kind === 'setup') {
-            return (
-              <div key={SETUP_ROW} className={styles.feeGridRow} role="row">
-                <span className={styles.feeGridLabel}>Setup</span>
-                <span className={styles.feeGridNa} title="Setup is billed once, so it has no recurring end">-</span>
-                <span className={styles.feeGridNa} title="Setup is billed once, so it has no recurring end">-</span>
-                <button
-                  type="button"
-                  className={styles.feeGridSetupBtn}
-                  onClick={onEditSetup}
-                  title={setupSummary
-                    ? `${setupSummary} — billed once, so it lands in year one and in the deal value, never in the annual. Click to edit the components.`
-                    : 'Built out of fixed and per-unit components rather than typed as a lump, so it can be taken apart later. Click to add them.'}
-                >
-                  {/* A setup fee made only of per-unit components comes to
-                      nothing until there are counts to multiply, and this is
-                      the one place the card shows it — so an empty figure
-                      falls back to the recipe rather than reading as "no
-                      setup fee" on a service that has one. */}
-                  {setupFee > 0
-                    ? formatMoney(setupFee)
-                    : (setupSummary || <span className={styles.feeGridEmpty}>+ Add</span>)}
-                </button>
-                <FeeCell value={setupFee > 0 ? setupFee : null} title="A setup fee is one figure, not a range" />
-              </div>
-            );
-          }
-
-          const b = r.basis;
+        {rows.map((b) => {
           const part = priced.get(b.key);
+          const setupPart = setupPriced.get(b.key);
           const isPrimary = row.basis === b.key;
           const percent = b.kind === 'percent';
           const rate = isPrimary ? row.rate : (part?.rate ?? null);
           const rateHigh = isPrimary ? row.rateHigh : (part?.rateHigh ?? null);
           const has = rate !== null && rate !== undefined;
+          const setupLine = setupRates.get(b.key);
+          const setupRate = setupLine?.rate ?? null;
+          const setupRateHigh = setupLine?.rateHigh ?? null;
+          const hasSetup = setupRate !== null && setupRate !== undefined;
+          // Year 1 is the two halves added, and a row priced on only one of
+          // them still has a first year: a setup-only line bills its setup,
+          // a recurring-only line bills its annual. A row priced on neither
+          // has nothing to add and shows a dash.
+          const rowYear1 = (part || setupPart)
+            ? (part?.fee ?? 0) + (setupPart?.fee ?? 0)
+            : null;
+          const rowYear1High = (part || setupPart)
+            ? (part?.feeHigh ?? 0) + (setupPart?.feeHigh ?? 0)
+            : null;
+          const note = part?.note || setupPart?.note || undefined;
 
           return (
             <div
               key={b.key}
-              className={`${styles.feeGridRow} ${has ? styles.feeGridRowOn : ''}`}
+              className={`${styles.feeGridRow} ${has || hasSetup ? styles.feeGridRowOn : ''}`}
               role="row"
             >
               <span className={styles.feeGridLabel} title={b.recurs
@@ -219,6 +214,24 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
               >
                 {b.label}
               </span>
+
+              <RateCell
+                value={setupRate}
+                percent={percent}
+                placeholder={percent ? '%' : '$'}
+                title={`What this service charges once, up front, on ${b.label.toLowerCase()} — billed in year one and never again`}
+                onCommit={(v) => onSaveSetupLine(b.key, { rate: v })}
+              />
+              <RateCell
+                value={setupRateHigh}
+                percent={percent}
+                disabled={!hasSetup}
+                placeholder={hasSetup ? (percent ? '%' : '$') : ''}
+                title={hasSetup
+                  ? 'Optional. Fill it in and this setup line prices to a range.'
+                  : 'Set the low setup rate first — a range needs both ends.'}
+                onCommit={(v) => onSaveSetupLine(b.key, { rateHigh: v })}
+              />
 
               <RateCell
                 value={rate}
@@ -238,26 +251,28 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
                 onCommit={(v) => onSaveLine(b.key, { rateHigh: v })}
               />
 
-              <FeeCell value={part ? part.fee : null} title={part?.note || undefined} />
-              <FeeCell value={part ? part.feeHigh : null} title={part?.note || undefined} />
+              <FeeCell value={rowYear1} title={note} />
+              <FeeCell value={rowYear1High} title={note} />
             </div>
           );
         })}
 
         <div className={styles.feeGridTotal} role="row">
           <span>Total</span>
+          <FeeCell value={setupFee} title="What this service costs to stand up, added across its setup lines. Billed once." />
+          <FeeCell value={setupFeeHigh} title="What this service costs to stand up, added across its setup lines. Billed once." />
           <FeeCell value={row._recurringFee} title="The annual this service bills, added across its lines" />
           <FeeCell value={row._recurringFeeHigh} title="The annual this service bills, added across its lines" />
-          <FeeCell value={year1} title="Every line, plus the setup fee, in the first year" />
-          <FeeCell value={year1High} title="Every line, plus the setup fee, in the first year" />
+          <FeeCell value={year1} title="Every line, setup and recurring, in the first year" />
+          <FeeCell value={year1High} title="Every line, setup and recurring, in the first year" />
         </div>
       </div>
 
       <div className={styles.pricingModalHint}>
-        The two rate columns are what you charge — dollars per unit, or a percentage. The Year 1
-        columns are what that comes to under the estimate open on the Deal Pricing subtab. The
-        Total row adds dollars, not rates: its recurring figure is the annual this service bills
-        across every line.
+        The four rate columns are what you charge — dollars per unit, or a percentage. Setup is
+        billed once and lands in year one; the recurring columns bill again every year and run for
+        the term. The Year 1 columns are the two added together under the estimate open on the Deal
+        Pricing subtab. The Total row adds dollars, not rates.
       </div>
     </>
   );
@@ -266,14 +281,11 @@ function FeeBreakdown({ row, bases, onSaveLine, onEditSetup }) {
 export function ServicePricingModal({
   row,
   bases = PRICING_BASES,
-  // False while a panel of this one's own is open on top (the setup fee
-  // builder): both would answer the same Escape, and closing the builder
-  // shouldn't take the pricing panel with it.
   escapeCloses = true,
   onSaveField,
   onSaveLine,
+  onSaveSetupLine,
   onToggleScope,
-  onEditSetup,
   onClose,
 }) {
   const panelRef = useRef(null);
@@ -373,7 +385,7 @@ export function ServicePricingModal({
             row={row}
             bases={bases}
             onSaveLine={onSaveLine}
-            onEditSetup={onEditSetup}
+            onSaveSetupLine={onSaveSetupLine}
           />
 
           <div className={styles.pricingModalSectionTitle}>Pricing notes</div>
