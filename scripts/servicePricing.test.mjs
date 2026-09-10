@@ -363,6 +363,37 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('no basis, no rates to read against it', cleared['Bill payment'], undefined);
 }
 
+// ── Picking a basis before there is a rate to read against it ─────────
+//
+// The most obvious way to start pricing a service: open the panel, pick
+// what it is charged on, then fill the rate in. The pick has to survive
+// being saved on its own — writing the (empty) line list back used to take
+// the basis with it, so the dropdown looked like it did nothing.
+{
+  const picked = setPricingField({}, 'RA dashboards', 'basis', 'per_site');
+  check('a basis picked on an unpriced service is stored',
+    picked['RA dashboards'], { basis: 'per_site' });
+  check('and reads back off the card', pricingFor(picked, 'RA dashboards').basis, 'per_site');
+  check('changing it again moves it',
+    setPricingField(picked, 'RA dashboards', 'basis', 'per_meter')['RA dashboards'].basis, 'per_meter');
+  check('and clearing it takes the entry that held nothing else',
+    setPricingField(picked, 'RA dashboards', 'basis', '')['RA dashboards'], undefined);
+
+  // It is a choice, not a price: nothing prices off a basis with no rate.
+  const est = estimateService({
+    entry: pricingFor(picked, 'RA dashboards'), meta: RECURRING, counts: { sites: 20 }, dealSize: '',
+  });
+  check('a bare basis is not a priced service', [est.priced, est.note], [false, 'No rate set']);
+
+  // And it survives on a service priced on setup alone, which has a basis
+  // to name the count its setup line multiplies but no recurring rate.
+  const setupOnly = setPricingField(
+    { Svc: { setupLines: [{ basis: 'per_site', rate: 40 }] } }, 'Svc', 'basis', 'per_site',
+  );
+  check('a setup-only service keeps the basis it was given', setupOnly.Svc.basis, 'per_site');
+  check('and keeps its setup line', setupOnly.Svc.setupLines.length, 1);
+}
+
 // ── Setup fees ────────────────────────────────────────────────────────
 //
 // One-time money on a service whose fee usually isn't, so what these pin is

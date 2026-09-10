@@ -144,11 +144,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     return new Map(lines.map(l => [l.name, l]));
   }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
 
-  // Priced = there's a basis behind it to work a figure out from. It is the
-  // only way a service gets a price now that a fee can't be stated outright.
+  // Priced = there is a rate on the card to work a figure out from, on a
+  // recurring line or a setup one. Which is the question the estimate above
+  // already answers, and answers off the card rather than off the scenario:
+  // a per-site service with no site count is priced, it just has nothing to
+  // multiply yet. Reading it here rather than testing the basis keeps a
+  // basis picked before any rate is typed from counting as a price.
   const pricedCount = useMemo(
-    () => serviceRows.filter(r => !!pricingFor(pricing, r.name, bases).basis).length,
-    [serviceRows, pricing, bases],
+    () => serviceRows.filter(r => allEstimates.get(r.name)?.priced).length,
+    [serviceRows, allEstimates],
   );
 
   const term = search.trim().toLowerCase();
