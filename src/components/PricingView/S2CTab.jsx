@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import styles from './S2CTab.module.css';
 import {
   S2C_TAG_FIELDS, collectS2cLineItems, countTagged, hasAnyTag,
-  s2cTagSuggestions, setS2cTag, clearS2cTags,
+  s2cTagSuggestions, setS2cTag, setS2cNote, clearS2cTags, s2cNote,
 } from '../../utils/s2cTags';
 
 const EMPTY_ROW = () => ({
@@ -93,19 +93,15 @@ function CellInput({ value, onCommit, align, placeholder, listId }) {
 // A line item the current workbook no longer carries but that still has tags
 // keeps its row, marked as such — otherwise the tags are invisible and there
 // is no way to clear them.
-function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
+function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags }) {
   const listPrefix = useId();
   const [filter, setFilter] = useState('');
   const [taggedOnly, setTaggedOnly] = useState(false);
 
-  const activeOpt = workbook?.options?.find(o => o.optionNumber === activeOption)
-    || workbook?.options?.[0];
-
   const pairs = useMemo(() => collectS2cLineItems({
     options: workbook?.options || [],
     tags,
-    activeOptionNumber: activeOpt?.optionNumber,
-  }), [workbook, tags, activeOpt]);
+  }), [workbook, tags]);
 
   const suggestionsByField = useMemo(() => {
     const out = {};
@@ -120,7 +116,11 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
       if (!q) return true;
       const entry = tags?.[p.key] || {};
       return p.lineItem.toLowerCase().includes(q)
-        || S2C_TAG_FIELDS.some(f => String(entry[f.key] || '').toLowerCase().includes(q));
+        || S2C_TAG_FIELDS.some(f => String(entry[f.key] || '').toLowerCase().includes(q))
+        // The note is a column of the table, so the box above it filters on
+        // it too — a filter that skips a visible column is a filter that
+        // hides rows for no stated reason.
+        || s2cNote(entry).toLowerCase().includes(q);
     });
   }, [pairs, tags, filter, taggedOnly]);
 
@@ -181,8 +181,7 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
                   <tr>
                     <th rowSpan={2} className={styles.costElementHeader}>Line Item</th>
                     <th colSpan={S2C_TAG_FIELDS.length} className={styles.tagGroup}>TAGS</th>
-                    <th rowSpan={2} className={styles.siaMetaHeader}>CTS ({activeOpt?.sheetName || 'active option'})</th>
-                    <th rowSpan={2} className={styles.siaMetaHeader}>On options</th>
+                    <th rowSpan={2} className={styles.siaNotesHeader}>Notes</th>
                     <th rowSpan={2} className={styles.actionCol} />
                   </tr>
                   <tr>
@@ -201,12 +200,6 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
                           {workbook && !pair.reachable && (
                             <span className={styles.siaMuted}> · not in this workbook</span>
                           )}
-                          {/* What the one answer is covering. Only worth
-                              saying above one row — "· 1 row" on most of the
-                              table would be noise. */}
-                          {pair.rowCount > 1 && (
-                            <span className={styles.siaMuted}> · {pair.rowCount} rows</span>
-                          )}
                         </td>
                         {S2C_TAG_FIELDS.map(f => (
                           <td key={f.key} className={styles.tagCell}>
@@ -214,20 +207,25 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
                               key={`${pair.key}-${f.key}-${entry[f.key] ?? ''}`}
                               value={entry[f.key]}
                               listId={`${listPrefix}-${f.key}`}
-                              placeholder={f.placeholder}
+                              // A dash rather than an example. The examples
+                              // read like values on a table where most cells
+                              // are empty, and the three of them repeated
+                              // down every row drowned out the answers.
+                              placeholder="-"
                               onCommit={(v) => setTag(pair.key, f.key, v, pair.lineItem)}
                             />
                           </td>
                         ))}
-                        <td className={`${styles.siaCell} ${styles.numCell}`}>
-                          {pair.activeCts == null
-                            ? <span className={styles.siaMuted}>-</span>
-                            : fmtMoney(pair.activeCts)}
-                        </td>
-                        <td className={styles.siaCell}>
-                          {pair.options.length === 0
-                            ? <span className={styles.siaMuted}>-</span>
-                            : pair.options.join(', ')}
+                        {/* Whatever had to be said about this line item.
+                            Stored on the same key as the tags, so it outlives
+                            the workbook exactly as they do. */}
+                        <td className={styles.siaNoteCell}>
+                          <CellInput
+                            key={`${pair.key}-notes-${s2cNote(entry)}`}
+                            value={s2cNote(entry)}
+                            placeholder="-"
+                            onCommit={(v) => setNote(pair.key, v, pair.lineItem)}
+                          />
                         </td>
                         <td className={styles.actionCell}>
                           {hasAnyTag(entry) && (
@@ -252,7 +250,7 @@ function SiaLineItemTags({ workbook, activeOption, tags, setTag, clearTags }) {
   );
 }
 
-export function S2CTab({ rows, setRows, workbook, activeOption, lineItemTags, setLineItemTags }) {
+export function S2CTab({ rows, setRows, workbook, lineItemTags, setLineItemTags }) {
   const safeRows = Array.isArray(rows) && rows.length
     ? rows
     : Array.from({ length: 10 }, EMPTY_ROW);
@@ -436,9 +434,9 @@ export function S2CTab({ rows, setRows, workbook, activeOption, lineItemTags, se
       {setLineItemTags && (
         <SiaLineItemTags
           workbook={workbook}
-          activeOption={activeOption}
           tags={lineItemTags || {}}
           setTag={(key, field, value, label) => setLineItemTags(prev => setS2cTag(prev, key, field, value, label))}
+          setNote={(key, value, label) => setLineItemTags(prev => setS2cNote(prev, key, value, label))}
           clearTags={(key) => setLineItemTags(prev => clearS2cTags(prev, key))}
         />
       )}
