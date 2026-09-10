@@ -39,7 +39,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
-import { serviceStatusColor } from '../../utils/serviceStatusColors';
+import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import {
@@ -97,6 +97,7 @@ import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList';
 import { subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
@@ -247,6 +248,31 @@ function buildDefaultOpportunityTemplate(dateLine, timeLine) {
     '<li>Final GIC questions and next step discussions: Mike</li>',
     '</ul>',
   ].join('');
+}
+
+// The opps list's table cells, above the Notes section. Plain objects rather
+// than a stylesheet because everything else in this popup is styled inline
+// and a single class hiding in the module would be the odd one out.
+const oppTh = { fontWeight: 600, padding: '0 0.5rem 0.3rem 0', whiteSpace: 'nowrap' };
+const oppTd = { padding: '0.3rem 0.5rem 0.3rem 0', verticalAlign: 'top' };
+
+// The colours a stage chip is painted. The shared status palette knows most
+// stage names already — it is what paints them in the Services Explored grid
+// on this same card — so a stage it knows reads the same in both places.
+//
+// The ones it doesn't know are the problem worth solving here: that palette
+// was written for service statuses, and it has no entry for Contracting or
+// Agreement Sent. Falling through to its default would paint the two most
+// advanced live stages in the grey it uses for "parked", so a deal one
+// signature from done would read as less alive than the Quoting deal above
+// it. The bucket a stage rolls up to answers for every stage there is, so
+// anything the palette misses is painted as what it IS: in flight, won, or
+// lost.
+function oppStageColors(stage) {
+  const exact = serviceStatusColor(stage);
+  if (exact.bg) return exact;
+  const bucket = serviceBucket(serviceStatusBucket(stage));
+  return { bg: bucket?.bg || '#F1F5F9', color: bucket?.color || '#475569' };
 }
 
 function companiesMatch(a, b) {
@@ -5248,6 +5274,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
   }, [fields.company, isNew, oppsCache]);
 
+  // The opps themselves, for the list above the Notes section. Same Account
+  // match the scope grid above uses, so the two can't disagree about which
+  // opps belong to this company — the card cannot show a service as Quoted
+  // off an opp the list below doesn't have.
+  const companyOpps = useMemo(() => {
+    if (isNew || !fields.company || !oppsCache) return [];
+    return companyOppRows(oppsCache.filter(r => companiesMatch(r.Account, fields.company)));
+  }, [fields.company, isNew, oppsCache]);
+  const companyOppsSummary = useMemo(() => summarizeCompanyOpps(companyOpps), [companyOpps]);
+  // Collapsed on open: most cards are opened to read or edit the company
+  // itself, and a company with a dozen opps would otherwise push the rest of
+  // the card off the screen. The header carries the count, so it says whether
+  // it is worth opening without being opened.
+  const [oppListOpen, setOppListOpen] = useState(false);
+
   // Sales Partner suggestions: every partner name already used on an Opps 2
   // row, so a repeat partner is one click and spellings don't fragment. The
   // picker still takes free text, since a partner who has no opp yet won't
@@ -7611,6 +7652,99 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               />
             </div>
           </div>
+
+          {/* Opps — the Opps 2 rows whose Account matches this company. Read
+              only: the Opps tab is where an opp is worked, and a second
+              editor for the same row is a second place for it to be wrong.
+              Above the Notes section because it is the shorter answer to
+              "where do we stand with these people" — and collapsed, because
+              the card is opened to read the company far more often than to
+              count its deals. */}
+          {!isNew && fields.company?.trim() && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setOppListOpen(o => !o)}
+                title={`Opportunities on the Opps tab whose Account matches ${fields.company.trim()}. Read-only here.`}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Opps
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: oppListOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                  {companyOppsSummary.total === 0
+                    ? (oppsCache ? 'none' : 'not loaded')
+                    : [
+                      companyOppsSummary.open ? `${companyOppsSummary.open} open` : '',
+                      companyOppsSummary.closed ? `${companyOppsSummary.closed} closed` : '',
+                    ].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+              {oppListOpen && (
+                <div style={{ marginTop: '0.6rem' }}>
+                  {!oppsCache ? (
+                    // The cache is filled by opening Opps 2, so a browser that
+                    // hasn't been there yet has no opps to show. Saying that is
+                    // the difference between "none" and "not loaded" — the two
+                    // look identical and mean opposite things.
+                    <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
+                      Opps aren&rsquo;t loaded in this browser yet — open the Opps tab once and they&rsquo;ll show here.
+                    </div>
+                  ) : companyOpps.length === 0 ? (
+                    <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
+                      No opps on the Opps tab have this company as their Account.
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', color: '#64748B' }}>
+                            <th style={oppTh}>Opportunity</th>
+                            <th style={oppTh}>Stage</th>
+                            <th style={oppTh}>Scope</th>
+                            <th style={{ ...oppTh, textAlign: 'right' }}>Deal Size</th>
+                            <th style={oppTh}>Started</th>
+                            <th style={oppTh}>Closed</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {companyOpps.map(opp => {
+                            const colors = oppStageColors(opp.stage);
+                            return (
+                              <tr key={opp.id} style={{ borderTop: '1px solid var(--color-border-light)', opacity: opp.active ? 1 : 0.65 }}>
+                                <td style={{ ...oppTd, fontWeight: 600, color: '#1E293B' }}>
+                                  {/* An opp that was never named in BFO still
+                                      has to be pickable out of a list, so it
+                                      falls back to what it is about. */}
+                                  {opp.name || opp.scope || <span style={{ color: '#94A3B8', fontWeight: 400 }}>Unnamed opp</span>}
+                                </td>
+                                <td style={oppTd}>
+                                  {opp.stage ? (
+                                    <span style={{
+                                      display: 'inline-block', padding: '1px 6px', borderRadius: 999,
+                                      fontSize: '0.66rem', fontWeight: 700, whiteSpace: 'nowrap',
+                                      background: colors.bg, color: colors.color,
+                                    }}>{opp.stage}</span>
+                                  ) : <span style={{ color: '#CBD5E1' }}>&mdash;</span>}
+                                </td>
+                                <td style={{ ...oppTd, color: '#475569' }}>{opp.scope || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
+                                <td style={{ ...oppTd, textAlign: 'right', color: '#475569', whiteSpace: 'nowrap' }}>{opp.amount || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
+                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.startDate || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
+                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.closeDate || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.35rem' }}>
+                        Read-only — opps are worked on the Opps tab.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Opportunities — bucketed notes pages, per-company, synced across devices */}
           {!isNew && fields.company?.trim() && (
