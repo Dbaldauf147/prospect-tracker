@@ -139,7 +139,9 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
+import { oppDealCounts, missingUnitChips } from '../../utils/oppDealCounts';
+import { companiesMatch } from '../../utils/listFlags';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -1981,7 +1983,7 @@ const EMPTY_SCOPE = [];
 //
 // `active` is what stops this running per rendered row: the answer is only
 // ever looked at inside a popup that is open.
-function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, serviceOverrides, sites, dealSize }) {
+function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize }) {
   const names = scopeNames || EMPTY_SCOPE;
   return useMemo(() => {
     if (!active || !names.length) return null;
@@ -1994,14 +1996,79 @@ function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, servic
       services: names,
       pricing: pricing || {},
       bases: pricingBases || undefined,
-      counts: { sites: parsePricingMoney(sites) ?? 0 },
+      // Whatever the caller knows about the account. The Deal Size cell has
+      // only the opp's Sites; the Lead prompt reads the company card too, so
+      // a per-account service prices there instead of coming back at nothing.
+      counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
       dealSize: parsePricingMoney(dealSize),
     });
     // Each line says where its fee came from, so a number that moves has a
     // reason on the row — the percentage ones move with the amount being
     // typed beside them, which is the deal size they are a cut of.
     return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
-  }, [active, names, pricing, pricingBases, serviceOverrides, sites, dealSize]);
+  }, [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize]);
+}
+
+// What is known about the account, as a row of counts above the fee table.
+//
+// Every per-unit fee below is one of these numbers times a rate, so the
+// numbers themselves are the first thing to check: a fee worked out against
+// a portfolio's 6,176 sites when the deal covers 40 of them is wrong in a
+// way no total will reveal. Each chip says which record answered — the opp
+// for what this deal covers, the company card for what the account has.
+//
+// A unit nothing has recorded is shown too, and only when some service in
+// the scope charges on it: that blank is the reason a line below reads $0,
+// and without it the $0 is indistinguishable from a service that is free.
+function DealCountChips({ chips, companyName, account }) {
+  if (!chips || !chips.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+      {chips.map(chip => {
+        const known = chip.value != null;
+        return (
+          <span
+            key={chip.unit}
+            title={known
+              ? `${chip.label}: ${chip.value.toLocaleString()}, from ${chip.from}. Every fee charged per ${chip.label.toLowerCase()} below is worked against it.`
+              : `No ${chip.label.toLowerCase()} count is recorded for this account, on the opp or on the company card — which is why a service charged per ${chip.label.toLowerCase()} prices at nothing below.`}
+            style={{
+              display: 'inline-flex', alignItems: 'baseline', gap: 4,
+              padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', whiteSpace: 'nowrap',
+              background: known ? '#F1F5F9' : '#fff',
+              border: `1px ${known ? 'solid #E2E8F0' : 'dashed #E2E8F0'}`,
+              color: known ? '#334155' : '#94A3B8',
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>{chip.label}</span>
+            {known ? (
+              <>
+                <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                  {chip.value.toLocaleString()}
+                </strong>
+                <span style={{ color: '#94A3B8', fontSize: '0.66rem' }}>
+                  {chip.source === 'opp' ? 'this opp' : 'company card'}
+                </span>
+              </>
+            ) : <span>not recorded</span>}
+          </span>
+        );
+      })}
+      {/* Which company card was read. The Account on an opp and the company
+          on the card are matched by name, so naming the one it landed on is
+          what makes a surprising count checkable. */}
+      {companyName ? (
+        <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+          from <strong style={{ fontWeight: 600 }}>{companyName}</strong>
+        </span>
+      ) : account ? (
+        <span
+          style={{ fontSize: '0.68rem', color: '#94A3B8' }}
+          title={`No company record matches “${account}”, so only what the opp itself carries is known here.`}
+        >no company card for {account}</span>
+      ) : null}
+    </div>
+  );
 }
 
 // The scope priced out, as a table: one row per service, the low end of its
@@ -2017,8 +2084,16 @@ function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, servic
 // box sits under the end it fills. Nothing is written until the user presses
 // one: the estimate is what the rate card says, and whether that IS the deal
 // size is theirs to decide.
-function ScopeFeeTable({ estimate, onUse }) {
+function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = null, onUse }) {
   if (!estimate || !estimate.lines.length) return null;
+  // The totals can be struck from a smaller set than the rows: the deal-size
+  // prompt lets a service be switched off, and an off service still has to
+  // be readable — you turn it off to see what the deal is worth without it,
+  // not to make it disappear.
+  const sums = totals || estimate;
+  const picking = !!selected && !!onToggle;
+  const isOn = (name) => (picking ? selected.has(name) : true);
+  const onCount = picking ? estimate.lines.filter(l => isOn(l.name)).length : estimate.lines.length;
   const cell = { padding: '2px 0', verticalAlign: 'top' };
   const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 10 };
   const head = {
@@ -2043,12 +2118,23 @@ function ScopeFeeTable({ estimate, onUse }) {
       <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
         Scope services{' '}
         <span style={{ color: '#94A3B8', fontWeight: 400 }}>
-          ({estimate.lines.length}) &middot; est. Year 1 fee
+          ({picking && onCount !== estimate.lines.length
+            ? `${onCount} of ${estimate.lines.length}`
+            : estimate.lines.length}) &middot; est. Year 1 fee
         </span>
+        {picking ? (
+          <span
+            style={{ color: '#94A3B8', fontWeight: 400 }}
+            title="A service left unticked still shows what it is worth — it just stops counting towards the total, so you can see what the deal is without it."
+          >
+            {' '}&middot; untick to exclude
+          </span>
+        ) : null}
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            {picking ? <th style={{ ...head, width: 20 }} aria-label="In the total" /> : null}
             <th style={{ ...head, textAlign: 'left' }}>Service</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th>
@@ -2056,7 +2142,21 @@ function ScopeFeeTable({ estimate, onUse }) {
         </thead>
         <tbody>
           {estimate.lines.map((line) => (
-            <tr key={line.name}>
+            <tr key={line.name} style={isOn(line.name) ? undefined : { opacity: 0.5 }}>
+              {picking ? (
+                <td style={{ ...cell, paddingTop: 3 }}>
+                  <input
+                    type="checkbox"
+                    checked={isOn(line.name)}
+                    onChange={(e) => { e.stopPropagation(); onToggle(line.name); }}
+                    onClick={(e) => e.stopPropagation()}
+                    title={isOn(line.name)
+                      ? `Leave ${line.name} out of the total`
+                      : `Count ${line.name} in the total`}
+                    style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+                  />
+                </td>
+              ) : null}
               <td style={cell}>
                 {line.name}
                 {/* Where the fee came from, and — when a priced service
@@ -2098,19 +2198,27 @@ function ScopeFeeTable({ estimate, onUse }) {
         </tbody>
         <tfoot>
           <tr>
-            <td style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+            <td
+              colSpan={picking ? 2 : 1}
+              style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+            >
               Year 1 total
-              {estimate.unpriced.length ? (
-                <span style={{ color: '#94A3B8' }}>{' '}({estimate.unpriced.length} unpriced)</span>
-              ) : null}
+              {(() => {
+                // One parenthetical, not two stacked next to each other.
+                const notes = [];
+                if (picking && onCount !== estimate.lines.length) notes.push(`${onCount} of ${estimate.lines.length} ticked`);
+                if (sums.unpriced.length) notes.push(`${sums.unpriced.length} unpriced`);
+                if (!notes.length) return null;
+                return <span style={{ color: '#94A3B8' }}>{' '}({notes.join(' · ')})</span>;
+              })()}
             </td>
             <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
-              <strong style={{ color: '#1E293B' }}>{money(estimate.year1Total)}</strong>
+              <strong style={{ color: '#1E293B' }}>{money(sums.year1Total)}</strong>
               {onUse ? (
                 <div>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onUse(estimate.year1Total); }}
+                    onClick={(e) => { e.stopPropagation(); onUse(sums.year1Total); }}
                     title="Put the low end of this estimate in the Deal Size box"
                     style={useLink}
                   >Use low</button>
@@ -2119,16 +2227,16 @@ function ScopeFeeTable({ estimate, onUse }) {
             </td>
             <td
               style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
-              title={estimate.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
+              title={sums.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
             >
-              <strong style={{ color: estimate.ranged ? '#1E293B' : '#94A3B8' }}>
-                {estimate.ranged ? money(estimate.year1TotalHigh) : '—'}
+              <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
+                {sums.ranged ? money(sums.year1TotalHigh) : '—'}
               </strong>
-              {onUse && estimate.ranged ? (
+              {onUse && sums.ranged ? (
                 <div>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onUse(estimate.year1TotalHigh); }}
+                    onClick={(e) => { e.stopPropagation(); onUse(sums.year1TotalHigh); }}
                     title="Put the high end of this estimate in the Deal Size box"
                     style={useLink}
                   >Use high</button>
@@ -2138,9 +2246,9 @@ function ScopeFeeTable({ estimate, onUse }) {
           </tr>
         </tfoot>
       </table>
-      {estimate.unpriced.length > 0 && (
+      {sums.unpriced.length > 0 && (
         <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
-          No price yet: {estimate.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
+          No price yet: {sums.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
         </div>
       )}
     </div>
@@ -4989,24 +5097,85 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
 // Lead). Mirrors the NotSoldFollowUpModal pattern.
 function LeadQuotedAmountModal({
   opp, onSave, onClose,
-  scopeNames = null, pricing = null, pricingBases = null, serviceOverrides = null,
+  scopeNames = null, pricing = null, pricingBases = null, serviceOverrides = null, prospects = null,
 }) {
   const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
+  // Services left out of the total. Held as the ones switched OFF rather
+  // than the ones on, so a scope that gains a service while the prompt is
+  // open counts it — the default for a service in the deal is that it is in
+  // the deal.
+  const [excluded, setExcluded] = useState(() => new Set());
+  const toggleService = (name) => setExcluded(prev => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+
+  // The company record behind this opp's Account, for the counts its card
+  // carries. Matched on the name the same fuzzy way every other reader of
+  // this pair does (an Account reads "Solenis (a Platinum Equity Co.)" where
+  // the card reads "Solenis"), and the chips name the card they landed on so
+  // a wrong match is visible rather than silently priced against.
+  const company = useMemo(() => {
+    const account = String(opp?.['Account'] ?? '').trim();
+    if (!account) return null;
+    const list = prospects || [];
+    // Exact on the whole name first. Most Accounts ARE the company's name,
+    // parenthetical and all ("Solenis (a Platinum Equity Co.)"), and taking
+    // the exact one when it exists means the fuzzy rule below never gets to
+    // prefer a shorter neighbour.
+    const key = account.toLowerCase();
+    return list.find(p => String(p?.company || '').trim().toLowerCase() === key)
+      || list.find(p => companiesMatch(p?.company, account))
+      || null;
+  }, [prospects, opp]);
 
   // What the deal's scope is worth, service by service, off the rate card —
   // the same table the Deal Size cell shows, because this is the same
   // question asked at the moment the figure is first wanted. Sizing a deal
   // from memory is how a pipeline fills with round numbers; sizing it from
   // what the services actually price at is the point of asking here.
+  //
+  // Priced twice, deliberately: once over the whole scope for the rows, and
+  // once over the ticked ones for the totals. A service switched off has to
+  // keep showing what it is worth — that is what makes "what is this deal
+  // without it" a question you can answer by looking.
+  const units = useMemo(() => pricingUnits(pricingBases || undefined), [pricingBases]);
+  const dealCounts = useMemo(() => oppDealCounts({ opp, company, units }), [opp, company, units]);
   const scopeEstimate = useScopeFeeEstimate({
     active: true,
     scopeNames,
     pricing,
     pricingBases,
     serviceOverrides,
-    sites: opp?.['Sites'],
+    counts: dealCounts.counts,
     dealSize: quotedAmount,
   });
+  const pickedNames = useMemo(
+    () => (scopeNames || EMPTY_SCOPE).filter(n => !excluded.has(n)),
+    [scopeNames, excluded],
+  );
+  const pickedEstimate = useScopeFeeEstimate({
+    active: excluded.size > 0,
+    scopeNames: pickedNames,
+    pricing,
+    pricingBases,
+    serviceOverrides,
+    counts: dealCounts.counts,
+    dealSize: quotedAmount,
+  });
+  const selectedServices = useMemo(() => new Set(pickedNames), [pickedNames]);
+  // Known counts first, then the ones this particular scope turned out to
+  // charge on and nobody has recorded — which is why the line below them
+  // reads $0.
+  const countChips = useMemo(() => [
+    ...dealCounts.chips,
+    ...missingUnitChips({
+      counts: dealCounts.counts,
+      needed: scopeEstimate?.unitsUsed ? [...scopeEstimate.unitsUsed] : null,
+      units,
+    }),
+  ], [dealCounts, scopeEstimate, units]);
 
   function handleSave() {
     onSave({ quotedAmount: quotedAmount.trim() });
@@ -5082,11 +5251,25 @@ function LeadQuotedAmountModal({
               style={inputStyle}
             />
           </div>
+          {/* What every per-unit fee below is worked against, and where each
+              of those numbers came from. Above the table because it is the
+              first thing to check: the rates are the rate card's, but the
+              counts are this account's, and a wrong count is a wrong deal. */}
+          {countChips.length > 0 && (
+            <DealCountChips
+              chips={countChips}
+              companyName={company?.company || ''}
+              account={String(opp?.['Account'] ?? '').trim()}
+            />
+          )}
           {/* The scope priced out. "Use low" / "Use high" fill the box above
               rather than saving: the estimate is what the rate card says, and
               whether that is the deal size is the user's call. */}
           <ScopeFeeTable
             estimate={scopeEstimate}
+            totals={pickedEstimate || scopeEstimate}
+            selected={selectedServices}
+            onToggle={toggleService}
             onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
           />
           {/* A deal with nothing in Scope has nothing to price, and saying so
@@ -14598,6 +14781,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             pricing={servicePricing}
             pricingBases={pricingBases}
             serviceOverrides={settings?.serviceOverrides}
+            // For the account's own counts — the company card behind this
+            // opp's Account carries its Sites, Sites w/ Mandate and Accounts.
+            prospects={prospects}
             onSave={({ quotedAmount }) => {
               // Only push when the value actually changed so the undo
               // stack stays uncluttered with no-op snapshots.
