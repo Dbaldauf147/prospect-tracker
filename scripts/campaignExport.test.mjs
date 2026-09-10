@@ -13,6 +13,12 @@ import {
   campaignSummaryRow, campaignsSummaryCsv, CAMPAIGN_SUMMARY_HEADERS, csvFilename,
 } from '../src/utils/campaignExport.js';
 
+// Columns by name rather than by position: the file has grown columns in the
+// middle before (the follow-up count sits next to Sent Date, where it reads),
+// and a test pinned to slice(9, 12) fails everywhere at once when it does
+// without saying anything about what actually broke.
+const cells = (row, ...names) => names.map(n => row[CAMPAIGN_CONTACT_HEADERS.indexOf(n)]);
+
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
   const a = JSON.stringify(actual);
@@ -65,6 +71,9 @@ check('a replied contact', campaignContactRow({
   company: 'Acme',
   recipientCount: 1,
   sentDate: '2026-09-01T14:00:00Z',
+  sendCount: 1,
+  firstSentDate: '2026-09-01T14:00:00Z',
+  sendHistory: [{ date: '2026-09-01T14:00:00Z', subject: 'Power prices, September' }],
   replied: true,
   replyDate: '2026-09-02T09:12:00Z',
   repliedBy: 'Sam Reed',
@@ -75,7 +84,7 @@ check('a replied contact', campaignContactRow({
   tracking: { clickCount: 1, firstClickAt: Date.parse('2026-09-01T14:05:00Z'), lastClickAt: Date.parse('2026-09-01T14:06:00Z') },
 }), [
   'September market update', 'Power prices, September', 'sam@acme.com', 'Sam Reed', 'Acme', 1,
-  '2026-09-01', 'Confirmed', 'Replied',
+  '2026-09-01', '2026-09-01', 1, 'No', 'Confirmed', 'Replied',
   1, '2026-09-01 14:05 UTC', '2026-09-01 14:06 UTC',
   'Sam Reed', '2026-09-02', '', '', 'Going',
 ]);
@@ -83,41 +92,72 @@ check('a replied contact', campaignContactRow({
 // An untracked send leaves the three tracking cells empty. A 0 there would
 // read as "watched and never clicked", which is a different — and wrong —
 // claim.
-check('untracked leaves tracking blank', campaignContactRow(
+check('untracked leaves tracking blank', cells(campaignContactRow(
   { email: 'lee@acme.com', sentDate: '2026-09-01T14:00:00Z' },
   { campaign, delivery: 'Delivered', tracking: null },
-).slice(9, 12), ['', '', '']);
+), 'Clicks', 'First Click', 'Last Click'), ['', '', '']);
 
 // Tracked but never clicked really is zero.
-check('tracked, never clicked', campaignContactRow(
+check('tracked, never clicked', cells(campaignContactRow(
   { email: 'lee@acme.com', sentDate: '2026-09-01T14:00:00Z' },
   { campaign, delivery: 'Delivered', tracking: { clickCount: 0, firstClickAt: 0, lastClickAt: 0 } },
-).slice(9, 12), [0, '', '']);
+), 'Clicks', 'First Click', 'Last Click'), [0, '', '']);
 
 // A click the counter threw out (a security gateway following the link) leaves
 // no click time: the hook's lastClickAt is the raw one, and a timestamp beside
 // a count of zero reads as a contradiction with no tooltip to explain it.
-check('a scanned-only click has no time', campaignContactRow(
+check('a scanned-only click has no time', cells(campaignContactRow(
   { email: 'lee@acme.com', sentDate: '2026-09-01' },
   { campaign, tracking: { clickCount: 0, firstClickAt: 0, lastClickAt: Date.parse('2026-09-01T15:05:00Z') } },
-).slice(9, 12), [0, '', '']);
+), 'Clicks', 'First Click', 'Last Click'), [0, '', '']);
 
 // A roster member nobody has emailed yet: no send date, no reply date, and
 // the recipient count defaults to one.
 check('an unsent roster member', campaignContactRow({ email: 'new@acme.com' }, { campaign }), [
   'September market update', 'Power prices, September', 'new@acme.com', '', '', 1,
-  '', '', 'Not Sent', '', '', '', '', '', '', '', '',
+  '', '', '', '', '', 'Not Sent', '', '', '', '', '', '', '', '',
 ]);
 
+// --- follow-ups -------------------------------------------------------
+// A contact who has been chased: the count is every email that went to that
+// address under the campaign's subject lines, and First Sent is the original
+// rather than the most recent send that Sent Date carries.
+check('a chased contact', cells(campaignContactRow({
+  email: 'sam@acme.com',
+  sentDate: '2026-09-15T09:00:00Z',
+  sendCount: 3,
+  firstSentDate: '2026-09-01T14:00:00Z',
+  sendHistory: [
+    { date: '2026-09-01T14:00:00Z', subject: 'Power prices, September' },
+    { date: '2026-09-08T09:00:00Z', subject: 'RE: Power prices, September' },
+    { date: '2026-09-15T09:00:00Z', subject: 'RE: Power prices, September' },
+  ],
+}, { campaign }), 'Sent Date', 'First Sent', 'Sends', 'Follow-up'),
+['2026-09-15', '2026-09-01', 3, 'Yes']);
+
+// A campaign saved before follow-ups were counted has send dates and no
+// counts. Those cells stay empty: "no follow-up" would be a claim the
+// snapshot cannot make, and a 1 would be a number nobody counted.
+check('an uncounted snapshot says nothing', cells(campaignContactRow(
+  { email: 'old@acme.com', sentDate: '2026-09-01' },
+  { campaign },
+), 'First Sent', 'Sends', 'Follow-up'), ['', '', '']);
+
+// Never emailed is never chased.
+check('an unsent contact says nothing', cells(campaignContactRow(
+  { email: 'new@acme.com', sendCount: 0 },
+  { campaign },
+), 'First Sent', 'Sends', 'Follow-up'), ['', '', '']);
+
 // A bounce and an out-of-office each carry their own date.
-check('bounce date', campaignContactRow(
+check('bounce date', cells(campaignContactRow(
   { email: 'gone@acme.com', sentDate: '2026-09-01', bounced: true, bounceDate: '2026-09-01T14:01:00Z' },
   { campaign },
-).slice(14, 16), ['2026-09-01', '']);
-check('ooo date', campaignContactRow(
+), 'Bounce Date', 'Out of Office Date'), ['2026-09-01', '']);
+check('ooo date', cells(campaignContactRow(
   { email: 'away@acme.com', sentDate: '2026-09-01', outOfOffice: true, oooDate: '2026-09-03T08:00:00Z' },
   { campaign },
-).slice(14, 16), ['', '2026-09-03']);
+), 'Bounce Date', 'Out of Office Date'), ['', '2026-09-03']);
 
 // --- the whole file ---------------------------------------------------
 const file = campaignContactsCsv(

@@ -26,6 +26,7 @@ import {
 import {
   campaignEventUrl, eventLinkHref, eventLinkLabel, withEventUrl, sameEventUrl,
 } from '../../utils/campaignEventLink';
+import { followUpInfo } from '../../utils/campaignFollowUp';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -47,6 +48,13 @@ const CONTACT_COLUMNS = [
     title: 'The company on the recipient\u2019s HubSpot contact. Where HubSpot has none, the brand read off their email domain stands in, greyed.',
   },
   { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
+  {
+    key: 'followUp',
+    label: 'Follow-up',
+    sortKey: 'followUp',
+    width: 120,
+    title: 'Whether a SECOND email has gone to this address under the campaign\u2019s subject lines \u2014 a chase, a re-send, a reply of your own on the thread. Hover a row to see each send with its subject line. "Sent Date" is the most recent of them; the tooltip has the first.',
+  },
   { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
   { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
   {
@@ -302,6 +310,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         merged.push({
           ...rc,
           sentDate: act.sentDate,
+          // How many sends this address has had under the campaign's subject
+          // lines, and the last few of them, so the Follow-up column survives
+          // a refresh the same way the reply detail does.
+          sendCount: act.sendCount ?? null,
+          firstSentDate: act.firstSentDate || act.sentDate || null,
+          sendHistory: Array.isArray(act.sendHistory) ? act.sendHistory : [],
           replied: !!act.replied,
           replyDate: act.replyDate,
           repliedBy: act.repliedBy,
@@ -1008,6 +1022,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     switch (key) {
       case 'email': return String(c.email || '').toLowerCase();
       case 'sentDate': return c.sentDate ? (new Date(c.sentDate).getTime() || 0) : 0;
+      // Most-chased first when sorted descending; rows whose answer isn't
+      // known yet sort with the never-sent rather than claiming "no".
+      case 'followUp': return followUpInfo(c).sendCount;
       case 'status': return statusRank(c);
       case 'delivery': return DELIVERY_RANK[deliveryFor(c)] ?? 2;
       case 'repliedBy': return String(c.repliedBy || '').toLowerCase();
@@ -1317,6 +1334,42 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       }
       case 'sentDate':
         return <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</span>;
+      case 'followUp': {
+        const info = followUpInfo(c);
+        if (!info.sent) {
+          return <span style={{ color: 'var(--color-text-muted)' }} title="Not emailed yet — there is no follow-up to look for.">-</span>;
+        }
+        if (!info.known) {
+          // A campaign saved before follow-ups were counted. Opening it
+          // refreshes in the background, so this fills itself in; saying "no"
+          // meanwhile would be a guess, and the wrong one to act on.
+          return <span style={{ color: 'var(--color-text-muted)' }} title="Not counted in this saved snapshot yet — it fills in when the campaign refreshes.">?</span>;
+        }
+        const lines = [
+          info.followUp
+            ? `${info.sendCount} emails have gone to this address under this campaign\u2019s subject lines \u2014 ${info.followUpCount} follow-up${info.followUpCount === 1 ? '' : 's'} after the first.`
+            : 'Only the first email has gone to this address under this campaign\u2019s subject lines.',
+          `First sent ${fmtDate(info.firstSentDate)}.`,
+          // Each send with the subject line it went out under — that is how
+          // you tell a chase from the original at a glance.
+          ...(info.history.length
+            ? ['', ...info.history.map((h, n) => `${info.sendCount - info.history.length + n + 1}. ${fmtDate(h.date)} \u2014 ${h.subject || '(no subject)'}`)]
+            : []),
+          ...(info.sendCount > info.history.length ? ['', `Only the last ${info.history.length} sends are listed.`] : []),
+        ].join('\n');
+        return (
+          <span title={lines}>
+            <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap', ...(info.followUp ? { background: '#DCFCE7', color: '#166534' } : { background: '#F3F4F6', color: '#6B7280' }) }}>
+              {info.followUp ? `Yes${info.followUpCount > 1 ? ` \u00d7${info.followUpCount}` : ''}` : 'No'}
+            </span>
+            {info.followUp && (
+              <span style={{ display: 'block', fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+                last {fmtDate(info.lastSentDate)}
+              </span>
+            )}
+          </span>
+        );
+      }
       case 'delivery': {
         const d = deliveryFor(c);
         const tone = d === DELIVERY.FAILED ? { background: '#FEE2E2', color: '#991B1B' }
@@ -1439,8 +1492,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   }
 
   return (
-    // Wide: the campaign's contact table carries nine columns — sent date,
-    // delivery, status, clicks, who replied and when, event status —
+    // Wide: the campaign's contact table carries ten columns — sent date,
+    // follow-up, delivery, status, clicks, who replied and when, event status —
     // and at the old 1000px cap the last of them fell off the right edge of
     // a container that clipped rather than scrolled. The cap is what keeps
     // the search box and the subject line from stretching across an
