@@ -15,6 +15,8 @@ import {
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
 import { QuestionsTab } from './QuestionsTab';
+import { CoaItemsTab } from './CoaItemsTab';
+import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
 import { ServicesPricingTab } from './ServicesPricingTab';
 import { DealPricingTab } from './DealPricingTab';
 import { buildServiceRows } from '../../utils/serviceRows';
@@ -1044,6 +1046,20 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
 export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
+  // How many COA items the subtab badge shows. Read here rather than
+  // reported up from the tab, so the badge is right before the tab has ever
+  // been opened — and re-read on the store's own change events, which cover
+  // an edit in another browser tab and the Firestore mirror hydrating.
+  const [coaItemCount, setCoaItemCount] = useState(() => loadCoaItemOptions().length);
+  useEffect(() => {
+    const refresh = () => setCoaItemCount(loadCoaItemOptions().length);
+    window.addEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
   // `|| {}` for the same reason the pricing subtab does it: the view still
   // renders outside the AuthProvider, and with no uid the estimate below
   // simply isn't remembered.
@@ -1648,6 +1664,13 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           className={activeTab === 'questions' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('questions')}
         >Questions</button>
+        {/* The COA exceptions every opp is asked about. The count is the
+            number of rows this list puts on each opp's Stage 6 table. */}
+        <button
+          type="button"
+          className={activeTab === 'coa' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('coa')}
+        >COA Items <span className={styles.subtabCount}>{coaItemCount}</span></button>
       </div>
 
       {activeTab === 'lists' ? (
@@ -1880,6 +1903,10 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
         />
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
+      ) : activeTab === 'coa' ? (
+        // Its own store (localStorage + Firestore mirror, like the Timeline
+        // Type list), not settings — so it takes neither prop.
+        <CoaItemsTab />
       ) : (
         <QuestionsTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       )}

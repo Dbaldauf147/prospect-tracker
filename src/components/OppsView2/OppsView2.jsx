@@ -26,7 +26,7 @@ import {
 import { ScopeServicesCell, ScopeServicesModal } from './ScopeServicesPicker';
 import {
   coaItemsForOpp, coaItemsToStore, coaItemStatus, coaDaysWaiting, coaItemsSummary,
-  outstandingCoaItems,
+  outstandingCoaItems, applyCoaCatalogChange,
   emptyCoaItem,
 } from '../../utils/coaItems';
 import {
@@ -719,16 +719,19 @@ const COA_APPROVALS_DUE_STAGE = 'Agreement Sent';
 // an approved date or has been marked N/A. Returns the outstanding items, so
 // the chip can carry the count and the details banner can name them.
 //
-// The seeded "3% esc" item counts as outstanding until the record answers it
-// (see outstandingCoaItems) — a row carrying only that name is never stored,
-// so an opp with no row for it is one where nobody has dealt with the
-// escalator, which at this stage is exactly the thing worth catching before
-// the agreement comes back signed.
-function coaApprovalsNeeded(row) {
+// The items on the COA list (the Dropdowns page's COA Items tab) count as
+// outstanding until the record answers them (see outstandingCoaItems) — a row
+// carrying only a list name is never stored, so an opp with no row for "3%
+// esc" is one where nobody has dealt with the escalator, which at this stage
+// is exactly the thing worth catching before the agreement comes back signed.
+//
+// The list is read here rather than passed in: this is called per row while
+// the Flags column renders, and the store hands back a cached array.
+function coaApprovalsNeeded(row, catalog) {
   if (!row) return [];
   const stage = String(row['Stage'] ?? '').replace(ZERO_WIDTH_RE, '').trim();
   if (stage !== COA_APPROVALS_DUE_STAGE) return [];
-  return outstandingCoaItems(row);
+  return outstandingCoaItems(row, catalog || loadCoaItemOptions());
 }
 
 // Look up a row value by header name, tolerant to casing / zero-width /
@@ -5705,13 +5708,26 @@ function OppTicketLinksSection({ opp, onFieldChange }) {
 // mount, so without a remount the section would keep showing the previous
 // opp's items after moving to another record.
 function OppCoaItemsSection({ opp, onFieldChange }) {
-  const [rows, setRows] = useState(() => coaItemsForOpp(opp));
-  // Presets plus every item typed before, so an exception named once is
-  // offered on the next opp. Re-read on the in-tab event and on cross-tab
-  // storage writes, like the Timeline Type list.
+  // The COA list kept on the Dropdowns page: every item on it is a row here,
+  // and it is what the item cell's dropdown offers. Re-read on the in-tab
+  // event and on cross-tab storage writes, like the Timeline Type list.
   const [itemOptions, setItemOptions] = useState(loadCoaItemOptions);
+  const [rows, setRows] = useState(() => coaItemsForOpp(opp, loadCoaItemOptions()));
+  // The list the rows on screen were built from, so a change can be told
+  // from the list it replaced — which is what says whether a row now missing
+  // from the list was this opp's own or only ever the list's.
+  const catalogRef = useRef(itemOptions);
   useEffect(() => {
-    const refresh = () => setItemOptions(loadCoaItemOptions());
+    const refresh = () => {
+      const prev = catalogRef.current;
+      const next = loadCoaItemOptions();
+      catalogRef.current = next;
+      setItemOptions(next);
+      // Lay the new list over what is on screen rather than re-reading the
+      // opp: an item added while this was open should appear, and a date
+      // half-typed into another row should not be thrown away to show it.
+      setRows(cur => applyCoaCatalogChange(cur, prev, next));
+    };
     window.addEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
     window.addEventListener('storage', refresh);
     return () => {
@@ -5722,7 +5738,10 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
 
   const commit = (next) => {
     setRows(next);
-    if (onFieldChange) onFieldChange('_coaItems', coaItemsToStore(next));
+    // The list decides which rows are only being asked about: a row carrying
+    // a list name and nothing else isn't written, so an opp nobody has
+    // answered stays untouched however long the list grows.
+    if (onFieldChange) onFieldChange('_coaItems', coaItemsToStore(next, itemOptions));
   };
   const updateRow = (idx, key, value) =>
     commit(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
@@ -5739,7 +5758,9 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
     if (addCoaItemOption(value)) setItemOptions(loadCoaItemOptions());
   };
 
-  const summary = coaItemsSummary(rows);
+  // `undefined` for the clock: the summary reads it itself, and a Date.now()
+  // spelled out here would be an impure call in the render body.
+  const summary = coaItemsSummary(rows, undefined, itemOptions);
   const listId = `coa-item-options-${opp?._id ?? 'new'}`;
   const cellInput = {
     width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
