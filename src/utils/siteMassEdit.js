@@ -28,6 +28,7 @@
 
 // Extension included so this resolves under plain Node for the tests.
 import { PROPERTY_TYPE_OPTIONS } from '../data/propertyTypeEstimates.js';
+import { TENURE_OPTIONS } from './ownershipEstimates.js';
 
 /**
  * The mapped site fields, in the order the picker offers them.
@@ -58,7 +59,18 @@ export const SITE_EDIT_FIELDS = [
     // state industrial rate; everything else uses commercial.
     options: ['Commercial', 'Industrial'],
   },
-  { key: 'ownership', label: 'Ownership', options: ['Owned', 'Leased'] },
+  {
+    key: 'ownership',
+    label: 'Ownership',
+    // "Leased" on its own is a complete tenure answer and scopes the
+    // compliance subtabs and the savings the same way the two beside it do.
+    // What the specific pair adds is how the site is ESTIMATED: a suite is
+    // sized on the tenant's floor and its one electric account, a whole
+    // building on the building and nearly all of its meters. Setting one of
+    // those across a portfolio you know the shape of is exactly the kind of
+    // portfolio-wide gap this editor is for.
+    options: TENURE_OPTIONS,
+  },
   { key: 'siteDescription', label: 'Site Description' },
   { key: 'propertySize', label: 'Size (ft²)', type: 'number' },
   { key: 'electric', label: 'Annual Electric Consumption', type: 'number' },

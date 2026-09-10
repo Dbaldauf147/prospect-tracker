@@ -88,10 +88,6 @@ import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
   normalizePropertyType,
-  estimateConsumption,
-  propertyTypeAccounts,
-  propertyTypeAccountTotal,
-  propertyTypeEquipment,
   propertyTypeIntensity,
   varianceVsEstimate,
   KWH_PER_DTH,
@@ -102,6 +98,21 @@ import {
   PROPERTY_TYPE_EXCLUDED,
   PROPERTY_TYPE_EXCLUDED_LABEL,
 } from '../../data/propertyTypeEstimates';
+// Ownership-aware wrappers over the four estimators above. Everything on
+// this page that estimates a SITE goes through these, because a site has a
+// tenure and a bare property type does not: a leased suite is sized on the
+// premises the tenant holds, not on the building it sits in. An owned row,
+// and any row whose tenure is blank or unplaceable, gets exactly what the
+// unwrapped functions returned before these existed.
+import {
+  TENURE,
+  TENURE_OPTIONS,
+  accountsForTenure,
+  accountTotalForTenure,
+  equipmentForTenure,
+  estimateConsumptionForTenure,
+  tenureEstimateNote,
+} from '../../utils/ownershipEstimates';
 import {
   normalizeCountryName,
   countryElectricSavings,
@@ -383,15 +394,50 @@ function normalizeOwnership(raw) {
   const v = String(raw ?? '').trim().toLowerCase();
   if (!v) return null;
   // Single-letter codes first — too short for the word test below.
-  if (v === 'o') return 'Owned';
-  if (v === 'l') return 'Leased';
+  if (v === 'o') return TENURE.OWNED;
+  if (v === 'l') return TENURE.LEASED;
   const saysOwned = /\bown(s|ed|er|ers|ership)?\b|\bfreehold\b|\bpurchased?\b/.test(v);
-  const saysLeased = /\bleas(e|es|ed|ing|ehold)\b|\blessee\b|\btenant\b|\brent(s|ed|ing|al)?\b/.test(v);
+  // "NNN" and "triple net" name a lease structure and nothing else — they
+  // are a tenure answer even with no form of "lease" beside them, which is
+  // how a real estate list often writes it.
+  const saysLeased = /\bleas(e|es|ed|ing|ehold)\b|\blessee\b|\btenant\b|\brent(s|ed|ing|al)?\b|\bnnn\b|\btriple[-\s]?net\b/.test(v);
   // "Owned/Leased" and friends name both — genuinely ambiguous for a
   // single site, so leave it unresolved rather than guessing.
-  if (saysOwned && !saysLeased) return 'Owned';
-  if (saysLeased && !saysOwned) return 'Leased';
-  return null;
+  if (saysOwned && !saysLeased) return TENURE.OWNED;
+  if (!saysLeased || saysOwned) return null;
+  // A lease that says WHICH KIND it is. The two are estimated very
+  // differently — a suite is sized on the tenant's floor and its one
+  // electric account, a whole-building net lease on the building and nearly
+  // all of its meters — so a file that already knows is worth reading
+  // properly rather than folding onto a bare "Leased" and re-deriving it.
+  //
+  // Suite is tested first: "leased suite in a single building" says both
+  // words, and the narrower claim is the one that was meant.
+  const saysSuite = /\bsuite\b|\bfloor(s)?\b|\bunit\b|\bpartial\b|\bmulti[-\s]?tenant\b|\bshared\b|\bin[-\s]?line\b|\bpart\s+of\b|\bgross\s+lease\b|\bfull[-\s]?service\s+lease\b/.test(v);
+  const saysWhole = /\bwhole\b|\bentire\b|\bfull\s+building\b|\bstand[-\s]?alone\b|\bfreestanding\b|\bsingle[-\s]?tenant\b|\bnet\s+lease\b|\bnnn\b|\btriple[-\s]?net\b|\bground\s+lease\b|\bbuild(ing)?[-\s]?lease\b/.test(v);
+  if (saysSuite) return TENURE.SUITE;
+  if (saysWhole) return TENURE.WHOLE;
+  // Leased, kind not stated — which is what most site lists say. Carried
+  // through as typed; the estimators resolve it against the property type.
+  return TENURE.LEASED;
+}
+
+// What assuming a tenure across a whole file does to that file's estimates,
+// in one clause. The compliance and savings scopes read every leased value
+// the same way; what the specific pair changes is the SIZE of what gets
+// estimated, and that is worth saying at the moment somebody stamps it onto
+// every row rather than leaving it to a tooltip elsewhere.
+function tenureAssumeHint(tenure) {
+  if (tenure === TENURE.SUITE) {
+    return ' Sites are then sized as a tenant\u2019s premises: one electric account, in-suite equipment, and the landlord\u2019s base-building load left out.';
+  }
+  if (tenure === TENURE.WHOLE) {
+    return ' Sites are then sized as whole buildings behind the tenant\u2019s own meters \u2014 close to owned, less the landlord\u2019s water account and structure.';
+  }
+  if (tenure === TENURE.LEASED) {
+    return ' Each site then takes the lease shape its property type usually implies \u2014 offices and labs as suites, industrial and standalone retail as whole buildings.';
+  }
+  return '';
 }
 
 // classifyUtility (Regulated vs Deregulated) now lives in
@@ -2684,8 +2730,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // savings, monthly breakdown — flagged via __kwhFromEstimate__ /
       // __thermsFromEstimate__ so the UI can render an italic / muted
       // hint that the number is modeled rather than measured.
+      // Scoped to what the party on this row actually holds: a leased suite
+      // is estimated on its own floor area and the share of the load it is
+      // billed for, not on the whole building and its central plant. Owned
+      // and unknown-tenure rows are unchanged.
       const propertyTypeEstimate = canonicalPropertyType
-        ? estimateConsumption(canonicalPropertyType, inputPropertySize)
+        ? estimateConsumptionForTenure(canonicalOwnership, canonicalPropertyType, inputPropertySize)
         : null;
       const elecValueFinal = elec.value ?? propertyTypeEstimate?.electricKwh ?? null;
       const elecValueFromEstimate = elec.value == null && elecValueFinal != null;
@@ -3039,7 +3089,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const byType = new Map();
     for (const r of rows) {
       if (String(r.__propertyTypeRaw__ || '').trim()) withRawType += 1;
-      const est = propertyTypeAccountTotal(r.__propertyType__);
+      const est = accountTotalForTenure(r.__ownership__, r.__propertyType__);
       if (est == null) { unknown += 1; continue; }
       total += est;
       sites += 1;
@@ -3072,7 +3122,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     let unknown = 0;
     const byType = new Map();
     for (const r of rows) {
-      const est = propertyTypeEquipment(r.__propertyType__);
+      const est = equipmentForTenure(r.__ownership__, r.__propertyType__);
       if (est == null) { unknown += 1; continue; }
       total += est;
       sites += 1;
@@ -3755,8 +3805,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             >{raw}</span>
           );
         }
-        const est = estimateConsumption(canonical, row.__propertySizeFt2__);
-        const accounts = propertyTypeAccounts(canonical);
+        const est = estimateConsumptionForTenure(row.__ownership__, canonical, row.__propertySizeFt2__);
+        const accounts = accountsForTenure(row.__ownership__, canonical);
         const sub = est
           ? `Est. ${Math.round(est.electricKwh).toLocaleString()} kWh · ${Math.round(est.gasDth).toLocaleString()} Dth`
           : '';
@@ -3825,10 +3875,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const ownershipCol = {
       key: 'ownership',
       label: 'Owned / Leased',
-      // Wider than the old "Ownership" header needed: the label is five
-      // characters longer and the values ("Owned", "Leased", or a raw
-      // string the import couldn't place) sit under it as pills.
-      defaultWidth: 140,
+      // Wide enough for the longest canonical value ("Leased – Whole
+      // Building") as a pill, plus the raw strings the import couldn't
+      // place, which travel through as typed.
+      defaultWidth: 190,
       render: (row) => {
         const canonical = row.__ownership__;
         const raw = row.__ownershipRaw__;
@@ -3838,18 +3888,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (!canonical) {
           return (
             <span
-              title={`Unrecognized ownership status: "${raw}". Expected Owned or Leased.`}
+              title={`Unrecognized ownership status: "${raw}". Expected ${TENURE_OPTIONS.join(', ')}.`}
               style={{ fontSize: '0.72rem', color: '#B91C1C', fontStyle: 'italic' }}
             >{raw}</span>
           );
         }
-        const isOwned = canonical === 'Owned';
-        const palette = isOwned
+        // Owned green, leased indigo — and the two specific leases keep the
+        // leased colour rather than taking one each: the first thing to read
+        // off the column is still owned-or-not, which is what every scope on
+        // the page turns on. Which kind of lease is the second thing, and the
+        // label carries it.
+        const palette = canonical === TENURE.OWNED
           ? { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }
           : { bg: '#E0E7FF', border: '#A5B4FC', text: '#3730A3' };
+        // What the tenure does to this row's estimates, so the column that
+        // sets them is also the column that explains them.
+        const why = tenureEstimateNote(canonical, row.__propertyType__);
         return (
           <span
-            title={`${canonical}${raw && raw.toLowerCase() !== canonical.toLowerCase() ? `: from "${raw}"` : ''}`}
+            title={`${canonical}${raw && raw.toLowerCase() !== canonical.toLowerCase() ? `: from "${raw}"` : ''}${why ? `\n\n${why}` : ''}`}
             style={{ display: 'inline-block', fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: 4, background: palette.bg, border: `1px solid ${palette.border}`, color: palette.text }}
           >{canonical}</span>
         );
@@ -4229,7 +4286,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           render: (row) => {
             const canonical = row.__propertyType__;
             if (!canonical) return dash;
-            const est = estimateConsumption(canonical, row.__propertySizeFt2__);
+            const est = estimateConsumptionForTenure(row.__ownership__, canonical, row.__propertySizeFt2__);
             if (!est) return dash;
             const v = get(row, est);
             if (v == null || !Number.isFinite(v)) return dash;
@@ -4238,7 +4295,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           exportValue: (row) => {
             const canonical = row.__propertyType__;
             if (!canonical) return '';
-            const est = estimateConsumption(canonical, row.__propertySizeFt2__);
+            const est = estimateConsumptionForTenure(row.__ownership__, canonical, row.__propertySizeFt2__);
             if (!est) return '';
             return exportGet ? exportGet(row, est) : (get(row, est) ?? '');
           },
@@ -4266,14 +4323,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             render: (row) => {
               const canonical = row.__propertyType__;
               if (!canonical) return dash;
-              const acc = propertyTypeAccounts(canonical);
+              const acc = accountsForTenure(row.__ownership__, canonical);
               if (!acc) return dash;
-              const total = propertyTypeAccountTotal(canonical);
+              const total = accountTotalForTenure(row.__ownership__, canonical);
               const text = accountBreakdownText(acc);
+              // On a leased row the count is what the TENANT holds, which is
+              // most of the point of the column — a suite with one electric
+              // bill is a very different data deal from a tower with five.
+              const why = tenureEstimateNote(row.__ownership__, canonical);
               return (
                 <span
                   style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}
-                  title={`${fmtAccounts(total)} utility account${total === 1 ? '' : 's'} (bills) estimated for a ${canonical} site${text ? `: ${text}` : ''}`}
+                  title={`${fmtAccounts(total)} utility account${total === 1 ? '' : 's'} (bills) estimated for a ${canonical} site${text ? `: ${text}` : ''}${why ? `\n\n${why}` : ''}`}
                 >
                   <strong style={{ color: 'var(--color-text)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>{fmtAccounts(total)}</strong>
                   {text ? <span style={{ fontSize: '0.66rem' }}> {text}</span> : null}
@@ -4286,10 +4347,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             exportValue: (row) => {
               const canonical = row.__propertyType__;
               if (!canonical) return '';
-              const total = propertyTypeAccountTotal(canonical);
+              const total = accountTotalForTenure(row.__ownership__, canonical);
               return total == null ? '' : total;
             },
-            getSortValue: (row) => propertyTypeAccountTotal(row.__propertyType__) ?? -1,
+            getSortValue: (row) => accountTotalForTenure(row.__ownership__, row.__propertyType__) ?? -1,
           },
           {
             // The connected assets in the building — the unit an
@@ -4302,20 +4363,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             render: (row) => {
               const canonical = row.__propertyType__;
               if (!canonical) return dash;
-              const n = propertyTypeEquipment(canonical);
+              const n = equipmentForTenure(row.__ownership__, canonical);
               if (n == null) return dash;
+              const why = tenureEstimateNote(row.__ownership__, canonical);
               return (
                 <span
                   style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
-                  title={`${n.toLocaleString()} piece${n === 1 ? '' : 's'} of equipment estimated for a ${canonical} site`}
+                  title={`${n.toLocaleString()} piece${n === 1 ? '' : 's'} of equipment estimated for a ${canonical} site${why ? `\n\n${why}` : ''}`}
                 >{fmtInt(n)}</span>
               );
             },
             exportValue: (row) => {
-              const n = propertyTypeEquipment(row.__propertyType__);
+              const n = equipmentForTenure(row.__ownership__, row.__propertyType__);
               return n == null ? '' : n;
             },
-            getSortValue: (row) => propertyTypeEquipment(row.__propertyType__) ?? -1,
+            getSortValue: (row) => equipmentForTenure(row.__ownership__, row.__propertyType__) ?? -1,
           },
         ];
       })(),
@@ -5371,7 +5433,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Gas accepts MWh too — used in some European markets where gas is
     // priced on its energy-content equivalent.
     const GAS_PRICE_UOM_OPTIONS = ['therm', 'Dth', 'MMBtu', 'Mcf', 'Ccf', 'MWh'];
-    const OWNERSHIP_OPTIONS = ['Owned', 'Leased'];
+    // Four values, not two: "Leased" on its own is what most site lists
+    // say and stays a complete answer, and the two beside it let a file that
+    // knows which kind of lease it is say so — which is what decides whether
+    // the site is estimated as a tenant's floor or as a whole building.
+    const OWNERSHIP_OPTIONS = TENURE_OPTIONS;
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
     const CURRENCY_OPTIONS = ['USD', 'CAD', 'MXN', 'GBP', 'EUR', 'AUD'];
     const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
@@ -5388,7 +5454,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
       { label: 'Property Type', greenHeader: true, hint: 'Building / use type. Drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula.', validation: { type: 'list', options: PROPERTY_TYPE_OPTIONS } },
-      { label: 'Ownership', greenHeader: true, hint: 'Whether the building is Owned or Leased. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Variants like "Own", "Owner-Occupied", "Tenant", or "Leasehold" are recognized on upload too.', validation: { type: 'list', options: OWNERSHIP_OPTIONS } },
+      { label: 'Ownership', greenHeader: true, hint: 'Whether the building is Owned or Leased. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Variants like "Own", "Owner-Occupied", "Tenant", or "Leasehold" are recognized on upload too. Where you know the lease shape, say so — "Leased – Suite" for part of a building, "Leased – Whole Building" for a whole one on a net lease — and the site is estimated on what the tenant actually holds rather than on the building.', validation: { type: 'list', options: OWNERSHIP_OPTIONS } },
       { label: 'Site Description', greenHeader: true, hint: 'Free-text annotation for the site: building name, internal code, notes, anything that helps identify the row. Passthrough only; shown next to Property Type on the Utility Lookup page. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'Size (ft²)', greenHeader: true, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional: when blank the reference size for the property type is used as-is. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
     ];
@@ -5666,12 +5732,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // type. Written per site so a company's account total can be read
     // back off the saved list the same way its site count is — by
     // counting the list, not the one upload that happened to be open.
-    ['Est. Utility Accounts', r => round(propertyTypeAccountTotal(r.__propertyType__), 2)],
+    ['Est. Utility Accounts', r => round(accountTotalForTenure(r.__ownership__, r.__propertyType__), 2)],
     // Equipment expected at the site, from its property type. Written per
     // site for the same reason the account estimate is: a company's total
     // has to be readable off the saved list itself, not off whichever
     // upload happened to be open when it was saved.
-    ['Est. Equipment', r => propertyTypeEquipment(r.__propertyType__)],
+    ['Est. Equipment', r => equipmentForTenure(r.__ownership__, r.__propertyType__)],
   ];
 
   // Which of those figures were MODELED rather than measured, for one
@@ -6086,7 +6152,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // that came out higher is still a model. That also makes a correction
       // downwards possible, which a max() would silently ignore.
       const loadedAccounts = Math.round(
-        allRows.reduce((sum, r) => sum + (propertyTypeAccountTotal(r.__propertyType__) || 0), 0),
+        allRows.reduce((sum, r) => sum + (accountTotalForTenure(r.__ownership__, r.__propertyType__) || 0), 0),
       );
       const accountCount = manualAccounts != null
         ? manualAccounts
@@ -6116,7 +6182,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // type was recognized, which is "unknown", not "no equipment" — and
       // stamping it would wipe a real number someone typed in the popup.
       const loadedEquipment = Math.round(
-        allRows.reduce((sum, r) => sum + (propertyTypeEquipment(r.__propertyType__) || 0), 0),
+        allRows.reduce((sum, r) => sum + (equipmentForTenure(r.__ownership__, r.__propertyType__) || 0), 0),
       );
       const equipmentTotal = Math.max(loadedEquipment, siteList.equipment || 0);
       setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}: updating the company record…` });
@@ -11653,8 +11719,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
           // Null rather than 0 for a type that didn't resolve, so the cell
           // stays empty instead of claiming an empty building.
-          equipment: propertyTypeEquipment(r.__propertyType__),
-          accounts: propertyTypeAccountTotal(r.__propertyType__),
+          equipment: equipmentForTenure(r.__ownership__, r.__propertyType__),
+          accounts: accountTotalForTenure(r.__ownership__, r.__propertyType__),
           // Canonical Owned / Leased where the upload's value could be
           // placed. Where it couldn't, the raw string travels as-is
           // rather than the cell going blank: "Owned/Leased" or "TBD" is
@@ -12055,14 +12121,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const canonicalType = r.__propertyType__;
         if (!canonicalType) return null;
         const sizeFt2 = r.__propertySizeFt2__;
-        const cons = estimateConsumption(canonicalType, sizeFt2);
-        const accounts = propertyTypeAccounts(canonicalType);
+        const tenure = r.__ownership__;
+        const cons = estimateConsumptionForTenure(tenure, canonicalType, sizeFt2);
+        const accounts = accountsForTenure(tenure, canonicalType);
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           state: r.__state__ || '',
           country: String(r.__country__ || '').trim(),
           rawPropertyType: r.__propertyTypeRaw__ || '',
           propertyType: canonicalType,
+          // What the figures beside it were scoped to. A leased row's
+          // numbers are the tenant's share, and a methodology tab that
+          // didn't say so would read as a claim about the building.
+          tenure: tenure || '',
+          tenureNote: tenureEstimateNote(tenure, canonicalType),
           category: cons?.category ?? '',
           sizeFt2: cons?.sizeFt2 ?? null,
           referenceSizeFt2: cons?.referenceSizeFt2 ?? null,
@@ -12071,7 +12143,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           gasKwh: cons?.gasKwh ?? null,
           totalKwh: cons?.totalKwh ?? null,
           accounts: accounts || null,
-          equipment: propertyTypeEquipment(canonicalType),
+          equipment: equipmentForTenure(tenure, canonicalType),
         };
       })
       .filter(Boolean);
@@ -16345,7 +16417,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.): drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
             { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
-            { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" (plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L")), are folded onto the two labels; anything else is shown as-is so nothing is lost.' },
+            { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" (plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L")) are folded onto the canonical labels; anything else is shown as-is so nothing is lost. A value that also names the lease shape — "suite", "floor", "multi-tenant", or "whole building", "single-tenant", "NNN" — is read as that, and the site is estimated on what the tenant holds instead of on the whole building.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional: when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
@@ -16535,12 +16607,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                         tenure: say so here instead of editing the file. */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.45rem', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600 }}>Or assume one tenure for all {active.rows.length.toLocaleString()} rows:</span>
-                      <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll('Owned')} title={`Write "Owned" onto every row as a ${ASSUMED_TENURE_HEADER} column and map Ownership to it`}>
-                        All sites Owned
-                      </button>
-                      <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll('Leased')} title={`Write "Leased" onto every row as a ${ASSUMED_TENURE_HEADER} column and map Ownership to it`}>
-                        All sites Leased
-                      </button>
+                      {/* All four, not just Owned and Leased: a corporate
+                          occupier's site list really is every row a leased
+                          suite, and that is the portfolio whose estimates
+                          this changes most. */}
+                      {TENURE_OPTIONS.map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          style={assumeBtn}
+                          onClick={() => assumeTenureForAll(t)}
+                          title={`Write "${t}" onto every row as a ${ASSUMED_TENURE_HEADER} column and map Ownership to it${tenureAssumeHint(t)}`}
+                        >
+                          All sites {t}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -16548,11 +16629,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#ECFDF5', border: '1px solid #6EE7B7', borderRadius: 6, fontSize: '0.75rem', color: '#065F46', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <span style={{ flex: 1, minWidth: 220 }}>
                       <strong>All {active.rows.length.toLocaleString()} rows assumed {assumedTenure}.</strong>{' '}
-                      A <code>{ASSUMED_TENURE_HEADER}</code> column carrying "{assumedTenure}" is added to every row and mapped to <strong>Ownership (Owned / Leased)</strong>. Individual sites can still be changed afterwards with <strong>Mass edit</strong>.
+                      A <code>{ASSUMED_TENURE_HEADER}</code> column carrying "{assumedTenure}" is added to every row and mapped to <strong>Ownership</strong>. Individual sites can still be changed afterwards with <strong>Mass edit</strong>.
+                      {tenureAssumeHint(assumedTenure)}
                     </span>
-                    <button type="button" style={assumeBtn} onClick={() => assumeTenureForAll(assumedTenure === 'Owned' ? 'Leased' : 'Owned')}>
-                      Switch to all {assumedTenure === 'Owned' ? 'Leased' : 'Owned'}
-                    </button>
+                    {/* Every other tenure, rather than a two-way switch:
+                        there are four now, and a toggle could only ever
+                        reach one of the three the user didn't pick. */}
+                    {TENURE_OPTIONS.filter(t => t !== assumedTenure).map(t => (
+                      <button key={t} type="button" style={assumeBtn} onClick={() => assumeTenureForAll(t)}>
+                        Switch to all {t}
+                      </button>
+                    ))}
                     <button type="button" style={{ ...assumeBtn, borderColor: '#CBD5E1', color: '#475569' }} onClick={clearAssumedTenure}>
                       Undo
                     </button>

@@ -1,3 +1,5 @@
+import { TENURE, isLeasedTenure } from '../../utils/ownershipEstimates.js';
+
 // Ownership scoping shared by the two building-compliance subtabs
 // (Building Compliance Screening and Compliance Roadmap). Both analyses
 // are about obligations that fall on the building owner, so they default
@@ -17,18 +19,22 @@
 // nothing to exclude, so the control says so rather than pretending to
 // filter.
 
-// Sites whose ownership is known to be leased. Exact match on the
-// canonical 'Leased' the upload normalizes to — a value it couldn't place
-// ("Owned/Leased", "TBD", …) travels through as typed and counts as
-// unknown, which screens.
-const isLeased = (s) => s?.ownership === 'Leased';
+// Sites whose ownership is known to be leased. Any of the canonical leased
+// values the upload normalizes to — a bare "Leased", or one of the two that
+// name the kind of lease (see TENURE in ownershipEstimates.js). The kind
+// changes what a site is worth ESTIMATING; it changes nothing about whose
+// obligation the building is, so every one of them is leased here.
+//
+// A value the upload couldn't place ("Owned/Leased", "TBD", …) travels
+// through as typed and counts as unknown, which screens.
+const isLeased = (s) => isLeasedTenure(s?.ownership);
 
 // Counts by ownership status across a compliance site list.
 export function ownershipScopeStats(sites = []) {
   let owned = 0;
   let leased = 0;
   for (const s of sites) {
-    if (s?.ownership === 'Owned') owned++;
+    if (s?.ownership === TENURE.OWNED) owned++;
     else if (isLeased(s)) leased++;
   }
   const total = sites.length;
@@ -64,7 +70,7 @@ export function scopeSitesByOwnership(sites = [], excludeLeased) {
 // normalized to on `__ownership__`, so the rule — and everything said above
 // about an unknown status not counting as somebody else's building — is
 // identical; only the field name differs.
-export const isLeasedUtilityRow = (r) => r?.__ownership__ === 'Leased';
+export const isLeasedUtilityRow = (r) => isLeasedTenure(r?.__ownership__);
 
 // Savings scope for the Master Analysis. Indicative savings are a
 // procurement motion on the supply contract behind the meter, and on a
@@ -98,12 +104,20 @@ export function savingsOwnershipScope(rows = []) {
 export function tenureCoverage(rows = []) {
   let owned = 0;
   let leased = 0;
+  // The leased rows that also say WHICH KIND of lease. Not part of the
+  // warning — a bare "Leased" is a complete tenure answer and scopes
+  // everything here the same way — but it decides how the site is ESTIMATED,
+  // so the page can say how much of the book is resolving off a property-type
+  // default rather than off something the upload actually stated.
+  let leasedTyped = 0;
   let unplaceable = 0;
   for (const r of rows) {
     const canonical = r?.__ownership__;
-    if (canonical === 'Owned') owned += 1;
-    else if (canonical === 'Leased') leased += 1;
-    else if (String(r?.__ownershipRaw__ ?? '').trim()) unplaceable += 1;
+    if (canonical === TENURE.OWNED) owned += 1;
+    else if (isLeasedTenure(canonical)) {
+      leased += 1;
+      if (canonical !== TENURE.LEASED) leasedTyped += 1;
+    } else if (String(r?.__ownershipRaw__ ?? '').trim()) unplaceable += 1;
   }
   const total = rows.length;
   const known = owned + leased;
@@ -112,6 +126,10 @@ export function tenureCoverage(rows = []) {
     total,
     owned,
     leased,
+    // Leased rows naming the kind of lease, and the rest, which take the
+    // property type's default class when they are estimated.
+    leasedTyped,
+    leasedUntyped: leased - leasedTyped,
     // A value the upload couldn't fold onto Owned or Leased. Uploaded, so
     // not part of the warning — but it doesn't scope anything either.
     unplaceable,
