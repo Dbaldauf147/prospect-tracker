@@ -24,6 +24,8 @@ import {
   decisionMakerCoverage,
   isDecisionMakerContact,
   tierAccounts,
+  COLD_OUTREACH_EXCLUDED_STATUSES,
+  isColdOutreachExcluded,
 } from '../src/utils/decisionMakerCoverage.js';
 
 let passed = 0, failed = 0;
@@ -89,6 +91,11 @@ check('a Schneider contact is caught by email domain as well as company',
 }
 
 // --- which accounts the percentage is over ------------------------------
+//
+// Cold outreach is for names with no relationship yet, so every status
+// that means the account already has a history is out of the universe —
+// not just off the missing list. Left in the denominator they would hold a
+// tier below 100% on accounts nobody intends to work.
 {
   const prospects = [
     acct('Alpha', 'Tier 1'),
@@ -99,6 +106,50 @@ check('a Schneider contact is caught by email domain as well as company',
   ];
   check('this CDM\'s Tier 1 accounts, clients out, tier read case-insensitively',
     names(tierAccounts(prospects, CDM, 'Tier 1')), ['Alpha', 'Beta']);
+}
+
+{
+  const prospects = [
+    acct('Alpha', 'Tier 1', { status: 'Inside Sales' }),
+    acct('Beta', 'Tier 1', { status: 'Qualifying' }),
+    acct('Gamma', 'Tier 1', { status: 'Client' }),
+    acct('Delta', 'Tier 1', { status: 'Old Client' }),
+    acct('Epsilon', 'Tier 1', { status: 'Hold Off' }),
+    acct('Zeta', 'Tier 1', { status: 'Lost - Not Sold' }),
+    acct('Eta', 'Tier 1', { status: 'Partnering w/Another CDM' }),
+    acct('Theta', 'Tier 1', { status: '' }),
+  ];
+  check('every status with a history behind it is out',
+    names(tierAccounts(prospects, CDM, 'Tier 1')), ['Alpha', 'Beta', 'Eta', 'Theta']);
+  // The status comes off a sheet, so a filter written for "Old Client"
+  // must not be dodged by casing or stray spacing.
+  check('casing and spacing do not let one through',
+    names(tierAccounts([
+      acct('Alpha', 'Tier 1', { status: 'old client' }),
+      acct('Beta', 'Tier 1', { status: ' HOLD  OFF ' }),
+      acct('Gamma', 'Tier 1', { status: 'lost - not sold' }),
+      acct('Delta', 'Tier 1', { status: 'Inside Sales' }),
+    ], CDM, 'Tier 1')), ['Delta']);
+  check('the excluded list is what it says', COLD_OUTREACH_EXCLUDED_STATUSES,
+    ['Client', 'Old Client', 'Hold Off', 'Lost - Not Sold']);
+  check('an unknown status is still cold', isColdOutreachExcluded({ status: 'Qualifying' }), false);
+  check('a missing status is still cold', isColdOutreachExcluded({}), false);
+}
+
+// The whole readout follows: an excluded account is neither listed nor
+// counted, so a tier of nothing but history reads as fully mapped rather
+// than as a morning's work.
+{
+  const prospects = [
+    acct('Alpha', 'Tier 1'),
+    acct('Beta', 'Tier 1', { status: 'Old Client' }),
+    acct('Gamma', 'Tier 1', { status: 'Hold Off' }),
+  ];
+  const cov = decisionMakerCoverage({ prospects, contacts: [contact('Alpha', 'Decision Maker')], cdmName: CDM });
+  const t1 = cov.tiers.find(t => t.tier === 'Tier 1');
+  check('the excluded accounts are out of the denominator', [t1.total, t1.mapped, t1.pct], [1, 1, 100]);
+  check('and off the list', names(t1.missing), []);
+  check('so the step reads as done', cov.allMapped, true);
 }
 
 // --- the tiers, worked one at a time ------------------------------------

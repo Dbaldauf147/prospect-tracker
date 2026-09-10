@@ -819,7 +819,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
           return (
             <span
               key={t.tier}
-              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot — ${t.missing.length} still to map. Clients are left out; the accounts counted are the ones on your Table View.`}
+              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot — ${t.missing.length} still to map. Accounts that already have a history are left out entirely — Client, Old Client, Hold Off and Lost - Not Sold — since cold outreach is for names with no relationship yet. The rest are the accounts on your Table View.`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 padding: '1px 8px', borderRadius: 999,

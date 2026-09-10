@@ -18,6 +18,11 @@
 // exclusions, the same fuzzy company match — because the two readouts
 // answer the same question about the same accounts, and two rules would
 // eventually give two numbers. That page reads these helpers too.
+//
+// Which ACCOUNTS the question is asked about is this step's own business
+// though, and narrower: cold outreach is for names with no relationship
+// yet, so accounts that already have a history are out (see
+// COLD_OUTREACH_EXCLUDED_STATUSES). Only this step reads that rule.
 
 import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { matchesCdm } from './cdmMatch.js';
@@ -81,16 +86,49 @@ export function accountHasDecisionMaker(prospect, dmCompanies) {
 }
 
 /**
+ * Statuses that take an account out of cold outreach entirely.
+ *
+ * The step is for names with no relationship yet, so every one of these is
+ * an account that already has a history — a current client, a former one,
+ * a deal that went the other way, or one deliberately parked. Finding a
+ * decision maker at any of them is not this morning's job, and listing
+ * them made the tier percentages read as work owed when it wasn't.
+ *
+ * Compared case- and space-insensitively: the status arrives from a sheet,
+ * and "old client" must not slip past a filter written for "Old Client".
+ */
+export const COLD_OUTREACH_EXCLUDED_STATUSES = [
+  'Client',
+  'Old Client',
+  'Hold Off',
+  'Lost - Not Sold',
+];
+
+const EXCLUDED_STATUS_KEYS = new Set(
+  COLD_OUTREACH_EXCLUDED_STATUSES.map(s => s.toLowerCase().replace(/\s+/g, ' ').trim()),
+);
+
+/** Is this account one cold outreach has no business listing? */
+export function isColdOutreachExcluded(prospect) {
+  const key = String(prospect?.status ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return EXCLUDED_STATUS_KEYS.has(key);
+}
+
+/**
  * The accounts one tier's percentage is counted over: this CDM's, in that
- * tier. Clients are left out — a client is not a cold prospect, and the
- * Key Prospect roster draws its Tier 1 / 2 universe the same way, so the
- * two pages count the same accounts.
+ * tier, minus the ones cold outreach doesn't cover (see
+ * COLD_OUTREACH_EXCLUDED_STATUSES).
+ *
+ * Excluded from the whole universe rather than just the missing list, so
+ * the percentage is over the accounts actually worth mapping. Leaving them
+ * in the denominator would hold a tier below 100% on accounts nobody
+ * intends to work.
  */
 export function tierAccounts(prospects, cdmName, tier) {
   const want = String(tier || '').toLowerCase();
   return (prospects || []).filter(p => {
     if (!matchesCdm(p?.cdm, cdmName)) return false;
-    if (p.status === 'Client') return false;
+    if (isColdOutreachExcluded(p)) return false;
     return String(p.tier || '').toLowerCase().trim() === want;
   });
 }
