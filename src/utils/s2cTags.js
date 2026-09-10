@@ -38,11 +38,19 @@
 // mean nothing could be tagged until someone wrote one. What keeps free text
 // from becoming forty spellings of the same segment is that each column offers
 // back what has already been used.
+//
+// A NOTE rides alongside the three tags, in the same entry and on the same
+// key, so whatever had to be said about a line item outlives the workbook the
+// way its tags do. It is not a tag: it never makes a line item count as
+// tagged — the heading's "2 of 7 tagged" is about the mapping being finished,
+// and a note is somebody thinking out loud — but it is enough on its own to
+// keep an entry, and to keep a row on the table for a line item the current
+// workbook no longer carries. A note nothing can show is a note lost.
 
 export const S2C_TAG_FIELDS = [
-  { key: 'serviceSegment', label: 'Service Segment', placeholder: 'e.g. Sustainability' },
-  { key: 'productName', label: 'Product Name', placeholder: 'e.g. ENERGY STAR Link' },
-  { key: 'deliverable', label: 'Deliverable', placeholder: 'e.g. Monthly report' },
+  { key: 'serviceSegment', label: 'Service Segment' },
+  { key: 'productName', label: 'Product Name' },
+  { key: 'deliverable', label: 'Deliverable' },
 ];
 
 const TAG_KEYS = S2C_TAG_FIELDS.map(f => f.key);
@@ -55,6 +63,11 @@ const TAG_KEYS = S2C_TAG_FIELDS.map(f => f.key);
 // count as tagged, and it goes when the tags go.
 const LABEL_KEY = 'label';
 
+// The free-text note, kept beside the tags on the same entry. Like the label
+// it is not a tag; unlike the label it is the user's own writing, so it is
+// worth an entry of its own — see hasS2cNote.
+const NOTES_KEY = 'notes';
+
 // The Line Item key. Case- and whitespace-insensitive so the same service
 // spelled with a stray trailing space in one workbook still finds its tags.
 export function s2cTagKey(lineItem) {
@@ -65,6 +78,27 @@ export function s2cTagKey(lineItem) {
 // tagged line item, and must not count as one anywhere.
 export function hasAnyTag(entry) {
   return TAG_KEYS.some(k => String(entry?.[k] ?? '').trim() !== '');
+}
+
+/** The note on an entry, as text. */
+export function s2cNote(entry) {
+  return String(entry?.[NOTES_KEY] ?? '');
+}
+
+/**
+ * Is there a note here?
+ *
+ * Asked wherever "is this entry worth keeping" is asked. A line item with a
+ * note and no tags is a line item somebody wrote something about, and
+ * dropping it would throw the writing away.
+ */
+export function hasS2cNote(entry) {
+  return s2cNote(entry).trim() !== '';
+}
+
+/** Anything on this entry worth storing — a tag, or a note. */
+export function hasS2cContent(entry) {
+  return hasAnyTag(entry) || hasS2cNote(entry);
 }
 
 /**
@@ -135,36 +169,70 @@ export function setS2cTag(tags, key, field, value, label) {
   const spelling = String(label ?? '').trim();
   if (spelling) entry[LABEL_KEY] = spelling;
 
-  if (hasAnyTag(entry)) next[key] = entry;
+  // The note keeps the entry alive on its own: clearing the last tag off a
+  // line item somebody wrote a note about must not take the note with it.
+  if (hasS2cContent(entry)) next[key] = entry;
   else if (key in next) delete next[key];
   else return tags || {};
   return next;
 }
 
-// Clear all three tags on one line item.
+/**
+ * Set the note on one line item, returning a new map.
+ *
+ * Same shape as setS2cTag, and the same emptying rule: a note typed back to
+ * blank is removed, and an entry left holding neither a tag nor a note drops
+ * out rather than sitting in the map as a hollow row.
+ */
+export function setS2cNote(tags, key, value, label) {
+  const next = { ...(tags || {}) };
+  const entry = { ...(next[key] || {}) };
+  const trimmed = String(value ?? '').trim();
+  if (trimmed) entry[NOTES_KEY] = trimmed;
+  else delete entry[NOTES_KEY];
+
+  const spelling = String(label ?? '').trim();
+  if (spelling) entry[LABEL_KEY] = spelling;
+
+  if (hasS2cContent(entry)) next[key] = entry;
+  else if (key in next) delete next[key];
+  else return tags || {};
+  return next;
+}
+
+/**
+ * Clear all three tags on one line item.
+ *
+ * The note stays. The button that calls this says it clears the tags, and a
+ * note is the one thing on the row that can't be got back by re-reading the
+ * workbook — so it takes its own deliberate emptying, in its own box.
+ */
 export function clearS2cTags(tags, key) {
   if (!tags || !(key in tags)) return tags || {};
   const next = { ...tags };
-  delete next[key];
+  const entry = { ...next[key] };
+  for (const f of TAG_KEYS) delete entry[f];
+  if (hasS2cNote(entry)) next[key] = entry;
+  else delete next[key];
   return next;
 }
 
 /**
  * Every Line Item the loaded workbook offers, plus any line item that carries
- * tags — one tagged against a workbook since replaced still needs a row, or
- * the tags are invisible and impossible to clear.
+ * tags or a note — one tagged against a workbook since replaced still needs a
+ * row, or its answers are invisible and impossible to clear.
  *
- * One row per line item, however many workbook rows it spans. `rowCount` is
- * how many it spans on the whole workbook and `activeCts` sums what they cost
- * on the option being shown, so a service that bills as both a Setup and a
- * Recurring line reads as one service with one total.
+ * One row per line item, however many workbook rows it spans: a service that
+ * bills as both a Setup and a Recurring line is one service and is asked about
+ * once. What those rows COST isn't collected — the table is the mapping, and
+ * the money is on the Pricing subtab that owns it.
  *
  * Not shared with collectPassThroughPairs any more: that one is inherently
  * per-pair, because pass-through IS a property of the pair — the Setup half
  * marked up while the Recurring half passes through is a normal thing to want.
  * These two tables genuinely disagree about what a row is.
  */
-export function collectS2cLineItems({ options = [], tags = {}, activeOptionNumber } = {}) {
+export function collectS2cLineItems({ options = [], tags = {} } = {}) {
   const byKey = new Map();
 
   for (const opt of options) {
@@ -172,29 +240,20 @@ export function collectS2cLineItems({ options = [], tags = {}, activeOptionNumbe
       for (const item of section?.items || []) {
         const name = item?.description || '';
         const key = s2cTagKey(name);
-        if (!key) continue;
-        let row = byKey.get(key);
-        if (!row) {
-          // First spelling seen wins the display form, so the row reads the
-          // way the workbook writes it rather than lower-cased.
-          row = { key, lineItem: name.trim(), options: [], rowCount: 0, activeCts: null, reachable: true };
-          byKey.set(key, row);
-        }
-        row.rowCount += 1;
-        if (opt?.sheetName && !row.options.includes(opt.sheetName)) row.options.push(opt.sheetName);
-        if (opt?.optionNumber === activeOptionNumber && typeof item?.cts === 'number') {
-          row.activeCts = (row.activeCts || 0) + item.cts;
-        }
+        if (byKey.has(key) || !key) continue;
+        // First spelling seen wins the display form, so the row reads the
+        // way the workbook writes it rather than lower-cased.
+        byKey.set(key, { key, lineItem: name.trim(), reachable: true });
       }
     }
   }
 
   for (const [key, entry] of Object.entries(tags || {})) {
-    if (!hasAnyTag(entry) || byKey.has(key)) continue;
+    if (!hasS2cContent(entry) || byKey.has(key)) continue;
     // The spelling remembered when it was tagged, falling back to the key
     // for entries written before that was recorded.
     const label = String(entry[LABEL_KEY] ?? '').trim();
-    byKey.set(key, { key, lineItem: label || key, options: [], rowCount: 0, activeCts: null, reachable: false });
+    byKey.set(key, { key, lineItem: label || key, reachable: false });
   }
 
   return [...byKey.values()].sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));

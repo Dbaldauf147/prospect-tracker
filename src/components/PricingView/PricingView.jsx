@@ -4825,7 +4825,6 @@ export function PricingView({ settings } = {}) {
           rows={s2cTabData}
           setRows={setS2cTabData}
           workbook={workbook}
-          activeOption={activeOption}
           lineItemTags={s2cLineItemTags}
           setLineItemTags={setS2cLineItemTags}
         />

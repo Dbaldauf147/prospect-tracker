@@ -229,11 +229,20 @@
   white-space: normal;
 }
 
-.grid th.siaMetaHeader {
+/* Notes — the last column, and the widest: it holds a sentence, while the
+   three tags beside it hold a name each. Not part of the TAGS block, so it
+   keeps the plain header the workbook's own columns have. */
+.grid th.siaNotesHeader {
   white-space: normal;
+  min-width: 220px;
 }
 
 .tagCell { background: #f5f9ff; }
+
+.siaNoteCell {
+  background: #fff;
+  min-width: 220px;
+}
 
 .tan { background: #fdf6e3; }
 .calc {

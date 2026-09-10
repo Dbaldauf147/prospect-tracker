@@ -17,9 +17,16 @@
 // the file moved the keys again for line items nobody had touched. It is now
 // keyed by Line Item alone: one service, one answer, covering its Setup row,
 // its Recurring row, every option and every later workbook.
+//
+// A note lives on the same entry, and the rules that keep it are the ones
+// worth pinning: it never counts as a tag (the heading counts finished
+// mappings, not thinking out loud), it holds an entry open on its own, and
+// clearing the tags leaves it alone — a note is the one thing on the row that
+// can't be got back by re-reading the workbook.
 import {
   S2C_TAG_FIELDS, s2cTagKey, hasAnyTag, setS2cTag, clearS2cTags,
   collectS2cLineItems, countTagged, s2cTagSuggestions, migrateS2cTags,
+  setS2cNote, s2cNote, hasS2cNote, hasS2cContent,
 } from '../src/utils/s2cTags.js';
 
 let passed = 0, failed = 0;
@@ -120,16 +127,14 @@ const workbook = [
 ];
 
 {
-  const rows = collectS2cLineItems({ options: workbook, activeOptionNumber: 1 });
+  const rows = collectS2cLineItems({ options: workbook });
   check('collect: one row per Line Item, sorted',
     rows.map(r => r.lineItem), ['Budgets', 'CCM NAM', 'ENERGY STAR Link (RA)']);
-  const ccm = rows.find(r => r.key === 'ccm nam');
-  // Both of Option 1's rows for this service, and neither of Option 2's.
-  check('collect: CTS sums the line items rows on the active option', ccm.activeCts, 3796 + 9224);
-  check('collect: rowCount is every workbook row the name spans', ccm.rowCount, 3);
-  check('collect: every option it appears on', ccm.options, ['Option 1', 'Option 2']);
-  check('collect: a line item off the active option has no total',
-    rows.find(r => r.key === 'budgets').activeCts, null);
+  // The same name across two options and two Types is one row: the mapping
+  // asks about a service once, and what those rows cost is the Pricing
+  // subtab's business, not this table's.
+  check('collect: a name spanning options and Types is listed once',
+    rows.filter(r => r.key === 'ccm nam').length, 1);
   check('collect: the workbook spelling is kept for display',
     rows.find(r => r.key === 'energy star link (ra)').lineItem, 'ENERGY STAR Link (RA)');
 }
@@ -138,7 +143,7 @@ const workbook = [
   // A line item tagged against a workbook since replaced still gets a row —
   // otherwise the tags are invisible and can never be cleared.
   const tags = { 'supplier charges': { productName: 'Pass-through energy' } };
-  const rows = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  const rows = collectS2cLineItems({ options: workbook, tags });
   const orphan = rows.find(r => r.key === 'supplier charges');
   check('collect: a tagged line item the workbook lost still shows', !!orphan, true);
   check('collect: ...and is marked as not in this workbook', orphan.reachable, false);
@@ -154,7 +159,7 @@ const workbook = [
   // An entry of three blanks is not a tagged line item and must not drag a
   // row onto the table.
   const tags = { ghost: { serviceSegment: '', productName: '  ' } };
-  const rows = collectS2cLineItems({ options: workbook, tags, activeOptionNumber: 1 });
+  const rows = collectS2cLineItems({ options: workbook, tags });
   check('collect: hollow entries pull in no row', rows.some(r => r.key === 'ghost'), false);
 }
 {
