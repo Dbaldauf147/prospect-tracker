@@ -108,6 +108,7 @@ import {
   countryGasSavings,
   countryHasRegulatedRateOpportunity,
   COUNTRY_DEREGULATION,
+  NOT_SERVED,
 } from '../../data/countryDeregulation';
 import {
   NA_CATEGORIES,
@@ -9417,8 +9418,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           agg = {
             country,
             elecTierKey: eTier, gasTierKey: gTier,
-            elecStatus: STATUS_LABEL[tierToStatus(eTier)],
-            gasStatus:  STATUS_LABEL[tierToStatus(gTier)],
+            // Label off the raw status, not the tier: 'Not served'
+            // shares the regulated tier so every roll-up keeps counting
+            // it, but this table names the status, and printing
+            // "Regulated" against Russia would be a claim about that
+            // market rather than about our coverage of it.
+            elecStatus: c.electric === NOT_SERVED ? NOT_SERVED : STATUS_LABEL[tierToStatus(eTier)],
+            gasStatus:  c.gas === NOT_SERVED ? NOT_SERVED : STATUS_LABEL[tierToStatus(gTier)],
             sites: 0, kwh: 0, therms: 0, cost: 0,
           };
           countryAggs.set(country, agg);
@@ -13482,7 +13488,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // ---- Section 3: Country deregulation reference ----
       sectionBanner('3. Country Deregulation Reference');
-      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend): except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend): the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
+      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend): except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend): the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion, and so does "Not served" — a market we will not buy energy in, which earns no savings whatever its own structure. Those countries are shown grey on the market maps alongside the regulated ones, and named here so the reason is not mistaken for a claim about the market itself.');
       blank();
       headerRow(['Country', 'Region', 'Electric Power', 'Gas', 'Power Rate Optimization', '', '']);
       const countryRows = Object.entries(COUNTRY_DEREGULATION)
@@ -13497,6 +13503,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (s === 'Some deregulation') return 'FFFEF9C3';
         if (s === 'Unlikely') return 'FFFFEDD5';
         if (s === 'No opportunity') return 'FFFEE2E2';
+        // Grey rather than a red: the market isn't the problem, our
+        // coverage of it is. Matches the band it paints on the maps.
+        if (s === NOT_SERVED) return 'FFE2E8F0';
         return null;
       };
       const statusFg = (s) => {
@@ -13504,6 +13513,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         if (s === 'Some deregulation') return 'FF92400E';
         if (s === 'Unlikely') return 'FF9A3412';
         if (s === 'No opportunity') return 'FF991B1B';
+        if (s === NOT_SERVED) return 'FF475569';
         return SE_TEXT_DARK;
       };
       countryRows.forEach(([country, v]) => {

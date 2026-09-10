@@ -317,14 +317,22 @@ export const CANADA_PROVINCE_CENTERS = {
 // colors in the renderer:
 //   'dereg' (green)  — Deregulated
 //   'some'  (orange) — Some deregulation
-//   'reg'   (red)    — Unlikely / No opportunity / regulated
+//   'reg'   (red)    — Unlikely / No opportunity / Not served / regulated
 //   'unknown' (gray) — null or unrecognized
+//
+// 'Not served' (a market we won't buy in — see countryDeregulation.js)
+// shares the 'reg' tier deliberately: it is the no-opportunity end of
+// the scale, which is the band the maps already paint grey, and every
+// tier-keyed aggregate on the export is built from these four keys. The
+// distinction it carries — that the market itself may be perfectly
+// deregulated — is not a colour, so it's said where the statuses are
+// named rather than by inventing a fifth band nothing else counts.
 export function statusTier(status) {
   if (status == null) return 'unknown';
   const s = String(status).trim().toLowerCase();
   if (s === 'deregulated') return 'dereg';
   if (s === 'some deregulation') return 'some';
-  if (s === 'unlikely' || s === 'no opportunity') return 'reg';
+  if (s === 'unlikely' || s === 'no opportunity' || s === 'not served') return 'reg';
   return 'unknown';
 }
 
