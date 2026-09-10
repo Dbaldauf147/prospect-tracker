@@ -84,7 +84,6 @@ import {
 import {
   basisFor,
   feeBasisLabel,
-  formatMoney,
   formatMoneyRange,
   getServicePricing,
   pricingFor,
@@ -1171,9 +1170,12 @@ export function DealSizingView({
       key: 'setup', label: 'Setup', defaultWidth: 130,
       getSortValue: (row) => row.setup ?? -1,
       exportValue: (row) => row.setup ?? '',
+      // A range like every other money column here: setup is quoted low to
+      // high on the rate card, and showing only the low end beside a Year 1
+      // figure that carries the high one would understate the row.
       render: (row) => (
-        row.serviceCount && row.estimate.setup && !row.onCard
-          ? <span style={{ color: '#475569' }}>{formatMoney(row.estimate.setup)}</span>
+        row.serviceCount && (row.estimate.setup || row.estimate.setupHigh) && !row.onCard
+          ? <span style={{ color: '#475569' }}>{formatMoneyRange(row.estimate.setup, row.estimate.setupHigh)}</span>
           : <span style={{ color: '#CBD5E1' }} title={row.onCard ? ON_CARD_WHY : undefined}>—</span>
       ),
     },
@@ -1329,9 +1331,9 @@ export function DealSizingView({
                       </td>
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                         {line.priced ? formatMoneyRange(line.fee, line.feeHigh) : <span style={{ color: '#CBD5E1' }}>—</span>}
-                        {line.setup > 0 && (
+                        {(line.setup > 0 || line.setupHigh > 0) && (
                           <div style={{ display: 'block', fontSize: '0.7rem', color: '#64748B' }} title="Setup fee, billed once. Included in Year 1 and in the deal value, never multiplied by the term.">
-                            + {formatMoney(line.setup)} setup
+                            + {formatMoneyRange(line.setup, line.setupHigh)} setup
                           </div>
                         )}
                       </td>

@@ -146,17 +146,17 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
                   of the two a figure came from. */}
               <tr>
                 <td style={{ ...footCell, ...muted, borderTop: 'none' }} colSpan={3}>
-                  {analysis.setup > 0 ? 'One-off + setup' : 'One-off projects'}
+                  {(analysis.setup > 0 || analysis.setupHigh > 0) ? 'One-off + setup' : 'One-off projects'}
                 </td>
                 <td style={{ ...footCell, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
                   {formatMoneyRange(analysis.oneTime, analysis.oneTimeHigh) || '$0'}
                 </td>
               </tr>
-              {analysis.setup > 0 && (
+              {(analysis.setup > 0 || analysis.setupHigh > 0) && (
                 <tr>
                   <td style={{ ...footCell, ...muted, borderTop: 'none', paddingLeft: 24 }} colSpan={3}>of which setup fees</td>
                   <td style={{ ...footCell, ...muted, borderTop: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} colSpan={2}>
-                    {formatMoneyRange(analysis.setup, analysis.setup) || '$0'}
+                    {formatMoneyRange(analysis.setup, analysis.setupHigh) || '$0'}
                   </td>
                 </tr>
               )}

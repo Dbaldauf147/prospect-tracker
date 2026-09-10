@@ -289,6 +289,9 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
     () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize, bases, serviceUnits }),
     [serviceRows, inScope, pricing, counts, dealSize, bases, serviceUnits],
   );
+  // Whether there is a setup fee in the scope at all. Either end of it: a
+  // fee quoted from nothing up to a figure is still a setup fee.
+  const hasSetup = totals.setup > 0 || totals.setupHigh > 0;
 
   // The project work in this scope, one row per service. Sites and accounts
   // are facts about the account, so one box each answers for every service
@@ -350,10 +353,11 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
         _how: est ? feeBasisLabel(est, bases) : '',
         _extraLines: entry.lines.length,
         notes: entry.notes,
-        // What the setup components come to under this scenario. The
-        // components themselves are rate card data and are edited there.
-        setup: entry.setup,
+        // What the setup lines come to under this scenario. The rates
+        // themselves are rate card data and are edited there.
+        setupLines: entry.setupLines,
         _setupFee: est?.setup ?? 0,
+        _setupFeeHigh: est?.setupHigh ?? 0,
         // Typed against the row when there is one, otherwise whatever the
         // estimator's count works out to — the estimate already prefers the
         // typed figure, except on a row whose fee was typed too, where it
@@ -511,17 +515,19 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             );
           },
         };
-      // What standing the service up costs on this deal: the components off
-      // the rate card, with the per-unit half following the counts above.
+      // What standing the service up costs on this deal: the setup lines off
+      // the rate card, with the per-unit ones following the counts above.
+      // Quoted as a range when the card quotes one, exactly as the fee
+      // beside it is — the two are negotiated together.
       case 'setup':
         return {
           ...base,
           getSortValue: (row) => row._setupFee,
-          render: (row) => (row.setup.length === 0
-            ? <span className={styles.serviceMutedCell} title="No setup fee on the card. Add its components on the Services Pricing subtab.">-</span>
+          render: (row) => (row.setupLines.length === 0
+            ? <span className={styles.serviceMutedCell} title="No setup fee on the card. Set its rates on the Services Pricing subtab.">-</span>
             : (
-              <span title={`Billed once on this deal. The components are on the Services Pricing subtab.`}>
-                {formatMoney(row._setupFee) || '$0'}
+              <span title="Billed once on this deal. The rates are on the Services Pricing subtab.">
+                {formatMoneyRange(row._setupFee, row._setupFeeHigh) || '$0'}
               </span>
             )),
         };
@@ -658,15 +664,17 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
               scope. The label names the setup half only when there is one,
               so a scope without any reads exactly as it did before setup
               fees existed — and one with them can't pass a $8,000
-              implementation charge off as project work. */}
+              implementation charge off as project work. A setup fee quoted
+              as a range says so in the tooltip rather than reporting its
+              low end as the figure. */}
           <div className={styles.pricingTotal}>
             <span className={styles.pricingTotalLabel}>
-              {totals.setup > 0 ? 'One-off + setup' : 'One-off projects'}
+              {hasSetup ? 'One-off + setup' : 'One-off projects'}
             </span>
             <span
               className={styles.pricingTotalValue}
-              title={totals.setup > 0
-                ? `Billed once: ${formatMoney(totals.setup)} of setup fees${totals.oneTime > totals.setup ? ` and ${formatMoney(totals.oneTime - totals.setup)} of one-off project work` : ''}.`
+              title={hasSetup
+                ? `Billed once: ${formatMoneyRange(totals.setup, totals.setupHigh)} of setup fees${totals.oneTime > totals.setup ? ` and ${formatMoney(totals.oneTime - totals.setup)} of one-off project work` : ''}.`
                 : undefined}
             >{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
           </div>
