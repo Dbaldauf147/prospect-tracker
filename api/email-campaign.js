@@ -16,6 +16,7 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { classifyAutoReply, attributeBounce } from './_lib/autoReply.js';
+import { sendHistoryByAddress, sendHistoryFor } from '../src/utils/campaignFollowUp.js';
 
 const BASE = 'https://api.hubapi.com';
 
@@ -224,21 +225,43 @@ async function handler(req, res, auth) {
         return (m ? m[1] : a).trim();
       })
       .filter(Boolean);
-    const sendsByRecipients = {};
+    // Each send with its addresses resolved once: the grouping below reads it,
+    // and so does the follow-up index, which needs every send rather than the
+    // one survivor per recipient set.
+    const resolvedSends = [];
     for (const e of sentEmails) {
       const recipients = [...new Set([
         ...splitAddrs(e.hs_email_to_email),
         ...splitAddrs(e.hs_email_cc_email),
-      ])];
+      ])].sort();
       if (recipients.length === 0) continue;
-      const key = recipients.sort().join(',');
+      resolvedSends.push({
+        id: e.id,
+        timestamp: e.hs_timestamp,
+        subject: e.hs_email_subject || '',
+        recipients,
+        recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' '),
+      });
+    }
+
+    // Every send that reached each individual address, so a row can say
+    // whether a follow-up went out — see src/utils/campaignFollowUp.js. Kept
+    // per ADDRESS, not per recipient set: a first mail to a contact and their
+    // colleague and a chase to the contact alone are two recipient sets and
+    // one person emailed twice.
+    const historyByAddress = sendHistoryByAddress(resolvedSends);
+
+    const sendsByRecipients = {};
+    for (const e of resolvedSends) {
+      const recipients = e.recipients;
+      const key = recipients.join(',');
       // Keep most recent send per unique recipient set
-      if (!sendsByRecipients[key] || (e.hs_timestamp && e.hs_timestamp > sendsByRecipients[key].timestamp)) {
+      if (!sendsByRecipients[key] || (e.timestamp && e.timestamp > sendsByRecipients[key].timestamp)) {
         sendsByRecipients[key] = {
           id: e.id,
-          timestamp: e.hs_timestamp,
+          timestamp: e.timestamp,
           recipients,
-          recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '-',
+          recipientNames: e.recipientNames || recipients[0] || '-',
           replied: false,
           replyDate: null,
           repliedBy: null,
@@ -312,23 +335,33 @@ async function handler(req, res, auth) {
     const responseRate = totalSends > 0 ? ((totalReplied / totalSends) * 100).toFixed(1) : '0.0';
 
     // Build contact-level detail for the table
-    const contacts = sends.map(s => ({
-      email: s.recipients.join('; '),
-      name: s.recipientNames,
-      sentDate: s.timestamp,
-      replied: s.replied,
-      replyDate: s.replyDate,
-      repliedBy: s.repliedBy,
-      // A delivery failure for this address, and the recipient's own
-      // auto-responder. Both are non-answers, and neither is a "no": a bounce
-      // means nobody ever saw it, an OOO means not yet.
-      bounced: !!s.bounced,
-      bounceDate: s.bounceDate || null,
-      outOfOffice: !!s.outOfOffice,
-      oooDate: s.oooDate || null,
-      oooSubject: s.oooSubject || '',
-      recipientCount: s.recipients.length,
-    })).sort((a, b) => {
+    const contacts = sends.map(s => {
+      // How many times this contact has been emailed under the campaign's
+      // subject lines, and the last few of those sends. `sentDate` stays the
+      // most recent send it always was; `firstSentDate` is when the first one
+      // went out, which is the date a follow-up is measured from.
+      const { sendCount, firstSentDate, history } = sendHistoryFor(historyByAddress, s.recipients);
+      return {
+        email: s.recipients.join('; '),
+        name: s.recipientNames,
+        sentDate: s.timestamp,
+        sendCount,
+        firstSentDate: firstSentDate || s.timestamp || null,
+        sendHistory: history,
+        replied: s.replied,
+        replyDate: s.replyDate,
+        repliedBy: s.repliedBy,
+        // A delivery failure for this address, and the recipient's own
+        // auto-responder. Both are non-answers, and neither is a "no": a bounce
+        // means nobody ever saw it, an OOO means not yet.
+        bounced: !!s.bounced,
+        bounceDate: s.bounceDate || null,
+        outOfOffice: !!s.outOfOffice,
+        oooDate: s.oooDate || null,
+        oooSubject: s.oooSubject || '',
+        recipientCount: s.recipients.length,
+      };
+    }).sort((a, b) => {
       if (a.replied !== b.replied) return a.replied ? -1 : 1;
       return (a.sentDate || '').localeCompare(b.sentDate || '');
     });
