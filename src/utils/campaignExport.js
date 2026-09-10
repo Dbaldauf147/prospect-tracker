@@ -16,6 +16,7 @@
 import { campaignSendStats, isCampaignActive, campaignOutreachLabel } from './campaignOutreach.js';
 import { stripDashes } from './exportSanitize.js';
 import { campaignSubjects } from './campaignSubjects.js';
+import { campaignEventUrl } from './campaignEventLink.js';
 
 // One CSV cell. Quoted only where it has to be, doubled quotes inside.
 export function csvCell(v) {
@@ -139,6 +140,9 @@ export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingF
 export const CAMPAIGN_SUMMARY_HEADERS = [
   'Campaign', 'Subjects', 'Contacts', 'Sent', '% Sent', 'Left to Send',
   'Replies', 'Response Rate %', 'Status', 'Saved', 'Last Refreshed',
+  // Last, so every column that was here keeps its place — the tests and
+  // anybody's saved spreadsheet formula both read these by position.
+  'Event Link',
 ];
 
 // One saved campaign's row: the Saved Campaigns table's own figures, read
@@ -157,6 +161,9 @@ export function campaignSummaryRow(c, nowMs = Date.now()) {
     isCampaignActive(c, nowMs) ? 'Active' : 'Inactive',
     csvDate(c?.savedAt),
     csvDate(c?.refreshedAt),
+    // As typed, not as displayed: a spreadsheet wants the address it can
+    // click, not the shortened label the screen shows.
+    campaignEventUrl(c),
   ];
 }
 

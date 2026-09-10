@@ -23,6 +23,9 @@ import {
   campaignSubjects, primarySubject, withSubjects, parseSubjectLines,
   subjectLinesText, sameSubjects,
 } from '../../utils/campaignSubjects';
+import {
+  campaignEventUrl, eventLinkHref, eventLinkLabel, withEventUrl, sameEventUrl,
+} from '../../utils/campaignEventLink';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -112,11 +115,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [editSubjects, setEditSubjects] = useState('');
   const [editingSubjectInline, setEditingSubjectInline] = useState(false); // editing the open campaign's subject lines from the results header
   const [subjectDraft, setSubjectDraft] = useState('');
+  // The campaign's event link, edited from the results header the same way.
+  // Kept separate from the subject editor so adding the link doesn't mean
+  // opening — and risking a change to — the lines the campaign matches on.
+  const [editingEventInline, setEditingEventInline] = useState(false);
+  const [eventDraft, setEventDraft] = useState('');
+  // The saved-campaign row editor's event link.
+  const [editEventUrl, setEditEventUrl] = useState('');
   // "New Campaign" form: create a campaign by hand instead of searching for a
   // subject line that has already been sent.
   const [showNewForm, setShowNewForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('');
+  const [newEventUrl, setNewEventUrl] = useState('');
   const [creating, setCreating] = useState(false); // manual create in flight
   // Draft for the "add an email to this campaign" input. Manually-added
   // addresses are the only way contacts enter a campaign's fixed list.
@@ -375,6 +386,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setViewingSaved(null);
     setEditingSubjectInline(false);
     setSubjectDraft('');
+    cancelEventEdit();
     try {
       setResults(await fetchCampaignActivity(subject));
     } catch (err) {
@@ -387,7 +399,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   async function handleSave() {
     if (!results) return;
     setSaving(true);
-    const campaign = withSubjects({
+    const campaign = withEventUrl(withSubjects({
       // Title is the campaign's display name; the subject lines are what sent
       // mail is matched against. A freshly-searched campaign has no separate
       // title yet, so seed it from the first line — the user can split them
@@ -400,7 +412,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       suppressed: results.suppressed || null,
       removedEmails: results.removedEmails || [],
       contacts: results.contacts,
-    }, campaignSubjects(results));
+    }, campaignSubjects(results)), campaignEventUrl(results));
     // Replace if a campaign already leads with the same subject, otherwise add.
     // A replace rebuilds the campaign from the search results, which know
     // nothing about its status — so the two status fields are carried across
@@ -414,6 +426,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const kept = {};
     if (typeof prev?.manualActive === 'boolean') kept.manualActive = prev.manualActive;
     if (prev?.pausedUntil) kept.pausedUntil = prev.pausedUntil;
+    // Same story for the event link: a search result carries one only if it
+    // was opened from the saved campaign, so a re-save of a fresh search would
+    // otherwise drop the link somebody added.
+    if (!campaignEventUrl(campaign) && campaignEventUrl(prev)) kept.eventUrl = campaignEventUrl(prev);
     const updated = existing >= 0
       ? savedCampaigns.map((c, i) => i === existing ? { ...campaign, ...kept } : c)
       : [campaign, ...savedCampaigns];
@@ -437,7 +453,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const title = newTitle.trim() || nextSubjects[0];
     setCreating(true);
     setError('');
-    const campaign = withSubjects({
+    const campaign = withEventUrl(withSubjects({
       title,
       savedAt: new Date().toISOString(),
       ...deriveCounts([]),
@@ -446,7 +462,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       suppressed: null,
       removedEmails: [],
       contacts: [],
-    }, nextSubjects);
+    }, nextSubjects), newEventUrl);
     // Newest first, matching handleSave.
     await saveCampaigns([campaign, ...savedCampaigns]);
     setCreating(false);
@@ -460,6 +476,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setEditingIndex(null);
     setEditingSubjectInline(false);
     setSubjectDraft('');
+    cancelEventEdit();
     setSubject(nextSubjects[0]);
     setResults(campaign);
     setViewingSaved(0);
@@ -468,6 +485,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   function openNewForm() {
     setError('');
     setNewTitle('');
+    setNewEventUrl('');
     // Seed from the search box: a subject typed there is usually the one the
     // campaign is being created for.
     setNewSubject(subject.trim());
@@ -478,6 +496,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setShowNewForm(false);
     setNewTitle('');
     setNewSubject('');
+    setNewEventUrl('');
   }
 
   // Push every "Not Sent" contact (in the campaign roster but never emailed)
@@ -686,6 +705,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setViewingSaved(index);
     setEditingSubjectInline(false);
     setSubjectDraft('');
+    cancelEventEdit();
     setError('');
     if (subjects.length === 0) return;
     const token = ++viewTokenRef.current;
@@ -730,6 +750,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setEditingIndex(index);
     setEditTitle(c?.title || primarySubject(c) || '');
     setEditSubjects(subjectLinesText(c));
+    setEditEventUrl(campaignEventUrl(c));
   }
 
   function cancelEdit(e) {
@@ -737,12 +758,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setEditingIndex(null);
     setEditTitle('');
     setEditSubjects('');
+    setEditEventUrl('');
   }
 
-  // Edit a saved campaign's two fields: the Title (display name) and the
+  // Edit a saved campaign's three fields: the Title (display name), the
   // Subject lines (the email subjects matched against sent mail — one per row,
-  // and mail matching any of them counts). At least one line is required, but
-  // they need not be unique: two campaigns can share a subject to track
+  // and mail matching any of them counts) and the Event link (the page the
+  // campaign is inviting people to). At least one subject line is required,
+  // but they need not be unique: two campaigns can share a subject to track
   // different contact segments of the same email. Persists to Firestore and
   // keeps the open campaign + the search box in sync when the edited one is
   // being viewed.
@@ -758,17 +781,21 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       return;
     }
     const subjectsChanged = !sameSubjects(subjects, campaignSubjects(current));
-    if (!subjectsChanged && title === (current.title || primarySubject(current))) { cancelEdit(); return; }
+    const eventChanged = !sameEventUrl(current, editEventUrl);
+    if (!subjectsChanged && !eventChanged && title === (current.title || primarySubject(current))) { cancelEdit(); return; }
     setError('');
-    const updated = savedCampaigns.map((c, i) => (i === idx ? withSubjects({ ...c, title }, subjects) : c));
+    const updated = savedCampaigns.map((c, i) => (
+      i === idx ? withEventUrl(withSubjects({ ...c, title }, subjects), editEventUrl) : c
+    ));
     await saveCampaigns(updated);
     if (viewingSaved === idx) {
       setSubject(subjects[0]);
-      setResults(r => (r ? withSubjects({ ...r, title }, subjects) : r));
+      setResults(r => (r ? withEventUrl(withSubjects({ ...r, title }, subjects), editEventUrl) : r));
     }
     setEditingIndex(null);
     setEditTitle('');
     setEditSubjects('');
+    setEditEventUrl('');
     // The subject lines drive which sent mail matches, so a change to them
     // needs the activity re-pulled — same as editing them from the header.
     if (subjectsChanged && viewingSaved === idx) {
@@ -840,6 +867,41 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setSubject(nextSubjects[0]);
     setResults(next);
     await refreshOpenCampaign({ index: idx, base: next, subjects: nextSubjects, title });
+  }
+
+  // Inline event-link editing from the results header, for whatever campaign
+  // is open — saved or a search result not yet saved. One link: the page the
+  // campaign invites people to, which is what the Event Status column is an
+  // RSVP against. Unlike the subject lines it changes nothing about which mail
+  // matches, so saving it never re-pulls activity.
+  function startEventEdit() {
+    if (!displayResults) return;
+    setError('');
+    setEventDraft(campaignEventUrl(displayResults));
+    setEditingEventInline(true);
+  }
+
+  function cancelEventEdit() {
+    setEditingEventInline(false);
+    setEventDraft('');
+  }
+
+  // `url` is what to save. Remove passes '' rather than emptying the draft
+  // first: a setState in the same handler doesn't reach this closure, so
+  // reading `eventDraft` here would save the link the user just asked to drop.
+  async function commitEventEdit(url = eventDraft) {
+    const idx = viewingSaved;
+    const current = idx == null ? displayResults : savedCampaigns[idx];
+    if (!current) { cancelEventEdit(); return; }
+    if (sameEventUrl(current, url)) { cancelEventEdit(); return; }
+    setError('');
+    const next = withEventUrl(current, url);
+    // A campaign that hasn't been saved yet keeps the link on screen only; it
+    // is written when the user saves the campaign (handleSave reads it back
+    // off the open results).
+    if (idx != null) await saveCampaigns(savedCampaigns.map((c, i) => (i === idx ? next : c)));
+    setResults(r => (r ? withEventUrl(r, url) : next));
+    cancelEventEdit();
   }
 
   function fmtDate(d) {
@@ -1464,6 +1526,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
               />
             </div>
+            {/* Optional, and usually known before the mail is: the page the
+                campaign invites people to. It can be added later from the
+                campaign's header. */}
+            <div style={{ flex: '1 1 220px' }}>
+              <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Event link</label>
+              <input
+                type="text"
+                value={newEventUrl}
+                onChange={e => setNewEventUrl(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); createCampaign(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closeNewForm(); }
+                }}
+                placeholder="https://… (optional)"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'inherit' }}
+              />
+            </div>
             <button
               onClick={createCampaign}
               disabled={creating || !newSubject.trim()}
@@ -1687,6 +1766,103 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#F1F5F9', color: '#475569' }}
                 >{displayResults.autoRepliesSuppressed} auto-reply{displayResults.autoRepliesSuppressed === 1 ? '' : 's'} suppressed</span>
               )}
+              {/* The event this campaign invites people to. Its own line under
+                  the subjects: the roster's Event Status column is an RSVP to
+                  something, and until now that something — the registration
+                  page, the listing, the invite — was only in somebody's inbox.
+                  One link, opened in a new tab so the campaign stays put. */}
+              <div style={{ marginTop: '3px' }}>
+                {editingEventInline ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    <span>Event:</span>
+                    <input
+                      type="text"
+                      value={eventDraft}
+                      autoFocus
+                      onChange={e => setEventDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitEventEdit(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelEventEdit(); }
+                      }}
+                      placeholder="https://… the registration or event page"
+                      style={{
+                        minWidth: '320px', padding: '0.25rem 0.4rem', border: '1px solid var(--color-accent)',
+                        borderRadius: '4px', fontSize: '0.8rem', fontFamily: 'inherit', color: 'var(--color-text)',
+                        background: 'var(--color-surface)',
+                      }}
+                    />
+                    <button
+                      onClick={() => commitEventEdit()}
+                      style={{
+                        padding: '0.2rem 0.55rem', border: 'none', borderRadius: '4px',
+                        background: 'var(--color-accent)', color: '#fff', fontSize: '0.7rem', fontWeight: 600,
+                        fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >Save</button>
+                    <button
+                      onClick={cancelEventEdit}
+                      style={{
+                        padding: '0.2rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: '4px',
+                        background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.7rem',
+                        fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >Cancel</button>
+                    {campaignEventUrl(displayResults) && (
+                      <button
+                        onClick={() => commitEventEdit('')}
+                        title="Remove this campaign's event link"
+                        style={{
+                          padding: '0.2rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: '4px',
+                          background: 'var(--color-surface)', color: '#DC2626', fontSize: '0.7rem',
+                          fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                        }}
+                      >Remove</button>
+                    )}
+                  </span>
+                ) : campaignEventUrl(displayResults) ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    <span>Event:</span>
+                    {eventLinkHref(displayResults) ? (
+                      <a
+                        href={eventLinkHref(displayResults)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={campaignEventUrl(displayResults)}
+                        style={{ color: 'var(--color-accent)', fontWeight: 600, textDecoration: 'none' }}
+                        onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                        onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                      >{eventLinkLabel(displayResults)} ↗</a>
+                    ) : (
+                      /* Only http(s) is ever made clickable — anything else
+                         stays text so it can be seen and corrected rather
+                         than silently dropped. */
+                      <span
+                        title="Not a web address this can open — edit it to an http(s) link"
+                        style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}
+                      >{eventLinkLabel(displayResults)}</span>
+                    )}
+                    <button
+                      onClick={startEventEdit}
+                      title="Edit this campaign's event link"
+                      style={{
+                        padding: '1px 6px', border: '1px solid var(--color-border)',
+                        borderRadius: '4px', background: 'var(--color-surface)', color: 'var(--color-accent)',
+                        fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                      }}
+                    >Edit</button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={startEventEdit}
+                    title="Link this campaign to the event it invites people to — the registration page, the listing, the invite"
+                    style={{
+                      padding: '1px 6px', border: '1px dashed var(--color-border)',
+                      borderRadius: '4px', background: 'transparent', color: 'var(--color-text-secondary)',
+                      fontSize: '0.65rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                    }}
+                  >+ Add event link</button>
+                )}
+              </div>
             </div>
             <div style={{ display: 'inline-flex', gap: '0.5rem', flexShrink: 0 }}>
               {(() => {
@@ -1991,6 +2167,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                           One per row — mail matching any of them counts toward this campaign.
                         </div>
                       </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text-secondary)', marginBottom: '2px' }}>Event link</label>
+                        <input
+                          type="text"
+                          value={editEventUrl}
+                          onChange={e => setEditEventUrl(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                          }}
+                          placeholder="https://… (optional)"
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                        />
+                        <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                          The page this campaign invites people to. Clear it to remove the link.
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -2002,6 +2195,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                       {((c.title && c.title !== subs[0]) || subs.length > 1) && (
                         <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={subs.join('\n')}>
                           {subs.length > 1 ? 'Subjects: ' : 'Subject: '}{subs.join(' · ')}
+                        </div>
+                      )}
+                      {/* The event, straight from the list — the row opens the
+                          campaign, so the link stops the click from doing both. */}
+                      {eventLinkHref(c) && (
+                        <div style={{ fontSize: '0.65rem', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <a
+                            href={eventLinkHref(c)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            title={campaignEventUrl(c)}
+                            style={{ color: 'var(--color-accent)', fontWeight: 600, textDecoration: 'none' }}
+                          >↗ {eventLinkLabel(c)}</a>
                         </div>
                       )}
                     </>
