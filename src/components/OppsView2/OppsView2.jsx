@@ -133,7 +133,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, resolvePricingBases, estimateScope, formatMoneyRange, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, parseMoney as parsePricingMoney } from '../../utils/servicePricing';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -1960,6 +1960,188 @@ function PricingOptionSnapshotView({ snapshot }) {
   );
 }
 
+// A stable empty list, so a popup with nothing in scope doesn't re-run the
+// estimator on every render against a fresh [].
+const EMPTY_SCOPE = [];
+
+// What the services in a deal's Scope are worth in their first year, read
+// off the rate card on Dropdowns › Services Pricing.
+//
+// The same estimator the Deal Pricing tab runs, so a fee here is the fee it
+// shows: the basis and rate worked against the counts. The only count an opp
+// carries is its Sites, so a service priced per meter or per invoice comes
+// back priced but at nothing, and says which count it was missing rather than
+// showing a confident $0. A percentage-of-deal service reads the amount being
+// typed into the box beside it, which is what it is a percentage of.
+//
+// `active` is what stops this running per rendered row: the answer is only
+// ever looked at inside a popup that is open.
+function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, serviceOverrides, sites, dealSize }) {
+  const names = scopeNames || EMPTY_SCOPE;
+  return useMemo(() => {
+    if (!active || !names.length) return null;
+    const rows = names.map(name => ({
+      name,
+      meta: getEffectiveServiceMetadata(name, serviceOverrides),
+    }));
+    const est = estimateScope({
+      rows,
+      services: names,
+      pricing: pricing || {},
+      bases: pricingBases || undefined,
+      counts: { sites: parsePricingMoney(sites) ?? 0 },
+      dealSize: parsePricingMoney(dealSize),
+    });
+    // Each line says where its fee came from, so a number that moves has a
+    // reason on the row — the percentage ones move with the amount being
+    // typed beside them, which is the deal size they are a cut of.
+    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
+  }, [active, names, pricing, pricingBases, serviceOverrides, sites, dealSize]);
+}
+
+// The scope priced out, as a table: one row per service, the low end of its
+// year 1 fee and the high end beside it.
+//
+// Low and high are their own columns rather than one "$40k – $55k" cell so
+// that each end reads down its own column: sizing a deal is picking an end
+// and defending it, and a column of low ends is the conservative number for
+// the whole scope. A service quoted at one figure shows that figure in both,
+// which is what it means — there is no spread to argue about on that line.
+//
+// The totals carry the same two ends, and the button that fills the amount
+// box sits under the end it fills. Nothing is written until the user presses
+// one: the estimate is what the rate card says, and whether that IS the deal
+// size is theirs to decide.
+function ScopeFeeTable({ estimate, onUse }) {
+  if (!estimate || !estimate.lines.length) return null;
+  const cell = { padding: '2px 0', verticalAlign: 'top' };
+  const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 10 };
+  const head = {
+    padding: '0 0 3px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#94A3B8',
+  };
+  const useLink = {
+    background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline',
+    cursor: 'pointer', padding: 0, font: 'inherit', fontSize: '0.7rem',
+  };
+  // A fee that isn't a range prints once rather than twice: "$5,000" under
+  // Low and "$5,000" under High is the same claim made twice, and the eye
+  // reads the repetition as a spread that isn't there.
+  const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+
+  return (
+    <div style={{
+      padding: '0.5rem 0.6rem', background: '#F8FAFC',
+      border: '1px solid var(--color-border-light)', borderRadius: 4,
+      fontSize: '0.78rem', color: '#475569',
+    }}>
+      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
+        Scope services{' '}
+        <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+          ({estimate.lines.length}) &middot; est. Year 1 fee
+        </span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...head, textAlign: 'left' }}>Service</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th>
+          </tr>
+        </thead>
+        <tbody>
+          {estimate.lines.map((line) => (
+            <tr key={line.name}>
+              <td style={cell}>
+                {line.name}
+                {/* Where the fee came from, and — when a priced service
+                    still came out at nothing — the count it needed that
+                    the opp doesn't carry. */}
+                {(line.note || line.how) ? (
+                  <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
+                    {line.note || line.how}
+                    {line.recurring ? ' · per year' : ''}
+                  </div>
+                ) : (line.recurring ? (
+                  <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
+                ) : null)}
+              </td>
+              {line.priced ? (
+                <>
+                  <td style={num}>
+                    <strong style={{ color: '#1E293B' }} title="Worked out from this service&rsquo;s basis and rate">
+                      {money(line.fee)}
+                    </strong>
+                  </td>
+                  <td
+                    style={num}
+                    title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
+                  >
+                    <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
+                      {line.feeHigh > line.fee ? money(line.feeHigh) : '—'}
+                    </strong>
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td style={{ ...num, color: '#94A3B8' }} title="No price on the Services Pricing tab yet">—</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>—</td>
+                </>
+              )}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              Year 1 total
+              {estimate.unpriced.length ? (
+                <span style={{ color: '#94A3B8' }}>{' '}({estimate.unpriced.length} unpriced)</span>
+              ) : null}
+            </td>
+            <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              <strong style={{ color: '#1E293B' }}>{money(estimate.year1Total)}</strong>
+              {onUse ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onUse(estimate.year1Total); }}
+                    title="Put the low end of this estimate in the Deal Size box"
+                    style={useLink}
+                  >Use low</button>
+                </div>
+              ) : null}
+            </td>
+            <td
+              style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+              title={estimate.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
+            >
+              <strong style={{ color: estimate.ranged ? '#1E293B' : '#94A3B8' }}>
+                {estimate.ranged ? money(estimate.year1TotalHigh) : '—'}
+              </strong>
+              {onUse && estimate.ranged ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onUse(estimate.year1TotalHigh); }}
+                    title="Put the high end of this estimate in the Deal Size box"
+                    style={useLink}
+                  >Use high</button>
+                </div>
+              ) : null}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      {estimate.unpriced.length > 0 && (
+        <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+          No price yet: {estimate.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Quoted Amount cell. Clicking the value opens a small editor popup
 // with two fields — the dollar amount and an optional hyperlink. The
 // cell itself stays icon-free: when a hyperlink is set the amount
@@ -2000,38 +2182,11 @@ function QuotedAmountCell({
   // stays correct even after the Pricing tab is cleared.
   const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
 
-  // What the services in this deal's Scope are worth in their first year,
-  // read off the rate card on Dropdowns › Services Pricing.
-  //
-  // The same estimator the Deal Pricing tab runs, so a fee here is the fee
-  // it shows: the basis and rate worked against the counts. The only count
-  // an opp carries is its
-  // Sites, so a service priced per meter or per invoice comes back priced
-  // but at nothing, and says which count it was missing rather than showing
-  // a confident $0. A percentage-of-deal service reads the amount being
-  // typed in the box above, which is what it's a percentage of.
-  //
-  // Only while the popup is open: this runs per rendered row otherwise, and
-  // the answer is only ever looked at here.
-  const scopeEstimate = useMemo(() => {
-    if (!open || !scopeNames.length) return null;
-    const rows = scopeNames.map(name => ({
-      name,
-      meta: getEffectiveServiceMetadata(name, serviceOverrides),
-    }));
-    const est = estimateScope({
-      rows,
-      services: scopeNames,
-      pricing: pricing || {},
-      bases: pricingBases || undefined,
-      counts: { sites: parsePricingMoney(sites) ?? 0 },
-      dealSize: parsePricingMoney(draftAmount),
-    });
-    // Each line says where its fee came from, so a number that moves has a
-    // reason on the row — the percentage ones move with the amount being
-    // typed in the box above, which is the deal size they're a cut of.
-    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
-  }, [open, scopeNames, pricing, pricingBases, serviceOverrides, sites, draftAmount]);
+  // The scope priced out, for the table below the amount box — see
+  // useScopeFeeEstimate. Only while the popup is open.
+  const scopeEstimate = useScopeFeeEstimate({
+    active: open, scopeNames, pricing, pricingBases, serviceOverrides, sites, dealSize: draftAmount,
+  });
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
@@ -2083,7 +2238,7 @@ function QuotedAmountCell({
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-              minWidth: 360, maxWidth: 480, boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+              minWidth: 360, maxWidth: 520, boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
               display: 'flex', flexDirection: 'column', gap: '0.75rem',
             }}
           >
@@ -2187,105 +2342,10 @@ function QuotedAmountCell({
                 )}
               </div>
             )}
-            {scopeEstimate && scopeEstimate.lines.length > 0 && (
-              <div style={{
-                padding: '0.5rem 0.6rem', background: '#F8FAFC',
-                border: '1px solid var(--color-border-light)', borderRadius: 4,
-                fontSize: '0.78rem', color: '#475569',
-              }}>
-                <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
-                  Scope services{' '}
-                  <span style={{ color: '#94A3B8', fontWeight: 400 }}>
-                    ({scopeEstimate.lines.length}) &middot; est. Year 1 fee
-                  </span>
-                </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <tbody>
-                    {scopeEstimate.lines.map((line) => (
-                      <tr key={line.name}>
-                        <td style={{ padding: '2px 0', verticalAlign: 'top' }}>
-                          {line.name}
-                          {/* Where the fee came from, and — when a priced
-                              service still came out at nothing — the count
-                              it needed that the opp doesn't carry. */}
-                          {(line.note || line.how) ? (
-                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
-                              {line.note || line.how}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td style={{ padding: '2px 0', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                          {line.priced ? (
-                            <strong
-                              style={{ color: '#1E293B' }}
-                              title="Worked out from this service\u2019s basis and rate"
-                            >{formatMoneyRange(line.fee, line.feeHigh) || '$0'}</strong>
-                          ) : (
-                            <span style={{ color: '#94A3B8' }} title="No price on the Services Pricing tab yet">&mdash;</span>
-                          )}
-                          {line.recurring ? (
-                            <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                  borderTop: '1px solid var(--color-border-light)', paddingTop: 4, marginTop: 4,
-                }}>
-                  <span>
-                    Year 1 total
-                    {scopeEstimate.unpriced.length ? (
-                      <span style={{ color: '#94A3B8' }}>
-                        {' '}({scopeEstimate.unpriced.length} unpriced)
-                      </span>
-                    ) : null}
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <strong style={{ color: '#1E293B' }}>
-                      {formatMoneyRange(scopeEstimate.year1Total, scopeEstimate.year1TotalHigh) || '$0'}
-                    </strong>
-                    {/* Fills the box above rather than saving: the total is an
-                        estimate, and whether it IS the deal size is the
-                        user's call to make and then Save. */}
-                    {/* The Amount box holds one figure. When the estimate
-                        is a range there's no honest way to pick an end on
-                        the user's behalf, so both are offered and they
-                        choose which deal they're quoting. */}
-                    {scopeEstimate.ranged ? (
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
-                          title="Put the low end of this range in the Amount box above"
-                          style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                        >Use low</button>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1TotalHigh)))); }}
-                          title="Put the high end of this range in the Amount box above"
-                          style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                        >Use high</button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setDraftAmount(formatQuotedAmountLive(String(Math.round(scopeEstimate.year1Total)))); }}
-                        title="Put this total in the Amount box above"
-                        style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                      >Use</button>
-                    )}
-                  </span>
-                </div>
-                {scopeEstimate.unpriced.length > 0 && (
-                  <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
-                    No price yet: {scopeEstimate.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
-                  </div>
-                )}
-              </div>
-            )}
+            <ScopeFeeTable
+              estimate={scopeEstimate}
+              onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
+            />
             {snapshot && optionServices.length > 0 && (
               <div style={{
                 padding: '0.5rem 0.6rem', background: '#F8FAFC',
@@ -4890,8 +4950,26 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
 // Pre-populates with whatever the row already has. Save applies the
 // value via updateOppField; Skip leaves the row as-is (Stage is still
 // Lead). Mirrors the NotSoldFollowUpModal pattern.
-function LeadQuotedAmountModal({ opp, onSave, onClose }) {
+function LeadQuotedAmountModal({
+  opp, onSave, onClose,
+  scopeNames = null, pricing = null, pricingBases = null, serviceOverrides = null,
+}) {
   const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
+
+  // What the deal's scope is worth, service by service, off the rate card —
+  // the same table the Deal Size cell shows, because this is the same
+  // question asked at the moment the figure is first wanted. Sizing a deal
+  // from memory is how a pipeline fills with round numbers; sizing it from
+  // what the services actually price at is the point of asking here.
+  const scopeEstimate = useScopeFeeEstimate({
+    active: true,
+    scopeNames,
+    pricing,
+    pricingBases,
+    serviceOverrides,
+    sites: opp?.['Sites'],
+    dealSize: quotedAmount,
+  });
 
   function handleSave() {
     onSave({ quotedAmount: quotedAmount.trim() });
@@ -4926,7 +5004,11 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
         style={{
-          width: 420, maxWidth: '92vw',
+          // Wider once there is a fee table under the box: three columns of
+          // money in a 420px dialog wrap, and a wrapped figure is one nobody
+          // can compare down its column.
+          width: scopeEstimate ? 560 : 420, maxWidth: '92vw',
+          maxHeight: '86vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -4937,24 +5019,49 @@ function LeadQuotedAmountModal({ opp, onSave, onClose }) {
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
-            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}just moved to <strong>Lead</strong>. Add the Deal Size below.
+            {/* The scope is spelled out here only when the table below
+                isn't listing it — the same names twice, one above the
+                other, is a header nobody reads. */}
+            {!scopeEstimate && opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}just moved to <strong>Lead</strong>.{' '}
+            {scopeEstimate
+              ? 'What its scope prices out at is below.'
+              : 'Add the Deal Size below.'}
           </div>
         </div>
 
-        <div style={{ padding: '0.85rem 1rem' }}>
-          <label style={labelStyle}>Deal Size</label>
-          <input
-            type="text"
-            autoFocus
-            value={quotedAmount}
-            onChange={(e) => setQuotedAmount(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
-            }}
-            placeholder="e.g. $25,000"
-            style={inputStyle}
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <label style={labelStyle}>Deal Size</label>
+            <input
+              type="text"
+              autoFocus
+              value={quotedAmount}
+              onChange={(e) => setQuotedAmount(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              placeholder="e.g. $25,000"
+              style={inputStyle}
+            />
+          </div>
+          {/* The scope priced out. "Use low" / "Use high" fill the box above
+              rather than saving: the estimate is what the rate card says, and
+              whether that is the deal size is the user's call. */}
+          <ScopeFeeTable
+            estimate={scopeEstimate}
+            onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
           />
+          {/* A deal with nothing in Scope has nothing to price, and saying so
+              is more use than an empty panel — the scope is where the figure
+              would come from. */}
+          {!scopeEstimate && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {String(opp?.['Scope'] ?? '').trim()
+                ? 'None of the services in this opp’s Scope match a service on the rate card, so there is nothing to price it from.'
+                : 'Nothing is in this opp’s Scope yet — fill it in and this prompt prices the services out for you.'}
+            </div>
+          )}
         </div>
 
         <div style={{
@@ -14438,6 +14545,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return (
           <LeadQuotedAmountModal
             opp={opp}
+            // What's in the deal, and what the rate card says each of those
+            // services is worth — the same inputs the Deal Size cell prices
+            // from, so the two can't disagree about what this scope costs.
+            scopeNames={scopeServices(opp, solutionOptions)}
+            pricing={servicePricing}
+            pricingBases={pricingBases}
+            serviceOverrides={settings?.serviceOverrides}
             onSave={({ quotedAmount }) => {
               // Only push when the value actually changed so the undo
               // stack stays uncluttered with no-op snapshots.
