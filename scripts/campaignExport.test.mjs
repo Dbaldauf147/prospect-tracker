@@ -10,7 +10,7 @@
 import {
   csvCell, toCsv, csvDate, csvDateTime, contactStatusLabel, eventStatusLabel,
   campaignContactRow, campaignContactsCsv, CAMPAIGN_CONTACT_HEADERS,
-  campaignSummaryRow, campaignsSummaryCsv, csvFilename,
+  campaignSummaryRow, campaignsSummaryCsv, CAMPAIGN_SUMMARY_HEADERS, csvFilename,
 } from '../src/utils/campaignExport.js';
 
 // Columns by name rather than by position: the file has grown columns in the
@@ -207,8 +207,18 @@ check('a half-sent campaign', campaignSummaryRow({
   refreshedAt: daysAgo(1),
 }, NOW), [
   'September market update', 'Power prices, September', 33, 13, 39.4, 20,
-  4, 30.8, 'Active', '2026-08-29', '2026-09-07',
+  4, 30.8, 'Active', '2026-08-29', '2026-09-07', '',
 ]);
+
+// The event the campaign invites people to, as typed — the file carries the
+// address itself, not the shortened label the screen prints.
+check('the event link ships with the campaign', campaignSummaryRow({
+  title: 'Q4 briefing', subject: 'Q4 briefing', eventUrl: 'https://www.acme.com/e/q4-briefing?src=email',
+}, NOW)[11], 'https://www.acme.com/e/q4-briefing?src=email');
+check('a campaign with no event leaves the cell empty',
+  campaignSummaryRow({ title: 'Q4 briefing', subject: 'Q4 briefing' }, NOW)[11], '');
+check('every summary column ships',
+  CAMPAIGN_SUMMARY_HEADERS.length, campaignSummaryRow({ subject: 's' }, NOW).length);
 
 // Sixty days without a save or a refresh reads Inactive, and a manual
 // override beats the clock either way — the same rule the table greys out on.
