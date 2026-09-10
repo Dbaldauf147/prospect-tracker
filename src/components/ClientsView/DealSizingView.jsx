@@ -32,8 +32,8 @@
 //     used to mean opening the card in another tab. What it writes is a
 //     ruling, never the scope.
 //   • It does not claim to be a forecast. Nothing here knows whether the
-//     client wants the service. It is a sizing exercise, and the header says
-//     so, because a column of large numbers is very easy to start believing.
+//     client wants the service. It is a sizing exercise, and a column of
+//     large numbers is very easy to start believing.
 //
 // The service picker is the same board Opps 2 uses for Scope, which means a
 // service is ticked here with its status for that account already visible —
@@ -1445,25 +1445,9 @@ export function DealSizingView({
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: '0.9rem 1.25rem 2rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: '#1E293B' }}>Deal Sizing</h2>
-        <span style={{ fontSize: '0.8rem', color: '#64748B' }}>
-          What each of your clients would be worth if you sold them a set of services.
-        </span>
-      </div>
-      <div style={{ fontSize: '0.74rem', color: '#64748B', margin: '0.35rem 0 0.75rem', maxWidth: 900, lineHeight: 1.5 }}>
-        Pick services against a client and the estimate builds itself from that client&rsquo;s own Sites and Accounts —
-        no re-keying. Rates come from <strong>Dropdowns › Services Pricing</strong>, so a rate edited there moves every
-        figure here. This is a sizing exercise, not a forecast: nothing here knows whether the client wants the service.
-        Scopes are saved per client and are never written to the company record. What that record already says is
-        shown beside them, on the row and against each service, so you can see what a client already buys before you
-        size it again &mdash; and a client whose card already has a status against a scoped service (sold, in flight,
-        turned down or N/A) shows no figures at all, because that is not new business to size. The
-        <strong> Set Status</strong> column is the one thing here that writes back: it puts a status on the card&rsquo;s
-        <strong> Services Explored</strong> for the whole scope, or service by service in an expanded row &mdash; which
-        also means it takes that client out of the totals. Clients ticked <strong>Don&rsquo;t Track</strong> on the Clients tab are
-        left out, here as everywhere else &mdash; nobody is working them, so their money does not belong in these totals.
       </div>
 
-      <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+      <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', margin: '0.75rem 0' }}>
         <div
           style={tile}
           title={totals.onCard > 0
