@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
+import { normalizeMetState, MET_YES } from '../../utils/metInPerson';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -3024,7 +3025,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           contactMetInPerson={settings?.contactMetInPerson || {}}
           onSaveMetInPerson={(cid, met) => {
             if (cid == null) return;
-            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: !!met } });
+            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: normalizeMetState(met) ?? MET_YES } });
           }}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={(cid, invited) => {

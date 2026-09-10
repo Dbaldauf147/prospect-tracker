@@ -2,12 +2,17 @@
 // visit list. Plain Node — no test framework (the project has none). Run:
 //   node scripts/metInPerson.test.mjs
 //
-// The rules worth pinning: the local checkbox beats the legacy HubSpot tag
-// in both directions, a contact nobody has ticked either way still counts
-// as met when the old tag says so, and the list under the visits step
-// groups by the account a trip would be to — with a coverage that hasn't
-// landed reading as "unknown" rather than "you have met everybody".
-import { hasMetInPersonTag, resolveMetInPerson, keyContactsNotMet } from '../src/utils/metInPerson.js';
+// The rules worth pinning: the local answer beats the legacy HubSpot tag in
+// both directions, a contact nobody has answered either way still counts as
+// met when the old tag says so, the booleans the old checkbox wrote still
+// read as Yes / No, "hold off" is not met and not on the visit list, and
+// the list under the visits step groups by the account a trip would be to —
+// with a coverage that hasn't landed reading as "unknown" rather than "you
+// have met everybody".
+import {
+  hasMetInPersonTag, resolveMetInPerson, keyContactsNotMet,
+  metInPersonState, normalizeMetState, MET_YES, MET_NO, MET_HOLD, MET_STATE_OPTIONS,
+} from '../src/utils/metInPerson.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -85,12 +90,54 @@ check('an explicit no puts the tagged one back',
 // Everybody met is an empty list, which the page renders as nothing at all.
 check('nobody left to meet',
   keyContactsNotMet(coverage, { 1: true, 2: true, 4: true, 5: true }),
-  { total: 0, accounts: 0, groups: [] });
+  { total: 0, accounts: 0, groups: [], onHold: 0 });
 
 // And a coverage that hasn't landed is unknown, not empty — otherwise the
 // step would claim a finished book while the contacts were still loading.
 check('coverage not loaded', keyContactsNotMet(null, {}), null);
 check('no key roster on it', keyContactsNotMet({ all: { people: [] } }, {}), null);
+
+// --- the third answer -------------------------------------------------
+//
+// The checkbox could only say met or not, so somebody deliberately parked
+// looked exactly like somebody nobody had got to — and the visit ladder
+// asked about them again every week.
+
+// The booleans the checkbox wrote are still most of the map. They must keep
+// reading as the answers they were, with nothing rewritten on load.
+check('a stored true is Yes', normalizeMetState(true), MET_YES);
+check('a stored false is No', normalizeMetState(false), MET_NO);
+check('the new values pass through', [normalizeMetState('yes'), normalizeMetState('hold')], [MET_YES, MET_HOLD]);
+check('case and padding do not matter', normalizeMetState('  Hold '), MET_HOLD);
+check('nothing stored is nothing', normalizeMetState(undefined), null);
+check('junk is nothing, so the fallback still gets a say', normalizeMetState('maybe'), null);
+
+const taggedOne = { id: 9, dans_tags: 'Met In Person' };
+check('a stored answer beats the tag', metInPersonState(taggedOne, { 9: MET_HOLD }), MET_HOLD);
+check('the tag answers when nothing is stored', metInPersonState(taggedOne, {}), MET_YES);
+check('and No is the default for everyone else', metInPersonState({ id: 10 }, {}), MET_NO);
+check('unreadable storage falls back rather than sticking', metInPersonState(taggedOne, { 9: 'maybe' }), MET_YES);
+
+// Hold off is a decision not to chase somebody, not a claim to have met
+// them — so every column and count that asks "met?" reads it as not met.
+check('hold off is not met', resolveMetInPerson({ id: 9 }, { 9: MET_HOLD }), false);
+check('yes is met', resolveMetInPerson({ id: 9 }, { 9: MET_YES }), true);
+check('a legacy true is still met', resolveMetInPerson({ id: 9 }, { 9: true }), true);
+
+// ...but it does come off the visit ladder, counted rather than dropped
+// silently, so the page can say how many it is not showing.
+{
+  const all = keyContactsNotMet(coverage, {});
+  const held = keyContactsNotMet(coverage, { 1: MET_HOLD });
+  check('a held contact leaves the list', held.total, all.total - 1);
+  check('and is counted', held.onHold, 1);
+  check('nobody held, nothing counted', all.onHold, 0);
+  check('a held contact is in no group',
+    held.groups.flatMap(g => g.people.map(p => String(p.id))).includes('1'), false);
+}
+
+check('the dropdown offers exactly three answers',
+  MET_STATE_OPTIONS.map(o => o.value), [MET_YES, MET_NO, MET_HOLD]);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

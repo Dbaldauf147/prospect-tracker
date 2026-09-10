@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { companyPopupTarget } from '../../utils/companyLookup';
+import { normalizeMetState, MET_YES } from '../../utils/metInPerson';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
@@ -11505,7 +11506,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   }, [settings?.contactFamilies, updateSettings]);
   const saveContactMetInPerson = useCallback((cid, met) => {
     const cur = settings?.contactMetInPerson || {};
-    updateSettings({ contactMetInPerson: { ...cur, [cid]: !!met } });
+    updateSettings({ contactMetInPerson: { ...cur, [cid]: normalizeMetState(met) ?? MET_YES } });
   }, [settings?.contactMetInPerson, updateSettings]);
   const saveContactInvitedToLouisville = useCallback((cid, invited) => {
     const cur = settings?.contactInvitedToLouisville || {};
