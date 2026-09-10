@@ -2,7 +2,7 @@
 // Plain Node — no test framework (the project has none). Run:
 //   node scripts/recentlyClosedOpps.test.mjs
 //
-// Four rules decide this list, and each of them is a way the table could
+// Five rules decide this list, and each of them is a way the table could
 // quietly say something false:
 //
 //   1. What "closed" means. Sold and Not Sold, both — a week's losses are
@@ -18,6 +18,12 @@
 //   4. A closed opp with no Close Date. It can't be placed in any week, so
 //      it is counted and reported rather than dropped: a Sold deal missing
 //      its Close Date is a gap in the record worth seeing.
+//   5. A closed opp with no BFO Opportunity Name. It isn't a deal that
+//      closed, it is a line somebody kept on the sheet — the New Opps table
+//      above has always said so, and this half of the same week says it
+//      too. Checked BEFORE the Close Date, so the "no Close Date" count
+//      stays a nag about opps that would otherwise belong here rather than
+//      one that can never be worked down to zero.
 import {
   closedAgoLabel, daysSinceClose, isClosedStage, recentlyClosedOpps, RECENTLY_CLOSED_DAYS,
 } from '../src/utils/recentlyClosedOpps.js';
@@ -35,8 +41,11 @@ function check(label, actual, expected) {
 // rather than accidentally working because the clock read midnight.
 const NOW = new Date(2026, 8, 9, 15, 42).getTime(); // 9 Sep 2026, local
 const iso = (d) => `2026-09-${String(d).padStart(2, '0')}`;
-const opp = (account, stage, closeDate) => ({
-  _id: account, Account: account, Stage: stage, 'Close Date': closeDate,
+// A real opp on this table has a BFO Opportunity Name — it is what makes it
+// an opp in BFO rather than a row on a spreadsheet — so the fixture carries
+// one and the tests for the rule pass their own.
+const opp = (account, stage, closeDate, bfoName = `SB - ${account}`) => ({
+  _id: account, Account: account, Stage: stage, 'Close Date': closeDate, 'BFO Link': bfoName,
 });
 const names = (rows) => rows.map(r => r.Account);
 
@@ -121,9 +130,52 @@ check('the age label reads like a person would say it',
 // --- nothing to show ----------------------------------------------------
 {
   check('no records is an empty week, not a crash',
-    recentlyClosedOpps([], { nowMs: NOW }), { rows: [], undated: 0 });
+    recentlyClosedOpps([], { nowMs: NOW }), { rows: [], undated: 0, unnamed: 0 });
   check('and neither is nothing at all',
-    recentlyClosedOpps(null, { nowMs: NOW }), { rows: [], undated: 0 });
+    recentlyClosedOpps(null, { nowMs: NOW }), { rows: [], undated: 0, unnamed: 0 });
+}
+
+// --- opps that exist in BFO ---------------------------------------------
+{
+  // Every disguise a blank arrives in from the sheet: nothing typed, the
+  // dash somebody types to mean "none", and either casing of the #N/A a
+  // lookup formula leaves behind.
+  for (const blank of ['', '   ', '-', '#N/A', '#n/a', 'N/A', 'n/a']) {
+    const { rows, unnamed } = recentlyClosedOpps(
+      [opp('Named', 'Sold', iso(8)), opp('Unnamed', 'Not Sold', iso(8), blank)],
+      { nowMs: NOW },
+    );
+    check(`a closed opp whose BFO name is "${blank}" is left out`, names(rows), ['Named']);
+    check(`and it is counted as unnamed, not dropped ("${blank}")`, unnamed, 1);
+  }
+  const missingKey = { _id: 'NoKey', Account: 'NoKey', Stage: 'Sold', 'Close Date': iso(8) };
+  check('a record with no BFO field at all is left out too',
+    recentlyClosedOpps([missingKey], { nowMs: NOW }), { rows: [], undated: 0, unnamed: 1 });
+}
+
+{
+  // The order of the two checks. An unnamed opp with no Close Date is
+  // counted once, as unnamed: it was never going to be on this table, so
+  // adding it to the "no Close Date" nag would make that number impossible
+  // to clear.
+  const { rows, undated, unnamed } = recentlyClosedOpps([
+    opp('Both missing', 'Not Sold', '', ''),
+    opp('Just undated', 'Sold', ''),
+    opp('Fine', 'Sold', iso(8)),
+  ], { nowMs: NOW });
+  check('an unnamed, undated opp counts once — as unnamed', unnamed, 1);
+  check('and the Close Date nag counts only the opp that belongs here', undated, 1);
+  check('the named, dated opp is the row', names(rows), ['Fine']);
+}
+
+{
+  // An opp outside the window is not "left out for having no name": the
+  // rule that excluded it is the week, and the counts have to say which.
+  const { rows, undated, unnamed } = recentlyClosedOpps(
+    [opp('Old', 'Sold', iso(1))], { nowMs: NOW },
+  );
+  check('an old opp is simply not in the week', { rows: names(rows), undated, unnamed },
+    { rows: [], undated: 0, unnamed: 0 });
 }
 
 console.log(`${passed} passed, ${failed} failed`);
