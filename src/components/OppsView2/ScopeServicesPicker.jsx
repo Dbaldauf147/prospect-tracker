@@ -23,6 +23,7 @@ import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
+import { splitServiceNames } from '../../utils/serviceNameList';
 import { autoAddListFor, collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
@@ -162,11 +163,14 @@ export function ScopeServicesModal({
   // measured — so the board says which is which.
   const trackedServices = useCoverageServices();
 
-  const selected = useMemo(() => parseMulti(value), [value]);
-  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
-
   const categories = useMemo(() => buildCategories(settings, options), [settings, options]);
   const allItems = useMemo(() => categories.flatMap(c => c.items), [categories]);
+  // Scope is stored comma-separated, and some services have commas in their
+  // names ("Cat 3, 5, 6, and 7 (part of GHG)"). Split against the board's own
+  // vocabulary so such a service stays one tick rather than becoming several
+  // fragments in the off-board bucket.
+  const selected = useMemo(() => splitServiceNames(value, allItems), [value, allItems]);
+  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
   // Memoized because the selection summary depends on it: a fresh {} literal
   // every render would rebuild that list on every keystroke in the filter box.
   const renames = useMemo(() => settings?.serviceRenames || {}, [settings?.serviceRenames]);
@@ -252,7 +256,7 @@ export function ScopeServicesModal({
       return isSoldStatus(autoStatuses.get(item));
     });
     if (sold.length === 0) return new Map();
-    return collectAutoNa(sold, settings?.serviceOverrides, { canonical });
+    return collectAutoNa(sold, settings?.serviceOverrides, { canonical, names: allItems });
   }, [allItems, manualStatuses, autoStatuses, settings?.serviceOverrides, canonical]);
 
   // What each service on the board pulls in, so a row can say so before it's
@@ -261,7 +265,7 @@ export function ScopeServicesModal({
   const autoAddByItem = useMemo(() => {
     const map = new Map();
     for (const item of allItems) {
-      const list = autoAddListFor(item, settings?.serviceOverrides)
+      const list = autoAddListFor(item, settings?.serviceOverrides, allItems)
         .map(canonical)
         .filter(Boolean);
       if (list.length > 0) map.set(item, list);
@@ -284,6 +288,7 @@ export function ScopeServicesModal({
     const extra = collectAutoAdds([item], settings?.serviceOverrides, {
       canonical,
       present: next,
+      names: allItems,
     });
     setAutoAdded(extra);
     onChange([...next, ...extra].join(', '));
@@ -307,6 +312,7 @@ export function ScopeServicesModal({
     const extra = collectAutoAdds(picked, settings?.serviceOverrides, {
       canonical,
       present: next,
+      names: allItems,
     });
     setAutoAdded(extra);
     onChange([...next, ...extra].join(', '));

@@ -31,6 +31,7 @@ import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
 import { formatAutoAddList, autoAddedByMap } from '../../utils/serviceAutoAdd';
 import { autoNaedByMap } from '../../utils/serviceAutoNa';
+import { splitServiceNames } from '../../utils/serviceNameList';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -558,7 +559,10 @@ function ServiceImpliesCell({ value, options, selfName, onCommit, titleSet, titl
   const [rect, setRect] = useState(null);
   const cellRef = useRef(null);
 
-  const selected = useMemo(() => parseMulti(value), [value]);
+  // Split against the Solutions list, not on every comma: a service called
+  // "Cat 3, 5, 6, and 7 (part of GHG)" is one pick, and splitting it four ways
+  // left the cell showing stale fragments and the picker showing it unticked.
+  const selected = useMemo(() => splitServiceNames(value, options), [value, options]);
   const selectedSet = useMemo(
     () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
   // A service can't pull itself in, so it isn't offered.

@@ -358,7 +358,9 @@ function ImpliedServicesEditor({ value, options, selfName, onCommit, title, empt
   // services open by default would push the section below off the panel.
   const [picking, setPicking] = useState(false);
 
-  const selected = useMemo(() => parseAutoAddList(value), [value]);
+  // Parsed against the Solutions list so a service whose name contains a
+  // comma comes back as one chip rather than several fragments.
+  const selected = useMemo(() => parseAutoAddList(value, options), [value, options]);
   const selectedSet = useMemo(
     () => new Set(selected.map(s => s.trim().toLowerCase())), [selected]);
   const pickable = useMemo(

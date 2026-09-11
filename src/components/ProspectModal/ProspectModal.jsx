@@ -5442,6 +5442,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (sold.length === 0) return new Map();
     const byLower = new Map(allServiceItems.map(i => [i.toLowerCase(), i]));
     return collectAutoNa(sold, settings.serviceOverrides, {
+      names: allServiceItems,
       canonical: (n) => byLower.get(String(n || '').trim().toLowerCase()) || n,
     });
   }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);

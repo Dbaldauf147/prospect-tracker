@@ -99,6 +99,22 @@ check(
   ['Comp GHG', 'Cat 1 & 2'],
 );
 
+// A service name with a comma in it is one name, not several — the same
+// rebuilding the auto-add column needs (src/utils/serviceNameList.js).
+const CAT = 'Cat 3, 5, 6, and 7 (part of GHG)';
+const commaOverrides = { 'Comp GHG': { autoNa: `${CAT}, GHG` } };
+const commaNames = ['Comp GHG', CAT, 'GHG'];
+check(
+  'a comma name is retired whole',
+  list(collectAutoNa(['Comp GHG'], commaOverrides, { names: commaNames })),
+  { [CAT]: ['Comp GHG'], 'GHG': ['Comp GHG'] },
+);
+check(
+  'and the reverse direction finds its row',
+  autoNaedByMap(commaNames, commaOverrides).get(CAT.toLowerCase()),
+  ['Comp GHG'],
+);
+
 // Nothing sold, nothing retired.
 check('no sales, no N/As', list(collectAutoNa([], overrides)), {});
 check('a sale with no list implies nothing', list(collectAutoNa(['Bill payment'], overrides)), {});
