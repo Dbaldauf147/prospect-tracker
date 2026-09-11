@@ -233,6 +233,25 @@ function isEuropeanRegion(region) {
   return String(region || '').startsWith('Europe');
 }
 
+/**
+ * Is this country one of the European markets? Same grouping the TBD
+ * band above and the Europe View sheet use — region "Europe" or the
+ * transcontinental "Europe/Asia" (Turkey, Georgia, Russia, ...).
+ *
+ * Exported so callers that key off Europe — the Indicative Savings
+ * tab's large-market threshold, for one — ask the reference table the
+ * same question rather than re-spelling the prefix test and drifting
+ * from it.
+ *
+ * Accepts any spelling the alias list resolves ("UK", "Holland", a
+ * three-letter ISO code).
+ */
+export function isEuropeanCountry(name) {
+  const canonical = normalizeCountryName(name);
+  if (!canonical) return false;
+  return isEuropeanRegion(COUNTRY_DEREGULATION[canonical]?.region);
+}
+
 // Resolves the commodity-savings band for a country bucket, applying
 // the European TBD override on top of the status-driven SAVINGS_BAND.
 function savingsBandFor(status, region) {
