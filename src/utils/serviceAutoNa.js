@@ -34,8 +34,9 @@ import { getEffectiveServiceMetadata } from '../data/serviceCatalog.js';
 import { parseAutoAddList, formatAutoAddList } from './serviceAutoAdd.js';
 
 // The stored list shape is the same as the auto-add column's ("A, B", with
-// '-' reading as blank), so the parsing is too rather than being written
-// twice and drifting.
+// '-' reading as blank, and names that contain commas rebuilt against the
+// list of services that exist), so the parsing is too rather than being
+// written twice and drifting.
 export const parseAutoNaList = parseAutoAddList;
 export const formatAutoNaList = formatAutoAddList;
 
@@ -46,9 +47,11 @@ export function isSoldStatus(status) {
   return String(status ?? '').trim().toLowerCase() === 'sold';
 }
 
-// What one service retires, per the user's Services tab overrides.
-export function autoNaListFor(name, overrides) {
-  return parseAutoNaList(getEffectiveServiceMetadata(name, overrides)?.autoNa);
+// What one service retires, per the user's Services tab overrides. `known` —
+// every service name there is — lets a name with a comma in it come back
+// whole rather than as fragments; see src/utils/serviceNameList.js.
+export function autoNaListFor(name, overrides, known) {
+  return parseAutoNaList(getEffectiveServiceMetadata(name, overrides)?.autoNa, known);
 }
 
 // Which services list `name` in their Auto-N/A cell — the reverse of the
@@ -57,7 +60,9 @@ export function autoNaListFor(name, overrides) {
 export function autoNaedByMap(names, overrides) {
   const map = new Map();
   for (const name of names || []) {
-    for (const target of autoNaListFor(name, overrides)) {
+    // The rows themselves are the known names, so a cell naming a service
+    // with a comma in it lands on that service's row.
+    for (const target of autoNaListFor(name, overrides, names)) {
       const key = target.trim().toLowerCase();
       if (!key) continue;
       if (!map.has(key)) map.set(key, []);
@@ -75,7 +80,9 @@ export function autoNaedByMap(names, overrides) {
 // with different casing still lands on the row rather than on nothing.
 // A sold service is never itself N/A — two services that retire each other
 // and are both sold simply cancel out.
-export function collectAutoNa(sold, overrides, { canonical } = {}) {
+// `names` is every service the board knows, used both to rebuild a name with
+// a comma in it and (via `canonical`) to spell it the way the board does.
+export function collectAutoNa(sold, overrides, { canonical, names } = {}) {
   const spell = typeof canonical === 'function' ? canonical : (n => n);
   const soldKeys = new Set(
     (sold || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean),
@@ -83,7 +90,7 @@ export function collectAutoNa(sold, overrides, { canonical } = {}) {
   const out = new Map();
   for (const trigger of sold || []) {
     if (!String(trigger || '').trim()) continue;
-    for (const raw of autoNaListFor(trigger, overrides)) {
+    for (const raw of autoNaListFor(trigger, overrides, names)) {
       const name = spell(raw);
       const key = String(name || '').trim().toLowerCase();
       if (!key || soldKeys.has(key)) continue;

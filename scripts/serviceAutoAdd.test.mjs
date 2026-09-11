@@ -84,6 +84,33 @@ check(
   ['GHG', 'ESG report', 'AP upload (indirect payment)'],
 );
 
+// A service name with a comma in it ("Cat 3, 5, 6, and 7 (part of GHG)") is
+// one name, not four. Passing the known names in is what rebuilds it — see
+// scripts/serviceNameList.test.mjs for the splitting itself.
+const CAT = 'Cat 3, 5, 6, and 7 (part of GHG)';
+const commaOverrides = { 'Comp GHG': { autoAdd: `${CAT}, GHG` } };
+const commaNames = ['Comp GHG', CAT, 'GHG'];
+check(
+  'a comma in a name shreds the list without the vocabulary',
+  autoAddListFor('Comp GHG', commaOverrides),
+  ['Cat 3', '5', '6', 'and 7 (part of GHG)', 'GHG'],
+);
+check(
+  'and survives with it',
+  autoAddListFor('Comp GHG', commaOverrides, commaNames),
+  [CAT, 'GHG'],
+);
+check(
+  'so the Scope board ticks it rather than a fragment',
+  collectAutoAdds(['Comp GHG'], commaOverrides, { names: commaNames }),
+  [CAT, 'GHG'],
+);
+check(
+  'and the reverse direction finds its row',
+  autoAddedByMap(commaNames, commaOverrides).get(CAT.toLowerCase()),
+  ['Comp GHG'],
+);
+
 // A service that names nothing implies nothing.
 check('no list, no additions', collectAutoAdds(['Bill payment'], overrides), []);
 check('nothing ticked, nothing added', collectAutoAdds([], overrides), []);

@@ -18,24 +18,27 @@
 // (scripts/serviceAutoAdd.test.mjs), which resolves the path itself rather
 // than through Vite.
 import { getEffectiveServiceMetadata } from '../data/serviceCatalog.js';
+import { splitServiceNames, joinServiceNames } from './serviceNameList.js';
 
 // A stored list of service names ("A, B"), as an array. '-' is the app's
 // blank sentinel and reads as an empty list, same as an empty cell.
-export function parseAutoAddList(value) {
-  return String(value ?? '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s && s !== '-');
+//
+// `known` — every service name there is — lets a name with a comma in it
+// ("Cat 3, 5, 6, and 7 (part of GHG)") come back whole instead of as four
+// fragments; see src/utils/serviceNameList.js. Callers that have the list to
+// hand should pass it, and every caller that can, does.
+export function parseAutoAddList(value, known) {
+  return splitServiceNames(value, known).filter(s => s !== '-');
 }
 
 // The list back as it's stored.
 export function formatAutoAddList(names) {
-  return (names || []).map(n => String(n || '').trim()).filter(Boolean).join(', ');
+  return joinServiceNames(names);
 }
 
 // What one service pulls in, per the user's Services tab overrides.
-export function autoAddListFor(name, overrides) {
-  return parseAutoAddList(getEffectiveServiceMetadata(name, overrides)?.autoAdd);
+export function autoAddListFor(name, overrides, known) {
+  return parseAutoAddList(getEffectiveServiceMetadata(name, overrides)?.autoAdd, known);
 }
 
 // Which services list `name` as one of their auto-adds — the reverse of the
@@ -44,7 +47,9 @@ export function autoAddListFor(name, overrides) {
 export function autoAddedByMap(names, overrides) {
   const map = new Map();
   for (const name of names || []) {
-    for (const target of autoAddListFor(name, overrides)) {
+    // The rows themselves are the list of known names, so a cell naming a
+    // service with a comma in it lands on that service's row.
+    for (const target of autoAddListFor(name, overrides, names)) {
       const key = target.trim().toLowerCase();
       if (!key) continue;
       if (!map.has(key)) map.set(key, []);
@@ -64,7 +69,9 @@ export function autoAddedByMap(names, overrides) {
 // `canonical` maps a stored name to the board's spelling, so a cell typed
 // with different casing still ticks the row rather than adding a second
 // off-board entry. `present` is what's already in Scope.
-export function collectAutoAdds(triggers, overrides, { canonical, present = [] } = {}) {
+// `names` is every service the board knows, used both to rebuild a name with
+// a comma in it and (via `canonical`) to spell it the way the board does.
+export function collectAutoAdds(triggers, overrides, { canonical, present = [], names } = {}) {
   const spell = typeof canonical === 'function' ? canonical : (n => n);
   const have = new Set(present.map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
   const expanded = new Set();
@@ -76,7 +83,7 @@ export function collectAutoAdds(triggers, overrides, { canonical, present = [] }
     const key = String(trigger || '').trim().toLowerCase();
     if (!key || expanded.has(key)) continue;
     expanded.add(key);
-    for (const raw of autoAddListFor(trigger, overrides)) {
+    for (const raw of autoAddListFor(trigger, overrides, names)) {
       const name = spell(raw);
       const nameKey = String(name || '').trim().toLowerCase();
       // Already in Scope (or already added by another trigger this round):
