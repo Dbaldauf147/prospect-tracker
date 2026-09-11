@@ -2219,33 +2219,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
           )}
 
-          {/* The roster itself — the duplicate warning that describes it, the
-              box that adds to it, and the table. Collapsed together with the
-              cards: on a campaign with a long contact list this is nearly the
-              whole page, and "Hide details" is asked for to get past it to
-              what's below. Everything that acts on the campaign as a whole
-              (Export CSV, Add unsent to Draft, Save) stays put — those don't
-              need the rows on screen to be worth clicking. */}
-          {!detailsCollapsed && (
-          <>
-          {/* Duplicate contacts warning */}
-          {dupKeys.size > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '0.78rem', color: '#92400E' }}>
-              <span>
-                <strong>⚠ {dupKeys.size} duplicate contact{dupKeys.size === 1 ? '' : 's'}</strong> in this campaign
-                {extraRows > 0 && <>: {extraRows} extra row{extraRows === 1 ? '' : 's'}</>}. Duplicated rows are flagged below.
-              </span>
-              <button
-                onClick={removeDuplicates}
-                style={{ flexShrink: 0, padding: '0.3rem 0.7rem', border: 'none', borderRadius: '6px', background: '#D97706', color: '#fff', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
-                title="Collapse each duplicated contact to a single row, keeping the copy with the most activity"
-              >Remove duplicates</button>
-            </div>
-          )}
-
           {/* Manually add an email to the campaign's fixed list. The campaign
               only tracks the emails added here; the subject line is used to
-              look up their send/reply status, never to pull in new addresses. */}
+              look up their send/reply status, never to pull in new addresses.
+
+              Outside "Hide details" on purpose, and it is the one part of the
+              roster block that is. Collapsing is for getting past a long
+              contact table to what is below it; this is the only way an
+              address ever enters a campaign, so hiding it with the table left
+              a campaign with nothing sent — one created here, or set up ahead
+              of the send — with no visible way to put anybody in it at all,
+              and the collapse is a saved preference, so it stayed that way
+              across every campaign until somebody thought to expand. */}
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             <input
               type="text"
@@ -2270,7 +2255,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
             {/* The same Columns picker the contacts tables use: show / hide,
                 star a default set, drag to reorder, Reset to get back. Widths
-                are set by dragging a header's right edge. */}
+                are set by dragging a header's right edge. It goes with the
+                table rather than with the box beside it — there is nothing to
+                configure the columns of while the table is collapsed. */}
+            {!detailsCollapsed && (
             <div style={{ marginLeft: 'auto' }}>
               <ColumnToggle
                 align="right"
@@ -2288,14 +2276,42 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 onResetColumns={resetCols}
               />
             </div>
+            )}
           </div>
 
           {/* An empty roster — a just-created campaign, or one every contact has
               been removed from. The table renders nothing at all in that case,
-              so say what to do next instead of showing a blank panel. */}
+              so say what to do next instead of showing a blank panel. Shown
+              collapsed or not, for the same reason the box above it is: an
+              empty roster has no details to hide, and this is the line that
+              says the box is what to do about it. */}
           {!(displayResults.contacts || []).length && (
             <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
               No contacts in this campaign yet — add an email above to start tracking who it goes to.
+            </div>
+          )}
+
+          {/* The rest of the roster — the duplicate warning that describes the
+              table, and the table itself. Collapsed together with the cards:
+              on a campaign with a long contact list this is nearly the whole
+              page, and "Hide details" is asked for to get past it to what's
+              below. Everything that acts on the campaign as a whole (Export
+              CSV, Add unsent to Draft, Save) stays put — those don't need the
+              rows on screen to be worth clicking. */}
+          {!detailsCollapsed && (
+          <>
+          {/* Duplicate contacts warning */}
+          {dupKeys.size > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', margin: '0.5rem 0', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '0.78rem', color: '#92400E' }}>
+              <span>
+                <strong>⚠ {dupKeys.size} duplicate contact{dupKeys.size === 1 ? '' : 's'}</strong> in this campaign
+                {extraRows > 0 && <>: {extraRows} extra row{extraRows === 1 ? '' : 's'}</>}. Duplicated rows are flagged below.
+              </span>
+              <button
+                onClick={removeDuplicates}
+                style={{ flexShrink: 0, padding: '0.3rem 0.7rem', border: 'none', borderRadius: '6px', background: '#D97706', color: '#fff', fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                title="Collapse each duplicated contact to a single row, keeping the copy with the most activity"
+              >Remove duplicates</button>
             </div>
           )}
 
@@ -2446,8 +2462,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   cursor: isEditing ? 'default' : 'pointer',
                   opacity: active ? 1 : 0.55,
                 }}
-                title={paused ? pauseNote : (active ? undefined : (manualStatus ? 'Manually marked inactive' : 'Inactive: no save or refresh in the last 60 days'))}
+                title={paused
+                  ? `${pauseNote}. Click to open it.`
+                  : (active ? 'Open this campaign' : `${manualStatus ? 'Manually marked inactive' : 'Inactive: no save or refresh in the last 60 days'}. Click to open it.`)}
                 onClick={isEditing ? undefined : () => viewCampaign(i)}
+                /* Every row opens, paused and inactive ones included — they
+                   are the campaigns most likely to still need a roster built.
+                   Dimmed to 0.55 they read as switched off, so the hover says
+                   otherwise. */
+                onMouseEnter={e => { if (!isEditing && viewingSaved !== i) e.currentTarget.style.background = 'var(--color-surface-alt)'; }}
+                onMouseLeave={e => { if (viewingSaved !== i) e.currentTarget.style.background = 'transparent'; }}
               >
                 <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
                   {isEditing ? (
