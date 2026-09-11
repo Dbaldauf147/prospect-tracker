@@ -87,6 +87,7 @@ check('a replied contact', campaignContactRow({
   '2026-09-01', '2026-09-01', 1, 'No', 'Confirmed', 'Replied',
   1, '2026-09-01 14:05 UTC', '2026-09-01 14:06 UTC',
   'Sam Reed', '2026-09-02', '', '', 'Going',
+  '', '', '',
 ]);
 
 // An untracked send leaves the three tracking cells empty. A 0 there would
@@ -116,7 +117,32 @@ check('a scanned-only click has no time', cells(campaignContactRow(
 check('an unsent roster member', campaignContactRow({ email: 'new@acme.com' }, { campaign }), [
   'September market update', 'Power prices, September', 'new@acme.com', '', '', 1,
   '', '', '', '', '', 'Not Sent', '', '', '', '', '', '', '', '',
+  '', '', '',
 ]);
+
+// --- hold / avoid / notes -----------------------------------------------
+// The three columns that say whether this contact is to be emailed at all,
+// and why. They read the clock the same way the table does, so a hold that
+// has run out prints as nothing rather than as a hold somebody might act on.
+const NOW_HOLD = Date.parse('2026-09-11T10:00:00Z');
+check('a contact on hold', cells(campaignContactRow(
+  { email: 'sam@acme.com', outreach: 'hold', holdUntil: '2026-09-25', notes: 'On leave until the 24th' },
+  { campaign, nowMs: NOW_HOLD },
+), 'Outreach', 'Hold Until', 'Notes'), ['On hold', '2026-09-25', 'On leave until the 24th']);
+check('a hold that has run out', cells(campaignContactRow(
+  { email: 'sam@acme.com', outreach: 'hold', holdUntil: '2026-08-01' },
+  { campaign, nowMs: NOW_HOLD },
+), 'Outreach', 'Hold Until'), ['', '']);
+check('a contact to avoid', cells(campaignContactRow(
+  { email: 'sam@acme.com', outreach: 'avoid', notes: 'Asked not to be contacted' },
+  { campaign, nowMs: NOW_HOLD },
+), 'Outreach', 'Hold Until', 'Notes'), ['Avoid', '', 'Asked not to be contacted']);
+// A note with a comma in it is one cell, not two.
+check('a note with a comma survives', campaignContactsCsv(
+  campaign,
+  [{ email: 'sam@acme.com', notes: 'Wants pricing, then a call' }],
+  { nowMs: NOW_HOLD },
+).split('\r\n')[1].endsWith(',"Wants pricing, then a call"'), true);
 
 // --- follow-ups -------------------------------------------------------
 // A contact who has been chased: the count is every email that went to that
