@@ -2770,7 +2770,17 @@
 
 /* The Pricing Basis cell: the picker, and a count of the lines the picker
    isn't showing. */
-.pricingBasisCell {
+/* DataTable truncates every direct child of a cell — `display: inline-block`,
+   one line, an ellipsis — which is right for a plain value and wrong for this
+   one: the cell is two things, the basis dropdown and the badge counting the
+   bases beyond it, and a full-width dropdown pushed that badge past the cell's
+   edge where `overflow: hidden` clipped it. Laying out as flex lets the
+   dropdown shrink and the badge keep its few pixels.
+
+   The class is doubled only to outrank `.table td > *` — one class and one
+   type, the same weight as this selector undoubled, which would then come
+   down to which stylesheet the bundler happened to emit last. */
+.pricingBasisCell.pricingBasisCell {
   display: flex;
   align-items: center;
   gap: 4px;
