@@ -94,6 +94,7 @@ import {
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
+import { slimHubspotContact, withoutUnknownBlanks } from '../../utils/hubspotContactFields';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
@@ -1393,7 +1394,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
-  function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
+  // Every field the user actually typed in. A blank field they never touched,
+  // on a contact record that has no value for it either, is a blank this form
+  // can't speak for — withoutUnknownBlanks keeps it out of the HubSpot write
+  // rather than wiping what HubSpot holds.
+  const touchedRef = useRef(new Set());
+  function set(key, val) {
+    touchedRef.current.add(key);
+    setF(prev => ({ ...prev, [key]: val }));
+  }
 
   // Autosave fires from a debounce timer (and from the unmount flush), so it
   // can't read the render-time closure — by the time it runs the user has
@@ -1422,7 +1431,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     try {
       const allProps = { ...snap.f, company: companyCommittedRef.current, dans_tags: buildTagsStringFrom(snap.checkedTags) };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
-      const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...hsProps } = allProps;
+      const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...localStripped } = allProps;
+      // ...and leave out the blanks this form can't speak for — see touchedRef.
+      const hsProps = withoutUnknownBlanks(localStripped, contact, touchedRef.current);
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
       const oldCompanyValue = oldCompany || '';
@@ -4854,16 +4865,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (!json?.contacts) throw new Error('No contacts in response');
-      const slimContacts = json.contacts.map(c => ({
-        id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
-        email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
-        hs_linkedin_url: c.hs_linkedin_url, linkedin_url: c.linkedin_url, hs_linkedinid: c.hs_linkedinid,
-        city: c.city, state: c.state, country: c.country,
-        dans_tags: c.dans_tags, dan_s_tags: c.dan_s_tags, dans_tag: c.dans_tag,
-        decision_maker: c.decision_maker, role: c.role,
-        hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
-        notes_last_contacted: c.notes_last_contacted,
-      }));
+      const slimContacts = json.contacts.map(slimHubspotContact);
       await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
     } catch (err) {
       setRefreshHubspotError(err?.message || 'Refresh failed');

@@ -12,6 +12,7 @@ import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
+import { slimHubspotContact } from '../../utils/hubspotContactFields';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
@@ -2066,17 +2067,7 @@ Fix that now?
         const res = await apiFetch('/api/hubspot?action=contacts');
         const json = await res.json();
         if (json.contacts) {
-          // Slim each contact to essential fields to keep the cache compact.
-          const slimContacts = json.contacts.map(c => ({
-            id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
-            email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
-            hs_linkedin_url: c.hs_linkedin_url, linkedin_url: c.linkedin_url, hs_linkedinid: c.hs_linkedinid,
-            city: c.city, state: c.state, country: c.country,
-            dans_tags: c.dans_tags, dan_s_tags: c.dan_s_tags, dans_tag: c.dans_tag,
-            decision_maker: c.decision_maker, role: c.role,
-            hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
-            notes_last_contacted: c.notes_last_contacted,
-          }));
+          const slimContacts = json.contacts.map(slimHubspotContact);
           try {
             await setHubspotCachePreservingManual({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
           } catch (err) {
