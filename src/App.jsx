@@ -48,6 +48,7 @@ const ClientsView = lazyView(() => import('./components/ClientsView/ClientsView'
 const ContactsView = lazyView(() => import('./components/ContactsView/ContactsView').then(m => ({ default: m.ContactsView })));
 const DraftEmailsPage = lazyView(() => import('./components/DraftEmailView/DraftEmailsPage').then(m => ({ default: m.DraftEmailsPage })));
 const DropdownsView = lazyView(() => import('./components/DropdownsView/DropdownsView').then(m => ({ default: m.DropdownsView })));
+const EfficiencyTreeView = lazyView(() => import('./components/EfficiencyTreeView/EfficiencyTreeView').then(m => ({ default: m.EfficiencyTreeView })));
 const IssuesView = lazyView(() => import('./components/IssuesView/IssuesView').then(m => ({ default: m.IssuesView })));
 const KanbanView = lazyView(() => import('./components/KanbanView/KanbanView').then(m => ({ default: m.KanbanView })));
 const ListsView = lazyView(() => import('./components/ListsView/ListsView').then(m => ({ default: m.ListsView })));
@@ -530,6 +531,8 @@ function App() {
               onSelectProspect={handleSelect}
               initialTab={view === 'activity' ? 'activity' : ''}
             />
+          ) : view === 'efficiency' ? (
+            <EfficiencyTreeView settings={settings} settingsLoaded={settingsLoaded} updateSettings={updateSettings} />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'agents' ? (
