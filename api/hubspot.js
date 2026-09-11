@@ -53,23 +53,32 @@ async function hubspotPost(path, token, body) {
   return res.json();
 }
 
+// Every contact property the app pulls down. Anything the cache keeps (see
+// slimHubspotContact) has to be in here: a property left out comes back
+// undefined, blanks the cached value, and — since the contact popup posts its
+// whole form — gets written over HubSpot's own copy on the next edit. That is
+// exactly what kept erasing the Cell Phone Number while `mobilephone` was
+// missing from this list. The two are pinned together in
+// scripts/contactCellPhone.test.mjs.
+export const CONTACT_SYNC_PROPERTIES = [
+  'firstname', 'lastname', 'email', 'phone', 'mobilephone', 'company', 'jobtitle',
+  'associatedcompanyid',
+  'hs_lead_status', 'lastmodifieddate', 'createdate',
+  'notes_last_updated', 'notes_last_contacted', 'num_contacted_notes',
+  'hs_sales_email_last_replied', 'hs_email_last_send_date',
+  'hs_email_last_open_date', 'hs_email_last_click_date',
+  'num_unique_conversion_events',
+  'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count',
+  'hs_linkedinid', 'linkedin_url', 'hs_linkedin_url',
+  'city', 'state', 'country',
+  'dans_tags', 'dan_s_tags', 'dans_tag',
+  'decision_maker', 'role',
+];
+
 async function getAllContacts(token) {
   const contacts = [];
   let after = undefined;
-  const properties = [
-    'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
-    'associatedcompanyid',
-    'hs_lead_status', 'lastmodifieddate', 'createdate',
-    'notes_last_updated', 'notes_last_contacted', 'num_contacted_notes',
-    'hs_sales_email_last_replied', 'hs_email_last_send_date',
-    'hs_email_last_open_date', 'hs_email_last_click_date',
-    'num_unique_conversion_events',
-    'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count',
-    'hs_linkedinid', 'linkedin_url', 'hs_linkedin_url',
-    'city', 'state', 'country',
-    'dans_tags', 'dan_s_tags', 'dans_tag',
-    'decision_maker', 'role',
-  ];
+  const properties = CONTACT_SYNC_PROPERTIES;
 
   while (true) {
     const params = new URLSearchParams({
@@ -1043,7 +1052,7 @@ async function handler(req, res) {
         const idMatch = errText.match(/Existing ID:\s*(\d+)/);
         if (idMatch) {
           const existingId = idMatch[1];
-          const props = 'email,firstname,lastname,jobtitle,phone,company,city,state,country,hs_linkedin_url,hs_linkedinid';
+          const props = 'email,firstname,lastname,jobtitle,phone,mobilephone,company,city,state,country,hs_linkedin_url,hs_linkedinid';
           const getRes = await fetch(`${BASE}/crm/v3/objects/contacts/${existingId}?properties=${encodeURIComponent(props)}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
