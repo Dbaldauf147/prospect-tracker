@@ -220,6 +220,56 @@ export function mergeTagEdit({ base, intended, current }) {
   return { action: 'write', tags };
 }
 
+// A tag list's identity, independent of order and of spelling: the sorted
+// tagKeys. Two strings with the same signature say the same thing about a
+// contact, so a re-seed from one of them is a no-op.
+export function tagListSignature(str) {
+  return String(str || '')
+    .split(';')
+    .map(t => tagKey(t))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+// How long an incoming tag list may be recognised as the echo of one of
+// this editor's own writes. Echoes arrive within a second or two; past
+// this, a list matching an earlier write is somebody re-tagging the
+// contact for real and has to be honoured.
+export const TAG_ECHO_WINDOW_MS = 15000;
+
+/**
+ * Is this incoming tag list a LATE echo of a write this editor already
+ * superseded — and therefore something to ignore rather than re-seed from?
+ *
+ * Every tag click saves the whole list, and each save hands the new list
+ * back to the editor through the contact prop as it lands. Those props
+ * arrive in whatever order the network manages, so the echo of an earlier
+ * click can turn up after a later click's write has already been accepted
+ * — and re-seeding from it un-ticks the tag that was just clicked, which is
+ * the "it undoes my selections" the user sees. It comes back a moment
+ * later when its own echo lands, which is what makes it read as a glitch
+ * rather than as a failure.
+ *
+ *   incoming  the tag list the prop now carries
+ *   saved     the last list this editor had accepted (the newest truth)
+ *   writes    [{ sig, at }] — signatures this editor has written, newest last
+ *   now       current ms
+ *
+ * A list matching `saved` is never stale (re-seeding from it changes
+ * nothing anyway), and a list this editor never wrote is never stale —
+ * that's a real edit from somewhere else.
+ */
+export function isStaleTagEcho({ incoming, saved, writes = [], now = Date.now(), windowMs = TAG_ECHO_WINDOW_MS }) {
+  const sig = tagListSignature(incoming);
+  if (sig === tagListSignature(saved)) return false;
+  for (const w of writes) {
+    if (!w || w.sig !== sig) continue;
+    if (now - Number(w.at || 0) <= windowMs) return true;
+  }
+  return false;
+}
+
 // The tag writes a bulk "Mark …" implies, as few calls as they'll fit in.
 //
 // `wanted` says, per contact, which of the chosen tags they should end up

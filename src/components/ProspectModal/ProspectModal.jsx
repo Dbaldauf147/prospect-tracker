@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_HOLD } from '../../utils/metInPerson';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
+import { createTagWriter } from '../../utils/tagWriteQueue';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -920,16 +921,29 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // drops it: the row reads as untagged however plainly HubSpot has it, and
   // the next save from this popup writes the tag list without it.
   //
-  // The in-flight guard is what keeps a fast run down the table honest.
+  // Two guards keep a fast run down the table honest, and they are the
+  // whole of the "it unrecorded what I just clicked" report.
+  //
   // Every click saves the WHOLE tag list, and each save hands the new list
-  // back through the contact prop as it lands — so a click made while the
-  // previous save was still in the air used to be wiped off screen the
-  // moment that older list arrived, and only came back when its own save
-  // landed a second later. That flicker is the "it unrecorded what I just
-  // clicked": while this popup has writes outstanding, its own state is the
-  // newer one.
+  // back through the contact prop as it lands. So:
+  //
+  //   * While this popup still owes HubSpot a write — a tick waiting in the
+  //     debounce, or one in the air — its own state is the newer one and
+  //     the prop cannot speak for it.
+  //   * Those props then arrive in whatever order the network manages. The
+  //     echo of an earlier click turning up AFTER a later click's write was
+  //     accepted un-ticked the tag just clicked, and put it back a second
+  //     later when its own echo landed. A list this popup wrote itself and
+  //     has since superseded is not news (isStaleTagEcho), so it is
+  //     ignored rather than re-seeded from — for a few seconds only, after
+  //     which the same list means somebody re-tagging the contact for real.
   useEffect(() => {
-    if (tagWritesPendingRef.current > 0) return;
+    if (tagWriterRef.current?.pending() > 0) return;
+    if (isStaleTagEcho({
+      incoming: rawTags,
+      saved: savedTagsRef.current,
+      writes: tagWritesRef.current,
+    })) return;
     savedTagsRef.current = rawTags;
     setCheckedTags(checkedTagsFrom(rawTags));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1171,36 +1185,63 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return [...set, ...extraTags].join(';');
   }
 
-  // Tag writes, one at a time and only the latest.
+  // Tag writes: one per burst of clicks, one at a time, only the latest.
   //
-  // dans_tags is a single string, so every click sends the WHOLE list. Fired
-  // in parallel, four quick clicks were four overlapping whole-list writes
-  // whose order HubSpot decides — and whichever landed last won, which is
-  // how an answer clicked third could end up not recorded at all. They now
-  // queue behind each other, and a write that a later click has already
-  // superseded is dropped rather than sent: clicking five tags in a row
-  // costs one or two round trips instead of five.
+  // dans_tags is a single string, so every click sends the WHOLE list — and
+  // sending it is a live read, a PATCH, a rewrite of the local contacts
+  // cache and the app-wide re-render its broadcast triggers. Per click that
+  // made tagging somebody crawl. Since each click's list already contains
+  // every earlier click's tags, the queue holds a click briefly, lets the
+  // next one replace it, and sends only the last: ticking six tags costs
+  // one round trip instead of six. Writes never overlap, so HubSpot decides
+  // nothing about their order (see utils/tagWriteQueue.js).
   //
-  // The queue is refs rather than state on purpose — a click has to see what
-  // the click before it did without waiting for a render.
-  const tagWriteChainRef = useRef(Promise.resolve());
-  const tagWritesPendingRef = useRef(0);
-  const latestTagsRef = useRef(null);
+  // A ref rather than state: a click has to reach the same queue the click
+  // before it used, without waiting for a render.
   // The last tag string HubSpot accepted, so a refused write can put the
   // table back to what is actually saved rather than to a guess.
   const savedTagsRef = useRef(rawTags);
-  function queueDansTags(tagsStr) {
-    latestTagsRef.current = tagsStr;
-    tagWritesPendingRef.current += 1;
-    const run = tagWriteChainRef.current
-      .catch(() => {})
-      // Superseded by a later click while we waited our turn: that click's
-      // write carries this one's tags too, so sending this is pure latency.
-      .then(() => (latestTagsRef.current === tagsStr ? persistDansTags(tagsStr) : true));
-    tagWriteChainRef.current = run.catch(() => {});
-    const settle = (ok) => { tagWritesPendingRef.current -= 1; return ok; };
-    return run.then(settle, () => settle(false));
+  // Signatures of the lists this popup has written, newest last, with when.
+  // What makes a late prop echo recognisable as one of our own superseded
+  // writes rather than as news — see the re-seed effect above.
+  const tagWritesRef = useRef([]);
+  const tagWriterRef = useRef(null);
+  if (!tagWriterRef.current) {
+    tagWriterRef.current = createTagWriter({ write: (tagsStr) => persistDansTagsRef.current(tagsStr) });
   }
+  // persistDansTags closes over this render's props, and the queue is built
+  // once — so it calls through a ref that every render refreshes rather than
+  // pinning the first render's copy.
+  const persistDansTagsRef = useRef(null);
+  persistDansTagsRef.current = persistDansTags;
+  function queueDansTags(tagsStr) {
+    return tagWriterRef.current.push(tagsStr);
+  }
+
+  // The per-tag record (Yes / No / Not sure, Sold / Not sold) goes to
+  // Firestore settings, and that write is not cheap either: it snapshots the
+  // whole settings document for the backup, writes, and re-renders every
+  // view off the new settings object. The record is cumulative — the newest
+  // map contains every earlier answer — so a burst of clicks coalesces into
+  // one save the same way the tag list does. The popup's own state is
+  // updated on the click regardless, so nothing waits on this.
+  const tagReviewSaveRef = useRef(null);
+  tagReviewSaveRef.current = (map) => {
+    const cid = contact.id || contact.vid;
+    if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
+  };
+  const tagReviewWriterRef = useRef(null);
+  if (!tagReviewWriterRef.current) {
+    tagReviewWriterRef.current = createTagWriter({
+      write: (map) => { tagReviewSaveRef.current(map); return true; },
+    });
+  }
+
+  // A popup closing must not leave a click in either debounce timer.
+  useEffect(() => () => {
+    void tagWriterRef.current?.flush();
+    void tagReviewWriterRef.current?.flush();
+  }, []);
 
   // What HubSpot holds for this contact right now. Absent from the answer
   // means HubSpot has no such contact; a failed read returns undefined, and
@@ -1268,6 +1309,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         });
       } catch {}
       savedTagsRef.current = next;
+      // Remembered so the echo of this list, arriving through the contact
+      // prop after a later click has moved on, is recognised as ours and
+      // ignored rather than re-seeded from. Only the recent ones matter.
+      tagWritesRef.current = [
+        ...tagWritesRef.current.filter(w => Date.now() - w.at <= TAG_ECHO_WINDOW_MS),
+        { sig: tagListSignature(next), at: Date.now() },
+      ];
       onSave({ ...contact, dans_tags: next }, { silent: true });
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
@@ -1357,8 +1405,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     if (next.answer || next.status) map[tag] = { answer: next.answer, status: next.status };
     else delete map[tag];
     applyTagVerdicts(map);
-    const cid = contact.id || contact.vid;
-    if (cid != null && onSaveTagReview) onSaveTagReview(cid, map);
+    void tagReviewWriterRef.current.push(map);
   }
 
   function setTagAnswer(tag, answer) {
@@ -1423,6 +1470,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // status is reported inline rather than by handing control back to the
   // caller, which closes the popup on a non-silent onSave.
   async function handleSave({ auto = false } = {}) {
+    // A tag click still waiting in its debounce goes out first. This write
+    // sends the popup's whole tag list as it stands, so letting it overtake
+    // the queued write would put the coalesced list on HubSpot twice — and
+    // unmerged, which is the overwrite persistDansTags exists to avoid.
+    await tagWriterRef.current?.flush();
     const snap = stateRef.current;
     // An explicit click means the user is done typing, so the Company field's
     // current text counts as committed even if it never lost focus.
