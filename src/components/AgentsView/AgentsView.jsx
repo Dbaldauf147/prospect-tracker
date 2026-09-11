@@ -472,7 +472,49 @@ Self-Storage (Climate Controlled)
 Office Occupier
 Retail - Outparcel
 Restaurant (Quick-Service)
-Self-Storage (Non-Climate Controlled)`,
+Self-Storage (Non-Climate Controlled)
+
+TENURE: OWNED VS LEASED, AND HOW MUCH OF THE BUILDING
+
+Add a column named "Ownership" and fill it for every row. It must hold one of these four values and nothing else:
+
+Owned
+Leased – Suite
+Leased – Whole Building
+Leased
+
+The two "Leased" levels are the point of this column. "Leased" on its own describes both a company with one floor of an office tower and a company on a net lease of an entire plant, and those are not the same building to anybody downstream: the floor tenant holds one electric meter and its own plug load, the net-lease tenant holds the building and nearly all of its meters. So say which:
+
+- Leased – Whole Building: the company occupies all of it. A standalone or single-tenant building, a triple-net (NNN) lease, a ground lease, a build-to-suit, a sale-leaseback, a leased plant, warehouse, restaurant or hotel. The company is behind its own meters.
+- Leased – Suite: the company occupies part of it. A floor or a few floors, a suite or unit number in the address, a unit in a multi-tenant estate, an in-line retail unit, a serviced or coworking office. The landlord runs the central plant and the common areas.
+- Leased: you have established it is leased but not which of the two. This is a complete answer, not a failed one — use it rather than guessing a level.
+- Owned: freehold, owner-occupied, or the company or a subsidiary is the owner of record.
+
+Rules for this column:
+
+- Never default to "Owned". A row with no tenure evidence is already read as owned downstream, so writing "Owned" on a guess adds a claim and changes nothing else. Leave the cell BLANK and put "Not disclosed" in Tenure Evidence.
+- Never put anything outside the four values in the cell — not "Owned/Leased", "Both", "Mixed", "TBD" or "Not disclosed". Those are read as unrecognized and flag the row.
+- A plain hyphen is read the same as the dash above, and case does not matter. "Leased - Suite" is fine.
+- Where one address is part owned and part leased (an owned plant with a leased office beside it), split it into two rows rather than hedging in one.
+- Where the row is a Suite, any square footage must be the LEASED PREMISES, not the whole building. If you only have the building's area, leave the cell blank and say so in Notes — a tower's floor area on a floor tenant's row overstates them by an order of magnitude.
+
+Add two supporting columns beside it:
+
+- Tenure Evidence — the disclosure the value came from, in a few words: "10-K Item 2, listed as leased", "county assessor: owner of record is the company", "sale-leaseback announced 2023", "Not disclosed".
+- Tenure Source — the URL or filing reference.
+
+Where to look, in order:
+
+1. Item 2 (Properties) of the 10-K or 20-F. Usually tags sites or regions owned vs leased, and sometimes names the lease type.
+2. The leases note (ASC 842 / IFRS 16) in the annual report. Gives the scale of the leased estate even when it names no sites.
+3. Sustainability, CDP and ESG reporting. Often splits floor area into owned vs leased, and sometimes names the buildings.
+4. Local land registry, assessor or cadastre records. An owner of record settles Owned; a landlord's name settles Leased.
+5. Press releases and trade press on build-to-suit, sale-leaseback and new-facility announcements, which usually say outright which it is.
+6. Commercial listings for the building itself. A site advertised alongside other tenants is a Suite; a building marketed as single-tenant is a Whole Building.
+
+If all you can establish is a bare "Leased", the level is inferred from Property Type downstream — offices, laboratories, medical office, industrial flex, mixed use, malls and neighbourhood retail are treated as suites, everything else as whole buildings. Where you think that default is wrong for a row, say so in Notes.
+
+Two things that are not sites and must not get rows: a registered-agent or "c/o" address at a law firm or corporate services provider, and a mailing address with no building behind it. List them separately with a note instead.`,
   },
   {
     id: 'seed-big-site-list-python',
@@ -507,7 +549,7 @@ Before you start, tell me which of these the company is, because it changes what
 | Postal / ZIP Code | |
 | Country | |
 | Property Type | Must match the controlled vocabulary in rule 6 exactly |
-| Owned / Leased | See rule 4 |
+| Owned / Leased | One of: Owned / Leased – Suite / Leased – Whole Building / Leased — see rule 4 |
 | Square Footage | See rule 5 |
 
 Also add these supporting columns — they are what make the file auditable:
@@ -536,22 +578,57 @@ Also add these supporting columns — they are what make the file auditable:
 - Reproduce obvious errors on the company's own site as published, with a flag — don't silently
   "correct" them.
 
-### 4. Owned vs leased
+### 4. Owned vs leased, and how much of the building
+
+The **Owned / Leased** column takes one of exactly four values, and nothing else:
+
+> Owned · Leased – Suite · Leased – Whole Building · Leased
+
+The two lease levels are the point of the column. "Leased" describes both a company with one
+floor of an office tower and a company on a net lease of an entire plant, and those are not the
+same building: the floor tenant holds one electric meter and its own plug load, the net-lease
+tenant holds the building and nearly all of its meters.
+
+- **Leased – Whole Building** — the company occupies all of it: standalone or single-tenant,
+  triple-net (NNN), ground lease, build-to-suit, sale-leaseback, a leased plant, warehouse,
+  restaurant or hotel. Behind its own meters.
+- **Leased – Suite** — the company occupies part of it: a floor or several, a suite or unit
+  number in the address, a unit in a multi-tenant estate, in-line retail, a serviced or coworking
+  office. The landlord runs the central plant and the common areas.
+- **Leased** — established as a lease, level not established. A complete answer, not a failed one.
+- **Owned** — freehold, owner-occupied, or the company or a subsidiary is owner of record.
 
 Use only what's actually disclosed, and cite it in Tenure Evidence. Good sources, in order:
 
-1. Item 2 (Properties) of a 10-K, which usually footnotes leased sites
-2. Schedule III for REITs (owned only, aggregated by geography)
-3. Annual reports, sustainability reports, investor decks
+1. Item 2 (Properties) of a 10-K or 20-F, which usually footnotes leased sites
+2. The leases note (ASC 842 / IFRS 16) — the scale of the leased estate, rarely the sites
+3. Schedule III for REITs (owned only, aggregated by geography)
+4. Annual reports, sustainability and CDP reports, investor decks
+5. Local land registry / assessor records — an owner of record settles it either way
+6. Build-to-suit and sale-leaseback announcements, which usually say outright which it is
+7. Commercial listings for the building: advertised with other tenants is a Suite, marketed as
+   single-tenant is a Whole Building
 
 Where tenure isn't public — which is normal for offices, service centres and private companies —
-write "Not disclosed" and say what would resolve it. Don't dress up an assumption as a fact.
+leave the cell **blank** and write "Not disclosed" in Tenure Evidence, with what would resolve it.
+Don't dress up an assumption as a fact, and in particular **never default to Owned**: a blank is
+already read as owned downstream, so a guessed "Owned" adds a claim and changes nothing else.
+Nothing outside the four values belongs in the cell — not "Owned/Leased", "Both", "Mixed" or
+"TBD". Where one address is part owned and part leased, split it into two rows.
+
+A bare "Leased" resolves downstream by Property Type: offices, laboratories, medical office,
+industrial flex, mixed use, malls and neighbourhood retail as suites, everything else as whole
+buildings. Flag in Notes wherever that default looks wrong for a row.
 
 ### 5. Square footage
 
 Use published figures only. If the company reports only a network total, put that on the summary
 tab and leave the per-site column blank rather than dividing it up. Flag any figure that looks
 wrong for the building described.
+
+On a **Leased – Suite** row the figure must be the leased premises, not the building. If all you
+have is the building's area, leave the cell blank and say so in Notes — a tower's floor area on a
+floor tenant's row overstates them by an order of magnitude.
 
 ### 6. Property Type — controlled vocabulary
 
