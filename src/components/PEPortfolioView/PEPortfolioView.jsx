@@ -1317,6 +1317,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           firms={peFirms}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       ) : subtab === 'blueOwl' ? (
         // Keyed per tab: the two tabs render the same component at the
@@ -2022,7 +2024,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 // also shows the portfolio companies of every firm whose PE Owner is
 // Blue Owl). Matching uses the shared fuzzy companiesMatch so name
 // variants ("Blue Owl" ↔ "Blue Owl Capital") line up.
-function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
+function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
 
@@ -2262,6 +2264,8 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect }) {
         ) : (
           <DataTable
             tableId="pe-all-portfolio-companies"
+            settings={settings}
+            updateSettings={updateSettings}
             columns={columns}
             rows={filtered}
             alwaysVisible={['peFirm']}
@@ -3632,6 +3636,8 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
             // would otherwise strand the new ones at the far right, and to
             // -3 for the PE Stage column.
             tableId={isServicesVariant ? 'pe-overview-services-3' : 'pe-blue-owl-companies-11'}
+            settings={settings}
+            updateSettings={updateSettings}
             columns={columns}
             rows={filtered}
             alwaysVisible={['company', '_select']}

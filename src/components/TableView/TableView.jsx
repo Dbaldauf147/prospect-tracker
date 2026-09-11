@@ -1,4 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  persistTablePrefs, readRemoteTablePrefs, settingsHaveLoaded,
+  loadColWidths, loadColOrder, loadColRemoved, loadColHidden, loadColVisibleRaw,
+  loadColStarred,
+} from '../../utils/tablePrefsSync';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
@@ -43,53 +48,27 @@ const COLUMNS = [
   { key: 'tierList', label: 'Tier List', defaultWidth: 80 },
 ];
 
-const COL_WIDTHS_KEY = 'prospect-col-widths';
-const COL_VISIBLE_KEY = 'prospect-col-visible';
-const COL_REMOVED_KEY = 'prospect-col-removed';
+// This view predates the shared DataTable, so its column prefs have their own
+// (unsuffixed) storage names. They're kept as-is and handed to the shared
+// persistence rather than renamed — a rename would strand the layout every
+// existing user already has on the tab they use most.
+const COL_PREF_KEYS = {
+  widths: 'prospect-col-widths',
+  visible: 'prospect-col-visible',
+  removed: 'prospect-col-removed',
+  order: 'prospect-col-order',
+  hidden: 'prospect-col-hidden',
+  starred: 'prospect-col-starred',
+  names: 'prospect-col-names',
+};
+// What this table's layout is called in settings.tablePrefs.
+const PREFS_TABLE_ID = 'table-view';
 // What the user has hidden, and what they've starred as their own default
 // view — the same model the shared DataTable uses, for the same reason:
 // a stored list of VISIBLE columns can't tell "hidden on purpose" from
 // "added after you last chose", so every new column arrived hidden.
 // Company names the row, so it can't be hidden or deleted.
 const ALWAYS_VISIBLE_COLS = ['company'];
-const COL_ORDER_KEY = 'prospect-col-order';
-const COL_HIDDEN_KEY = 'prospect-col-hidden';
-const COL_STARRED_KEY = 'prospect-col-starred';
-
-function loadRemovedCols() {
-  try { return new Set(JSON.parse(localStorage.getItem(COL_REMOVED_KEY)) || []); } catch { return new Set(); }
-}
-function saveRemovedCols(set) { localStorage.setItem(COL_REMOVED_KEY, JSON.stringify([...set])); }
-
-function loadColWidths() {
-  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_KEY)) || {}; } catch { return {}; }
-}
-function saveColWidths(w) { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(w)); }
-
-// The pre-hidden-list visible set, as stored, for the one-time conversion.
-function loadColVisibleRaw() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(COL_VISIBLE_KEY));
-    return Array.isArray(saved) && saved.length > 0 ? saved : null;
-  } catch { return null; }
-}
-function loadColHidden() {
-  try { const v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return Array.isArray(v) ? v : null; } catch { return null; }
-}
-function saveColHidden(set) { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify([...set])); }
-function loadColStarred() {
-  try { const v = JSON.parse(localStorage.getItem(COL_STARRED_KEY)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
-}
-function saveColStarred(set) { localStorage.setItem(COL_STARRED_KEY, JSON.stringify([...set])); }
-
-// The order the user dragged the columns into. Survives a page update the
-// same way the hidden and starred lists do: a column added to the code
-// later isn't in the list, so orderColumns leaves it at the tail instead
-// of throwing the arrangement away.
-function loadColOrder() {
-  try { const v = JSON.parse(localStorage.getItem(COL_ORDER_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
-}
-function saveColOrder(order) { localStorage.setItem(COL_ORDER_KEY, JSON.stringify(order)); }
 
 function TagsCell({ value, prospect, colDef, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
@@ -578,12 +557,55 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
       return c;
     });
   }, [dynamicTypeOptions, dynamicCdmOptions, dynamicAssetTypeOptions]);
-  const [colWidths, setColWidths] = useState(loadColWidths);
-  const [colOrder, setColOrder] = useState(loadColOrder);
-  const [hiddenPref, setHiddenPref] = useState(loadColHidden);
-  const [legacyVisible, setLegacyVisible] = useState(loadColVisibleRaw);
-  const [starredCols, setStarredCols] = useState(loadColStarred);
-  const [removedCols, setRemovedCols] = useState(loadRemovedCols);
+  // The layout Firestore holds for this table, when settings have arrived.
+  // It wins over the local copy: it's the only one that knows what the
+  // user's other machine did.
+  const remotePrefs = useMemo(
+    () => readRemoteTablePrefs(settings, PREFS_TABLE_ID),
+    [settings?.tablePrefs?.[PREFS_TABLE_ID]], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const prefsLoaded = settingsHaveLoaded(settings);
+  const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(COL_PREF_KEYS));
+  const [colOrder, setColOrder] = useState(() => (
+    Array.isArray(remotePrefs?.order) ? remotePrefs.order : loadColOrder(COL_PREF_KEYS)));
+  const [hiddenPref, setHiddenPref] = useState(() => (
+    Array.isArray(remotePrefs?.hidden) ? remotePrefs.hidden : loadColHidden(COL_PREF_KEYS)));
+  const [legacyVisible, setLegacyVisible] = useState(() => (
+    Array.isArray(remotePrefs?.visible) && remotePrefs.visible.length > 0
+      ? remotePrefs.visible
+      : loadColVisibleRaw(COL_PREF_KEYS)));
+  const [starredCols, setStarredCols] = useState(() => (
+    Array.isArray(remotePrefs?.starred) ? new Set(remotePrefs.starred) : loadColStarred(COL_PREF_KEYS)));
+  const [removedCols, setRemovedCols] = useState(() => (
+    Array.isArray(remotePrefs?.removed) ? new Set(remotePrefs.removed) : loadColRemoved(COL_PREF_KEYS)));
+
+  // Save a layout change to both copies. Every handler below goes through
+  // this, so there's one place the Firestore write can be missed from.
+  const persistPrefs = useCallback((patch) => {
+    persistTablePrefs(COL_PREF_KEYS, PREFS_TABLE_ID, settings, updateSettings, patch);
+  }, [settings, updateSettings]);
+
+  // Adopt a layout saved on another machine when it arrives (or changes).
+  // Guarded on prefsLoaded so an empty settings object during the initial
+  // load can't read as "no saved layout" and wipe the one on screen.
+  useEffect(() => {
+    if (!prefsLoaded || !remotePrefs) return;
+    const differs = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+    if (remotePrefs.widths && differs(remotePrefs.widths, colWidths)) setColWidths(remotePrefs.widths);
+    if (Array.isArray(remotePrefs.hidden)) {
+      if (differs(remotePrefs.hidden, hiddenPref)) setHiddenPref(remotePrefs.hidden);
+    } else if (Array.isArray(remotePrefs.visible) && remotePrefs.visible.length > 0) {
+      if (differs(remotePrefs.visible, legacyVisible)) setLegacyVisible(remotePrefs.visible);
+    }
+    if (Array.isArray(remotePrefs.order) && differs(remotePrefs.order, colOrder)) setColOrder(remotePrefs.order);
+    if (Array.isArray(remotePrefs.starred) && differs(remotePrefs.starred, [...starredCols])) {
+      setStarredCols(new Set(remotePrefs.starred));
+    }
+    if (Array.isArray(remotePrefs.removed) && differs(remotePrefs.removed, [...removedCols])) {
+      setRemovedCols(new Set(remotePrefs.removed));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsLoaded, remotePrefs]);
   // The columns in the user's own order — what the picker lists and what
   // the table renders, so a drag in one shows up in the other.
   const orderedColumns = useMemo(() => orderColumns(COLUMNS, colOrder), [colOrder]);
@@ -769,7 +791,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     setRemovedCols(prev => {
       const next = new Set(prev);
       next.add(key);
-      saveRemovedCols(next);
+      persistPrefs({ removed: next });
       return next;
     });
   }
@@ -778,7 +800,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     setRemovedCols(prev => {
       const next = new Set(prev);
       next.delete(key);
-      saveRemovedCols(next);
+      persistPrefs({ removed: next });
       return next;
     });
     // It was deleted, not hidden — restoring it should show it.
@@ -790,7 +812,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   function commitHidden(nextHidden) {
     setHiddenPref([...nextHidden]);
     setLegacyVisible(null);
-    saveColHidden(nextHidden);
+    persistPrefs({ hidden: nextHidden });
   }
 
   // Star / un-star: the starred set is the user's own default view, which
@@ -800,9 +822,9 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     const star = !starredCols.has(key);
     const next = applyStar({ key, star, starred: starredCols, hidden: hiddenCols, removed: removedCols });
     setStarredCols(next.starred);
-    saveColStarred(next.starred);
+    persistPrefs({ starred: next.starred });
     setRemovedCols(next.removed);
-    saveRemovedCols(next.removed);
+    persistPrefs({ removed: next.removed });
     commitHidden(next.hidden);
   }
 
@@ -813,7 +835,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   function reorderCols(nextKeys) {
     const merged = mergeColumnOrder(colOrder, nextKeys);
     setColOrder(merged);
-    saveColOrder(merged);
+    persistPrefs({ order: merged });
   }
 
   // Reset: every deleted column back, the default order back, and
@@ -826,9 +848,9 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
       alwaysVisible: ALWAYS_VISIBLE_COLS,
     });
     setRemovedCols(removed);
-    saveRemovedCols(removed);
+    persistPrefs({ removed });
     setColOrder([]);
-    saveColOrder([]);
+    persistPrefs({ order: [] });
     commitHidden(hidden);
   }
 
@@ -857,7 +879,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
       const newWidth = Math.max(50, startWidth + diff);
       setColWidths(prev => {
         const next = { ...prev, [colKey]: newWidth };
-        saveColWidths(next);
+        persistPrefs({ widths: next });
         return next;
       });
     }
@@ -874,7 +896,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     document.addEventListener('mouseup', onMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [colWidths]);
+  }, [colWidths, persistPrefs]);
 
   if (prospects.length === 0) {
     return (
@@ -891,7 +913,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     <div className={styles.outerWrap}>
       <div className={styles.tableToolbar}>
         <ColumnToggle columns={orderedColumns} visibleCols={visibleCols} starredCols={starredCols} onToggle={toggleCol} onStar={toggleStar} removedCols={removedCols} onRemove={removeCol} onRestore={restoreCol} onReset={resetColumns} onReorder={reorderCols} />
-        <button className={styles.resetWidthsBtn} onClick={() => { setColWidths({}); saveColWidths({}); }}>
+        <button className={styles.resetWidthsBtn} onClick={() => { setColWidths({}); persistPrefs({ widths: {} }); }}>
           Reset widths
         </button>
         <button style={{ marginLeft: 'auto', padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-xs)', fontWeight: 500, color: 'var(--color-text-secondary)', background: 'var(--color-surface)', cursor: 'pointer', fontFamily: 'inherit' }} onClick={async () => {

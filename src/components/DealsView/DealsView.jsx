@@ -2680,6 +2680,8 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <DataTable
             key={tableId}
             tableId={tableId}
+            settings={settings}
+            updateSettings={updateSettings}
             columns={columns}
             rows={filtered}
             defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}

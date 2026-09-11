@@ -6,28 +6,27 @@ import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar, pickLegacyBucket,
   orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
-import { resolveSortSignal } from '../../utils/tableSortSignal';
+import {
+  tablePrefsKeys, persistTablePrefs, readRemoteTablePrefs, settingsHaveLoaded,
+  loadColWidths as readColWidths, loadColNames as readColNames,
+  loadColOrder as readColOrder, loadColRemoved as readColRemoved,
+  loadColHidden as readColHidden, loadColStarred as readColStarred,
+  loadColVisibleRaw as readColVisibleRaw,
+} from '../../utils/tablePrefsSync';
 
-const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
+// The shared persistence (utils/tablePrefsSync) is keyed by explicit
+// localStorage names so a table with its own established names can adopt it
+// without stranding the layout its users already have. This component has
+// always used the per-table-id defaults, so it just builds them.
 const COL_VISIBLE_PREFIX = 'prospect-col-visible-';
-const COL_NAMES_PREFIX = 'prospect-col-names-';
-const COL_ORDER_PREFIX = 'prospect-col-order-';
-const COL_REMOVED_PREFIX = 'prospect-col-removed-';
-// Columns the user has hidden, and the ones they've starred as their own
-// default view. `visible` (the old model) is still read for the one-time
-// conversion in resolveHiddenKeys — see utils/tableColumnPrefs.
-const COL_HIDDEN_PREFIX = 'prospect-col-hidden-';
-const COL_STARRED_PREFIX = 'prospect-col-starred-';
-
-function loadColNames(tableId) {
-  try { return JSON.parse(localStorage.getItem(COL_NAMES_PREFIX + tableId)) || {}; } catch { return {}; }
-}
-function saveColNames(tableId, names) { localStorage.setItem(COL_NAMES_PREFIX + tableId, JSON.stringify(names)); }
-
-function loadColOrder(tableId) {
-  try { const v = JSON.parse(localStorage.getItem(COL_ORDER_PREFIX + tableId)); return Array.isArray(v) ? v : []; } catch { return []; }
-}
-function saveColOrder(tableId, order) { localStorage.setItem(COL_ORDER_PREFIX + tableId, JSON.stringify(order)); }
+const loadColWidths = (tableId) => readColWidths(tablePrefsKeys(tableId));
+const loadColNames = (tableId) => readColNames(tablePrefsKeys(tableId));
+const loadColOrder = (tableId) => readColOrder(tablePrefsKeys(tableId));
+const loadColRemoved = (tableId) => readColRemoved(tablePrefsKeys(tableId));
+const loadColHidden = (tableId) => readColHidden(tablePrefsKeys(tableId));
+const loadColStarred = (tableId) => readColStarred(tablePrefsKeys(tableId));
+const loadColVisibleRaw = (tableId) => readColVisibleRaw(tablePrefsKeys(tableId));
+import { resolveSortSignal } from '../../utils/tableSortSignal';
 
 // The saved key order applied (see utils/tableColumnPrefs), plus one rule
 // of this table's own: a selection checkbox column always belongs at the
@@ -40,44 +39,6 @@ function orderTableColumns(columns, order) {
   if (selIdx > 0) out = [out[selIdx], ...out.slice(0, selIdx), ...out.slice(selIdx + 1)];
   return out;
 }
-
-function loadColWidths(tableId) {
-  try { return JSON.parse(localStorage.getItem(COL_WIDTHS_PREFIX + tableId)) || {}; } catch { return {}; }
-}
-function saveColWidths(tableId, w) { localStorage.setItem(COL_WIDTHS_PREFIX + tableId, JSON.stringify(w)); }
-
-// The pre-hidden-list visible set, as stored. Null when there's nothing to
-// read: an empty array is the "no columns visible" state that renders a
-// blank table, and reads as "no preference" the way it always has.
-function loadColVisibleRaw(tableId) {
-  try {
-    const saved = JSON.parse(localStorage.getItem(COL_VISIBLE_PREFIX + tableId));
-    return Array.isArray(saved) && saved.length > 0 ? saved : null;
-  } catch { return null; }
-}
-
-// Removed columns (removableColumns mode only): keys the user has taken
-// out of the table layout entirely. Unlike hidden columns these don't
-// appear in the Columns dropdown's "Hidden" list — they come back only
-// via Reset. Stored as a plain key array; absent / unparseable reads as
-// "nothing removed".
-function loadColRemoved(tableId) {
-  try { const v = JSON.parse(localStorage.getItem(COL_REMOVED_PREFIX + tableId)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
-}
-function saveColRemoved(tableId, set) { localStorage.setItem(COL_REMOVED_PREFIX + tableId, JSON.stringify([...set])); }
-
-// Hidden / starred column keys. Both read back as plain arrays (or null when
-// the table has no entry yet, which resolveHiddenKeys treats as "not set"
-// rather than "nothing hidden" — the difference is what lets an old
-// `visible` list still be honoured).
-function loadColHidden(tableId) {
-  try { const v = JSON.parse(localStorage.getItem(COL_HIDDEN_PREFIX + tableId)); return Array.isArray(v) ? v : null; } catch { return null; }
-}
-function saveColHidden(tableId, set) { localStorage.setItem(COL_HIDDEN_PREFIX + tableId, JSON.stringify([...set])); }
-function loadColStarred(tableId) {
-  try { const v = JSON.parse(localStorage.getItem(COL_STARRED_PREFIX + tableId)); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
-}
-function saveColStarred(tableId, set) { localStorage.setItem(COL_STARRED_PREFIX + tableId, JSON.stringify([...set])); }
 
 // Every stranded prefs bucket for a table whose id used to encode its column
 // list: `${tableId}:<column>|<column>|…`. Returns { id, keys } entries for
@@ -344,58 +305,12 @@ function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
 }
 
 
-// Firestore rejects map field names that both start AND end with "__"
-// (e.g. UploadedListView's helper columns __select__, __myAccountsList__).
-// We prefix those keys with a sentinel before persisting and strip it
-// back off on read so the rest of the app sees the original key.
-const REMOTE_KEY_PREFIX = '_x_';
-function encodeRemoteKey(k) {
-  return /^__.*__$/.test(k) ? REMOTE_KEY_PREFIX + k : k;
-}
-function decodeRemoteKey(k) {
-  return k.startsWith(REMOTE_KEY_PREFIX) ? k.slice(REMOTE_KEY_PREFIX.length) : k;
-}
-function encodeRemoteMap(m) {
-  if (!m || typeof m !== 'object') return m;
-  const out = {};
-  for (const [k, v] of Object.entries(m)) out[encodeRemoteKey(k)] = v;
-  return out;
-}
-function decodeRemoteMap(m) {
-  if (!m || typeof m !== 'object') return m;
-  const out = {};
-  for (const [k, v] of Object.entries(m)) out[decodeRemoteKey(k)] = v;
-  return out;
-}
-
-// When settings + updateSettings are provided, column prefs (widths,
-// visibility, renames) are mirrored to Firestore at
-// settings.tablePrefs[tableId]. Localstorage continues to be written
-// as a fast/offline mirror. This makes the prefs survive a browser
-// "Clear site data" — Firestore reseeds localStorage on the next
-// load. Tables not wired to settings keep the legacy localStorage-only
-// behavior.
+// Column layout persistence lives in utils/tablePrefsSync — local copy plus
+// the Firestore one at settings.tablePrefs[tableId], so a layout follows the
+// user to their other machine. This wrapper only supplies this component's
+// localStorage key names.
 function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
-  if (prefsUpdate.widths !== undefined) saveColWidths(tableId, prefsUpdate.widths);
-  if (prefsUpdate.names !== undefined) saveColNames(tableId, prefsUpdate.names);
-  if (prefsUpdate.order !== undefined) saveColOrder(tableId, prefsUpdate.order);
-  if (prefsUpdate.removed !== undefined) saveColRemoved(tableId, prefsUpdate.removed);
-  if (prefsUpdate.hidden !== undefined) saveColHidden(tableId, prefsUpdate.hidden);
-  if (prefsUpdate.starred !== undefined) saveColStarred(tableId, prefsUpdate.starred);
-  if (!settings || !updateSettings || !tableId) return;
-  const current = settings.tablePrefs?.[tableId] || {};
-  const nextEntry = { ...current };
-  if (prefsUpdate.widths !== undefined) nextEntry.widths = encodeRemoteMap(prefsUpdate.widths);
-  if (prefsUpdate.names !== undefined) nextEntry.names = encodeRemoteMap(prefsUpdate.names);
-  // Order is a plain array of column keys — stored as-is (no map-key
-  // encoding needed, and keys like `_select` are fine as array values).
-  if (prefsUpdate.order !== undefined) nextEntry.order = [...prefsUpdate.order];
-  if (prefsUpdate.removed !== undefined) nextEntry.removed = [...prefsUpdate.removed];
-  if (prefsUpdate.hidden !== undefined) nextEntry.hidden = [...prefsUpdate.hidden];
-  if (prefsUpdate.starred !== undefined) nextEntry.starred = [...prefsUpdate.starred];
-  updateSettings({
-    tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
-  });
+  persistTablePrefs(tablePrefsKeys(tableId), tableId, settings, updateSettings, prefsUpdate);
 }
 
 /**
@@ -495,20 +410,13 @@ export function DataTable({
   removableColumns = false,
 }) {
   const rawRemotePrefs = settings?.tablePrefs?.[tableId];
-  const remotePrefs = useMemo(() => {
-    if (!rawRemotePrefs) return rawRemotePrefs;
-    return {
-      ...rawRemotePrefs,
-      widths: decodeRemoteMap(rawRemotePrefs.widths),
-      names: decodeRemoteMap(rawRemotePrefs.names),
-    };
-  }, [rawRemotePrefs]);
+  const remotePrefs = useMemo(() => readRemoteTablePrefs(settings, tableId), [rawRemotePrefs]); // eslint-disable-line react-hooks/exhaustive-deps
   // settings._lastWriteAt is the canonical "Firestore subscription has
   // produced data" signal — it's stamped by every saveUserSettings call.
   // We use it to distinguish "Firestore has no entry for this table"
   // (don't sync, leave defaults / localStorage) from "Firestore is
   // still loading" (don't do anything; wait).
-  const settingsLoaded = !!(settings && settings._lastWriteAt);
+  const settingsLoaded = settingsHaveLoaded(settings);
   const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(tableId));
   // What the user has hidden, as a stored list — null until they hide
   // something, which is what lets an older `visible` list still be read
@@ -638,8 +546,9 @@ export function DataTable({
     const visible = Array.isArray(remoteLegacy?.visible) && remoteLegacy.visible.length > 0
       ? remoteLegacy.visible
       : loadColVisibleRaw(legacyId);
-    const widths = decodeRemoteMap(remoteLegacy?.widths) || loadColWidths(legacyId);
-    const names = decodeRemoteMap(remoteLegacy?.names) || loadColNames(legacyId);
+    const legacyRemote = readRemoteTablePrefs(settings, legacyId);
+    const widths = legacyRemote?.widths || loadColWidths(legacyId);
+    const names = legacyRemote?.names || loadColNames(legacyId);
     const order = Array.isArray(remoteLegacy?.order) ? remoteLegacy.order : loadColOrder(legacyId);
     const removed = Array.isArray(remoteLegacy?.removed) ? new Set(remoteLegacy.removed) : loadColRemoved(legacyId);
     // Hide what that layout hid — the columns it knew about and left out.
