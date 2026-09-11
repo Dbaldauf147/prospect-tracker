@@ -12,12 +12,7 @@
 // Drafts tab's .eml builder already takes, so a parsed attachment can go
 // straight back out on a new draft.
 
-import * as MsgReaderModule from '@kenjiuno/msgreader';
-
-// Depending on how the bundler resolves this CJS/ESM package, the class can
-// land at either .default or one level further down. Same unwrap the
-// Opportunity form's meeting drop zone uses.
-const MsgReader = (MsgReaderModule?.default?.default || MsgReaderModule?.default || MsgReaderModule);
+import { loadMsgReader } from './msgReaderLoader';
 
 const bytesToBase64 = (bytes) => {
   let binary = '';
@@ -51,7 +46,8 @@ export function guessType(name, fallback = 'application/octet-stream') {
 
 // ---- .msg ----------------------------------------------------------------
 
-function parseMsg(buffer) {
+async function parseMsg(buffer) {
+  const MsgReader = await loadMsgReader();
   const reader = new MsgReader(buffer);
   const data = reader.getFileData() || {};
   const attachments = [];
@@ -229,7 +225,7 @@ export async function parseEmailFile(file) {
   const name = String(file?.name || '').toLowerCase();
   if (name.endsWith('.msg')) {
     try {
-      return parseMsg(await file.arrayBuffer());
+      return await parseMsg(await file.arrayBuffer());
     } catch (err) {
       throw new Error(`Could not read that .msg file: ${err?.message || err}`);
     }

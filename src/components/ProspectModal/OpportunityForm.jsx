@@ -4,11 +4,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { ScopingNotesEditor } from './ScopingNotesEditor';
 import { SERVICE_CATEGORIES } from '../../data/enums';
 import { SERVICE_QUESTIONS, SERVICE_THEIR_QUESTIONS } from '../../data/serviceQuestions';
-import * as MsgReaderModule from '@kenjiuno/msgreader';
-// CJS default-export interop: depending on how Vite resolves the package,
-// the class can land at either MsgReaderModule.default or one extra level
-// down. Unwrap once if needed so `new MsgReader(...)` works either way.
-const MsgReader = (MsgReaderModule?.default?.default || MsgReaderModule?.default || MsgReaderModule);
+import { loadMsgReader } from '../../utils/msgReaderLoader';
 // OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
 // wired in: it requires a Microsoft Entra ID app registration in the
 // user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
@@ -1632,6 +1628,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     if (name.endsWith('.msg')) {
       try {
         const buf = await file.arrayBuffer();
+        const MsgReader = await loadMsgReader();
         const reader = new MsgReader(buf);
         const data = reader.getFileData();
         const parsed = msgToMeeting(data);

@@ -1,20 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './ContactsView.module.css';
-import { HubSpotView } from '../HubSpotView/HubSpotView';
-import { AgendaView } from '../AgendaView/AgendaView';
-import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
-import { ActiveContactsView } from '../ActiveContactsView/ActiveContactsView';
-import { ClientContactsView } from '../ClientContactsView/ClientContactsView';
-import { ChangedJobsContactsView } from '../ChangedJobsContactsView/ChangedJobsContactsView';
-import { DedupeView } from '../DedupeView/DedupeView';
-import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
-import { AllContactsView } from '../AllContactsView/AllContactsView';
-import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
-import { EventsView } from '../EventsView/EventsView';
-import { MarketingLeadsView } from '../MarketingLeadsView/MarketingLeadsView';
+import { lazyView } from '../../utils/lazyView';
 import { setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
+
+// Sub-tabs load on first visit rather than all riding in one chunk. Opening
+// Contacts used to download every contacts page at once — 404 kB of JS
+// (105 kB gzipped) — whichever tab you were actually headed to. The
+// <Suspense> around the tab body below covers them all.
+const HubSpotView = lazyView(() => import('../HubSpotView/HubSpotView').then(m => ({ default: m.HubSpotView })));
+const AgendaView = lazyView(() => import('../AgendaView/AgendaView').then(m => ({ default: m.AgendaView })));
+const KeyContactsView = lazyView(() => import('../KeyContactsView/KeyContactsView').then(m => ({ default: m.KeyContactsView })));
+const ActiveContactsView = lazyView(() => import('../ActiveContactsView/ActiveContactsView').then(m => ({ default: m.ActiveContactsView })));
+const ClientContactsView = lazyView(() => import('../ClientContactsView/ClientContactsView').then(m => ({ default: m.ClientContactsView })));
+const ChangedJobsContactsView = lazyView(() => import('../ChangedJobsContactsView/ChangedJobsContactsView').then(m => ({ default: m.ChangedJobsContactsView })));
+const DedupeView = lazyView(() => import('../DedupeView/DedupeView').then(m => ({ default: m.DedupeView })));
+const ZoomInfoView = lazyView(() => import('../ZoomInfoView/ZoomInfoView').then(m => ({ default: m.ZoomInfoView })));
+const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsView').then(m => ({ default: m.AllContactsView })));
+const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView').then(m => ({ default: m.KeyProspectsView })));
+const EventsView = lazyView(() => import('../EventsView/EventsView').then(m => ({ default: m.EventsView })));
+const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView').then(m => ({ default: m.MarketingLeadsView })));
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
@@ -145,6 +151,7 @@ export function ContactsView({
         </div>
       </div>
       <div className={styles.content}>
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
         {subtab === 'hubspot' && (
           <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
         )}
@@ -249,6 +256,7 @@ export function ContactsView({
           <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} onAddProspect={onAddProspect} />
         )}
         {subtab === 'dedupe' && <DedupeView />}
+        </Suspense>
       </div>
     </div>
   );

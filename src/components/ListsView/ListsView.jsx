@@ -1,15 +1,23 @@
-import { useState, useEffect, useMemo } from 'react';
-import { RAClientsView } from '../RAClientsView/RAClientsView';
-import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
-import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
-import { EcoActClientsView } from '../EcoActClientsView/EcoActClientsView';
-import { SitesView } from '../SitesView/SitesView';
-import { MasterSiteListView } from '../MasterSiteListView/MasterSiteListView';
-import { UploadedListView } from '../UploadedListView/UploadedListView';
+import { useState, useEffect, useMemo, Suspense } from 'react';
+import { lazyView } from '../../utils/lazyView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { userLsGet } from '../../utils/userLs';
 import styles from './ListsView.module.css';
+
+// Sub-tabs load on first visit rather than all riding in one chunk. Opening
+// Lists used to download every list page at once — 2.3 MB of JS (629 kB
+// gzipped), most of it SitesView and the eGRID zip table behind it — no
+// matter which tab you were actually after. The <Suspense> around the tab
+// body below covers them all, so the tab bar stays put while one loads.
+const RAClientsView = lazyView(() => import('../RAClientsView/RAClientsView').then(m => ({ default: m.RAClientsView })));
+const TargetAccountsView = lazyView(() => import('../TargetAccountsView/TargetAccountsView').then(m => ({ default: m.TargetAccountsView })));
+const RECAClientsView = lazyView(() => import('../RECAClientsView/RECAClientsView').then(m => ({ default: m.RECAClientsView })));
+const EcoActClientsView = lazyView(() => import('../EcoActClientsView/EcoActClientsView').then(m => ({ default: m.EcoActClientsView })));
+const SitesView = lazyView(() => import('../SitesView/SitesView').then(m => ({ default: m.SitesView })));
+const MasterSiteListView = lazyView(() => import('../MasterSiteListView/MasterSiteListView').then(m => ({ default: m.MasterSiteListView })));
+const UploadedListView = lazyView(() => import('../UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
+
 
 const SUBTABS = [
   { key: 'sites', label: 'Utility Lookup' },
@@ -395,6 +403,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         </div>
       </div>
       <div className={styles.content}>
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
@@ -542,6 +551,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
+        </Suspense>
       </div>
     </div>
   );

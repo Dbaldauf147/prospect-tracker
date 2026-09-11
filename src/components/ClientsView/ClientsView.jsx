@@ -1,13 +1,9 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { buildTargetTierResolver } from '../../utils/targetTier';
-import { DealsView } from '../DealsView/DealsView';
-import { CommissionsView } from './CommissionsView';
-import { ContractServicesView } from './ContractServicesView';
-import { ContractLanguageView } from './ContractLanguageView';
-import { DealSizingView } from './DealSizingView';
+import { lazyView } from '../../utils/lazyView';
 import { loadDealsList, saveDealsOverride } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
@@ -33,6 +29,17 @@ import { getIndicativeAnalysisMeta } from '../../utils/firestoreSync';
 // Shared with the Issues tab so both surfaces agree on what's expired.
 import { normClientName, soonestExpiration } from '../../utils/clientIssues';
 import { dealSoldDate, postSaleFollowUpRows } from '../../utils/postSaleFollowUp';
+
+// The heavy sub-tabs load on first visit rather than riding in the Clients
+// chunk. Deals, Commissions, Deal Sizing and the contract pages are 296 kB
+// of JS (78 kB gzipped) between them, and the clients table itself — the
+// tab that actually opens by default — needs none of it.
+const DealsView = lazyView(() => import('../DealsView/DealsView').then(m => ({ default: m.DealsView })));
+const CommissionsView = lazyView(() => import('./CommissionsView').then(m => ({ default: m.CommissionsView })));
+const ContractServicesView = lazyView(() => import('./ContractServicesView').then(m => ({ default: m.ContractServicesView })));
+const ContractLanguageView = lazyView(() => import('./ContractLanguageView').then(m => ({ default: m.ContractLanguageView })));
+const DealSizingView = lazyView(() => import('./DealSizingView').then(m => ({ default: m.DealSizingView })));
+
 
 const MS_PER_DAY = 86400000;
 
@@ -1375,7 +1382,9 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} user={user} addProspect={addProspect} />
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} user={user} addProspect={addProspect} />
+        </Suspense>
       </div>
     );
   }
@@ -1384,7 +1393,9 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <CommissionsView settings={settings} updateSettings={updateSettings} prospects={prospects} />
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <CommissionsView settings={settings} updateSettings={updateSettings} prospects={prospects} />
+        </Suspense>
       </div>
     );
   }
@@ -1402,14 +1413,16 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <DealSizingView
-          prospects={prospects}
-          cdmName={cdmName}
-          settings={settings}
-          updateSettings={updateSettings}
-          updateProspect={updateProspect}
-          onSelectProspect={onSelectProspect}
-        />
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <DealSizingView
+            prospects={prospects}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateProspect={updateProspect}
+            onSelectProspect={onSelectProspect}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -1418,7 +1431,9 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <ContractServicesView prospects={prospects} settings={settings} updateSettings={updateSettings} updateProspect={updateProspect} user={user} />
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <ContractServicesView prospects={prospects} settings={settings} updateSettings={updateSettings} updateProspect={updateProspect} user={user} />
+        </Suspense>
       </div>
     );
   }
@@ -1427,7 +1442,9 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <ContractLanguageView settings={settings} user={user} />
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <ContractLanguageView settings={settings} user={user} />
+        </Suspense>
       </div>
     );
   }
