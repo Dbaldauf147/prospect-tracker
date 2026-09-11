@@ -72,6 +72,7 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict } from '../../utils/targetAccountCdm';
 import {
   divisionsFor,
   divisionParentsFor,
@@ -4552,6 +4553,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return targetAccountTierMap.get(targetAccount.toLowerCase()) || '';
   }, [targetAccountTierMap]);
 
+  // Does the Target Accounts tab have this company under a different CDM?
+  // The workbook is the shared record of who covers what, so the Coverage
+  // CDM field shows a warning beside it rather than letting the two
+  // disagree silently. Compared against the draft value, so correcting the
+  // field clears the warning without a save.
+  //
+  // The resolver depends on the three settings it actually reads rather
+  // than the whole settings object, which App hands down freshly built on
+  // every render.
+  const resolveTargetCdmConflict = useMemo(
+    () => buildTargetCdmResolver({
+      targetAccountsData,
+      settings: {
+        targetCdmColumn: settings?.targetCdmColumn,
+        targetRepColumn: settings?.targetRepColumn,
+        targetMap: settings?.targetMap,
+      },
+    }),
+    [targetAccountsData, settings?.targetCdmColumn, settings?.targetRepColumn, settings?.targetMap],
+  );
+  const targetCdmConflict = useMemo(() => {
+    const company = String(fields.company || '').trim();
+    if (!company) return null;
+    return resolveTargetCdmConflict({ id: prospect?.id, company }, fields.cdm || '');
+  }, [resolveTargetCdmConflict, prospect?.id, fields.company, fields.cdm]);
+
   // Collect all unique tags across all HubSpot contacts for the dropdown.
   //
   // tagVocabulary collapses the spellings: this dataset carries "NAM only"
@@ -7374,12 +7401,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>CDM</label>
-              <SearchableSelect
-                options={cdmOptions}
-                value={fields.cdm || ''}
-                onChange={v => set('cdm', v)}
-                placeholder="Select CDM…"
-              />
+              {/* Control + conflict badge share the value column, so the
+                  warning reads beside the name it contradicts. The select
+                  keeps flexing; the badge truncates and puts the detail in
+                  its tooltip rather than widening the row. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <SearchableSelect
+                    options={cdmOptions}
+                    value={fields.cdm || ''}
+                    onChange={v => set('cdm', v)}
+                    placeholder="Select CDM…"
+                  />
+                </div>
+                {targetCdmConflict && (
+                  <span
+                    title={describeTargetCdmConflict(targetCdmConflict, fields.cdm)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.2rem', flexShrink: 0,
+                      maxWidth: '45%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                      background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                      fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'help',
+                    }}
+                  >
+                    <span aria-hidden="true">⚠</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {targetCdmConflictLabel(targetCdmConflict)}
+                    </span>
+                  </span>
+                )}
+              </div>
             </div>
 
             <div>
