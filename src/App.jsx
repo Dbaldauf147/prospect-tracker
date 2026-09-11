@@ -40,7 +40,6 @@ import './App.css';
 // you were headed to. One <Suspense> around the view switch below covers
 // them all; ProspectModal gets its own, plus an idle prefetch since it
 // opens from nearly every view.
-const ActivityView = lazyView(() => import('./components/ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
 const AgentsView = lazyView(() => import('./components/AgentsView/AgentsView').then(m => ({ default: m.AgentsView })));
 const BFOActivityView = lazyView(() => import('./components/BFOActivityView/BFOActivityView').then(m => ({ default: m.BFOActivityView })));
 const CallRecordingsView = lazyView(() => import('./components/CallRecordingsView/CallRecordingsView').then(m => ({ default: m.CallRecordingsView })));
@@ -520,17 +519,19 @@ function App() {
             <PricingView settings={settings} />
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
-          ) : view === 'recordings' ? (
+          ) : view === 'recordings' || view === 'activity' ? (
+            // The activity feed is a subtab of this page rather than a
+            // sidebar entry of its own; the `activity` view key stays
+            // routable so existing links land on that subtab.
             <CallRecordingsView
               prospects={prospects}
               settings={settings}
               updateSettings={updateSettings}
               onSelectProspect={handleSelect}
+              initialTab={view === 'activity' ? 'activity' : ''}
             />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
-          ) : view === 'activity' ? (
-            <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'agents' ? (
             <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} />
           ) : view === 'pe' ? (

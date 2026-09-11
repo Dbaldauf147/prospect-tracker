@@ -406,13 +406,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           )}
         </button>
         <button
-          className={view === 'activity' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('activity')}
-        >
-          <span className={styles.navIcon}>&#9202;</span>
-          Activity
-        </button>
-        <button
           className={view === 'agents' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agents')}
           title={agentsRunDue
@@ -451,12 +444,16 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#9999;</span>
           Draft Emails
         </button>
+        {/* Activity carries the call recordings — Calls, History, Call
+            breakdown — and the HubSpot activity feed as subtabs, so the
+            feed doesn't get a sidebar entry of its own. Both view keys
+            land here. */}
         <button
-          className={view === 'recordings' ? styles.navItemActive : styles.navItem}
+          className={view === 'recordings' || view === 'activity' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('recordings')}
         >
-          <span className={styles.navIcon}>&#127908;</span>
-          Call Recordings
+          <span className={styles.navIcon}>&#9202;</span>
+          Activity
         </button>
         <button
           className={view === 'charts' ? styles.navItemActive : styles.navItem}
