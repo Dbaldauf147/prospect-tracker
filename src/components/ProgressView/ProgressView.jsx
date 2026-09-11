@@ -11,6 +11,7 @@ import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { peStageOf } from '../../utils/peStages';
+import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -489,24 +490,24 @@ function makeSheetNamer() {
 
 function loadHiddenCharts() {
   try {
-    const raw = localStorage.getItem(HIDDEN_CHARTS_KEY);
+    const raw = readWorkKey(HIDDEN_CHARTS_KEY);
     const arr = raw ? JSON.parse(raw) : null;
     return Array.isArray(arr) ? new Set(arr) : new Set();
   } catch { return new Set(); }
 }
 function persistHiddenCharts(set) {
-  try { localStorage.setItem(HIDDEN_CHARTS_KEY, JSON.stringify([...set])); } catch {}
+  try { writeWorkKey(HIDDEN_CHARTS_KEY, JSON.stringify([...set])); } catch {}
 }
 
 function loadChartTitles() {
   try {
-    const raw = localStorage.getItem(CHART_TITLES_KEY);
+    const raw = readWorkKey(CHART_TITLES_KEY);
     const obj = raw ? JSON.parse(raw) : null;
     return obj && typeof obj === 'object' ? obj : {};
   } catch { return {}; }
 }
 function persistChartTitles(map) {
-  try { localStorage.setItem(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
+  try { writeWorkKey(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
 }
 
 // Per-chart default view (line / bar / area / …). Whatever view the user
@@ -514,13 +515,13 @@ function persistChartTitles(map) {
 // becomes that chart's default on the next visit.
 function loadChartViews() {
   try {
-    const raw = localStorage.getItem(CHART_VIEWS_KEY);
+    const raw = readWorkKey(CHART_VIEWS_KEY);
     const obj = raw ? JSON.parse(raw) : null;
     return obj && typeof obj === 'object' ? obj : {};
   } catch { return {}; }
 }
 function persistChartViews(map) {
-  try { localStorage.setItem(CHART_VIEWS_KEY, JSON.stringify(map)); } catch {}
+  try { writeWorkKey(CHART_VIEWS_KEY, JSON.stringify(map)); } catch {}
 }
 
 // Per-chart pinned data points. Keyed by chart id → array of week keys
@@ -529,13 +530,13 @@ function persistChartViews(map) {
 // values callout below it, and persist across visits.
 function loadChartPins() {
   try {
-    const raw = localStorage.getItem(CHART_PINS_KEY);
+    const raw = readWorkKey(CHART_PINS_KEY);
     const obj = raw ? JSON.parse(raw) : null;
     return obj && typeof obj === 'object' ? obj : {};
   } catch { return {}; }
 }
 function persistChartPins(map) {
-  try { localStorage.setItem(CHART_PINS_KEY, JSON.stringify(map)); } catch {}
+  try { writeWorkKey(CHART_PINS_KEY, JSON.stringify(map)); } catch {}
 }
 
 export function ProgressView({ prospects, settings, cdmName }) {

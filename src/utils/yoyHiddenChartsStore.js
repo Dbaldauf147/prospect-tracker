@@ -8,7 +8,8 @@
 //             'quotedByYear' | 'notSolds' | 'topAccounts' | 'annualSales' |
 //             'dealSize' | 'commissions'
 
-import { userLsGet, userLsSet } from './userLs';
+import { userLsGet } from './userLs';
+import { writeWorkKey } from './mirroredWorkKeys.js';
 
 const KEY = 'yoy-hidden-charts';
 
@@ -24,5 +25,5 @@ export function loadHiddenCharts() {
 }
 
 export function saveHiddenCharts(ids) {
-  try { userLsSet(KEY, JSON.stringify(Array.isArray(ids) ? ids : [])); } catch { /* ignore quota */ }
+  try { writeWorkKey(KEY, JSON.stringify(Array.isArray(ids) ? ids : [])); } catch { /* ignore quota */ }
 }

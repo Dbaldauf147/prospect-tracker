@@ -14,10 +14,17 @@
 // Stored under a single key 'list' as an array — these never grow huge
 // and a single record keeps reads / writes atomic.
 
-import { dbGet, dbPut } from '../../utils/db';
+import { dbGet } from '../../utils/db';
+import { registerMirroredDbKey, mirrorDbPut } from '../../utils/localMirrorSync';
 
 const STORE = 'daily-success-goals';
 const KEY = 'list';
+export const DAILY_GOALS_EVENT = 'daily-goals-changed';
+
+// A goal is something the user wrote down and works towards for weeks — it
+// belongs to them, not to the laptop they happened to type it on. One record
+// holding the whole list, so the single-record mirror fits it exactly.
+registerMirroredDbKey(STORE, KEY, DAILY_GOALS_EVENT);
 
 function newId() {
   return `g_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -29,7 +36,9 @@ export async function loadGoals() {
 }
 
 export async function saveGoals(list) {
-  await dbPut(STORE, Array.isArray(list) ? list : [], KEY);
+  // mirrorDbPut rather than dbPut: it writes the record and queues the push,
+  // so the cloud copy can't be forgotten at one of the callers below.
+  await mirrorDbPut(STORE, KEY, Array.isArray(list) ? list : []);
 }
 
 export async function addGoal(text) {

@@ -2,15 +2,16 @@ import { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './DedupeView.module.css';
+import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 
 const DISMISSED_KEY = 'dedupe-dismissed';
 
 function loadDismissed() {
-  try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY))); } catch { return new Set(); }
+  try { return new Set(JSON.parse(readWorkKey(DISMISSED_KEY))); } catch { return new Set(); }
 }
 
 function saveDismissed(set) {
-  localStorage.setItem(DISMISSED_KEY, JSON.stringify([...set]));
+  writeWorkKey(DISMISSED_KEY, JSON.stringify([...set]));
 }
 
 // Normalize name for comparison

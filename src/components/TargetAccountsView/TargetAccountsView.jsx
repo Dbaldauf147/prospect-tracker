@@ -4,11 +4,12 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from '../../utils/targetAccountOpps';
 import styles from './TargetAccountsView.module.css';
+import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 
 const STORE_NAME = 'target-accounts';
 
@@ -82,7 +83,7 @@ function loadBlockedAccountNames() {
 
 function persistBlockedAccountNames(set) {
   try {
-    userLsSet(BLOCKED_KEY, JSON.stringify([...set]));
+    writeWorkKey(BLOCKED_KEY, JSON.stringify([...set]));
   } catch { /* noop */ }
   try { window.dispatchEvent(new Event(BLOCKED_EVENT)); } catch { /* noop */ }
 }

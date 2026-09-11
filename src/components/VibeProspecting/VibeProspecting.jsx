@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { matchesCdm } from '../../utils/cdmMatch';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet } from '../../utils/userLs';
 import styles from './VibeProspecting.module.css';
+import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 
 const INDUSTRY_OPTIONS = [
   'Asset Management', 'Real Estate', 'Private Equity',
@@ -67,7 +68,7 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-  userLsSet(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  writeWorkKey(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
 }
 
 function toggleArrayValue(arr, val) {
@@ -88,7 +89,7 @@ function loadTitlePresets() {
   try { return JSON.parse(userLsGet(TITLE_PRESETS_KEY)) || []; } catch { return []; }
 }
 function saveTitlePresets(presets) {
-  userLsSet(TITLE_PRESETS_KEY, JSON.stringify(presets));
+  writeWorkKey(TITLE_PRESETS_KEY, JSON.stringify(presets));
 }
 
 function companiesMatch(a, b) {
