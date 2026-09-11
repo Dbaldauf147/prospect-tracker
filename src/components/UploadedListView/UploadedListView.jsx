@@ -2233,6 +2233,8 @@ export function UploadedListView({
         <DataTable
           key={tableId}
           tableId={tableId}
+          settings={settings}
+          updateSettings={updateSettings}
           // Without this the export falls back to tableId for its file name —
           // and tableId is the prefix plus every column key joined by "|", so
           // the CSRD list downloaded as "csrd-list-__sel-cdm-company-country-
