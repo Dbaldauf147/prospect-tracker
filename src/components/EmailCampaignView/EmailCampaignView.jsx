@@ -27,6 +27,9 @@ import {
   campaignEventUrl, eventLinkHref, eventLinkLabel, withEventUrl, sameEventUrl,
 } from '../../utils/campaignEventLink';
 import { followUpInfo } from '../../utils/campaignFollowUp';
+import {
+  contactOutreach, canEmailContact, outreachCounts, outreachPatch, CONTACT_HOLD_DAYS,
+} from '../../utils/campaignContactHold';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -58,6 +61,13 @@ const CONTACT_COLUMNS = [
   { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
   { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
   {
+    key: 'outreach',
+    label: 'Outreach',
+    sortKey: 'outreach',
+    width: 120,
+    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history \u2014 they are just left out of "Add unsent to Draft".',
+  },
+  {
     key: 'tracking',
     label: 'Clicks',
     width: 110,
@@ -69,6 +79,13 @@ const CONTACT_COLUMNS = [
   { key: 'repliedBy', label: 'Replied By', sortKey: 'repliedBy', width: 150 },
   { key: 'replyDate', label: 'Reply Date', sortKey: 'replyDate', width: 110 },
   { key: 'eventStatus', label: 'Event Status', sortKey: 'eventStatus', width: 130 },
+  {
+    key: 'notes',
+    label: 'Notes',
+    sortKey: 'notes',
+    width: 200,
+    title: 'Anything worth remembering about this contact on this campaign \u2014 why they are on hold, what they asked for, who is handling them. Click to type; it saves when you click away.',
+  },
 ];
 const CONTACT_COLS_LOCKED = ['email'];
 // See companyFor: what a domain's "brand" must never turn out to be.
@@ -97,6 +114,61 @@ function readCols(key, fallback) {
 }
 function writeCols(key, value) {
   try { userLsSet(COLS_LS[key], JSON.stringify(value)); } catch { /* a full or blocked localStorage just means prefs don't persist */ }
+}
+
+// One row's note, edited in place.
+//
+// The text is held locally while it is being typed and only handed back on
+// blur (or Enter): every commit is a Firestore write of the whole campaign,
+// and one per keystroke would be one per keystroke. Escape abandons the edit.
+// Outside an edit the cell follows the contact, so a note changed elsewhere —
+// or a campaign refreshed underneath — still shows what was saved.
+function NoteCell({ value, onCommit, placeholder }) {
+  const [draft, setDraft] = useState(value || '');
+  const [editing, setEditing] = useState(false);
+  // Escape blurs the box, and the blur handler is what saves — so the
+  // abandonment has to be recorded somewhere the handler can read
+  // immediately. A ref, not state: the blur fires before a re-render.
+  const abandonRef = useRef(false);
+  // Follow the contact while the box isn't being typed in, so a note changed
+  // elsewhere — or a campaign refreshed underneath — shows what was saved.
+  // Adjusted during the render that notices it rather than in an effect: an
+  // effect would paint the stale text first and then correct it.
+  const [seen, setSeen] = useState(value || '');
+  if (!editing && (value || '') !== seen) {
+    setSeen(value || '');
+    setDraft(value || '');
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder={placeholder}
+      title={draft || placeholder}
+      onFocus={() => { abandonRef.current = false; setEditing(true); }}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        if (abandonRef.current) { abandonRef.current = false; setDraft(value || ''); return; }
+        onCommit(draft.trim());
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          abandonRef.current = true;
+          e.currentTarget.blur();
+        }
+      }}
+      style={{
+        width: '100%', padding: '2px 4px', border: '1px solid transparent', borderRadius: '4px',
+        background: 'transparent', color: 'var(--color-text)', fontSize: '0.72rem',
+        fontFamily: 'inherit',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+      onMouseLeave={e => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.borderColor = 'transparent'; }}
+    />
+  );
 }
 
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
@@ -517,11 +589,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // into the shared Draft Emails recipients queue, so they can be dropped into
   // the composer's To section on the Draft Emails page. Multi-recipient cells
   // are split into individual addresses; deduped by email in the queue.
+  //
+  // Contacts on hold or marked Avoid are left out. This is the one button
+  // that turns the roster into mail, so it is where the Outreach column has
+  // to be obeyed — and the notice says how many were skipped rather than
+  // quietly handing over a shorter list.
   function queueUnsentToDraft() {
     const list = displayResults?.contacts || [];
     const recipients = [];
+    let heldBack = 0;
     for (const c of list) {
       if (c.sentDate) continue; // only the "Not Sent" rows
+      if (!canEmailContact(c)) { heldBack += 1; continue; }
       const emails = String(c.email || '').split(';').map(e => e.trim()).filter(Boolean);
       emails.forEach((email) => {
         const raw = emails.length === 1 ? String(c.name || '').trim() : '';
@@ -540,15 +619,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         });
       });
     }
+    const skipped = heldBack > 0
+      ? ` ${heldBack} contact${heldBack === 1 ? ' is' : 's are'} on hold or marked Avoid and ${heldBack === 1 ? 'was' : 'were'} left out.`
+      : '';
     if (recipients.length === 0) {
-      setNotice('No unsent contacts: everyone in this campaign has already been emailed.');
-      setTimeout(() => setNotice(''), 5000);
+      setNotice(heldBack > 0
+        ? `Nobody to queue: every unsent contact in this campaign is on hold or marked Avoid (${heldBack}).`
+        : 'No unsent contacts: everyone in this campaign has already been emailed.');
+      setTimeout(() => setNotice(''), 6000);
       return;
     }
     const added = addQueuedRecipients(recipients);
     const dupes = recipients.length - added;
     setNotice(
-      `Queued ${added} recipient${added === 1 ? '' : 's'} for Draft Emails${dupes > 0 ? ` (${dupes} already queued)` : ''}. `
+      `Queued ${added} recipient${added === 1 ? '' : 's'} for Draft Emails${dupes > 0 ? ` (${dupes} already queued)` : ''}.${skipped} `
       + 'Open Draft Emails → "From Email Campaigns" → "Add all to draft" to drop them into the To section.',
     );
     setTimeout(() => setNotice(''), 9000);
@@ -577,7 +661,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       const key = normEmail(e);
       if (!key || existing.has(key) || seen.has(key)) continue;
       seen.add(key);
-      additions.push({ email: e, name: '', sentDate: '', replied: false, eventStatus: '', recipientCount: 1 });
+      additions.push({
+        email: e, name: '', sentDate: '', replied: false, eventStatus: '', recipientCount: 1,
+        // Contactable, with nothing recorded against them yet.
+        outreach: '', holdUntil: '', notes: '',
+      });
     }
     if (additions.length === 0) {
       setError(wanted.length === 1 ? 'That email is already in the campaign.' : 'Those emails are already in the campaign.');
@@ -634,16 +722,48 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     }
   }
 
-  // Mark a contact's RSVP for the campaign's event (going / not going / maybe).
-  // Stored on the contact and preserved across refreshes; persisted for saved
-  // campaigns.
-  function setEventStatus(index, value) {
+  // Change one contact's own fields — the things the user records against a
+  // row rather than the things HubSpot reports. Stored on the contact and
+  // preserved across refreshes (mergeContacts keeps the roster entry and only
+  // refreshes its send/reply detail); persisted for saved campaigns.
+  function patchContact(index, patch) {
     if (!results) return;
-    const updated = results.contacts.map((c, i) => (i === index ? { ...c, eventStatus: value } : c));
+    const updated = results.contacts.map((c, i) => (i === index ? { ...c, ...patch } : c));
     setResults({ ...results, contacts: updated });
     if (viewingSaved != null) {
       saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved ? { ...c, contacts: updated } : c)));
     }
+  }
+
+  // Mark a contact's RSVP for the campaign's event (going / not going / maybe).
+  function setEventStatus(index, value) {
+    patchContact(index, { eventStatus: value });
+  }
+
+  // Hold a contact off, avoid them entirely, or put them back on the list.
+  // The fields to write are worked out in campaignContactHold so the default
+  // hold length and the "don't leave a stale date behind" rule live with the
+  // rest of the logic rather than in the cell that renders the dropdown.
+  function setContactOutreach(index, state) {
+    const c = results?.contacts?.[index];
+    if (!c) return;
+    patchContact(index, outreachPatch(c, state));
+  }
+
+  // Move the date a hold lifts on. Clearing the box holds the contact until
+  // the user says otherwise rather than releasing them — an empty date is
+  // "no end yet", and a contact quietly rejoining the next send because a
+  // date got deleted is the one outcome worth ruling out.
+  function setContactHoldUntil(index, value) {
+    patchContact(index, { outreach: 'hold', holdUntil: value || '' });
+  }
+
+  // The free-text note on a row. Committed on blur, not per keystroke: each
+  // save is a Firestore write.
+  function setContactNote(index, text) {
+    const c = results?.contacts?.[index];
+    if (!c || (c.notes || '') === text) return; // nothing typed — no write
+    patchContact(index, { notes: text });
   }
 
   // A contact's identity for duplicate detection: its recipient set, normalized
@@ -654,7 +774,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // duplicate to keep: a replied row beats a sent row beats one with just an
   // event status.
   function contactInfoScore(c) {
-    return (c?.replied ? 4 : 0) + (c?.sentDate ? 2 : 0) + (c?.eventStatus ? 1 : 0);
+    return (c?.replied ? 4 : 0) + (c?.sentDate ? 2 : 0) + (c?.eventStatus ? 1 : 0)
+      + (c?.outreach ? 1 : 0) + (c?.notes ? 1 : 0);
   }
 
   // Flag contacts that appear more than once in the campaign (by recipient
@@ -689,6 +810,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       const idx = byKey.get(k);
       const winner = contactInfoScore(c) > contactInfoScore(kept[idx]) ? { ...c } : { ...kept[idx] };
       if (!winner.eventStatus) winner.eventStatus = kept[idx].eventStatus || c.eventStatus || '';
+      // A "don't email this one" recorded on either copy survives the merge:
+      // collapsing two rows must never quietly put somebody back on the list.
+      if (!winner.outreach) {
+        const loser = kept[idx].outreach ? kept[idx] : (c.outreach ? c : null);
+        if (loser) { winner.outreach = loser.outreach; winner.holdUntil = loser.holdUntil || ''; }
+      }
+      if (!winner.notes) winner.notes = kept[idx].notes || c.notes || '';
       kept[idx] = winner;
     }
     if (kept.length === results.contacts.length) return; // nothing to collapse
@@ -920,7 +1048,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   function fmtDate(d) {
     if (!d) return '-';
-    const dt = new Date(d);
+    // A bare YYYY-MM-DD (a hold date, picked in a date box) parses as UTC
+    // midnight, which prints as the day BEFORE anywhere west of Greenwich.
+    // Read it as a local day — it was picked off a calendar, not a clock.
+    const raw = String(d);
+    const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : d);
     if (isNaN(dt)) return '-';
     return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
@@ -1007,6 +1139,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     [DELIVERY.CONFIRMED]: 4,
   };
 
+  // Avoid < On hold < contactable, so a descending sort puts the rows that
+  // are off the list at the top.
+  const OUTREACH_RANK = { open: 0, hold: 1, avoid: 2 };
+
   function statusRank(c) {
     if (c.replied) return 4;
     if (c.outOfOffice) return 3;
@@ -1030,6 +1166,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       case 'repliedBy': return String(c.repliedBy || '').toLowerCase();
       case 'replyDate': return c.replied && c.replyDate ? (new Date(c.replyDate).getTime() || 0) : 0;
       case 'eventStatus': return String(c.eventStatus || '');
+      // Descending brings the people not to be emailed to the top, which is
+      // the question this column gets sorted to answer: who is off the list?
+      case 'outreach': return OUTREACH_RANK[contactOutreach(c)] ?? 0;
+      // Rows with a note first when sorted descending, then alphabetically:
+      // an empty note sorts below every written one either way.
+      case 'notes': return String(c.notes || '').toLowerCase();
       // Sorted on what the cell shows, the domain fallback included, so the
       // order on screen matches the column that was clicked.
       case 'company': return companyFor(c).name.toLowerCase();
@@ -1152,6 +1294,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       sentAt: c.sentDate || null,
     });
   }, [lookupTracking]);
+
+  // How many of the roster are currently not to be emailed. Read live, so a
+  // hold that has run out stops counting on the day it lifts without anything
+  // being rewritten.
+  const holdStats = useMemo(
+    () => outreachCounts(displayResults?.contacts),
+    [displayResults?.contacts],
+  );
 
   // Campaign-level roll-up, counted over the contacts actually emailed so
   // the rates line up with the existing Response Rate denominator.
@@ -1408,6 +1558,65 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           >{label}</span>
         );
       }
+      case 'outreach': {
+        // The dropdown shows what is STORED; the colour shows what is true
+        // today. A hold whose date has passed still reads "Hold off" with the
+        // date that lapsed — greyed, and saying so — because "why is this
+        // person back on the list?" is answered by the date that ran out, not
+        // by a cell that quietly emptied itself.
+        const stored = c.outreach === 'hold' || c.outreach === 'avoid' ? c.outreach : '';
+        const live = contactOutreach(c);
+        const TONE = {
+          hold: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
+          avoid: { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+          open: { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' },
+        };
+        const lapsed = stored === 'hold' && live === 'open';
+        return (
+          <>
+            <select
+              value={stored}
+              onChange={e => setContactOutreach(i, e.target.value)}
+              title={live === 'avoid'
+                ? 'Never contact: left out of every draft this campaign queues until you clear it.'
+                : live === 'hold'
+                  ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} — left out of "Add unsent to Draft". A dated hold lifts on its own.`
+                  : lapsed
+                    ? 'This hold has run out — the contact is back on the list. Pick a later date to hold them again.'
+                    : `Contact freely. "Hold off" parks them for ${CONTACT_HOLD_DAYS} days by default; "Avoid" keeps them off every send until you clear it.`}
+              style={{ width: '100%', padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...TONE[live] }}
+            >
+              <option value="">Contact</option>
+              <option value="hold">Hold off</option>
+              <option value="avoid">Avoid</option>
+            </select>
+            {stored === 'hold' && (
+              <input
+                type="date"
+                value={String(c.holdUntil || '').slice(0, 10)}
+                onChange={e => setContactHoldUntil(i, e.target.value)}
+                title={lapsed
+                  ? 'The day this hold ran out. Pick a later one to hold them again.'
+                  : 'The last day this contact is held. It lifts on its own the morning after — clear the box to hold them until you say otherwise.'}
+                style={{
+                  width: '100%', marginTop: '2px', padding: '1px 3px', borderRadius: '4px',
+                  border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+                  color: lapsed ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                  fontSize: '0.62rem', fontFamily: 'inherit',
+                }}
+              />
+            )}
+          </>
+        );
+      }
+      case 'notes':
+        return (
+          <NoteCell
+            value={c.notes || ''}
+            placeholder="Add a note…"
+            onCommit={text => setContactNote(i, text)}
+          />
+        );
       case 'tracking': {
         const t = lookupTracking(c.email);
         if (!t) return <span style={{ color: 'var(--color-text-muted)' }} title="This send wasn't created with tracking on">-</span>;
@@ -1665,6 +1874,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <strong style={{ color: '#7C3AED' }}>{displayResults.responseRate}%</strong> response
                 <span style={{ color: 'var(--color-text-muted)' }}> · </span>
                 <strong style={{ color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</strong> contacts
+                {holdStats.onHold > 0 && (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                    <strong style={{ color: '#B45309' }} title="On hold: left out of “Add unsent to Draft” until the hold lifts.">{holdStats.onHold}</strong> on hold
+                  </>
+                )}
+                {holdStats.avoided > 0 && (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                    <strong style={{ color: '#B91C1C' }} title="Marked Avoid: never queued for a draft until you clear it.">{holdStats.avoided}</strong> avoid
+                  </>
+                )}
                 {trackingStats.tracked > 0 && (
                   <>
                     <span style={{ color: 'var(--color-text-muted)' }}> · </span>
@@ -1696,6 +1917,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</div>
             </div>
+            {/* Who is off the list, and why. Only shown when somebody is:
+                a "0 on hold" tile on every campaign would be a number that
+                never moves taking the place of one that does. */}
+            {holdStats.blocked > 0 && (
+              <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Not To Email</div>
+                <div
+                  style={{ fontSize: '1.4rem', fontWeight: 700, color: '#B45309' }}
+                  title={`${holdStats.blocked} contact${holdStats.blocked === 1 ? '' : 's'} left out of "Add unsent to Draft": ${holdStats.onHold} on hold, ${holdStats.avoided} marked Avoid. A hold lifts on its own on the date it names.`}
+                >
+                  {holdStats.blocked}{' '}
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                    ({holdStats.onHold} held, {holdStats.avoided} avoid)
+                  </span>
+                </div>
+              </div>
+            )}
             {/* Clicks, joined from the tracked drafts. Only shown once at
                 least one send in this campaign carried tracking — otherwise
                 the tile would read a misleading 0%.
@@ -1919,14 +2157,22 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
             <div style={{ display: 'inline-flex', gap: '0.5rem', flexShrink: 0 }}>
               {(() => {
-                const unsent = (displayResults.contacts || []).filter(c => !c.sentDate).length;
+                // The number on the button is what the button would actually
+                // queue: the unsent rows this campaign is still allowed to
+                // email. A count that included the held and the avoided would
+                // promise recipients the click then leaves behind.
+                const unsentRows = (displayResults.contacts || []).filter(c => !c.sentDate);
+                const unsent = unsentRows.filter(c => canEmailContact(c)).length;
+                const blocked = unsentRows.length - unsent;
                 return (
                   <button
                     onClick={queueUnsentToDraft}
                     disabled={unsent === 0}
                     title={unsent === 0
-                      ? 'No unsent contacts: everyone has been emailed'
-                      : 'Queue every "Not Sent" contact for the Draft Emails composer'}
+                      ? (blocked > 0
+                        ? `Nothing to queue: all ${blocked} unsent contact${blocked === 1 ? ' is' : 's are'} on hold or marked Avoid`
+                        : 'No unsent contacts: everyone has been emailed')
+                      : `Queue every "Not Sent" contact for the Draft Emails composer${blocked > 0 ? ` (${blocked} on hold or marked Avoid left out)` : ''}`}
                     style={{
                       padding: '0.35rem 0.75rem', border: '1px solid #1D4ED8', borderRadius: '6px',
                       background: unsent === 0 ? '#F1F5F9' : '#fff', color: unsent === 0 ? '#94A3B8' : '#1D4ED8',
@@ -2084,8 +2330,30 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <tbody>
                   {sortedContacts.map(({ c, i }) => {
                     const isDup = dupKeys.has(contactKey(c));
+                    // A row nobody is to email reads as set aside: a tint the
+                    // whole way across, and the text dimmed on the avoided
+                    // ones, so scrolling a long roster shows who is off the
+                    // list without reading the Outreach column row by row.
+                    // The duplicate warning is louder and keeps its colour.
+                    const blocked = contactOutreach(c);
+                    const rowBg = isDup ? '#FFFBEB'
+                      : blocked === 'avoid' ? 'var(--color-surface-alt)'
+                        : blocked === 'hold' ? 'rgba(251, 191, 36, 0.07)'
+                          : undefined;
                     return (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--color-border-light)', background: isDup ? '#FFFBEB' : undefined }}>
+                    <tr
+                      key={i}
+                      title={blocked === 'avoid' ? 'Marked Avoid — left out of every draft this campaign queues'
+                        : blocked === 'hold' ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ''} — left out of "Add unsent to Draft"`
+                          : undefined}
+                      style={{
+                        borderBottom: '1px solid var(--color-border-light)',
+                        background: rowBg,
+                        // Not on the held ones: a hold is a "not yet", and the
+                        // date it lifts on has to stay readable.
+                        opacity: blocked === 'avoid' ? 0.72 : 1,
+                      }}
+                    >
                       {visibleColumns.map(col => (
                         <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {renderContactCell(col.key, c, i, isDup)}

@@ -18,6 +18,7 @@ import { stripDashes } from './exportSanitize.js';
 import { campaignSubjects } from './campaignSubjects.js';
 import { campaignEventUrl } from './campaignEventLink.js';
 import { followUpInfo, followUpLabel } from './campaignFollowUp.js';
+import { contactOutreach, contactOutreachLabel } from './campaignContactHold.js';
 
 // One CSV cell. Quoted only where it has to be, doubled quotes inside.
 export function csvCell(v) {
@@ -73,6 +74,9 @@ export const CAMPAIGN_CONTACT_HEADERS = [
   'Clicks', 'First Click', 'Last Click',
   'Replied By', 'Reply Date', 'Bounce Date', 'Out of Office Date',
   'Event Status',
+  // Last, so every column that was here keeps its place — anybody's saved
+  // spreadsheet formula reads these by position.
+  'Outreach', 'Hold Until', 'Notes',
 ];
 
 /**
@@ -97,7 +101,7 @@ export const CAMPAIGN_CONTACT_HEADERS = [
  * security gateway's link scan carries a time but counts zero — on screen a
  * tooltip explains that, in a spreadsheet it just reads as a contradiction.
  */
-export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null } = {}) {
+export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null, nowMs = Date.now() } = {}) {
   const followUp = followUpInfo(c);
   return [
     campaignOutreachLabel(campaign),
@@ -127,6 +131,13 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
     c?.bounced ? csvDate(c?.bounceDate) : '',
     c?.outOfOffice ? csvDate(c?.oooDate) : '',
     eventStatusLabel(c?.eventStatus),
+    // Whether this contact is to be emailed, read the same way the screen
+    // reads it: a hold whose date has passed is over, so it prints as
+    // nothing rather than as a hold somebody might act on. The date only
+    // ships alongside a hold that is actually live, for the same reason.
+    contactOutreachLabel(c, nowMs),
+    contactOutreach(c, nowMs) === 'hold' ? csvDate(c?.holdUntil) : '',
+    c?.notes || '',
   ];
 }
 
@@ -138,11 +149,12 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
  * you get — while every column comes along regardless of which ones are
  * hidden: this is the data, not a screenshot.
  */
-export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingFor } = {}) {
+export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingFor, nowMs = Date.now() } = {}) {
   const rows = (contacts || []).map(c => campaignContactRow(c, {
     campaign: campaign || {},
     delivery: deliveryFor ? deliveryFor(c) : '',
     tracking: trackingFor ? trackingFor(c) : null,
+    nowMs,
   }));
   return toCsv(CAMPAIGN_CONTACT_HEADERS, rows);
 }
