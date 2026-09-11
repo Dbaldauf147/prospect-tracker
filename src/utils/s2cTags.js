@@ -357,3 +357,104 @@ export function s2cCellMatches(value, query) {
   if (!q) return true;
   return String(value ?? '').toLowerCase().includes(q);
 }
+
+// ── Column widths ─────────────────────────────────────────────────────────
+//
+// The table's columns hold answers of very different lengths — a segment is
+// one word, a deliverable is "Sourcing - TIER 3 - Flexible Price Contract
+// Structure", a note is a sentence — and which ones are long is a fact about
+// the client, not about the table. So the widths are dragged, and kept.
+//
+// Kept on their own store key alongside the tags, and for the same reason:
+// this table outlives the workbook, and a mapping that comes back after a
+// Clear with its Deliverable column truncating again has not really come
+// back.
+
+const S2C_COLUMN_DEFAULT_WIDTH = {
+  lineItem: 260,
+  serviceSegment: 170,
+  productName: 200,
+  // The long one, by some distance, on every SIA seen so far.
+  deliverable: 280,
+  notes: 240,
+};
+
+/**
+ * The table's columns, left to right, minus the × button's own strip.
+ *
+ * Built off S2C_TAG_FIELDS rather than repeating the three tags, so a column
+ * added there is a column here — and the keys line up with the per-column
+ * filters, which are keyed the same way.
+ */
+export const S2C_COLUMNS = [
+  { key: 'lineItem', label: 'Line Item' },
+  ...S2C_TAG_FIELDS,
+  { key: 'notes', label: 'Notes' },
+].map(c => ({ ...c, defaultWidth: S2C_COLUMN_DEFAULT_WIDTH[c.key] }));
+
+// Narrow enough to park a column out of the way, wide enough to read a
+// deliverable in full, and neither is a width a drag can leave the table in.
+export const S2C_COL_MIN_WIDTH = 90;
+export const S2C_COL_MAX_WIDTH = 900;
+
+const S2C_COLUMN_BY_KEY = new Map(S2C_COLUMNS.map(c => [c.key, c]));
+
+// A stored width as a usable number, or null for anything that isn't one.
+// Number() alone won't do: it turns null, '' and false into 0, which is a
+// perfectly finite number and would clamp a column to the minimum rather
+// than leave it at its default — a backup file that round-tripped a missing
+// width as null would come back as five squashed columns.
+function asWidth(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+const clampWidth = (n) => Math.min(S2C_COL_MAX_WIDTH, Math.max(S2C_COL_MIN_WIDTH, Math.round(n)));
+
+/** The default width for one column, or undefined for a key that isn't one. */
+export function s2cColumnDefaultWidth(key) {
+  return S2C_COLUMN_BY_KEY.get(key)?.defaultWidth;
+}
+
+/**
+ * What one column is actually rendered at.
+ *
+ * Anything unusable falls back to the default rather than to nothing: a
+ * stored map is user data that has been through a backup file and a schema
+ * change or two, and one bad number in it must not collapse a column to
+ * zero and hide a mapping.
+ */
+export function s2cColumnWidth(widths, key) {
+  const fallback = s2cColumnDefaultWidth(key);
+  const raw = asWidth(widths?.[key]);
+  return raw === null ? fallback : clampWidth(raw);
+}
+
+/**
+ * Set one column's width, returning a new map.
+ *
+ * A width back at its default is stored as nothing, so the map holds only
+ * what was actually changed and "reset" is a delete rather than a number that
+ * has to be kept in step with the default if the default ever moves.
+ */
+export function setS2cColumnWidth(widths, key, px) {
+  const fallback = s2cColumnDefaultWidth(key);
+  if (fallback === undefined) return widths || {};
+  const next = { ...(widths || {}) };
+  const n = asWidth(px);
+  const clamped = n === null ? fallback : clampWidth(n);
+  if (clamped === fallback) {
+    if (!(key in next)) return widths || {};
+    delete next[key];
+    return next;
+  }
+  if (next[key] === clamped) return widths || {};
+  next[key] = clamped;
+  return next;
+}
+
+/** Put one column back to its default width. */
+export function resetS2cColumnWidth(widths, key) {
+  return setS2cColumnWidth(widths, key, s2cColumnDefaultWidth(key));
+}

@@ -92,3 +92,12 @@ a:hover { text-decoration: underline; }
   margin-right: 0.4em;
   cursor: pointer;
 }
+
+/* Held on <body> while an S2C column is being dragged. The pointer spends
+   the drag outside the 6px handle, so the cursor and the text selection have
+   to be pinned from above it — see S2CTab's startColResize. */
+body.s2c-col-resizing,
+body.s2c-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}

@@ -4,6 +4,7 @@ import {
   S2C_TAG_FIELDS, collectS2cLineItems, countTagged, hasAnyTag,
   s2cTagSuggestions, setS2cTag, setS2cNote, clearS2cTags, s2cNote,
   addS2cLineItem, s2cSuggestionMatches, s2cCellMatches,
+  S2C_COLUMNS, s2cColumnWidth, setS2cColumnWidth, resetS2cColumnWidth,
 } from '../../utils/s2cTags';
 
 const EMPTY_ROW = () => ({
@@ -353,8 +354,16 @@ function ColumnFilter({ value, onChange, suggestions, placeholder, ariaLabel }) 
   );
 }
 
+// Put on <body> for the length of a column drag — see startColResize.
+const RESIZING_CLASS = 's2c-col-resizing';
+
+// The × button's strip, which is not resizable and not a column anybody maps
+// against. Matches .actionCol in the stylesheet.
+const ACTION_COL_WIDTH = 32;
+
 const BLANK_DRAFT = { lineItem: '', serviceSegment: '', productName: '', deliverable: '', notes: '' };
-const BLANK_COL_FILTERS = { lineItem: '', serviceSegment: '', productName: '', deliverable: '', notes: '' };
+// The filters are keyed by column, so the columns say what the keys are.
+const BLANK_COL_FILTERS = Object.fromEntries(S2C_COLUMNS.map(c => [c.key, '']));
 
 // The SIA line items, with the three tags that say what each one is for.
 //
@@ -371,7 +380,9 @@ const BLANK_COL_FILTERS = { lineItem: '', serviceSegment: '', productName: '', d
 // is no way to clear them. A line item no workbook ever carried can be added
 // by hand, and lands in exactly the same place: the mapping is not the
 // workbook's to decide, it only happens to be where most of it comes from.
-function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags, addLineItem }) {
+function SiaLineItemTags({
+  workbook, tags, setTag, setNote, clearTags, addLineItem, colWidths, setColWidths,
+}) {
   const [filter, setFilter] = useState('');
   const [taggedOnly, setTaggedOnly] = useState(false);
   const [colFilters, setColFilters] = useState(BLANK_COL_FILTERS);
@@ -426,6 +437,49 @@ function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags, addLineIt
   }, [pairs, tags, filter, taggedOnly, colFilters]);
 
   const tagged = countTagged(pairs, tags);
+
+  const colStyle = (key) => ({ width: s2cColumnWidth(colWidths, key) });
+
+  // The table is set to exactly what its columns add up to. A fixed-layout
+  // table left at width:auto resolves to the width of whatever contains it,
+  // which turns every column width into a share of that and means the table
+  // can never be wider than the page — so widening one column would always
+  // be taking the room from the ones beside it, and a long deliverable would
+  // never be readable without squashing something else.
+  const totalWidth = useMemo(
+    () => S2C_COLUMNS.reduce((n, c) => n + s2cColumnWidth(colWidths, c.key), ACTION_COL_WIDTH),
+    [colWidths],
+  );
+  const resizer = (key, label) => (
+    <span
+      className={styles.colResizer}
+      onMouseDown={(e) => startColResize(key, e)}
+      onDoubleClick={() => setColWidths(prev => resetS2cColumnWidth(prev, key))}
+      title={`Drag to resize ${label} · double-click to reset it`}
+    />
+  );
+
+  // Drag one column's right edge. Same shape as the resize on the Pricing
+  // subtab's own tables: the width the drag started from plus how far the
+  // pointer has travelled, clamped by the store on the way in.
+  function startColResize(key, evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    const startX = evt.clientX;
+    const startW = s2cColumnWidth(colWidths, key);
+    const onMove = (e) => setColWidths(prev => setS2cColumnWidth(prev, key, startW + (e.clientX - startX)));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.classList.remove(RESIZING_CLASS);
+    };
+    // While a drag is live the pointer leaves the 6px handle constantly, and
+    // every cell it crosses would otherwise flip the cursor and start
+    // selecting text under it.
+    document.body.classList.add(RESIZING_CLASS);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   function cancelAdd() {
     setAdding(false);
@@ -567,17 +621,40 @@ function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags, addLineIt
             </div>
           ) : (
             <div className={styles.gridWrap}>
-              <table className={styles.grid}>
+              <table className={`${styles.grid} ${styles.gridSized}`} style={{ width: totalWidth }}>
+                {/* The widths live here rather than on the header cells: the
+                    headings span rows and columns, so a width put on one of
+                    them is a width put on whichever cell happened to be
+                    first. A <col> is the column itself. */}
+                <colgroup>
+                  {S2C_COLUMNS.map(c => <col key={c.key} style={colStyle(c.key)} />)}
+                  <col className={styles.actionCol} />
+                  {/* Soaks up whatever is left when the columns don't fill the
+                      page, so the sized ones stay the width they were dragged
+                      to instead of being stretched to share out the slack. It
+                      is zero wide the moment they do fill it. */}
+                  <col />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th rowSpan={2} className={styles.costElementHeader}>Line Item</th>
+                    <th rowSpan={2} className={styles.costElementHeader}>
+                      Line Item
+                      {resizer('lineItem', 'Line Item')}
+                    </th>
                     <th colSpan={S2C_TAG_FIELDS.length} className={styles.tagGroup}>TAGS</th>
-                    <th rowSpan={2} className={styles.siaNotesHeader}>Notes</th>
+                    <th rowSpan={2} className={styles.siaNotesHeader}>
+                      Notes
+                      {resizer('notes', 'Notes')}
+                    </th>
                     <th rowSpan={3} className={styles.actionCol} />
+                    <th rowSpan={3} className={styles.spacerCell} />
                   </tr>
                   <tr>
                     {S2C_TAG_FIELDS.map(f => (
-                      <th key={f.key} className={styles.tagHeader}>{f.label}</th>
+                      <th key={f.key} className={styles.tagHeader}>
+                        {f.label}
+                        {resizer(f.key, f.label)}
+                      </th>
                     ))}
                   </tr>
                   {/* A filter per column, under the heading it filters. */}
@@ -661,6 +738,7 @@ function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags, addLineIt
                             >×</button>
                           )}
                         </td>
+                        <td className={styles.spacerCell} />
                       </tr>
                     );
                   })}
@@ -675,7 +753,9 @@ function SiaLineItemTags({ workbook, tags, setTag, setNote, clearTags, addLineIt
 }
 
 
-export function S2CTab({ rows, setRows, workbook, lineItemTags, setLineItemTags }) {
+export function S2CTab({
+  rows, setRows, workbook, lineItemTags, setLineItemTags, siaColWidths, setSiaColWidths,
+}) {
   const safeRows = Array.isArray(rows) && rows.length
     ? rows
     : Array.from({ length: 10 }, EMPTY_ROW);
@@ -864,6 +944,8 @@ export function S2CTab({ rows, setRows, workbook, lineItemTags, setLineItemTags 
           setNote={(key, value, label) => setLineItemTags(prev => setS2cNote(prev, key, value, label))}
           clearTags={(key) => setLineItemTags(prev => clearS2cTags(prev, key))}
           addLineItem={(lineItem, values) => setLineItemTags(prev => addS2cLineItem(prev, lineItem, values))}
+          colWidths={siaColWidths || {}}
+          setColWidths={setSiaColWidths || (() => {})}
         />
       )}
     </div>
