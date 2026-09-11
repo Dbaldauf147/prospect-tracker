@@ -2126,6 +2126,11 @@ const LINKED_TO_OPTIONS_KEY = 'linkedToOptionsList';
 // exactly like the Linked To defaults above, and on its own DB key for the
 // same reason: hand-curated, and it outlives any one workbook.
 const S2C_LINE_ITEM_TAGS_KEY = 's2cLineItemTags';
+// Column widths dragged on the S2C tab's SIA line-item table. On its own key
+// beside the tags, and for the tags' reason: that table outlives the
+// workbook, so a mapping that comes back after a Clear with its Deliverable
+// column truncating again has not really come back.
+const S2C_SIA_COL_WIDTHS_KEY = 's2cSiaColWidths';
 const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
 const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
 // Line items the user has chosen to ignore in the Line Item → Services
@@ -2239,6 +2244,7 @@ export function PricingView({ settings } = {}) {
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
   const [s2cLineItemTags, setS2cLineItemTags] = useState({}); // { [lineItem::type]: { serviceSegment, productName, deliverable } }
   const [s2cTabData, setS2cTabData] = useState(null); // S2CTab state: array of { costElement, setup, setupUom, ongoing, ongoingUom }
+  const [s2cSiaColWidths, setS2cSiaColWidths] = useState({}); // { [columnKey]: pixelWidth } on the SIA line-item table
   // Opps 2 records + Option ↔ Opp link map, shared with the Options
   // sub-tab so saving from either tab updates the Opps 2 "Pricing
   // Option" column. Loaded on mount and refreshed on the cross-tab
@@ -2300,6 +2306,10 @@ export function PricingView({ settings } = {}) {
           // one of them would read as untagged. The save effect writes the
           // migrated shape straight back.
           setS2cLineItemTags(migrateS2cTags(savedS2cLineItemTags));
+        }
+        const savedS2cSiaColWidths = await dbGet(STORE, S2C_SIA_COL_WIDTHS_KEY);
+        if (!cancelled && savedS2cSiaColWidths && typeof savedS2cSiaColWidths === 'object') {
+          setS2cSiaColWidths(savedS2cSiaColWidths);
         }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
@@ -2447,6 +2457,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, s2cLineItemTags, S2C_LINE_ITEM_TAGS_KEY).catch(err => console.warn('Failed to save S2C line item tags:', err));
   }, [s2cLineItemTags]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, s2cSiaColWidths, S2C_SIA_COL_WIDTHS_KEY).catch(err => console.warn('Failed to save S2C column widths:', err));
+  }, [s2cSiaColWidths]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -4827,6 +4842,8 @@ export function PricingView({ settings } = {}) {
           workbook={workbook}
           lineItemTags={s2cLineItemTags}
           setLineItemTags={setS2cLineItemTags}
+          siaColWidths={s2cSiaColWidths}
+          setSiaColWidths={setS2cSiaColWidths}
         />
       )}
 

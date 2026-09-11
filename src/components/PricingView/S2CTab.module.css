@@ -478,3 +478,69 @@
   font-size: var(--font-size-xs);
   color: #b91c1c;
 }
+
+/* The dragged widths are real pixels, not proportions.
+
+   `.grid` is width:100%, and a fixed-layout table at 100% treats its column
+   widths as shares of the container: drag one wider and the others give up
+   exactly what it gained, so the table can never be wider than the page and a
+   long deliverable is only ever readable by squeezing everything beside it.
+   Sized like this it fills the container while the columns fit inside it, and
+   past that point it grows and .gridWrap scrolls — which is the whole reason
+   somebody drags a column wider in the first place. */
+.gridSized {
+  /* The width itself is set inline, from what the columns add up to. This
+     only stops the table sitting short of the page when they add up to less
+     — the slack lands on the spacer column, not on the sized ones. */
+  min-width: 100%;
+}
+
+/* The slack column: table furniture, not a column, so it carries none of the
+   grid's borders and just continues the surface to the edge. */
+.grid th.spacerCell,
+.grid td.spacerCell {
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 0;
+  background: #fff;
+}
+
+.grid th.spacerCell { background: #f1f5f9; }
+
+/* ── Dragging a column's width ────────────────────────────────────────────
+   The handle straddles the column's right border rather than sitting inside
+   the cell, so it is grabbable from either side of the line it moves — and
+   it stretches the full height of the heading, because a 6px target that is
+   also only as tall as one row is a target nobody hits. */
+
+.grid th.costElementHeader,
+.grid th.tagHeader,
+.grid th.siaNotesHeader {
+  position: relative;
+}
+
+.colResizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  background: transparent;
+  z-index: 2;
+}
+
+.colResizer:hover { background: var(--color-accent, #2563eb); opacity: 0.45; }
+
+/* The tag headings span two rows of heading between them, so a handle that
+   only covered its own row would stop short of the TAGS banner above it. */
+.grid th.tagHeader .colResizer { top: -22px; }
+
+/* A column narrowed past its content clips it rather than pushing the table
+   wider — the whole point of the drag is that the width is the answer. */
+.siaCell,
+.siaNoteCell,
+.tagCell { overflow: hidden; }
+
+.siaCell { word-break: break-word; }

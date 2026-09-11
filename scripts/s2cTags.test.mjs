@@ -28,6 +28,8 @@ import {
   collectS2cLineItems, countTagged, s2cTagSuggestions, migrateS2cTags,
   setS2cNote, s2cNote, hasS2cNote, hasS2cContent,
   addS2cLineItem, s2cSuggestionMatches, s2cCellMatches,
+  S2C_COLUMNS, S2C_COL_MIN_WIDTH, S2C_COL_MAX_WIDTH,
+  s2cColumnWidth, setS2cColumnWidth, resetS2cColumnWidth, s2cColumnDefaultWidth,
 } from '../src/utils/s2cTags.js';
 
 let passed = 0, failed = 0;
@@ -342,6 +344,63 @@ const workbook = [
   check('filter: case-insensitive', s2cCellMatches('Invoice Validation', 'INVOICE'), true);
   check('filter: no match', s2cCellMatches('Sourcing', 'advisory'), false);
   check('filter: an untagged cell matches nothing typed', s2cCellMatches(undefined, 'a'), false);
+}
+
+// ── Column widths ─────────────────────────────────────────────────────────
+//
+// Dragged by hand and kept beside the tags, so the failures worth pinning are
+// the ones that lose a column: a stored width that has been through a backup
+// file and come back as a string or a null must not collapse the column it
+// names, and a drag must not be able to leave one at zero.
+{
+  check('cols: the three tags are columns, in order, between Line Item and Notes',
+    S2C_COLUMNS.map(c => c.key),
+    ['lineItem', 'serviceSegment', 'productName', 'deliverable', 'notes']);
+  check('cols: every column has a default width',
+    S2C_COLUMNS.every(c => Number.isFinite(c.defaultWidth) && c.defaultWidth >= S2C_COL_MIN_WIDTH), true);
+  // The one that started this: a deliverable is the long answer on the table.
+  check('cols: Deliverable is the widest tag column',
+    s2cColumnDefaultWidth('deliverable') > s2cColumnDefaultWidth('serviceSegment'), true);
+
+  check('width: unset falls back to the default',
+    s2cColumnWidth({}, 'notes'), s2cColumnDefaultWidth('notes'));
+  check('width: no map at all', s2cColumnWidth(undefined, 'lineItem'), s2cColumnDefaultWidth('lineItem'));
+  check('width: a stored width is used', s2cColumnWidth({ notes: 420 }, 'notes'), 420);
+  check('width: a numeric string still reads as a width',
+    s2cColumnWidth({ notes: '420' }, 'notes'), 420);
+  // Junk falls back rather than collapsing the column and hiding the mapping.
+  check('width: junk falls back', s2cColumnWidth({ notes: 'wide' }, 'notes'), s2cColumnDefaultWidth('notes'));
+  // Number() turns all three of these into a perfectly finite 0, which would
+  // clamp the column to the minimum rather than leave it alone.
+  check('width: null falls back', s2cColumnWidth({ notes: null }, 'notes'), s2cColumnDefaultWidth('notes'));
+  check('width: an empty string falls back', s2cColumnWidth({ notes: '' }, 'notes'), s2cColumnDefaultWidth('notes'));
+  check('width: a boolean falls back', s2cColumnWidth({ notes: false }, 'notes'), s2cColumnDefaultWidth('notes'));
+  check('width: clamped up from below the minimum', s2cColumnWidth({ notes: 5 }, 'notes'), S2C_COL_MIN_WIDTH);
+  check('width: clamped down from above the maximum', s2cColumnWidth({ notes: 5000 }, 'notes'), S2C_COL_MAX_WIDTH);
+  check('width: not a column', s2cColumnWidth({}, 'nonsense'), undefined);
+
+  check('set: stored, rounded', setS2cColumnWidth({}, 'notes', 333.4), { notes: 333 });
+  check('set: clamped at the floor', setS2cColumnWidth({}, 'notes', -20), { notes: S2C_COL_MIN_WIDTH });
+  check('set: clamped at the ceiling', setS2cColumnWidth({}, 'notes', 99999), { notes: S2C_COL_MAX_WIDTH });
+  check('set: other columns are left alone',
+    setS2cColumnWidth({ lineItem: 300 }, 'notes', 400), { lineItem: 300, notes: 400 });
+  // A width back at its default is stored as nothing, so the map holds only
+  // what was actually changed.
+  check('set: the default is stored as nothing',
+    setS2cColumnWidth({ notes: 400 }, 'notes', s2cColumnDefaultWidth('notes')), {});
+  check('set: not a column at all', setS2cColumnWidth({}, 'nonsense', 300), {});
+
+  const unchanged = { notes: 400 };
+  check('set: setting the width it already has changes nothing',
+    setS2cColumnWidth(unchanged, 'notes', 400) === unchanged, true);
+  check('set: clearing a column that was never set changes nothing',
+    setS2cColumnWidth(unchanged, 'lineItem', s2cColumnDefaultWidth('lineItem')) === unchanged, true);
+  check('set: the original map is not mutated', unchanged, { notes: 400 });
+
+  check('reset: back to the default, and out of the map',
+    resetS2cColumnWidth({ notes: 400, lineItem: 300 }, 'notes'), { lineItem: 300 });
+  check('reset: reading it back gives the default',
+    s2cColumnWidth(resetS2cColumnWidth({ notes: 400 }, 'notes'), 'notes'), s2cColumnDefaultWidth('notes'));
 }
 
 if (failed === 0) console.log(`PASS  s2cTags: ${passed} assertions`);
