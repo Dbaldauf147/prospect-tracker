@@ -620,3 +620,61 @@ export function withServiceStatus(current, names, status) {
   }
   return next;
 }
+
+/**
+ * What setting one status across the whole book would actually do.
+ *
+ * The same shape as planBulkAdd, and for the same reason: this is the other
+ * action on the page that touches every client at once, there is no way to
+ * eyeball forty rows to see what it did, and a status write is the one thing
+ * here that reaches the company record. So it is worked out and reported
+ * before anything is written.
+ *
+ * Two things decide who is in `change`:
+ *
+ * - Only a client the write would actually alter. `withServiceStatus` is
+ *   compared against what the client already has, so setting Sold on a book
+ *   where nineteen are already Sold reports fourteen, not thirty-three, and
+ *   those nineteen are not written to at all. What is compared is the stored
+ *   map, not the effective status: a client reading Sold because an opp's
+ *   Scope says so still changes when Sold is set by hand, because that pins
+ *   a ruling the opp could otherwise take back.
+ *
+ * - The services are whatever the caller names per client. `servicesOf`
+ *   returns them, so the page can point this at one service across the book
+ *   ("mark GRESB quant Not Sold everywhere") or at each client's whole scope,
+ *   without this having to know which question is being asked.
+ *
+ * @param clients      the client records
+ * @param status       a SERVICE_STATUSES value; '' or '-' clears the entry
+ * @param servicesOf   (client) => the service names to write for that client
+ * @returns { change, same, skipped }
+ *          change  — [{ client, servicesExplored }] — the map to write, and
+ *                    the client to write it to
+ *          same    — clients the write would leave exactly as they are
+ *          skipped — clients with no service to write against at all
+ */
+export function planBulkStatus({ clients = [], status, servicesOf }) {
+  const plan = { change: [], same: [], skipped: [] };
+  // Never a value to write — it is the cell's reading of a scope whose
+  // services disagree, and withServiceStatus returns the map unchanged for
+  // it, which would put every client in `same` and hide the no-op.
+  if (status === MIXED_STATUS) return plan;
+  for (const client of clients) {
+    const names = (servicesOf?.(client) || []).filter(n => String(n || '').trim());
+    if (!names.length) { plan.skipped.push(client); continue; }
+    const current = client?.servicesExplored || {};
+    const next = withServiceStatus(current, names, status);
+    if (sameStatusMap(current, next)) plan.same.push(client);
+    else plan.change.push({ client, servicesExplored: next });
+  }
+  return plan;
+}
+
+/** Do these two Services Explored maps say the same thing? */
+function sameStatusMap(a, b) {
+  const ka = Object.keys(a || {});
+  const kb = Object.keys(b || {});
+  if (ka.length !== kb.length) return false;
+  return ka.every(k => a[k] === b[k]);
+}

@@ -67,6 +67,7 @@ import {
   normalizeClientScope,
   planBulkAdd,
   planBulkRemove,
+  planBulkStatus,
   onCardScope,
   planClearServices,
   rollUpDealSizing,
@@ -507,6 +508,15 @@ export function DealSizingView({
   // the buyers are simply missing is the harder thing to read.
   const [bulkSkipSold, setBulkSkipSold] = useState(false);
   const [bulkUndo, setBulkUndo] = useState(null);
+  // The bulk status write: which status to put on the book, and whether it
+  // lands on the service picked above or on everything each client has
+  // scoped. Two different jobs — "mark GRESB quant Not Sold everywhere" after
+  // a bulk add, and "rule on these scopes" — and which one is running is a
+  // visible choice rather than a guess made from whether the picker happens
+  // to be full.
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkStatusTarget, setBulkStatusTarget] = useState('service'); // 'service' | 'scope'
+  const [statusBusy, setStatusBusy] = useState(false);
   // A client the Clients tab ticks "Don't Track" isn't being worked at all,
   // so pricing one inflates the book with money nobody is going after. They
   // come out by default — the same call the rosters, the issues list and
@@ -714,8 +724,22 @@ export function DealSizingView({
     setBulkUndo({ entries: previous, message });
   }, [scopeMap]);
 
+  // One Undo for both kinds of book-wide edit. A scope edit is put back
+  // through the scope store; a status edit is put back through the company
+  // record, which is a different mechanism entirely — so the entry says which
+  // it is rather than the link guessing. Only ever one is pending: making
+  // either edit replaces the other's offer, because a single "Undo" that
+  // might mean two things is worse than no Undo at all.
   const undoBulk = useCallback(() => {
     if (!bulkUndo) return;
+    if (bulkUndo.statuses) {
+      if (typeof updateProspect !== 'function') return;
+      for (const [id, servicesExplored] of bulkUndo.statuses) {
+        updateProspect(id, { servicesExplored });
+      }
+      setBulkUndo(null);
+      return;
+    }
     setClientScopes(bulkUndo.entries);
     setScopeMap(prev => {
       const copy = { ...prev };
@@ -728,7 +752,7 @@ export function DealSizingView({
       return copy;
     });
     setBulkUndo(null);
-  }, [bulkUndo]);
+  }, [bulkUndo, updateProspect]);
 
   const patchScope = useCallback((company, patch) => {
     const current = normalizeClientScope(scopeMap[normClientName(company)]);
@@ -830,6 +854,55 @@ export function DealSizingView({
     () => planClearServices({ clients: visible.map(r => r.client), scopeOf: (c) => scopeFor(c.company) }),
     [visible, scopeFor],
   );
+
+  // What the status write would do to the clients listed. Recomputed as the
+  // pick changes so the button can say what it is about to do rather than
+  // reporting it afterwards — the same contract the bulk add works to.
+  //
+  // The services per client come from the target: the one service picked in
+  // the bar, or everything that client has scoped. Scope mode reads the
+  // ESTIMATE's services rather than the raw scope, matching the Set Status
+  // column beside each row — a scope name the catalog has since retired is
+  // not a service to hang a status on.
+  const statusPlan = useMemo(() => {
+    if (!bulkStatus) return null;
+    const byRow = new Map(visible.map(r => [r.client, r.estimate.services]));
+    const servicesOf = bulkStatusTarget === 'scope'
+      ? (c) => byRow.get(c) || []
+      : () => (bulkService ? [bulkService] : []);
+    return planBulkStatus({ clients: visible.map(r => r.client), status: bulkStatus, servicesOf });
+  }, [bulkStatus, bulkStatusTarget, bulkService, visible]);
+
+  // Apply it. One write per client — there is no bulk prospect write, and a
+  // status is a single field on a record the rest of the app is subscribed
+  // to, so they go out together and the button stays busy until they land.
+  //
+  // Undo restores each client's Services Explored map exactly as it was, the
+  // same promise the scope edits make. Worth knowing what this does to the
+  // page: a scope the card has ruled on is not new business, so every client
+  // this writes to stops being sized and its money leaves the totals above.
+  // That is the existing rule doing its job, and the bar says so before you
+  // press it.
+  const applyBulkStatus = useCallback(async () => {
+    if (!statusPlan?.change.length || typeof updateProspect !== 'function') return;
+    const entries = statusPlan.change.filter(e => e.client?.id != null);
+    if (!entries.length) return;
+    const before = entries.map(e => [e.client.id, { ...(e.client.servicesExplored || {}) }]);
+    setStatusBusy(true);
+    try {
+      await Promise.all(entries.map(e => updateProspect(e.client.id, { servicesExplored: e.servicesExplored })));
+    } finally {
+      setStatusBusy(false);
+    }
+    const label = bulkStatusTarget === 'scope'
+      ? 'every scoped service'
+      : bulkService;
+    const shown = bulkStatus === '-' ? 'cleared the status' : `set ${bulkStatus}`;
+    setBulkUndo({
+      statuses: before,
+      message: `${shown.charAt(0).toUpperCase()}${shown.slice(1)} on ${label} for ${entries.length} client${entries.length === 1 ? '' : 's'}.`,
+    });
+  }, [statusPlan, updateProspect, bulkStatus, bulkStatusTarget, bulkService]);
 
   const clearAllServices = useCallback(() => {
     const n = clearPlan.length;
@@ -1565,6 +1638,81 @@ export function DealSizingView({
               </span>
             )}
             {bulkPlan.add.length === 0 && (
+              <span style={{ color: '#94A3B8' }}>Nothing to do for the clients listed below.</span>
+            )}
+          </div>
+        )}
+
+        {/* The other book-wide write, and the only one on this page that
+            reaches the COMPANY RECORD rather than the scope store. A bulk add
+            puts a service in front of thirty-three clients; the next question
+            is always what the card says about it for each of them, and until
+            now that was thirty-three trips to the Set Status column.
+
+            What it writes is the same hand-set status that column writes, to
+            the same map — so this is the column's own action done to the
+            whole list, never a new kind of edit. */}
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #F1F5F9' }}>
+          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Set the service status on every client listed</span>
+          <select
+            value={bulkStatusTarget}
+            onChange={e => { setBulkStatusTarget(e.target.value); setBulkUndo(null); }}
+            title="Which services the status lands on: the one picked above, or everything each client has scoped."
+            style={{ padding: '0.3rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff', color: '#334155', cursor: 'pointer' }}
+          >
+            <option value="service">for the service picked above</option>
+            <option value="scope">for every service in each scope</option>
+          </select>
+          <ServiceStatusSelect
+            value={bulkStatus || '-'}
+            manual={!!bulkStatus && bulkStatus !== '-'}
+            title="The status to put on the company card. “- (auto)” clears it, so the service falls back to whatever a matching opportunity says."
+            onPick={(next) => { setBulkStatus(next === '-' ? '-' : next); setBulkUndo(null); }}
+            minWidth={130}
+          />
+          <button
+            type="button"
+            onClick={applyBulkStatus}
+            disabled={statusBusy || !statusPlan?.change.length}
+            title={bulkStatusTarget === 'service' && !bulkService
+              ? 'Pick a service in the box above first — this writes the status for that one service.'
+              : 'Writes this status to each client’s company card. A scope the card has ruled on is not new business, so every client this touches stops being sized and its money leaves the totals above. It can be undone.'}
+            style={{
+              padding: '0.35rem 0.8rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
+              border: '1px solid ' + (statusPlan?.change.length && !statusBusy ? '#1D4ED8' : '#CBD5E1'),
+              background: statusPlan?.change.length && !statusBusy ? '#1D4ED8' : '#F8FAFC',
+              color: statusPlan?.change.length && !statusBusy ? '#fff' : '#94A3B8',
+              cursor: statusPlan?.change.length && !statusBusy ? 'pointer' : 'default',
+            }}
+          >{statusBusy
+            ? 'Setting…'
+            : (statusPlan?.change.length
+              ? `Set on ${statusPlan.change.length} client${statusPlan.change.length === 1 ? '' : 's'}`
+              : 'Set status')}</button>
+        </div>
+
+        {/* Same contract as the add's breakdown: every client the write would
+            NOT touch is accounted for by name of reason, so a count of 14 out
+            of 33 listed is never a number the reader has to explain. */}
+        {statusPlan && (
+          <div style={{ fontSize: '0.73rem', color: '#64748B', marginTop: '0.35rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <span>
+              <strong style={{ color: '#0F172A' }}>{statusPlan.change.length}</strong>
+              {bulkStatus === '-' ? ' will be cleared' : ' will change'}
+            </span>
+            {statusPlan.same.length > 0 && (
+              <span title="The card already says exactly this for these clients, so they are not written to.">
+                <strong style={{ color: '#334155' }}>{statusPlan.same.length}</strong> already read that way
+              </span>
+            )}
+            {statusPlan.skipped.length > 0 && (
+              <span title={bulkStatusTarget === 'scope'
+                ? 'No services picked for these clients, so there is nothing to put a status on. Pick some, or switch to the single service above.'
+                : 'No service is picked in the box above, so there is nothing to put a status on.'}>
+                <strong style={{ color: '#B45309' }}>{statusPlan.skipped.length}</strong> have no service to set
+              </span>
+            )}
+            {statusPlan.change.length === 0 && statusPlan.skipped.length === 0 && (
               <span style={{ color: '#94A3B8' }}>Nothing to do for the clients listed below.</span>
             )}
           </div>
