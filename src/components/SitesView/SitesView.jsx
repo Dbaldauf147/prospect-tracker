@@ -15499,7 +15499,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           scopeLabel={activeDivisionLabel()}
         />
       ) : mainTab === 'mapping' ? (
-        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} />
+        <UtilityMappingView siteUtilities={siteUtilities} referenceUtilityNames={knownUtilityNames} onExportSiteMapping={exportUtilityMappingAnalysis} settings={settings} updateSettings={updateSettings} />
       ) : (
     <div
       className={styles.wrapper}

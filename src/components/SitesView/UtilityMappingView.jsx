@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import * as XLSX from 'xlsx';
 import {
   saveList as saveListToIDB,
@@ -63,6 +64,8 @@ const NAME_MAP_COLUMNS = [
 const COL_WIDTHS_KEY = 'utility-name-map-col-widths';
 const COL_VISIBLE_KEY = 'utility-name-map-col-visible';
 const MIN_COL_WIDTH = 60;
+// What this table's layout is called in settings.tablePrefs.
+const PREFS_TABLE_ID = 'utility-name-map';
 
 // Read a persisted column-preference object from localStorage, merged onto
 // the defaults so a newly-added column always has a value.
@@ -83,7 +86,7 @@ function pickColumn(headers, re, fallback = '') {
   return headers.find(h => re.test(String(h))) || fallback;
 }
 
-export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [], onExportSiteMapping }) {
+export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [], onExportSiteMapping, settings, updateSettings }) {
   const [exporting, setExporting] = useState(false);
 
   // ---- Name-mapping section state --------------------------------------
@@ -97,14 +100,26 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
   const nameMapFileRef = useRef(null);
 
   // ---- Name-map table: column widths / visibility / per-column search ---
-  const [colWidths, setColWidths] = useState(() => loadColPref(COL_WIDTHS_KEY, DEFAULT_COL_WIDTHS));
-  const [colVisible, setColVisible] = useState(() => loadColPref(COL_VISIBLE_KEY, DEFAULT_COL_VISIBLE));
+  // localStorage stays the fast local copy; settings.tablePrefs carries the
+  // same layout to the user's other machine. `colVisible` is a per-column
+  // on/off map rather than a list, so it rides under `visible` as-is.
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => loadColPref(COL_WIDTHS_KEY, DEFAULT_COL_WIDTHS),
+    writeLocal: (w) => { try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(w)); } catch { /* ignore */ } },
+    fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...(w || {}) }),
+  });
+  const [colVisible, setColVisible] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
+    readLocal: () => loadColPref(COL_VISIBLE_KEY, DEFAULT_COL_VISIBLE),
+    writeLocal: (v) => { try { localStorage.setItem(COL_VISIBLE_KEY, JSON.stringify(v)); } catch { /* ignore */ } },
+    fromRemote: (v) => ({ ...DEFAULT_COL_VISIBLE, ...(v || {}) }),
+  });
   const [colSearch, setColSearch] = useState({}); // key -> query string
   const [showColMenu, setShowColMenu] = useState(false);
   const resizingRef = useRef(null);
 
-  useEffect(() => { try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths)); } catch { /* ignore */ } }, [colWidths]);
-  useEffect(() => { try { localStorage.setItem(COL_VISIBLE_KEY, JSON.stringify(colVisible)); } catch { /* ignore */ } }, [colVisible]);
+
 
   // Close the column-visibility menu on any outside click.
   useEffect(() => {
@@ -121,7 +136,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     if (!r) return;
     const w = Math.max(MIN_COL_WIDTH, r.startWidth + (e.clientX - r.startX));
     setColWidths(prev => ({ ...prev, [r.key]: w }));
-  }, []);
+  }, [setColWidths]);
   const onResizeEnd = useCallback(() => {
     resizingRef.current = null;
     document.removeEventListener('mousemove', onResizeMove);
@@ -137,7 +152,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
   const toggleColumn = useCallback((key) => {
     setColVisible(prev => ({ ...prev, [key]: prev[key] === false }));
-  }, []);
+  }, [setColVisible]);
 
   // ---- Name-mapping section: restore + upload + paste + persist --------
   useEffect(() => {

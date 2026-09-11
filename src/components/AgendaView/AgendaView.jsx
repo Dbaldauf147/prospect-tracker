@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
+import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
 import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -301,6 +302,19 @@ function persistBulkColVisible(set) {
   try { localStorage.setItem(BULK_COL_VISIBLE_KEY, JSON.stringify([...set])); } catch {}
 }
 
+// What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
+const BULK_PREFS_TABLE_ID = 'agenda-bulk-contacts';
+
+// A saved visible set, from either copy, with columns added since it was
+// saved switched on — otherwise a new column arrives hidden and the user has
+// to go find it in the Columns menu. (Today: the Full Name composite cell.)
+function bulkVisibleFromSaved(saved) {
+  if (!saved || saved.size === 0) return new Set(BULK_COLS.map(c => c.key));
+  const next = new Set(saved);
+  if (!next.has('fullName')) next.add('fullName');
+  return next;
+}
+
 const companyRuleKey = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 function loadCompanyRules() {
   try { return JSON.parse(userLsGet(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
@@ -503,7 +517,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const [companyRules, setCompanyRules] = useState(() => loadCompanyRules());
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   // Column-resize + visibility state for the Bulk Add Contacts table.
-  const [bulkColWidths, setBulkColWidths] = useState(() => loadBulkColWidths());
+  const [bulkColWidths, setBulkColWidths] = useSyncedTablePref({
+    tableId: BULK_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: loadBulkColWidths,
+    writeLocal: persistBulkColWidths,
+  });
   const [bulkColTextFilters, setBulkColTextFilters] = useState({});
   const [bulkMassMode, setBulkMassMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
@@ -557,16 +575,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       return n;
     });
   }, []);
-  const [bulkColVisible, setBulkColVisible] = useState(() => {
-    const saved = loadBulkColVisible();
-    if (saved) {
-      // Auto-enable new columns added since the user's last visit so
-      // they appear without a manual Columns-menu toggle. (Today: the
-      // Full Name composite cell.)
-      if (!saved.has('fullName')) saved.add('fullName');
-      return saved;
-    }
-    return new Set(BULK_COLS.map(c => c.key));
+  const [bulkColVisible, setBulkColVisible] = useSyncedTablePref({
+    tableId: BULK_PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
+    readLocal: () => bulkVisibleFromSaved(loadBulkColVisible()),
+    writeLocal: persistBulkColVisible,
+    toRemote: SET_PREF.toRemote,
+    fromRemote: (a) => bulkVisibleFromSaved(SET_PREF.fromRemote(a)),
   });
   // BULK_COLS filtered by visibility, with a dynamically-injected
   // _select checkbox column at the left edge when mass-edit mode is on.
@@ -583,10 +597,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     setBulkColVisible(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
-      persistBulkColVisible(next);
       return next;
     });
-  }, []);
+  }, [setBulkColVisible]);
   const bulkResizingRef = useRef(null);
   const handleBulkResize = useCallback((e, colKey) => {
     e.preventDefault();
@@ -605,13 +618,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       document.removeEventListener('mouseup', up);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      setBulkColWidths(prev => { persistBulkColWidths(prev); return prev; });
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [bulkColWidths]);
+  }, [bulkColWidths, setBulkColWidths]);
   const saveCompanyRule = useCallback((raw, canonical) => {
     const k = companyRuleKey(raw);
     const v = String(canonical || '').trim();

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
 import { saveList, loadList, clearList } from '../../utils/uploadedListStore';
 import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
@@ -27,6 +28,8 @@ import styles from './MasterSiteListView.module.css';
 // Per-user UI preferences (column widths + hidden columns).
 const WIDTHS_LS_KEY = 'master-site-list:col-widths';
 const HIDDEN_LS_KEY = 'master-site-list:hidden-cols';
+// What this table's layout is called in settings.tablePrefs.
+const PREFS_TABLE_ID = 'master-site-list';
 const SHOW_FILTERS_LS_KEY = 'master-site-list:show-filters';
 
 const ALL = '__all__';
@@ -343,7 +346,7 @@ function CompanyFilterCombo({ companies, counts, total, value, onChange }) {
   );
 }
 
-export function MasterSiteListView({ prospects = [] }) {
+export function MasterSiteListView({ prospects = [], settings, updateSettings }) {
   const [rows, setRows] = useState([]);
   const [zipMap, setZipMap] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -353,8 +356,20 @@ export function MasterSiteListView({ prospects = [] }) {
   // Column-matching popup: { cells, hasHeader, mapping } once text is parsed.
   const [matcher, setMatcher] = useState(null);
   const [busy, setBusy] = useState('');
-  const [colWidths, setColWidths] = useState(() => readJsonLs(WIDTHS_LS_KEY, {}));
-  const [hiddenCols, setHiddenCols] = useState(() => new Set(readJsonLs(HIDDEN_LS_KEY, [])));
+  // Widths and hidden columns keep their existing per-user localStorage keys
+  // as the fast local copy, and now also ride in settings.tablePrefs so the
+  // layout is the same on the user's other machine.
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => readJsonLs(WIDTHS_LS_KEY, {}),
+    writeLocal: (w) => userLsSet(WIDTHS_LS_KEY, JSON.stringify(w)),
+  });
+  const [hiddenCols, setHiddenCols] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'hidden', settings, updateSettings,
+    readLocal: () => new Set(readJsonLs(HIDDEN_LS_KEY, [])),
+    writeLocal: (set) => userLsSet(HIDDEN_LS_KEY, JSON.stringify([...set])),
+    ...SET_PREF,
+  });
   const [showColMenu, setShowColMenu] = useState(false);
   // Sort: { key, dir } while a column is sorted; key null = natural order.
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
@@ -390,8 +405,7 @@ export function MasterSiteListView({ prospects = [] }) {
   const skipSave = useRef(true);
 
   // Persist column widths / hidden columns per user.
-  useEffect(() => { userLsSet(WIDTHS_LS_KEY, JSON.stringify(colWidths)); }, [colWidths]);
-  useEffect(() => { userLsSet(HIDDEN_LS_KEY, JSON.stringify([...hiddenCols])); }, [hiddenCols]);
+
   useEffect(() => { userLsSet(SHOW_FILTERS_LS_KEY, JSON.stringify(showFilters)); }, [showFilters]);
 
   // Close the Columns popover on outside click / Escape.
@@ -423,7 +437,7 @@ export function MasterSiteListView({ prospects = [] }) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-  }, []);
+  }, [setColWidths]);
 
   const startResize = useCallback((key, e) => {
     e.preventDefault();
@@ -439,7 +453,7 @@ export function MasterSiteListView({ prospects = [] }) {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
-  }, []);
+  }, [setHiddenCols]);
 
   // Header click cycles the sort on that column: asc → desc → off.
   const toggleSort = useCallback((key) => {

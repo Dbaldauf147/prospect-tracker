@@ -1,4 +1,5 @@
 import { Component, Fragment, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { ColumnToggle } from '../common/ColumnToggle';
 import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
@@ -1925,13 +1926,21 @@ function KeyContactsViewInner({
     writeStoredList('col-order', []);
   }
 
-  const [contactColWidths, setContactColWidths] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {};
-      return { ...DEFAULT_CONTACT_COL_WIDTHS, ...saved };
-    } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
+  // Widths keep their existing per-prefix localStorage key as the fast local
+  // copy, and now ride in settings.tablePrefs too, so the layout is the same
+  // on the user's other machine. The prefix is part of the table id because
+  // this view is mounted more than once (Key Contacts, the client rosters)
+  // and each instance keeps its own layout.
+  const [contactColWidths, setContactColWidths] = useSyncedTablePref({
+    tableId: `${storagePrefix}:contacts`, field: 'widths', settings, updateSettings,
+    readLocal: () => {
+      try {
+        return { ...DEFAULT_CONTACT_COL_WIDTHS, ...(JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {}) };
+      } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
+    },
+    writeLocal: (w) => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(w)); } catch { /* storage blocked */ } },
+    fromRemote: (w) => ({ ...DEFAULT_CONTACT_COL_WIDTHS, ...(w || {}) }),
   });
-  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
   // Per-column value filters (Excel-style checklist). Each entry maps a
   // column key → array of selected display values; a row passes when its
   // value for that column is one of them. Absent / empty = column not
@@ -2278,15 +2287,18 @@ function KeyContactsViewInner({
   }, [campaignRecipientOptions, campaignFilterId]);
 
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
-  const [colWidths, setColWidths] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(lsKey('col-widths'))) || {};
-      return { ...DEFAULT_COL_WIDTHS, ...saved };
-    } catch { return DEFAULT_COL_WIDTHS; }
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: `${storagePrefix}:companies`, field: 'widths', settings, updateSettings,
+    readLocal: () => {
+      try {
+        return { ...DEFAULT_COL_WIDTHS, ...(JSON.parse(localStorage.getItem(lsKey('col-widths'))) || {}) };
+      } catch { return DEFAULT_COL_WIDTHS; }
+    },
+    writeLocal: (w) => { try { localStorage.setItem(lsKey('col-widths'), JSON.stringify(w)); } catch { /* storage blocked */ } },
+    fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...(w || {}) }),
   });
   const [sortKey, setSortKey] = useState(() => localStorage.getItem(lsKey('sort-key')) || 'keyContacts');
   const [sortDir, setSortDir] = useState(() => localStorage.getItem(lsKey('sort-dir')) || 'desc');
-  useEffect(() => { try { localStorage.setItem(lsKey('col-widths'), JSON.stringify(colWidths)); } catch {} }, [colWidths]);
   useEffect(() => { try { localStorage.setItem(lsKey('sort-key'), sortKey); } catch {} }, [sortKey]);
   useEffect(() => { try { localStorage.setItem(lsKey('sort-dir'), sortDir); } catch {} }, [sortDir]);
 
