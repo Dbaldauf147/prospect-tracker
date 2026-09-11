@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey, readAllProspects } from '../utils/firestoreSync';
 import { createAddProspectGuard } from '../utils/addProspectGuard';
 import { clearImportedTierOnEdit } from '../utils/tierSource';
-import seedData from '../data/seedProspects';
 
 // Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
 // its current PE Stage (the PE Portfolio "Days in Stage" board diffs this
@@ -97,6 +96,11 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
         // surprised by 99 admin-owned companies.
         if (!seededRef.current && user.email === 'baldaufdan@gmail.com') {
           seededRef.current = true;
+          // Loaded on demand rather than imported at the top: the seed is
+          // 40 kB of company records that only this one account can ever
+          // use, and a static import puts it in the entry chunk that every
+          // user downloads before the login page paints.
+          const { default: seedData } = await import('../data/seedProspects');
           const didSeed = await seedProspects(seedData);
           if (didSeed) console.log('Seeded', seedData.length, 'prospects');
         }
