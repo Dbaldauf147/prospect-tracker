@@ -20,6 +20,7 @@ globalThis.localStorage = {
 
 const {
   tablePrefsKeys, persistTablePrefs, flushTablePrefs, readRemoteTablePrefs, settingsHaveLoaded,
+  sameStoredValue, SET_PREF,
   loadColWidths, loadColHidden, loadColStarred, loadColOrder, loadColRemoved, loadColVisibleRaw,
   encodeRemoteMap, decodeRemoteMap,
 } = await import('../src/utils/tablePrefsSync.js');
@@ -139,6 +140,25 @@ eq([...loadColStarred(keys)], [], 'and a null starred list as nothing starred');
 // An empty saved visible list would render a table with no columns at all.
 store.set(keys.visible, '[]');
 eq(loadColVisibleRaw(keys), null, 'an empty visible list reads as no preference, not "show nothing"');
+
+// ── the stored-shape comparison ──────────────────────────────────────────
+//
+// How a table decides whether an incoming layout is news. It has to compare
+// in the shape the layout is STORED in: a hidden-column list is a Set while
+// it's in state, and JSON.stringify of any Set is "{}" — so comparing live
+// values reported every incoming set as already-equal, and a column hidden on
+// one machine never arrived on the other. Caught in a browser; pinned here.
+
+eq(sameStoredValue('{"a":1}', { a: 1 }), true, 'an unchanged map is not news');
+eq(sameStoredValue('{"a":2}', { a: 1 }), false, 'a changed map is');
+eq(sameStoredValue('["x"]', new Set(['x']), SET_PREF.toRemote), true,
+  'a Set holding the same keys is not news');
+eq(sameStoredValue('["x","y"]', new Set(['x']), SET_PREF.toRemote), false,
+  'a Set that gained a key IS news — the bug this pins made this read as equal');
+eq(sameStoredValue('[]', new Set(['x']), SET_PREF.toRemote), false,
+  'and so is one that lost its last key');
+eq(SET_PREF.fromRemote(['a', 'b']) instanceof Set, true, 'a stored list reads back as a Set');
+eq([...SET_PREF.fromRemote(null)], [], 'and a missing one as an empty Set');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

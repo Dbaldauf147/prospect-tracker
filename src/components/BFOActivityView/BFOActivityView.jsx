@@ -5,6 +5,7 @@
 // color-coded green/amber/red.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { persistTablePrefs, readRemoteTablePrefs, settingsHaveLoaded } from '../../utils/tablePrefsSync';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { saveBfoActivity } from '../../utils/bfoActivityStore';
@@ -38,6 +39,16 @@ function oppTargetLabel(r) {
 const STORE = 'bfo-activity';
 const KEY = 'current';
 const PREFS_KEY = 'prefs';
+// What this table's layout is called in settings.tablePrefs. The prefs record
+// itself stays in IndexedDB — this is the copy that reaches the other machine.
+const PREFS_TABLE_ID = 'bfo-activity';
+
+// One string for a layout, used to tell "the same as what we last adopted or
+// wrote" from a genuine change. Hidden columns are an on/off map here and a
+// key array in settings, so both sides are compared in the settings shape.
+function layoutSignature(colWidths, hiddenCols) {
+  return JSON.stringify({ widths: colWidths || {}, hidden: Object.keys(hiddenCols || {}).sort() });
+}
 const LEAD_SOURCE_COL = 'Lead Source';
 
 // Values an Opps 2 "BFO Link" (BFO Opportunity Name) cell can hold that
@@ -179,6 +190,40 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
   useEffect(() => {
     if (!hydratedRef.current) return;
     dbPut(STORE, { colWidths, hiddenCols }, PREFS_KEY).catch(err => console.warn('BFO prefs save failed', err));
+  }, [colWidths, hiddenCols]);
+
+  // The layout last taken from settings or written to them, so an echo of our
+  // own write doesn't read as a change from the other machine (and back).
+  const syncedLayoutRef = useRef(null);
+  const remoteLayout = readRemoteTablePrefs(settings, PREFS_TABLE_ID);
+  const remoteSignature = remoteLayout
+    ? layoutSignature(remoteLayout.widths, Object.fromEntries((remoteLayout.hidden || []).map(k => [k, true])))
+    : null;
+
+  // Adopt the layout saved on the user's other machine.
+  useEffect(() => {
+    if (!settingsHaveLoaded(settings) || !remoteSignature) return;
+    if (remoteSignature === syncedLayoutRef.current) return;
+    syncedLayoutRef.current = remoteSignature;
+    const { widths, hidden } = JSON.parse(remoteSignature);
+    setColWidths(widths);
+    setHiddenCols(Object.fromEntries(hidden.map(k => [k, true])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteSignature]);
+
+  // Publish a layout changed here. Skipped for the value we just adopted,
+  // and until the IndexedDB hydration has run — before that the state is the
+  // empty default, which would publish a blank layout over a real one.
+  useEffect(() => {
+    if (!hydratedRef.current || !settingsHaveLoaded(settings) || !updateSettings) return;
+    const mine = layoutSignature(colWidths, hiddenCols);
+    if (mine === syncedLayoutRef.current) return;
+    syncedLayoutRef.current = mine;
+    persistTablePrefs(null, PREFS_TABLE_ID, settings, updateSettings, {
+      widths: colWidths,
+      hidden: Object.keys(hiddenCols || {}),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colWidths, hiddenCols]);
 
   function toggleHidden(col) {

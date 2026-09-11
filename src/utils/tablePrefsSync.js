@@ -151,7 +151,9 @@ let flushTimer = null;
  * `patch` carries only the kinds that changed; a Set or an array is fine for
  * the list-shaped ones. Without `settings`/`updateSettings` this still writes
  * the local copy, so a table that isn't wired for sync keeps working exactly
- * as it did.
+ * as it did. Pass `keys` as null to write ONLY the remote copy — that's for a
+ * table that already has its own local storage (IndexedDB, a per-user
+ * localStorage key) and is adopting just the syncing half.
  *
  * The local write lands immediately — it's synchronous and free, and it's
  * what the table re-reads on the next load. The Firestore write is COALESCED,
@@ -162,12 +164,15 @@ let flushTimer = null;
  * write, a beat after the mouse stops.
  */
 export function persistTablePrefs(keys, tableId, settings, updateSettings, patch) {
-  if (patch.widths !== undefined) writeJson(keys.widths, patch.widths);
-  if (patch.names !== undefined) writeJson(keys.names, patch.names);
-  if (patch.order !== undefined) writeJson(keys.order, [...patch.order]);
-  if (patch.removed !== undefined) writeJson(keys.removed, [...patch.removed]);
-  if (patch.hidden !== undefined) writeJson(keys.hidden, [...patch.hidden]);
-  if (patch.starred !== undefined) writeJson(keys.starred, [...patch.starred]);
+  if (keys) {
+    if (patch.widths !== undefined) writeJson(keys.widths, patch.widths);
+    if (patch.names !== undefined) writeJson(keys.names, patch.names);
+    if (patch.order !== undefined) writeJson(keys.order, [...patch.order]);
+    if (patch.removed !== undefined) writeJson(keys.removed, [...patch.removed]);
+    if (patch.hidden !== undefined) writeJson(keys.hidden, [...patch.hidden]);
+    if (patch.starred !== undefined) writeJson(keys.starred, [...patch.starred]);
+    if (patch.visible !== undefined) writeJson(keys.visible, [...patch.visible]);
+  }
   if (!settings || !updateSettings || !tableId) return;
   const prior = pending.get(tableId);
   pending.set(tableId, {
@@ -188,6 +193,7 @@ function encodeEntry(current, patch) {
   if (patch.removed !== undefined) next.removed = [...patch.removed];
   if (patch.hidden !== undefined) next.hidden = [...patch.hidden];
   if (patch.starred !== undefined) next.starred = [...patch.starred];
+  if (patch.visible !== undefined) next.visible = [...patch.visible];
   return next;
 }
 
@@ -231,3 +237,21 @@ if (typeof window !== 'undefined') {
     if (document.visibilityState === 'hidden') flushTablePrefs();
   });
 }
+
+/**
+ * Is what's stored remotely the same as what this table is showing?
+ *
+ * Compared in the STORED shape, never the live one. A hidden-column list is a
+ * Set while it's in state, and `JSON.stringify` of ANY Set is "{}" — so
+ * comparing live values reported every incoming set as already-equal, and a
+ * column hidden on the other machine never arrived.
+ */
+export function sameStoredValue(remoteJson, value, toRemote = (v) => v) {
+  return remoteJson === JSON.stringify(toRemote(value));
+}
+
+/** A Set-valued layout kind (hidden, visible, starred) stored as an array. */
+export const SET_PREF = {
+  toRemote: (s) => [...s],
+  fromRemote: (a) => new Set(Array.isArray(a) ? a : []),
+};

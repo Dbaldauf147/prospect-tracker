@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -413,6 +414,8 @@ const POST_SALE_COLUMNS = [
 // this floor are clamped so a column can't be dragged shut.
 const POST_SALE_WIDTHS_KEY = 'prospect-col-widths-postsale';
 const POST_SALE_MIN_WIDTH = 60;
+// What this table's widths are called in settings.tablePrefs.
+const POST_SALE_PREFS_TABLE_ID = 'clients-post-sale';
 
 function loadPostSaleWidths() {
   try { return JSON.parse(localStorage.getItem(POST_SALE_WIDTHS_KEY)) || {}; } catch { return {}; }
@@ -424,9 +427,15 @@ function savePostSaleWidths(w) {
 // "Post-Sale Follow-Up" subtab: every uploaded deal missing a Follow Up On
 // Sale value, flagged for attention. Sourced from the same uploaded deals
 // list the Deals subtab shows (so it stays in sync with that data).
-function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
+function PostSaleFollowUpView({ deals, onUpdateFollowUp, settings, updateSettings }) {
   const [query, setQuery] = useState('');
-  const [colWidths, setColWidths] = useState(loadPostSaleWidths);
+  // localStorage keeps drawing the first paint; settings.tablePrefs carries
+  // the same widths to the user's other machine.
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: POST_SALE_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: loadPostSaleWidths,
+    writeLocal: savePostSaleWidths,
+  });
 
   const getWidth = (col) => colWidths[col.key] || col.minWidth;
 
@@ -442,11 +451,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
 
     function onMouseMove(ev) {
       const next = Math.max(POST_SALE_MIN_WIDTH, startWidth + (ev.clientX - startX));
-      setColWidths(prev => {
-        const updated = { ...prev, [colKey]: next };
-        savePostSaleWidths(updated);
-        return updated;
-      });
+      setColWidths(prev => ({ ...prev, [colKey]: next }));
     }
     function onMouseUp() {
       document.removeEventListener('mousemove', onMouseMove);
@@ -462,7 +467,6 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp }) {
 
   function resetWidths() {
     setColWidths({});
-    savePostSaleWidths({});
   }
 
   // The shared row builder the Pipeline table and the Issues detector run on:
@@ -1406,7 +1410,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} />
+        <PostSaleFollowUpView deals={dealsList} onUpdateFollowUp={updateFollowUpOnSale} settings={settings} updateSettings={updateSettings} />
       </div>
     );
   }

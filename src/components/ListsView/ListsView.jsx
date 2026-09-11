@@ -441,7 +441,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           />
         )}
         {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} onSelectProspect={onSelectProspect} />}
-        {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} />}
+        {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} settings={settings} updateSettings={updateSettings} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
