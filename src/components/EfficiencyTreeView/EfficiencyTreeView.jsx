@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './EfficiencyTreeView.module.css';
 import { DEFAULT_EFFICIENCY_TREE } from '../../data/efficiencyDecisionTree';
 import {
@@ -6,6 +7,7 @@ import {
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, treeStats,
   updateBranch, updateNode,
 } from '../../utils/decisionTree';
+import { edgePath, layoutTree } from '../../utils/treeLayout';
 
 // The page for the C&I efficiency decision tree: walk it to make a call on a
 // measure, or open the map and edit the flow itself.
@@ -151,10 +153,98 @@ function NodeEditor({ tree, nodeId, onChange, onSelect }) {
   );
 }
 
+// The popup behind a box in the diagram. A box only has room for a title, so
+// this is where the detail lives — plus the two questions you actually have
+// when you click one: what leads here, and where does it go next. Both lists
+// are clickable, so the popup doubles as a way to move around the flow
+// without hunting for the next box on the canvas.
+function NodeDetailModal({ tree, nodeId, editing, onClose, onGoTo, onWalkFrom, onChange }) {
+  const node = getNode(tree, nodeId);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const parents = useMemo(() => {
+    if (!node) return [];
+    const out = [];
+    for (const other of Object.values(tree.nodes)) {
+      for (const b of other.branches) {
+        if (b.to === node.id) out.push({ id: other.id, title: other.title, label: b.label });
+      }
+    }
+    return out;
+  }, [tree, node]);
+
+  if (!node) return null;
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onClose}>
+      <div className={styles.modalCard} onMouseDown={e => e.stopPropagation()} role="dialog" aria-label={node.title}>
+        <div className={styles.modalHead}>
+          <span className={node.kind === 'outcome' ? styles.kindOutcome : styles.kindQuestion}>
+            {node.kind === 'outcome' ? 'Do this' : 'Decide'}
+          </span>
+          <h2 className={styles.modalTitle}>{node.title || '(untitled step)'}</h2>
+          <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className={styles.modalBody}>
+          {node.detail
+            ? <NodeDetail detail={node.detail} />
+            : <div className={styles.emptyNote}>No detail on this step yet.{editing ? '' : ' Turn on Edit to write some.'}</div>}
+
+          {parents.length > 0 && (
+            <div className={styles.modalSection}>
+              <div className={styles.fieldLabel}>Reached from</div>
+              {parents.map(p => (
+                <button key={`${p.id}-${p.label}`} type="button" className={styles.linkRow} onClick={() => onGoTo(p.id)}>
+                  <span className={styles.linkRowLabel}>{p.title || '(untitled step)'}</span>
+                  <span className={styles.linkRowNote}>{p.label || '(unlabelled branch)'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.modalSection}>
+            <div className={styles.fieldLabel}>Leads to</div>
+            {node.branches.length === 0 && <div className={styles.emptyNote}>Nothing — this is an end of the route.</div>}
+            {node.branches.map(b => {
+              const target = b.to ? getNode(tree, b.to) : null;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  className={target ? styles.linkRow : styles.linkRowDead}
+                  disabled={!target}
+                  onClick={() => target && onGoTo(b.to)}
+                >
+                  <span className={styles.linkRowLabel}>{b.label || '(unlabelled branch)'}</span>
+                  <span className={styles.linkRowNote}>{target ? target.title : 'not linked yet'}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {editing && <NodeEditor tree={tree} nodeId={node.id} onChange={onChange} onSelect={onGoTo} />}
+        </div>
+
+        <div className={styles.modalFoot}>
+          <button type="button" className={styles.primaryBtn} onClick={() => onWalkFrom(node.id)}>Walk from here</button>
+          <button type="button" className={styles.smallBtn} onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, updateSettings }) {
   const saved = settings[SETTINGS_KEY];
   const [tree, setTree] = useState(() => normalizeTree(saved || DEFAULT_EFFICIENCY_TREE));
-  const [mode, setMode] = useState('walk');
+  const [mode, setMode] = useState('diagram');
   const [editing, setEditing] = useState(false);
   const [trail, setTrail] = useState([]);           // node ids answered through, root first
   const [selectedId, setSelectedId] = useState(null); // the step the map is inspecting
@@ -162,6 +252,9 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
+  const [zoom, setZoom] = useState(0.8);
+  const [popupId, setPopupId] = useState(null);   // the box whose detail is open
+  const canvasWrapRef = useRef(null);
 
   // A save is owed (debounce running) or in the air. While that's true a
   // snapshot arriving from Firestore is older than what's on screen, so the
@@ -209,6 +302,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const stats = useMemo(() => treeStats(tree), [tree]);
   const rows = useMemo(() => outlineRows(tree), [tree]);
   const orphans = useMemo(() => orphanIds(tree), [tree]);
+  const layout = useMemo(() => layoutTree(tree), [tree]);
 
   // Where the walk is standing. The trail holds the ids answered through; an
   // empty trail means the root, and a trail whose last step has been deleted
@@ -228,7 +322,43 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   function walkFrom(nodeId) {
     const path = pathFromRoot(tree, nodeId);
     setTrail(path ? path.map(p => p.nodeId) : [nodeId]);
+    setPopupId(null);
     setMode('walk');
+  }
+
+  // Scale the diagram so the whole flow fits the window it's shown in. The
+  // canvas is measured rather than assumed, because how much room there is
+  // depends on the browser window, not on the tree.
+  function zoomToFit() {
+    const box = canvasWrapRef.current?.getBoundingClientRect();
+    if (!box || !layout.width || !layout.height) return;
+    const fit = Math.min((box.width - 24) / layout.width, (box.height - 24) / layout.height);
+    setZoom(Math.max(0.2, Math.min(1.5, fit)));
+  }
+
+  // Drag anywhere on the canvas background to pan it, the way every other
+  // diagram behaves. Buttons and boxes keep their own clicks: the drag only
+  // starts on a primary press that didn't land on one.
+  function startPan(e) {
+    const wrap = canvasWrapRef.current;
+    if (!wrap || e.button !== 0 || e.target.closest('button')) return;
+    const startX = e.clientX, startY = e.clientY;
+    const fromLeft = wrap.scrollLeft, fromTop = wrap.scrollTop;
+    let moved = false;
+    const onMove = (ev) => {
+      if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) moved = true;
+      wrap.scrollLeft = fromLeft - (ev.clientX - startX);
+      wrap.scrollTop = fromTop - (ev.clientY - startY);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      wrap.classList.remove(styles.canvasPanning);
+      if (moved) wrap.dataset.panned = '1';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    wrap.classList.add(styles.canvasPanning);
   }
 
   function resetToTemplate() {
@@ -278,11 +408,23 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         </div>
         <div className={styles.headerActions}>
           <div className={styles.modeSwitch}>
+            <button type="button" className={mode === 'diagram' ? styles.modeBtnActive : styles.modeBtn}
+              onClick={() => setMode('diagram')}>Diagram</button>
             <button type="button" className={mode === 'walk' ? styles.modeBtnActive : styles.modeBtn}
               onClick={() => setMode('walk')}>Walk it</button>
             <button type="button" className={mode === 'map' ? styles.modeBtnActive : styles.modeBtn}
               onClick={() => setMode('map')}>Map &amp; edit</button>
           </div>
+          {mode === 'diagram' && (
+            <div className={styles.zoomBar}>
+              <button type="button" className={styles.iconBtn} title="Zoom out"
+                onClick={() => setZoom(z => Math.max(0.2, +(z - 0.1).toFixed(2)))}>−</button>
+              <span className={styles.zoomLevel}>{Math.round(zoom * 100)}%</span>
+              <button type="button" className={styles.iconBtn} title="Zoom in"
+                onClick={() => setZoom(z => Math.min(1.5, +(z + 0.1).toFixed(2)))}>+</button>
+              <button type="button" className={styles.smallBtn} onClick={zoomToFit}>Fit</button>
+            </div>
+          )}
           <label className={styles.editToggle} title="Show the editor for each step">
             <input type="checkbox" checked={editing} onChange={e => setEditing(e.target.checked)} />
             Edit
@@ -299,6 +441,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         {orphans.length > 0 && <span className={styles.warn}>{orphans.length} step{orphans.length === 1 ? '' : 's'} nothing reaches</span>}
         {!settingsLoaded && <span className={styles.muted}>Loading your saved tree…</span>}
         {settingsLoaded && !saved && <span className={styles.muted}>Showing the built-in template — your first edit saves a copy of your own.</span>}
+        {mode === 'diagram' && <span className={styles.muted}>Click a box for the detail · drag to pan</span>}
         {status && <span className={styles.muted}>{status}</span>}
       </div>
 
@@ -315,7 +458,87 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         </div>
       )}
 
-      {mode === 'walk' ? (
+      {mode === 'diagram' ? (
+        <div
+          className={styles.canvasWrap}
+          ref={canvasWrapRef}
+          onMouseDown={startPan}
+          title="Drag to pan · click a box for the detail"
+        >
+          <div className={styles.canvas} style={{ width: layout.width * zoom, height: layout.height * zoom }}>
+            <div className={styles.canvasInner} style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
+              <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
+                <defs>
+                  <marker id="eff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+                  </marker>
+                </defs>
+                {layout.edges.map(e => {
+                  // An edge lights up when both ends are consecutive steps on
+                  // the route currently being walked, so the diagram shows
+                  // where you are rather than just what exists.
+                  const i = trailSteps.indexOf(e.fromId);
+                  const onTrail = i !== -1 && trailSteps[i + 1] === e.toId;
+                  return (
+                    <path
+                      key={`${e.fromId}-${e.branchId}`}
+                      d={edgePath(e)}
+                      className={onTrail ? styles.edgeOnTrail : (e.back ? styles.edgeBack : styles.edge)}
+                      markerEnd="url(#eff-arrow)"
+                    />
+                  );
+                })}
+              </svg>
+
+              {layout.edges.map(e => (
+                <span
+                  key={`label-${e.fromId}-${e.branchId}`}
+                  className={e.back ? styles.edgeLabelBack : styles.edgeLabel}
+                  style={{ left: e.labelX, top: e.labelY }}
+                  title={e.label}
+                >{e.label || '—'}</span>
+              ))}
+
+              {layout.nodes.map(box => {
+                const node = getNode(tree, box.id);
+                if (!node) return null;
+                const onTrail = trailSteps.includes(box.id);
+                const here = trailSteps[trailSteps.length - 1] === box.id;
+                const cls = [
+                  node.kind === 'outcome' ? styles.boxOutcome : styles.boxQuestion,
+                  box.orphan ? styles.boxOrphan : '',
+                  onTrail ? styles.boxOnTrail : '',
+                  here ? styles.boxHere : '',
+                  popupId === box.id ? styles.boxOpen : '',
+                ].filter(Boolean).join(' ');
+                return (
+                  <button
+                    key={box.id}
+                    type="button"
+                    className={cls}
+                    style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+                    onClick={(ev) => {
+                      // A click that ended a pan isn't a click on the box.
+                      const wrap = canvasWrapRef.current;
+                      if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
+                      setPopupId(box.id);
+                      setSelectedId(box.id);
+                    }}
+                    title={node.detail ? `${node.title}\n\nClick for the detail` : node.title}
+                  >
+                    <span className={styles.boxTitle}>{node.title || '(untitled step)'}</span>
+                    <span className={styles.boxMeta}>
+                      {box.id === tree.rootId && <span className={styles.rootChip}>start</span>}
+                      {box.orphan && <span className={styles.repeatChip}>unreachable</span>}
+                      {node.branches.length === 0 && !box.orphan && <span className={styles.repeatChip}>end</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : mode === 'walk' ? (
         <div className={styles.body}>
           <div className={styles.trail}>
             {trailSteps.map((id, i) => {
@@ -506,6 +729,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             )}
           </div>
         </div>
+      )}
+
+      {popupId && (
+        <NodeDetailModal
+          tree={tree}
+          nodeId={popupId}
+          editing={editing}
+          onClose={() => setPopupId(null)}
+          onGoTo={(id) => { setPopupId(id); setSelectedId(id); }}
+          onWalkFrom={walkFrom}
+          onChange={applyTree}
+        />
       )}
     </div>
   );

@@ -655,3 +655,304 @@
     border-right: none;
   }
 }
+
+/* ── diagram mode ────────────────────────────────────────────────────── */
+
+.zoomBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-left: 0.2rem;
+}
+
+.zoomLevel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  min-width: 2.6rem;
+  text-align: center;
+}
+
+.canvasWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(30, 42, 54, 0.09) 1px, transparent 0) 0 0 / 22px 22px,
+    var(--color-bg);
+  cursor: grab;
+}
+
+.canvasPanning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* Two boxes: the outer one carries the SCALED size so the scrollbars match
+   what you can see, the inner one is the unscaled coordinate space the
+   layout computed and is then transformed down into it. */
+.canvas {
+  position: relative;
+}
+
+.canvasInner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edge,
+.edgeBack,
+.edgeOnTrail {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.edge {
+  stroke: #94A3B8;
+  color: #94A3B8;
+}
+
+.edgeBack {
+  stroke: #C4B5FD;
+  color: #C4B5FD;
+  stroke-dasharray: 5 4;
+}
+
+.edgeOnTrail {
+  stroke: var(--color-accent);
+  color: var(--color-accent);
+  stroke-width: 2.5;
+}
+
+.edgeLabel,
+.edgeLabelBack {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 9.5rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+}
+
+.edgeLabelBack {
+  color: #6D28D9;
+  font-style: italic;
+}
+
+.boxQuestion,
+.boxOutcome {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.2rem;
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  font-family: inherit;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  overflow: hidden;
+  transition: box-shadow 0.12s, border-color 0.12s, transform 0.12s;
+}
+
+.boxQuestion {
+  border-left: 4px solid var(--color-accent);
+}
+
+.boxOutcome {
+  border-left: 4px solid var(--color-success);
+}
+
+.boxQuestion:hover,
+.boxOutcome:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+}
+
+.boxOnTrail {
+  background: var(--color-accent-light);
+}
+
+.boxHere {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.boxOpen {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  box-shadow: var(--shadow-md);
+}
+
+.boxOrphan {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.boxTitle {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.boxMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.boxMore {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+/* ── the detail popup ────────────────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modalCard {
+  width: 40rem;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.modalTitle {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.modalClose {
+  border: none;
+  background: none;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.modalClose:hover {
+  color: var(--color-text);
+}
+
+.modalBody {
+  padding: 0.8rem 0.9rem;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.modalSection {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.linkRow,
+.linkRowDead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.linkRow:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.linkRowDead {
+  border-style: dashed;
+  cursor: default;
+  opacity: 0.7;
+}
+
+.linkRowLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.linkRowNote {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.modalFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  flex-shrink: 0;
+}
