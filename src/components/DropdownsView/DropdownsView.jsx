@@ -30,6 +30,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ServiceDetailModal } from './ServiceDetailModal';
 import { parseMulti } from '../common/columnLinks';
 import { formatAutoAddList, autoAddedByMap } from '../../utils/serviceAutoAdd';
+import { autoNaedByMap } from '../../utils/serviceAutoNa';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -64,6 +65,12 @@ const SERVICE_TABLE_COLUMNS = [
   // the Opps Scope board, which ticks them the moment this service is
   // ticked (src/utils/serviceAutoAdd.js).
   { key: 'autoAdd',          label: 'Auto-add Services', width: 240,    editable: true  },
+  // The other direction: services this one takes off the table once it's
+  // sold. Picked here; applied by the status boards (the company card and
+  // the Opps Scope picker), which show an N/A nobody typed rather than a
+  // blank row that still reads as an open question
+  // (src/utils/serviceAutoNa.js).
+  { key: 'autoNa',           label: 'Auto-N/A Services', width: 240,    editable: true  },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
   { key: 'ktm',              label: 'KTM',               width: 150,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
@@ -80,6 +87,7 @@ const SERVICES_LATE_COLUMNS = [
   { key: 'sme',       flag: 'servicesSmeColumnRevealed' },
   { key: 'dependsOn', flag: 'servicesDependsOnColumnRevealed' },
   { key: 'autoAdd',   flag: 'servicesAutoAddColumnRevealed' },
+  { key: 'autoNa',    flag: 'servicesAutoNaColumnRevealed' },
   { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
   { key: 'serviceBucket', flag: 'servicesBucketColumnRevealed' },
   // Not a new column, but the survivor of the BFO Tag / Local Project Name
@@ -539,7 +547,13 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
 //
 // Same shape and same picker as Dependent Rollout Services, minus the steps:
 // this column is about what's sold together, not about what waits for what.
-function ServiceAutoAddCell({ value, options, selfName, onCommit }) {
+//
+// The Auto-N/A column is the same cell with the opposite meaning — a list of
+// service names picked off the Solutions list, one chip and a +N — so it
+// renders through here too and passes its own hover text. Only the wording
+// differs; duplicating the picker to change two sentences is how the two
+// columns would start behaving differently.
+function ServiceImpliesCell({ value, options, selfName, onCommit, titleSet, titleEmpty }) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
   const cellRef = useRef(null);
@@ -589,9 +603,7 @@ function ServiceAutoAddCell({ value, options, selfName, onCommit }) {
       <span
         ref={cellRef}
         onClick={(e) => { swallowClick(e); openPicker(); }}
-        title={selected.length > 0
-          ? `Added to Scope with ${selfName}: ${selected.join(', ')}. Click to change.`
-          : `Click to pick the services that go into Scope automatically with ${selfName}`}
+        title={selected.length > 0 ? titleSet(selected) : titleEmpty}
         style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em', overflow: 'hidden' }}
       >
         {/* One line, whatever the count — same reasoning as the dependency
@@ -1245,6 +1257,13 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     () => autoAddedByMap(serviceRows.map(r => r.name), serviceOverrides),
     [serviceRows, serviceOverrides],
   );
+  // And the reverse of the Auto-N/A column, for the same reason: a service
+  // showing a greyed-out N/A on an account nobody set it on is explained
+  // from here — by the sale that retired it.
+  const autoNaedBy = useMemo(
+    () => autoNaedByMap(serviceRows.map(r => r.name), serviceOverrides),
+    [serviceRows, serviceOverrides],
+  );
   const toggleHideService = useCallback((name) => {
     const current = settings?.hiddenServices || [];
     const next = current.includes(name)
@@ -1320,7 +1339,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
       if (name.toLowerCase().includes(term)) return true;
       if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.sme, meta.ktm]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1418,6 +1437,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     rolloutTime: meta?.rolloutTime || '',
     dependsOn: meta?.dependsOn || '',
     autoAdd: meta?.autoAdd || '',
+    autoNa: meta?.autoNa || '',
     sme: meta?.sme || '',
     ktm: meta?.ktm || '',
     _url: serviceLinks[name] || '',
@@ -1488,11 +1508,24 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
             )
             : col.key === 'autoAdd'
             ? (row) => (
-              <ServiceAutoAddCell
+              <ServiceImpliesCell
                 value={row.autoAdd}
                 options={solutionNames}
                 selfName={row.name}
                 onCommit={(v) => saveServiceField(row.name, 'autoAdd', v)}
+                titleSet={(list) => `Added to Scope with ${row.name}: ${list.join(', ')}. Click to change.`}
+                titleEmpty={`Click to pick the services that go into Scope automatically with ${row.name}`}
+              />
+            )
+            : col.key === 'autoNa'
+            ? (row) => (
+              <ServiceImpliesCell
+                value={row.autoNa}
+                options={solutionNames}
+                selfName={row.name}
+                onCommit={(v) => saveServiceField(row.name, 'autoNa', v)}
+                titleSet={(list) => `Marked N/A once ${row.name} is sold: ${list.join(', ')}. Click to change.`}
+                titleEmpty={`Click to pick the services that stop being questions once ${row.name} is sold`}
               />
             )
             : (row) => (
@@ -1866,6 +1899,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
               hidden={hiddenServices.has(detailService.name)}
               dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
               autoAddedBy={autoAddedBy.get(detailService.name.trim().toLowerCase()) || []}
+              autoNaedBy={autoNaedBy.get(detailService.name.trim().toLowerCase()) || []}
               options={solutionNames}
               templates={timelineTemplates}
               bucket={detailService.bucket}
