@@ -10,6 +10,7 @@ import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
 import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { mergeTagEdit } from '../../utils/contactTagReview';
+import { createTagWriter } from '../../utils/tagWriteQueue';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -786,6 +787,23 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   // read first and the user's change applied to those (see mergeTagEdit); a
   // read that fails refuses the write rather than falling back to the cache,
   // which is the bug itself.
+  // One write per burst, never two at once. dans_tags is a single string,
+  // so each click sends the whole list — read, PATCH, cache rewrite — and
+  // firing that per click both dragged and raced: two overlapping
+  // whole-list writes let HubSpot decide which one won. The queue holds a
+  // click briefly, lets the next replace it, and sends only the last (see
+  // utils/tagWriteQueue.js). Flushed when the popup closes so nothing is
+  // left sitting in the timer.
+  const tagWriterRef = useRef(null);
+  const persistTagsRef = useRef(null);
+  if (!tagWriterRef.current) {
+    tagWriterRef.current = createTagWriter({ write: (tagsStr) => persistTagsRef.current(tagsStr) });
+  }
+  useEffect(() => () => { void tagWriterRef.current?.flush(); }, []);
+  function queueTagsString(tagsStr) {
+    return tagWriterRef.current.push(tagsStr);
+  }
+
   async function persistTagsString(tagsStr) {
     const cid = contact?.id || contact?.vid;
     if (!cid) return; // new contact — will be saved when user clicks Save
@@ -830,6 +848,8 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
       setTimeout(() => setTagsSaveStatus(''), 4000);
     }
   }
+
+  persistTagsRef.current = persistTagsString;
 
   useEffect(() => {
     if (!tagsDropdownOpen) return;
@@ -1121,7 +1141,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                                 if (!currentTags.includes(tag)) {
                                   const nextStr = [...currentTags, tag].join(';');
                                   set('dans_tags', nextStr);
-                                  persistTagsString(nextStr);
+                                  queueTagsString(nextStr);
                                 }
                                 setNewTagInput('');
                               }
@@ -1143,7 +1163,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                                   const next = isActive ? currentTags.filter(t => t !== tag) : [...currentTags, tag];
                                   const nextStr = next.join(';');
                                   set('dans_tags', nextStr);
-                                  persistTagsString(nextStr);
+                                  queueTagsString(nextStr);
                                 }}
                                 style={{ accentColor: 'var(--color-accent)', width: '14px', height: '14px', cursor: 'pointer' }}
                               />
