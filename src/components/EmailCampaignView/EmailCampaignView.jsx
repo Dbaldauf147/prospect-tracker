@@ -1,6 +1,10 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { ColumnToggle } from '../common/ColumnToggle';
+import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
+import {
+  collectSuggestions, rowMatchesFilters, activeFilterCount, filtersForColumns,
+} from '../../utils/columnFilter';
 import {
   isColumnVisible, resetToStarred, applyStar, orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
@@ -17,7 +21,8 @@ import {
   isCampaignActive, isCampaignPaused, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
 } from '../../utils/campaignOutreach';
 import {
-  campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, csvFilename, downloadCsv,
+  campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, eventStatusLabel,
+  csvFilename, downloadCsv,
 } from '../../utils/campaignExport';
 import {
   campaignSubjects, primarySubject, withSubjects, parseSubjectLines,
@@ -26,7 +31,7 @@ import {
 import {
   campaignEventUrl, eventLinkHref, eventLinkLabel, withEventUrl, sameEventUrl,
 } from '../../utils/campaignEventLink';
-import { followUpInfo } from '../../utils/campaignFollowUp';
+import { followUpInfo, followUpLabel } from '../../utils/campaignFollowUp';
 import {
   contactOutreach, canEmailContact, outreachCounts, outreachPatch, CONTACT_HOLD_DAYS,
 } from '../../utils/campaignContactHold';
@@ -88,6 +93,9 @@ const CONTACT_COLUMNS = [
   },
 ];
 const CONTACT_COLS_LOCKED = ['email'];
+// What the Outreach column filters on: the words its own dropdown shows, so
+// the box under the heading offers back what the cells above it read.
+const OUTREACH_FILTER_LABEL = { open: 'Contact', hold: 'On hold', avoid: 'Avoid' };
 // See companyFor: what a domain's "brand" must never turn out to be.
 const DOMAIN_SUFFIX_WORDS = new Set(['com', 'co', 'net', 'org', 'gov', 'edu', 'ac', 'ne', 'or']);
 const ACTIONS_COL_WIDTH = 36;
@@ -217,6 +225,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // Which column the contact table is sorted by, and the direction. key === null
   // leaves the table in its natural (roster) order.
   const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
+  // What has been typed into the box under each heading, keyed by column.
+  // Not persisted: a filter is a question being asked right now, and coming
+  // back tomorrow to a table quietly hiding half the roster is the one thing
+  // a remembered filter reliably does.
+  const [colFilters, setColFilters] = useState({});
   // Column layout: what's hidden, what's starred as the user's default view,
   // what's been deleted out of the table, the order, and the widths. Stored
   // as the user set it and reapplied on every visit.
@@ -1143,6 +1156,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // are off the list at the top.
   const OUTREACH_RANK = { open: 0, hold: 1, avoid: 2 };
 
+
   function statusRank(c) {
     if (c.replied) return 4;
     if (c.outOfOffice) return 3;
@@ -1321,22 +1335,6 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     };
   }, [displayResults?.contacts, lookupTracking]);
 
-  // Rows to render, carrying each contact's ORIGINAL index so the row actions
-  // (remove, event status) keep pointing at the right entry in
-  // results.contacts even after the display order changes. A stable sort falls
-  // back to the original index to keep equal rows in their prior order.
-  const sortedContacts = (() => {
-    const list = (displayResults?.contacts || []).map((c, i) => ({ c, i }));
-    if (!sortConfig.key) return list;
-    const dir = sortConfig.dir === 'asc' ? 1 : -1;
-    return list.slice().sort((a, b) => {
-      const va = sortValue(a.c, sortConfig.key);
-      const vb = sortValue(b.c, sortConfig.key);
-      if (va < vb) return -1 * dir;
-      if (va > vb) return 1 * dir;
-      return a.i - b.i;
-    });
-  })();
 
   // Take the open campaign out as a CSV.
   //
@@ -1395,6 +1393,108 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     () => visibleColumns.reduce((sum, c) => sum + widthOf(c), 0) + ACTIONS_COL_WIDTH,
     [visibleColumns, widthOf],
   );
+
+  // ---- Per-column filters -------------------------------------------------
+  // What one row reads as in one column — the text the cell prints, not the
+  // field behind it. Filtering has to match what is on screen: the Sent Date
+  // column says "Jul 15, 2026", so typing "Jul" into the box under it has to
+  // find those rows, and the Status column says "Out of Office", which is not
+  // a field on the contact at all.
+  const contactFilterValue = useCallback((c, key) => {
+    switch (key) {
+      case 'email': return String(c?.email || '');
+      case 'company': return companyFor(c).name;
+      case 'sentDate': return c?.sentDate ? fmtDate(c.sentDate) : '';
+      case 'followUp': return followUpLabel(c);
+      case 'delivery': return DELIVERY_LABEL[deliveryFor(c)] || '';
+      case 'status': return contactStatusLabel(c);
+      case 'outreach': return OUTREACH_FILTER_LABEL[contactOutreach(c)] || '';
+      case 'tracking': {
+        const t = lookupTracking(c?.email);
+        return t ? `${t.clickCount} click${t.clickCount === 1 ? '' : 's'}` : '';
+      }
+      case 'repliedBy': return String(c?.repliedBy || '');
+      case 'replyDate': return c?.replied && c?.replyDate ? fmtDate(c.replyDate) : '';
+      case 'eventStatus': return eventStatusLabel(c?.eventStatus);
+      case 'notes': return String(c?.notes || '');
+      default: return '';
+    }
+  }, [companyFor, deliveryFor, lookupTracking]);
+
+  // Only the columns on screen can be filtered, and a filter left running on
+  // a column that has just been hidden is dropped: rows disappearing with no
+  // box in sight to explain it is the one way a filter row can lie.
+  const liveFilters = useMemo(
+    () => filtersForColumns(colFilters, visibleColumns.map(col => col.key)),
+    [colFilters, visibleColumns],
+  );
+  useEffect(() => {
+    if (liveFilters !== colFilters) setColFilters(liveFilters);
+  }, [liveFilters, colFilters]);
+  const filtersOn = activeFilterCount(liveFilters);
+
+  // Each visible column's own vocabulary, read off the campaign's roster —
+  // so the box under Company offers the companies in THIS campaign and the
+  // box under Status offers the statuses that actually occur in it.
+  const filterSuggestions = useMemo(() => {
+    const contacts = displayResults?.contacts || [];
+    const out = {};
+    for (const col of visibleColumns) {
+      out[col.key] = collectSuggestions(contacts.map(c => contactFilterValue(c, col.key)));
+    }
+    return out;
+  }, [displayResults?.contacts, visibleColumns, contactFilterValue]);
+
+  const setColFilter = (key, value) => setColFilters(prev => ({ ...prev, [key]: value }));
+  const clearColFilters = () => setColFilters({});
+
+  // Where the filter row sticks: directly under the heading row, measured
+  // rather than guessed. A heading that wraps on a narrow column, or a
+  // different font size, moves it — and a filter row parked a few pixels off
+  // either floats over the headings or leaves a gap the first data row shows
+  // through while scrolling.
+  //
+  // The row is held in state rather than a ref so the measurement runs when
+  // the table actually appears. A ref alone doesn't: the table isn't mounted
+  // until a campaign is opened, and an effect watching anything else has
+  // already run and found nothing by then — which parks the filter row at 0,
+  // directly behind the headings.
+  const [headerRowEl, setHeaderRowEl] = useState(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    if (!headerRowEl) return undefined;
+    const measure = () => setHeaderHeight(headerRowEl.getBoundingClientRect().height || 0);
+    measure();
+    // The heading row's height changes with the column widths (a heading
+    // wraps at a narrow one), which no window event reports.
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    ro?.observe(headerRowEl);
+    window.addEventListener('resize', measure);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [headerRowEl]);
+
+  // Rows to render, carrying each contact's ORIGINAL index so the row actions
+  // (remove, event status, notes) keep pointing at the right entry in
+  // results.contacts even after the display order changes. A stable sort falls
+  // back to the original index to keep equal rows in their prior order.
+  const sortedContacts = (() => {
+    let list = (displayResults?.contacts || []).map((c, i) => ({ c, i }));
+    if (filtersOn > 0) {
+      list = list.filter(({ c }) => rowMatchesFilters(
+        Object.fromEntries(Object.keys(liveFilters).map(k => [k, contactFilterValue(c, k)])),
+        liveFilters,
+      ));
+    }
+    if (!sortConfig.key) return list;
+    const dir = sortConfig.dir === 'asc' ? 1 : -1;
+    return list.slice().sort((a, b) => {
+      const va = sortValue(a.c, sortConfig.key);
+      const vb = sortValue(b.c, sortConfig.key);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return a.i - b.i;
+    });
+  })();
 
   const toggleCol = (key) => setColHidden(prev => {
     const next = new Set(prev);
@@ -2186,7 +2286,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               <button
                 onClick={exportContactsCsv}
                 disabled={!(displayResults.contacts || []).length}
-                title="Download this campaign as a CSV: every contact, with send date, delivery, status, clicks, replies and event status"
+                title={filtersOn > 0
+                  ? `Download the ${sortedContacts.length} contact${sortedContacts.length === 1 ? '' : 's'} the column filters leave on the table, with every column: send date, delivery, status, clicks, replies, event status, outreach and notes`
+                  : 'Download this campaign as a CSV: every contact, with send date, delivery, status, clicks, replies, event status, outreach and notes'}
                 style={{
                   padding: '0.35rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                   background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
@@ -2253,13 +2355,35 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               }}
             >Add email</button>
 
+            {/* What the filters are currently leaving on the table. A table
+                quietly showing eight of twenty-two rows is the thing a filter
+                row does wrong, so the count says so out loud and offers the
+                way back. With the table collapsed there is nothing on screen
+                for it to describe, so it goes with the table. */}
+            {!detailsCollapsed && filtersOn > 0 && (
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                <span title={`${filtersOn} column filter${filtersOn === 1 ? '' : 's'} set. The rest of the campaign is still here — the filters only decide what the table shows.`}>
+                  Showing <strong style={{ color: 'var(--color-text)' }}>{sortedContacts.length}</strong> of {(displayResults.contacts || []).length}
+                </span>
+                <button
+                  onClick={clearColFilters}
+                  title="Clear every column filter"
+                  style={{
+                    padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                    background: 'var(--color-surface)', color: 'var(--color-accent)',
+                    fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Clear filters</button>
+              </span>
+            )}
+
             {/* The same Columns picker the contacts tables use: show / hide,
                 star a default set, drag to reorder, Reset to get back. Widths
                 are set by dragging a header's right edge. It goes with the
                 table rather than with the box beside it — there is nothing to
                 configure the columns of while the table is collapsed. */}
             {!detailsCollapsed && (
-            <div style={{ marginLeft: 'auto' }}>
+            <div style={{ marginLeft: filtersOn > 0 ? 0 : 'auto' }}>
               <ColumnToggle
                 align="right"
                 columns={orderedColumns}
@@ -2337,13 +2461,57 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   <col />
                 </colgroup>
                 <thead>
-                  <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
+                  <tr ref={setHeaderRowEl} style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 2 }}>
                     {visibleColumns.map(col => <ColHeader key={col.key} col={col} />)}
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }} aria-label="Remove" />
                     <th style={{ borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
                   </tr>
+                  {/* A box under every heading: type to narrow the roster, or
+                      pick from what that column already holds. Sticky too, and
+                      parked directly under the headings — its offset is the
+                      measured height of the row above rather than a guess,
+                      which a heading that wraps or a different font size would
+                      make wrong. */}
+                  <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: headerHeight, zIndex: 1 }}>
+                    {visibleColumns.map(col => (
+                      <th key={col.key} style={{ padding: '0 0.35rem 0.35rem', background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)', fontWeight: 400 }}>
+                        <ColumnFilterCombo
+                          value={liveFilters[col.key] || ''}
+                          onChange={v => setColFilter(col.key, v)}
+                          suggestions={filterSuggestions[col.key]}
+                          label={col.label}
+                        />
+                      </th>
+                    ))}
+                    <th style={{ padding: '0 0.2rem 0.35rem', textAlign: 'center', background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)' }}>
+                      {filtersOn > 0 && (
+                        <button
+                          onClick={clearColFilters}
+                          title={`Clear ${filtersOn} column filter${filtersOn === 1 ? '' : 's'}`}
+                          aria-label="Clear every column filter"
+                          style={{ background: 'none', border: 'none', color: 'var(--color-accent)', fontSize: '0.8rem', cursor: 'pointer', padding: 0, lineHeight: 1 }}
+                        >&#8635;</button>
+                      )}
+                    </th>
+                    <th style={{ background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
+                  </tr>
                 </thead>
                 <tbody>
+                  {sortedContacts.length === 0 && filtersOn > 0 && (
+                    <tr>
+                      <td
+                        colSpan={visibleColumns.length + 2}
+                        style={{ padding: '1rem', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}
+                      >
+                        No contact matches {filtersOn === 1 ? 'that filter' : 'those filters'}.{' '}
+                        <button
+                          onClick={clearColFilters}
+                          style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}
+                        >Clear {filtersOn === 1 ? 'it' : 'them'}</button>
+                        {' '}to get the roster back.
+                      </td>
+                    </tr>
+                  )}
                   {sortedContacts.map(({ c, i }) => {
                     const isDup = dupKeys.has(contactKey(c));
                     // A row nobody is to email reads as set aside: a tint the

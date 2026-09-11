@@ -47,6 +47,8 @@
 // keep an entry, and to keep a row on the table for a line item the current
 // workbook no longer carries. A note nothing can show is a note lost.
 
+import { suggestionMatches, cellMatches } from './columnFilter.js';
+
 export const S2C_TAG_FIELDS = [
   { key: 'serviceSegment', label: 'Service Segment' },
   { key: 'productName', label: 'Product Name' },
@@ -321,42 +323,27 @@ export function addS2cLineItem(tags, lineItem, values = {}) {
 }
 
 /**
- * The suggestions that match what has been typed, best first.
- *
- * Prefix matches lead, substring matches follow, each group keeping the
- * alphabetical order it arrived in. Typing "inv" should put "Invoice
- * Validation" above "Monthly Invoice Check" — a prefix is what somebody
- * spelling out a name they half remember is producing.
+ * The suggestions that match what has been typed, best first — prefix
+ * matches, then substrings.
  *
  * An empty query offers everything, so focusing a blank cell shows the
  * column's vocabulary rather than nothing. That is the whole reason the
  * suggestions exist: free text keeps forty spellings of one segment out only
  * if the thirty-ninth person can see the first.
+ *
+ * The rule itself lives in utils/columnFilter now, shared with the other
+ * tables that filter a column by typing into a box under its heading. Two
+ * tables that match by subtly different rules are two tables somebody has to
+ * learn separately.
  */
-export function s2cSuggestionMatches(values = [], query = '') {
-  const q = String(query ?? '').trim().toLowerCase();
-  if (!q) return [...values];
-  const starts = [], contains = [];
-  for (const v of values) {
-    const lower = String(v).toLowerCase();
-    if (lower.startsWith(q)) starts.push(v);
-    else if (lower.includes(q)) contains.push(v);
-  }
-  return [...starts, ...contains];
-}
+export const s2cSuggestionMatches = suggestionMatches;
 
 /**
- * Does one cell pass one column's filter? Blank filter passes everything.
- *
- * Substring rather than equality on purpose: the column filters are typed
- * into as well as picked from, so half a name has to narrow the table or
- * typing it does nothing until the last character lands.
+ * Does one cell pass one column's filter? Blank filter passes everything,
+ * and a set one matches on any part of the value — the boxes are typed into
+ * as well as picked from. Shared, as above.
  */
-export function s2cCellMatches(value, query) {
-  const q = String(query ?? '').trim().toLowerCase();
-  if (!q) return true;
-  return String(value ?? '').toLowerCase().includes(q);
-}
+export const s2cCellMatches = cellMatches;
 
 // ── Column widths ─────────────────────────────────────────────────────────
 //
