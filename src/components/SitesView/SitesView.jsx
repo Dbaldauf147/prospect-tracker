@@ -114,6 +114,7 @@ import {
   estimateConsumptionForTenure,
   tenureEstimateNote,
 } from '../../utils/ownershipEstimates';
+import { readWorkKey, writeWorkKey, clearWorkKey } from '../../utils/mirroredWorkKeys';
 import {
   normalizeCountryName,
   countryElectricSavings,
@@ -1586,14 +1587,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // decisions above.
   const [propertyTypeMap, setPropertyTypeMap] = useState(() => {
     try {
-      const raw = localStorage.getItem('utility-lookup:property-type-map');
+      const raw = readWorkKey('utility-lookup:property-type-map');
       const parsed = raw ? JSON.parse(raw) : {};
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch { return {}; }
   });
   const persistPropertyTypeMap = useCallback((next) => {
     setPropertyTypeMap(next);
-    try { localStorage.setItem('utility-lookup:property-type-map', JSON.stringify(next)); } catch {}
+    try { writeWorkKey('utility-lookup:property-type-map', JSON.stringify(next)); } catch {}
   }, []);
   // null = closed. Set to the pending list to open the mapping modal.
   const [propertyTypeModalOpen, setPropertyTypeModalOpen] = useState(false);
@@ -1631,7 +1632,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   //   'accepted' | 'rejected'>.
   const [vendorDecisions, setVendorDecisions] = useState(() => {
     try {
-      const raw = localStorage.getItem('utility-lookup:vendor-decisions');
+      const raw = readWorkKey('utility-lookup:vendor-decisions');
       const parsed = raw ? JSON.parse(raw) : {};
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch { return {}; }
@@ -1642,7 +1643,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     setVendorDecisions(prev => {
       const next = { ...prev };
       if (decision == null) delete next[key]; else next[key] = decision;
-      try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(next)); } catch {}
+      try { writeWorkKey('utility-lookup:vendor-decisions', JSON.stringify(next)); } catch {}
       return next;
     });
   };
@@ -1655,7 +1656,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // commit) falls back to the source-data tokens.
   const [supplierOverrides, setSupplierOverrides] = useState(() => {
     try {
-      const raw = localStorage.getItem('utility-lookup:supplier-overrides');
+      const raw = readWorkKey('utility-lookup:supplier-overrides');
       const parsed = raw ? JSON.parse(raw) : {};
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch { return {}; }
@@ -1666,7 +1667,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const next = { ...prev };
       const v = String(value || '').trim();
       if (!v) delete next[key]; else next[key] = v;
-      try { localStorage.setItem('utility-lookup:supplier-overrides', JSON.stringify(next)); } catch {}
+      try { writeWorkKey('utility-lookup:supplier-overrides', JSON.stringify(next)); } catch {}
       return next;
     });
   };
@@ -2039,7 +2040,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // the existing per-row overrides still point at the right rows.
       if (!isUpdate) {
         setSupplierOverrides({});
-        try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
+        try { clearWorkKey('utility-lookup:supplier-overrides'); } catch {}
       }
       // The mass-edit selection is row positions, so it means nothing
       // once a different file occupies those positions — and a stale one
@@ -2089,7 +2090,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const rt = roundTripState;
         if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
           setVendorDecisions(rt.vendorDecisions);
-          try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+          try { writeWorkKey('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
         }
         // Per-row supplier edits are keyed by row index, and the export
         // wrote its rows in the page's own row order, so the indexes
@@ -2097,7 +2098,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // above so the cells show the same manual picks they had.
         if (rt && rt.supplierOverrides && typeof rt.supplierOverrides === 'object') {
           setSupplierOverrides(rt.supplierOverrides);
-          try { localStorage.setItem('utility-lookup:supplier-overrides', JSON.stringify(rt.supplierOverrides)); } catch { /* noop */ }
+          try { writeWorkKey('utility-lookup:supplier-overrides', JSON.stringify(rt.supplierOverrides)); } catch { /* noop */ }
         }
         // The company's researched facts, so an imported analysis restores
         // the Corporate Compliance cards along with the site list.

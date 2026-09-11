@@ -112,6 +112,7 @@ import { FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { STAGE_BANDS } from '../../utils/stageBands';
+import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import {
   TRACKED_STAGES,
   TRACKED_STAGES_SET,
@@ -10702,7 +10703,7 @@ function TodoBox() {
   const [text, setText] = useState(() => userLsGet('opps2:todo') ?? '');
   const [collapsed, setCollapsed] = useState(() => userLsGet('opps2:todoCollapsed') === '1');
   const taRef = useRef(null);
-  useEffect(() => { try { userLsSet('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
+  useEffect(() => { try { writeWorkKey('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
   useEffect(() => { try { userLsSet('opps2:todoCollapsed', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
 
   // Grow the textarea to fit its content so there's no dead space below

@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
+import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -320,7 +321,7 @@ function loadCompanyRules() {
   try { return JSON.parse(userLsGet(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
 }
 function persistCompanyRules(map) {
-  try { userLsSet(COMPANY_RULES_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+  try { writeWorkKey(COMPANY_RULES_KEY, JSON.stringify(map)); } catch { /* ignore */ }
 }
 
 function loadCache() {

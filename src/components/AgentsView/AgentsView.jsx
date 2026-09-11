@@ -7,6 +7,7 @@ import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mer
 import { normalizeCompany as canonCompany } from '../../utils/companyNorm';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { writeWorkKey, AGENT_SETTINGS_EVENT } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
@@ -189,7 +190,7 @@ function readOverrides() {
 }
 
 function writeOverrides(next) {
-  try { userLsSet(OVERRIDE_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { writeWorkKey(OVERRIDE_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readIgnoredEmails() {
@@ -203,7 +204,7 @@ function readIgnoredEmails() {
 }
 
 function writeIgnoredEmails(next) {
-  try { userLsSet(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { writeWorkKey(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readIgnoredMeetings() {
@@ -217,7 +218,7 @@ function readIgnoredMeetings() {
 }
 
 function writeIgnoredMeetings(next) {
-  try { userLsSet(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { writeWorkKey(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readExcludedRecipients() {
@@ -231,7 +232,7 @@ function readExcludedRecipients() {
 }
 
 function writeExcludedRecipients(next) {
-  try { userLsSet(EXCLUDED_RECIPIENTS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { writeWorkKey(EXCLUDED_RECIPIENTS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readHideActivityOnDate() {
@@ -239,7 +240,7 @@ function readHideActivityOnDate() {
 }
 
 function writeHideActivityOnDate(on) {
-  try { userLsSet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
+  try { writeWorkKey(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
 }
 
 // Which sub-tab of the Agents page is showing: 'automations' (the default
@@ -779,7 +780,7 @@ function readAiPrompt() {
 }
 
 function writeAiPrompt(next) {
-  try { userLsSet(AI_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(AI_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readNewBfoOppPrompt() {
@@ -792,7 +793,7 @@ function readNewBfoOppPrompt() {
 }
 
 function writeNewBfoOppPrompt(next) {
-  try { userLsSet(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readCloseDatesPrompt() {
@@ -805,7 +806,7 @@ function readCloseDatesPrompt() {
 }
 
 function writeCloseDatesPrompt(next) {
-  try { userLsSet(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readAmountUpdatesPrompt() {
@@ -818,7 +819,7 @@ function readAmountUpdatesPrompt() {
 }
 
 function writeAmountUpdatesPrompt(next) {
-  try { userLsSet(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readStageChangePrompt() {
@@ -831,7 +832,7 @@ function readStageChangePrompt() {
 }
 
 function writeStageChangePrompt(next) {
-  try { userLsSet(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readCloseNotSoldsPrompt() {
@@ -844,7 +845,7 @@ function readCloseNotSoldsPrompt() {
 }
 
 function writeCloseNotSoldsPrompt(next) {
-  try { userLsSet(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readUpdateBfoActivityPrompt() {
@@ -857,7 +858,7 @@ function readUpdateBfoActivityPrompt() {
 }
 
 function writeUpdateBfoActivityPrompt(next) {
-  try { userLsSet(UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY, next); } catch {}
+  try { writeWorkKey(UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readBfoPrepPrompt() {
@@ -870,7 +871,7 @@ function readBfoPrepPrompt() {
 }
 
 function writeBfoPrepPrompt(next) {
-  try { userLsSet(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+  try { writeWorkKey(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readImportMarketingLeadsPrompt() {
@@ -883,7 +884,7 @@ function readImportMarketingLeadsPrompt() {
 }
 
 function writeImportMarketingLeadsPrompt(next) {
-  try { userLsSet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+  try { writeWorkKey(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readMarketingLeadsPrompt() {
@@ -896,7 +897,7 @@ function readMarketingLeadsPrompt() {
 }
 
 function writeMarketingLeadsPrompt(next) {
-  try { userLsSet(MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+  try { writeWorkKey(MARKETING_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readMarketingLeadStatusUpdatePrompt() {
@@ -909,7 +910,7 @@ function readMarketingLeadStatusUpdatePrompt() {
 }
 
 function writeMarketingLeadStatusUpdatePrompt(next) {
-  try { userLsSet(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+  try { writeWorkKey(MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readDuplicateLeadsPrompt() {
@@ -922,7 +923,7 @@ function readDuplicateLeadsPrompt() {
 }
 
 function writeDuplicateLeadsPrompt(next) {
-  try { userLsSet(DUPLICATE_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+  try { writeWorkKey(DUPLICATE_LEADS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 // Small editable cell for the Marketing Leads agent's Salesforce Link
@@ -1731,6 +1732,29 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [duplicateLeadsPrompt, setDuplicateLeadsPrompt] = useState(readDuplicateLeadsPrompt);
+
+  // A prompt (or one of the decision lists) edited on the user's other
+  // machine arrives after sign-in, while this page may already be open —
+  // the mirror fires this event once it lands, so re-read rather than
+  // leaving the stale wording on screen until a reload.
+  useEffect(() => {
+    const onMirror = () => {
+      setAiPrompt(readAiPrompt());
+      setNewBfoOppPrompt(readNewBfoOppPrompt());
+      setCloseDatesPrompt(readCloseDatesPrompt());
+      setAmountUpdatesPrompt(readAmountUpdatesPrompt());
+      setStageChangePrompt(readStageChangePrompt());
+      setCloseNotSoldsPrompt(readCloseNotSoldsPrompt());
+      setUpdateBfoActivityPrompt(readUpdateBfoActivityPrompt());
+      setBfoPrepPrompt(readBfoPrepPrompt());
+      setImportMarketingLeadsPrompt(readImportMarketingLeadsPrompt());
+      setMarketingLeadsPrompt(readMarketingLeadsPrompt());
+      setMarketingLeadStatusUpdatePrompt(readMarketingLeadStatusUpdatePrompt());
+      setDuplicateLeadsPrompt(readDuplicateLeadsPrompt());
+    };
+    window.addEventListener(AGENT_SETTINGS_EVENT, onMirror);
+    return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onMirror);
+  }, []);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [bfoLeads, setBfoLeads] = useState(null);
   // Tagging state for the "BFO Opportunity Name not tagged to an opp"

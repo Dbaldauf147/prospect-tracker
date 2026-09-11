@@ -73,7 +73,6 @@ const LOCAL_BY_DESIGN = {
   // Per-browser view preferences. Cheap to redo, and arguably SHOULD differ
   // between a laptop and an external monitor.
   'stageTableColumns.js': 'per-browser column layout',
-  'yoyHiddenChartsStore.js': 'per-browser chart visibility',
 
   // Not a store: helpers that write through to other stores' keys.
   'companyRenameCascade.js': 'rename helper — writes through the stores it cascades into',
@@ -106,8 +105,17 @@ const persistsLocally = (src) =>
   /\buserLsSet\s*\(/.test(src) || /\bdbPut\s*\(/.test(src) || /\bmirrorDbPut\s*\(/.test(src)
   // uploadedListStore opens its own database rather than going through
   // db.js, and was invisible to this scan until this line.
-  || /\bindexedDB\.open\s*\(/.test(src);
-const isMirrored = (src) => /\bregisterMirroredKey\s*\(|\bregisterMirroredDbKey\s*\(/.test(src);
+  || /\bindexedDB\.open\s*\(/.test(src)
+  // writeWorkKey is a localStorage write too — it just queues the cloud push
+  // along the way. Without this a store that adopted it would drop out of the
+  // scan entirely, which is the one outcome this file exists to prevent.
+  || /\bwriteWorkKey\s*\(/.test(src);
+// Registering with localMirrorSync directly, or going through the shared
+// list of work keys in utils/mirroredWorkKeys — which registers on the
+// store's behalf.
+const isMirrored = (src) =>
+  /\bregisterMirroredKey\s*\(|\bregisterMirroredDbKey\s*\(/.test(src)
+  || /from '\.\/mirroredWorkKeys(\.js)?'/.test(src);
 // A store that writes its own Firestore documents rather than registering
 // a mirrored key — the payloads too big for one, which go through
 // utils/chunkedDoc (or, for the uploaded lists, listBackupSync).
@@ -147,7 +155,15 @@ const hydrateBody = hydrateSrc.slice(hydrateSrc.indexOf('async function loadMirr
 const hydrateImports = new Set(
   [...hydrateBody.matchAll(/import\(\s*'\.\/([A-Za-z0-9_]+)(?:\.js)?'\s*\)/g)].map((m) => `${m[1]}.js`),
 );
-const notHydrated = mirrored.filter((f) => !hydrateImports.has(f));
+// A store whose key is registered centrally (utils/mirroredWorkKeys holds
+// the list and calls registerMirroredKey for all of them) is covered by THAT
+// module's force-import — requiring its own would be asking for an import
+// that registers nothing. Everything registering for itself still needs one.
+const registersCentrally = (f) => /from '\.\/mirroredWorkKeys(\.js)?'/.test(source.get(f))
+  && !/\bregisterMirroredKey\s*\(|\bregisterMirroredDbKey\s*\(/.test(source.get(f));
+const notHydrated = mirrored.filter(
+  (f) => !hydrateImports.has(f) && !(registersCentrally(f) && hydrateImports.has('mirroredWorkKeys.js')),
+);
 ok(
   notHydrated.length === 0,
   'every mirrored store is force-imported by hydrateLocalMirrors',

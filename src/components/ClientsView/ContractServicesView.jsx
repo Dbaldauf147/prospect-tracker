@@ -7,6 +7,7 @@ import { appendContractLanguage } from '../../utils/contractLanguageStore';
 import { applyDealTerms, DEAL_TERM_FIELDS, loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, resolveClientName } from '../../utils/dealClientMap';
 import { fmtDate } from '../../utils/dealsFormat';
+import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 
 // Vercel caps a serverless request body at 4.5 MB and base64 adds a third,
 // so this is the largest PDF that can be posted whole for Claude to read
@@ -20,7 +21,7 @@ const STORAGE_KEY = 'clients-view:contract-services';
 
 function loadSaved() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readWorkKey(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
@@ -28,7 +29,7 @@ function loadSaved() {
   } catch { return null; }
 }
 function save(state) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota — the analysis is re-runnable */ }
+  try { writeWorkKey(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota — the analysis is re-runnable */ }
 }
 
 // Whitespace-insensitive comparison, for deciding whether a service's full
