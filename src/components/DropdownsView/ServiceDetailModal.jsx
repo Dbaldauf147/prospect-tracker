@@ -342,12 +342,17 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
   );
 }
 
-// The services that come into Scope with this one. Same picker shape as the
-// dependency editor above, minus the steps: this list is about what's sold
-// together, not about what waits for what. Ticking this service on the Opps
-// Scope board ticks everything named here at the same time — additively, so
-// any of them can still be taken off afterwards.
-function AutoAddEditor({ value, options, selfName, onCommit }) {
+// The services another service implies. Same picker shape as the dependency
+// editor above, minus the steps: these lists are about what's sold together,
+// not about what waits for what.
+//
+// Two sections render through it, because they are the same edit on two
+// cells and only the sentences change:
+//   Auto-add — ticking this service on the Opps Scope board ticks everything
+//     named here too, additively, so any of them can still be taken off.
+//   Auto-N/A — selling this service greys the ones named here out on the
+//     status boards, as a derived reading rather than a saved status.
+function ImpliedServicesEditor({ value, options, selfName, onCommit, title, emptyText, chipTitle }) {
   const [query, setQuery] = useState('');
   // Behind a button for the same reason the dependency picker is: 139
   // services open by default would push the section below off the panel.
@@ -382,7 +387,7 @@ function AutoAddEditor({ value, options, selfName, onCommit }) {
   return (
     <div className={styles.detailSection}>
       <div className={styles.detailSectionHead}>
-        <span className={styles.detailSectionTitle}>Added to Scope with this one</span>
+        <span className={styles.detailSectionTitle}>{title}</span>
         <span className={styles.detailSectionCount}>{selected.length}</span>
         <button
           type="button"
@@ -396,9 +401,7 @@ function AutoAddEditor({ value, options, selfName, onCommit }) {
         )}
       </div>
       {selected.length === 0 ? (
-        <p className={styles.detailEmpty}>
-          Picking {selfName} on the Opps Scope board adds nothing else.
-        </p>
+        <p className={styles.detailEmpty}>{emptyText}</p>
       ) : (
         <div className={styles.detailChips}>
           {selected.map(name => {
@@ -409,7 +412,7 @@ function AutoAddEditor({ value, options, selfName, onCommit }) {
                 className={stale ? styles.serviceDepChipStale : styles.serviceDepChip}
                 title={stale
                   ? `"${name}" isn't in the Solutions list any more`
-                  : `${name} goes into Scope whenever ${selfName} does`}
+                  : chipTitle(name)}
               >
                 {name}
                 <button
@@ -1090,6 +1093,7 @@ function LinkField({ name, url, onSaveUrl }) {
  *   templates   - every timeline template, normalized; the ones attached to
  *                 this service are what the step editor edits
  *   autoAddedBy - string[], services whose Auto-add list names this one
+ *   autoNaedBy  - string[], services whose Auto-N/A list names this one
  *   onSaveField - (name, field, value) => void, the table's own save path
  *   onSaveUrl   - (name, url) => void
  *   onToggleHide- (name) => void
@@ -1106,6 +1110,9 @@ export function ServiceDetailModal({
   // Which services pull this one into Scope — the reverse of its own
   // Auto-add list, derived by the parent since no row stores it.
   autoAddedBy = [],
+  // And which sales grey this one out — the reverse of its own Auto-N/A
+  // list, derived by the parent for the same reason.
+  autoNaedBy = [],
   options,
   templates = [],
   // Which box the services board files this service in, and the boxes it
@@ -1245,11 +1252,14 @@ export function ServiceDetailModal({
             )}
           </div>
 
-          <AutoAddEditor
+          <ImpliedServicesEditor
             value={meta?.autoAdd}
             options={options}
             selfName={name}
             onCommit={save('autoAdd')}
+            title="Added to Scope with this one"
+            emptyText={`Picking ${name} on the Opps Scope board adds nothing else.`}
+            chipTitle={(other) => `${other} goes into Scope whenever ${name} does`}
           />
 
           {/* The other direction again, and the one that explains a tick
@@ -1265,6 +1275,37 @@ export function ServiceDetailModal({
               <div className={styles.detailChips}>
                 {autoAddedBy.map(src => (
                   <span key={src} className={styles.serviceDepChip} title={`Picking ${src} on the Opps Scope board adds ${name} too`}>{src}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* What selling this service settles. Nothing is written to any
+              account: the status boards read the list and show the N/A,
+              under anything the account actually says. */}
+          <ImpliedServicesEditor
+            value={meta?.autoNa}
+            options={options}
+            selfName={name}
+            onCommit={save('autoNa')}
+            title="Marked N/A once this one is sold"
+            emptyText={`Selling ${name} leaves every other service as it was.`}
+            chipTitle={(other) => `${other} shows as N/A on an account that has bought ${name}, unless its own status says otherwise`}
+          />
+
+          {/* The other direction of that one: the sales that would grey THIS
+              service out, which is what explains an N/A nobody typed. */}
+          <div className={styles.detailSection}>
+            <div className={styles.detailSectionHead}>
+              <span className={styles.detailSectionTitle}>Marked N/A by selling</span>
+              <span className={styles.detailSectionCount}>{autoNaedBy.length}</span>
+            </div>
+            {autoNaedBy.length === 0 ? (
+              <p className={styles.detailEmpty}>No sale marks {name} N/A on its own.</p>
+            ) : (
+              <div className={styles.detailChips}>
+                {autoNaedBy.map(src => (
+                  <span key={src} className={styles.serviceDepChip} title={`An account that has bought ${src} shows ${name} as N/A`}>{src}</span>
                 ))}
               </div>
             )}

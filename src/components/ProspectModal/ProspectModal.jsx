@@ -43,6 +43,7 @@ import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } fr
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
+import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
   SCHEDULED_OPP_COLORS,
   formatScheduledOppDay,
@@ -5419,6 +5420,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [serviceBoard],
   );
 
+  // Services this account needs no answer on, because something it has
+  // already bought retires them: the Auto-N/A Services column on
+  // Dropdowns › Services, keyed by service → the sold services that say so.
+  //
+  // "Sold" is the reading this board itself shows — a manual status of Sold,
+  // or a closed-won opp naming the service — so the greying follows the same
+  // truth the row above it does.
+  //
+  // Derived, never saved. The board lays it under both a manual status and a
+  // matching opp's stage (see the row below), so it only ever fills in a row
+  // that had nothing to say, and clearing the column on the Services tab
+  // clears the N/A on every account at once.
+  const autoNaServices = useMemo(() => {
+    const svc = fields.servicesExplored || {};
+    const sold = allServiceItems.filter(item => {
+      const manual = svc[item];
+      if (manual && manual !== '-') return isSoldStatus(manual);
+      return isSoldStatus(scopeMatchedServices.get(item));
+    });
+    if (sold.length === 0) return new Map();
+    const byLower = new Map(allServiceItems.map(i => [i.toLowerCase(), i]));
+    return collectAutoNa(sold, settings.serviceOverrides, {
+      canonical: (n) => byLower.get(String(n || '').trim().toLowerCase()) || n,
+    });
+  }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);
+
   // Services this company has an opp QUEUED for — a New Opp scheduled for
   // a future date, which has no row on the Opps table yet and so matches
   // nothing above. Without this the board reads as untouched right up
@@ -8617,10 +8644,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const isHidden = hiddenServices.has(item);
                             const manualStatus = svc[item] || '-';
                             const oppStage = scopeMatchedServices.get(item);
+                            // Why this row would read N/A without anyone
+                            // setting it: the sold services that retire it.
+                            const autoNaBy = autoNaServices.get(item);
                             let effectiveStatus = manualStatus;
-                            if (manualStatus === '-' && oppStage) {
-                              effectiveStatus = oppStage;
+                            if (manualStatus === '-') {
+                              // An opp naming the service outranks the
+                              // retirement: a live conversation about it is
+                              // the account saying it is a question after
+                              // all, whatever was sold alongside.
+                              if (oppStage) effectiveStatus = oppStage;
+                              else if (autoNaBy) effectiveStatus = 'N/A';
                             }
+                            const isAutoNa = manualStatus === '-' && !oppStage && !!autoNaBy;
                             // A real value in servicesExplored is a manual
                             // override of the automatic (opp-derived) status.
                             // When set, surface a one-click "revert to auto"
@@ -8742,7 +8778,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     }}
                                     title={isManualOverride
                                       ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" or click ↺ to revert to the automatic status.`
-                                      : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.` : 'No manual override and no matching opp.'}
+                                      : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.`
+                                      : isAutoNa ? autoNaTitle(getDisplayName(item), autoNaBy)
+                                      : 'No manual override and no matching opp.'}
                                     style={{
                                       fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
                                       borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',

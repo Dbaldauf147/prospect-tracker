@@ -24,6 +24,7 @@ import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } fr
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
 import { autoAddListFor, collectAutoAdds } from '../../utils/serviceAutoAdd';
+import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
@@ -102,8 +103,13 @@ function buildCategories(settings, options) {
 //
 // Without a company record to write to there's nothing to save against, so
 // the control goes read-only and says why instead of silently dropping edits.
-function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
-  const effective = manual || auto || '-';
+// `autoNa` is the third and weakest reading: the sold services that retire
+// this one per Dropdowns › Services. It fills in a row that neither a manual
+// status nor a matching opp has anything to say about — same ordering the
+// company card uses, so the two boards read a service the same way.
+function StatusSelect({ item, manual, auto, autoNa, onSet, disabled, disabledReason }) {
+  const naBySale = !manual && !auto && autoNa?.length > 0;
+  const effective = manual || auto || (naBySale ? 'N/A' : '-');
   const colors = STATUS_COLORS[effective] || {};
   const title = disabled
     ? disabledReason
@@ -111,7 +117,9 @@ function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
       ? `Manual override: ${manual}.${auto ? ` Automatic status from another opp: ${auto}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" to revert.`
       : auto
         ? `Automatic status from another opp on this account: ${auto}. Pick a status to set a manual override.`
-        : 'No status yet. Pick one to set it on the company card.';
+        : naBySale
+          ? autoNaTitle(item, autoNa)
+          : 'No status yet. Pick one to set it on the company card.';
 
   return (
     <select
@@ -129,7 +137,7 @@ function StatusSelect({ item, manual, auto, onSet, disabled, disabledReason }) {
         border: `1px solid ${manual ? 'var(--color-accent)' : 'var(--color-border)'}`,
         background: colors.bg || 'var(--color-surface)',
         color: colors.color || 'var(--color-text-muted)',
-        fontStyle: !manual && auto ? 'italic' : 'normal',
+        fontStyle: !manual && (auto || naBySale) ? 'italic' : 'normal',
       }}
     >
       {SERVICE_STATUSES.map(s => (
@@ -172,7 +180,10 @@ export function ScopeServicesModal({
     if (!name) return null;
     return (prospects || []).find(p => companiesMatch(p?.company, name)) || null;
   }, [prospects, account]);
-  const manualStatuses = prospect?.servicesExplored || {};
+  // Memoized: the auto-N/A reading below keys off it, and an account with no
+  // saved statuses would otherwise hand it a fresh {} on every keystroke in
+  // the filter box.
+  const manualStatuses = useMemo(() => prospect?.servicesExplored || {}, [prospect]);
   const smes = prospect?.serviceSMEs || {};
 
   const autoStatuses = useMemo(
@@ -228,6 +239,21 @@ export function ScopeServicesModal({
     const byLower = new Map(allItems.map(i => [i.toLowerCase(), i]));
     return (name) => byLower.get(String(name || '').trim().toLowerCase()) || name;
   }, [allItems]);
+
+  // The other column's reading: services this account has no question left
+  // on, because something it bought retires them. Same layering as the
+  // company card — under a manual status and under a matching opp's stage —
+  // and derived on the fly, so nothing is written to the company record and
+  // clearing the column on Dropdowns › Services clears this too.
+  const autoNaServices = useMemo(() => {
+    const sold = allItems.filter(item => {
+      const m = manualStatuses[item];
+      if (m && m !== '-') return isSoldStatus(m);
+      return isSoldStatus(autoStatuses.get(item));
+    });
+    if (sold.length === 0) return new Map();
+    return collectAutoNa(sold, settings?.serviceOverrides, { canonical });
+  }, [allItems, manualStatuses, autoStatuses, settings?.serviceOverrides, canonical]);
 
   // What each service on the board pulls in, so a row can say so before it's
   // ticked rather than only after. One pass over the board's items — the
@@ -584,6 +610,7 @@ export function ScopeServicesModal({
                             item={item}
                             manual={manual && manual !== '-' ? manual : ''}
                             auto={auto}
+                            autoNa={autoNaServices.get(item)}
                             onSet={setStatus}
                             disabled={!canEditStatus}
                             disabledReason={cannotEditReason}
@@ -618,7 +645,7 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
           {canEditStatus
-            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) — they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived from another opp, “- (auto)” reverts to that.'
+            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) — they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived — from another opp, or an N/A implied by something this account has already bought (Auto-N/A Services) — and “- (auto)” reverts to that.'
             : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
       </div>
