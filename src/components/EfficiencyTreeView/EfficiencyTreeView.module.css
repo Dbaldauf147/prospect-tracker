@@ -1,0 +1,657 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ── header ──────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.headerMain {
+  min-width: 14rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.subtitle {
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--color-text-secondary);
+  max-width: 46rem;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.modeSwitch {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.modeBtn,
+.modeBtnActive {
+  padding: 0.35rem 0.8rem;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.modeBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.modeBtnActive {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.editToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.smallBtn {
+  padding: 0.32rem 0.65rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.primaryBtn {
+  padding: 0.32rem 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 1rem;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.warn {
+  color: #B45309;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.importPanel {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+/* ── walk mode ───────────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem 2rem;
+}
+
+.trail {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.trailItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.trailArrow {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.trailLink,
+.trailHere {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trailLink:hover {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+.trailHere {
+  background: var(--color-accent-light);
+  border-color: #BFDBFE;
+  color: var(--color-accent);
+  font-weight: 700;
+  cursor: default;
+}
+
+.card {
+  max-width: 52rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.kindQuestion,
+.kindOutcome {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.kindQuestion {
+  background: var(--color-accent-light);
+  color: #1E40AF;
+}
+
+.kindOutcome {
+  background: #ECFDF5;
+  color: #166534;
+}
+
+.detail {
+  margin-top: 0.6rem;
+  font-size: 0.84rem;
+  color: var(--color-text);
+}
+
+.detailPara {
+  margin: 0 0 0.55rem;
+  white-space: pre-line;
+  line-height: 1.55;
+}
+
+.detailList {
+  margin: 0 0 0.55rem;
+  padding-left: 1.1rem;
+  line-height: 1.5;
+}
+
+.detailList li {
+  margin-bottom: 0.15rem;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+.choiceBtn,
+.choiceBtnDead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.choiceBtn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.choiceBtnDead {
+  border-style: dashed;
+  cursor: default;
+  opacity: 0.75;
+}
+
+.choiceLabel {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.choiceNext {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.endNote {
+  margin-top: 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.emptyNote {
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  padding: 0.25rem 0;
+}
+
+/* ── map mode ────────────────────────────────────────────────────────── */
+
+.mapBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+}
+
+.outline {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 0.7rem 0.75rem 2rem;
+  border-right: 1px solid var(--color-border);
+}
+
+.outlineRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0;
+  flex-wrap: wrap;
+}
+
+.branchChip {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outlineNode,
+.outlineNodeActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: var(--radius-sm);
+  padding: 0.18rem 0.4rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.outlineNode:hover {
+  background: var(--color-surface-alt);
+}
+
+.outlineNodeActive {
+  background: var(--color-accent-light);
+  border-color: #BFDBFE;
+  font-weight: 600;
+  color: #1E40AF;
+}
+
+.dotQuestion,
+.dotOutcome {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dotQuestion {
+  background: var(--color-accent);
+}
+
+.dotOutcome {
+  background: var(--color-success);
+}
+
+.rootChip,
+.repeatChip {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+}
+
+.rootChip {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.repeatChip {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  text-transform: none;
+  font-weight: 600;
+}
+
+.outlineDead {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+/* Compact enough that a row's controls sit beside the step rather than
+   wrapping under it. */
+.rowActions .iconBtn,
+.rowActions .iconBtnDanger {
+  padding: 0.1rem 0.3rem;
+  font-size: 0.66rem;
+}
+
+.orphanBlock {
+  margin-top: 1.1rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--color-border);
+}
+
+.inspector {
+  width: 27rem;
+  max-width: 45%;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 0.8rem 0.9rem 2rem;
+  background: var(--color-surface);
+}
+
+.inspectorHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.inspectorTitle {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* ── editor ──────────────────────────────────────────────────────────── */
+
+.editor {
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px dashed var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.editorRow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 12rem;
+}
+
+.fieldNarrow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 13rem;
+}
+
+.fieldLabel {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.fieldHint {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.branchBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* One branch: its label on top, where it goes underneath. Side by side they
+   wrapped a button per line in the map's inspector, which is only 27rem. */
+.branchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+}
+
+.branchTarget {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.branchGoes {
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.branchTarget .input {
+  flex: 1;
+  min-width: 7rem;
+  width: auto;
+}
+
+.branchActions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.2rem;
+}
+
+.iconBtn,
+.iconBtnDanger {
+  padding: 0.22rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  border-color: #BFDBFE;
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconBtnDanger {
+  color: #B91C1C;
+  border-color: #FECACA;
+  background: var(--color-danger-light);
+}
+
+.iconBtnDanger:hover {
+  background: #FEE2E2;
+}
+
+@media (max-width: 1100px) {
+  .mapBody {
+    flex-direction: column;
+  }
+
+  .inspector {
+    width: 100%;
+    max-width: none;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .outline {
+    border-right: none;
+  }
+}

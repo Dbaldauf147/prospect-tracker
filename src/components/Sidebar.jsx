@@ -476,6 +476,14 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#128203;</span>
           BFO Activity
         </button>
+        <button
+          className={view === 'efficiency' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('efficiency')}
+          title="Walk the C&I efficiency decision tree, or edit the flow"
+        >
+          <span className={styles.navIcon}>&#127795;</span>
+          Efficiency Decision Tree
+        </button>
       </nav>
 
       <div className={styles.settingsWrap} ref={settingsWrapRef}>
