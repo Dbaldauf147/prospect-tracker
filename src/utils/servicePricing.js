@@ -491,6 +491,9 @@ export function setPricingSetupLine(pricing, name, basisKey, patch, bases = PRIC
       ? { basis: l.basis, rate: l.rate }
       : { basis: l.basis, rate: l.rate, rateHigh: l.rateHigh }));
   }
+  // A setup rate is money too, so it takes the no-fee mark off exactly as a
+  // recurring one does — see setPricingLine.
+  if (out.length > 0) delete row.noFee;
   // The legacy list was read into `lines` above, so whatever it said is
   // either in `setupLines` now or was just cleared on purpose. Leaving it
   // behind would double the fee on the next pass either way.
@@ -582,6 +585,9 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
   const row = pricing?.[name];
   const basis = basisFor(row?.basis, bases);
   return {
+    // Delivered at no charge, on purpose. Not the same claim as an empty
+    // rate card, which says nobody has priced this yet — see setNoFee.
+    noFee: row?.noFee === true,
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     rateHigh: parseMoney(row?.rateHigh),
@@ -748,6 +754,11 @@ export function setPricingLine(pricing, name, basisKey, patch, bases = PRICING_B
   }
 
   const written = writePricingLines(row, out, bases);
+  // Money on a row that says it charges nothing is a contradiction, and the
+  // rate just typed is the later answer: it takes the mark off rather than
+  // being swallowed by it. Clearing the last line leaves the mark alone —
+  // an empty card is not a price either way.
+  if (out.length > 0) delete written.noFee;
   if (Object.keys(written).length === 0) delete next[name];
   else next[name] = written;
   return next;
@@ -787,9 +798,95 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
     // most obvious way to start pricing a service silently does nothing.
     if (!blank && !row.basis) row.basis = value;
   }
+  // Same rule as setPricingLine: naming a basis or typing a rate onto a
+  // service marked no fee takes the mark off, because the figure someone
+  // just typed is the later answer. Clearing one doesn't — that is not a
+  // price — and neither does editing the notes, which sit alongside the
+  // mark rather than against it.
+  if (!blank && field !== 'notes') delete row.noFee;
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
+}
+
+// Everything on a card that says what the service charges. Marking a
+// service no fee takes all of it: the mark IS the price, so a rate left
+// underneath would be a figure the card no longer charges sitting where
+// the next reader would take it for one.
+//
+// The notes are not on the list. "Included with the GRESB engagement" is
+// exactly what someone writes there, and it is the reason for the mark
+// rather than a price competing with it. The two retired figures (minFee,
+// avgFee) aren't either — pricingFor drops them on the way out of storage,
+// so they reach no calculation to be cleared out of, and this file leaves
+// stored numbers alone where it can.
+const PRICE_FIELDS = ['basis', 'rate', 'rateHigh', 'lines', 'units', 'setupLines', 'setup'];
+
+/**
+ * Mark one or more services as charging nothing — or take the mark off.
+ *
+ * "No fee" is an ANSWER, not a gap. A service with an empty rate card is
+ * one nobody has priced yet: the estimate lists it under unpriced and the
+ * deal total quietly leaves it out. A service marked no fee is priced, at
+ * zero, on purpose — it prices to $0, stops being listed as unpriced, and
+ * says "No fee" wherever a fee would be shown. That distinction is the
+ * whole point of the flag, and it is why this isn't "type 0 in the rate
+ * box": a $0 flat rate is a rate, and the next person to read it can't tell
+ * it from a typo.
+ *
+ * Marking clears the card's rates (see PRICE_FIELDS) rather than sitting on
+ * top of them, so nothing is hidden behind the mark. Unmarking therefore
+ * leaves the service unpriced — it does not put back rates the mark
+ * removed, and the caller that offers it should say so. `planNoFee` counts
+ * which rows would lose a rate, so the offer can be made before the write
+ * rather than explained after it.
+ *
+ * Returns the next servicePricing map for updateSettings.
+ */
+export function setNoFee(pricing, names, on = true) {
+  const list = (Array.isArray(names) ? names : [names])
+    .map(n => String(n ?? '').trim())
+    .filter(Boolean);
+  if (list.length === 0) return pricing;
+  const next = { ...(pricing || {}) };
+  for (const name of list) {
+    const row = { ...(next[name] || {}) };
+    if (on) {
+      for (const field of PRICE_FIELDS) delete row[field];
+      row.noFee = true;
+    } else {
+      delete row.noFee;
+    }
+    // An entry with nothing left in it is deleted outright rather than left
+    // behind as an empty object, the same as every other write here.
+    if (Object.keys(row).length === 0) delete next[name];
+    else next[name] = row;
+  }
+  return next;
+}
+
+/**
+ * What `setNoFee` would actually do, before it does it.
+ *
+ * A bulk action that says "25" and means "3" is one nobody can check
+ * afterwards, so the bar offering it counts the rows honestly:
+ *   change   — rows the write would change
+ *   same     — rows already marked (or already unmarked), left alone
+ *   clearing — rows carrying a rate the mark would take away, which is the
+ *              only part of this that loses anything
+ * Every entry is a service name, in the order given.
+ */
+export function planNoFee({ names = [], pricing = {}, on = true, bases = PRICING_BASES }) {
+  const plan = { change: [], same: [], clearing: [] };
+  for (const raw of names) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+    const marked = pricing?.[name]?.noFee === true;
+    if (marked === on) { plan.same.push(name); continue; }
+    plan.change.push(name);
+    if (on && pricedBases(pricingFor(pricing, name, bases)).length > 0) plan.clearing.push(name);
+  }
+  return plan;
 }
 
 // Follow a service rename on the Solutions list. Returns the next map, or
@@ -849,6 +946,12 @@ export function isRecurring(meta) {
 //   note     — why a priced service still came out at nothing, when it did
 export function estimateService({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const est = estimateRecurring({ entry, meta, counts, dealSize, bases });
+  // Nothing to stand up either: a service marked no fee charges nothing at
+  // all, and a setup line left on the card under the mark would put money
+  // back on the one row that says there is none.
+  if (est.noFee) {
+    return { ...est, setup: 0, setupHigh: 0, setupBreakdown: [], setupOnly: false };
+  }
   const basis = basisFor(entry?.basis, bases);
   // The setup fee is one-time money on a service whose fee may not be, so
   // it rides alongside the recurring figure rather than inside it: the
@@ -988,6 +1091,9 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     priced: false, fee: null, feeHigh: null, value: null, valueHigh: null, recurring, years,
     recurringFee: 0, recurringFeeHigh: 0, oneOffFee: 0, oneOffFeeHigh: 0,
     unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
+    // Charged at nothing on purpose. False on every ordinary line, so a
+    // caller can read it off any estimate without testing for the field.
+    noFee: false,
     // Every unit whose count this service reads out of the estimator's
     // shared boxes, so the estimator knows which boxes to put up. A line
     // charged on a count typed against the service isn't one of them.
@@ -997,6 +1103,23 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     // a caller reading a line never has to check whether the field is there.
     setup: 0, setupOnly: false,
   };
+
+  // Marked no fee: the service is given away, and that is an answer rather
+  // than a gap. It prices to zero and reports itself PRICED, so the deal
+  // stops listing it as something nobody has got to yet and its $0 reads as
+  // a figure somebody chose.
+  //
+  // Ahead of everything below because the mark IS the price. setNoFee
+  // clears the card's rates on the way in, so ordinarily there is nothing
+  // here to outrank; this ordering is what makes a rate that somehow
+  // survived (an older entry, an import) stop charging rather than quietly
+  // win against the mark.
+  if (entry?.noFee) {
+    return {
+      ...base, priced: true, noFee: true,
+      fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note: 'No fee',
+    };
+  }
 
   // A fee typed into the Year 1 Fee column is the answer, whatever the rate
   // card would have made of the counts — and it's one figure, not a range:
@@ -1132,6 +1255,10 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
 // `units`). Returns '' for a service with nothing to say — an unpriced one,
 // whose own `note` says that instead.
 export function feeBasisLabel(line, bases = PRICING_BASES) {
+  // The mark, said in the one place a reader asks why the fee is $0. It has
+  // no breakdown to describe, so without this the row would carry a zero
+  // with nothing beside it.
+  if (line?.noFee) return 'No fee';
   // Named for the box the figure was typed into on the rate card, so a
   // reader who wants to change it knows what they are looking for.
   if (line?.typed) return line.units > 1 ? `Typed fee × ${line.units}` : 'Typed fee';

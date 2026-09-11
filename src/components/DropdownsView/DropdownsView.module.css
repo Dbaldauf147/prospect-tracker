@@ -3057,3 +3057,186 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Services Pricing: bulk edit ──────────────────────────────────────
+   The bar under the search row while the mode is on. Half of what gets
+   done to a rate card is done to a dozen rows at once — a bucket of
+   services that all price per site, a set that is bundled in and charges
+   nothing — and this is where that is said once. Laid out as one wrapping
+   row so a narrow window stacks it rather than clipping the Apply button
+   off the right edge. */
+.bulkBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 1.25rem 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+/* The mode's own button, on. The off state borrows .showHiddenBtn, so the
+   row doesn't change shape when the mode is turned on. */
+.bulkToggleOn {
+  padding: 2px 8px;
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bulkSelectAll {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Muted at nothing selected and loud once something is, because it is the
+   number every button beside it is about to act on. */
+.bulkCount {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.bulkCount[data-on='true'] {
+  color: var(--color-accent);
+}
+
+.bulkInput {
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text);
+  font-size: 0.72rem;
+  font-family: inherit;
+  min-width: 150px;
+}
+
+.bulkApply,
+.bulkNoFee,
+.bulkClear {
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bulkApply {
+  border: 1px solid var(--color-accent);
+  background: transparent;
+  color: var(--color-accent);
+}
+
+.bulkApply:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* The action this bar exists for, so it is the filled one. */
+.bulkNoFee {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.bulkNoFee:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.bulkApply:disabled,
+.bulkNoFee:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bulkClear {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.bulkClear:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Between the no-fee pair and the field setter: two different edits that
+   happen to share a selection. */
+.bulkDivider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--color-border-light, #e5e7eb);
+}
+
+.bulkOk {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #15803D;
+}
+
+.bulkError {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #B91C1C;
+}
+
+/* Takes the rest of the row, so it drops to its own line when the bar
+   wraps rather than squeezing the controls. */
+.bulkNote {
+  flex: 1 1 100%;
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+}
+
+/* A row ticked for the bulk edit. Warmer than the scope tint it can sit
+   on top of, so a service that is both in scope and ticked still reads as
+   ticked. */
+.pricingRowPicked td {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+/* "No fee" where the price would be, in the Pricing Basis cell. Green
+   rather than the accent blue the +N chip uses: it is an answer about the
+   money, not a note about how many lines the money is spread over. */
+.pricingNoFeeBadge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #DCFCE7;
+  color: #15803D;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* The same thing said at the top of the pricing panel, where the grid the
+   mark emptied would otherwise be a screen of blank boxes. */
+.pricingNoFeeNote {
+  margin-bottom: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #BBF7D0;
+  border-radius: var(--radius-md);
+  background: #F0FDF4;
+  color: #166534;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
