@@ -16,18 +16,14 @@ import styles from './DropdownsView.module.css';
 // Every field writes through the same save path the table cells use, so an
 // edit here and an edit in a column that still exists are the same edit;
 // there is no Save button and nothing to lose by closing the panel.
-
-// A read-only figure, shown in the same shape as the fields around it so the
-// panel reads as one form rather than a form with facts scattered through it.
-function ReadOnlyField({ label, children, hint, title }) {
-  return (
-    <div className={styles.detailField} title={title}>
-      <span className={styles.detailLabel}>{label}</span>
-      <div className={styles.pricingModalValue}>{children}</div>
-      {hint && <span className={styles.pricingModalHint}>{hint}</span>}
-    </div>
-  );
-}
+//
+// The panel opens on the breakdown. It used to lead with a "How it's priced"
+// pair — a Pricing basis dropdown and a read-only unit count — and both were
+// saying again what the screen already said: the basis has its own editable
+// column on the rate card and is marked on its row in the breakdown below,
+// and the unit count is the account's, set on the Deal Pricing subtab and
+// not editable from here. Two fields' worth of height before the arithmetic
+// anyone opened this for.
 
 // The order the fee breakdown lists its bases in. Not the order the bases
 // are declared in: this is the order the rows get read in when someone is
@@ -297,10 +293,6 @@ export function ServicePricingModal({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [escapeCloses, onClose]);
 
-  const percent = row._kind === 'percent';
-  const hasBasis = !!row.basis;
-  const unitNoun = row._unitLabel ? row._unitLabel.toLowerCase() : 'units';
-
   return createPortal(
     <div className={styles.detailOverlay} onClick={onClose} role="presentation">
       <div
@@ -331,55 +323,6 @@ export function ServicePricingModal({
         </div>
 
         <div className={styles.basesBody}>
-          <div className={styles.pricingModalSectionTitle}>How it&rsquo;s priced</div>
-          <div className={styles.detailGrid}>
-            <label className={styles.detailField}>
-              <span className={styles.detailLabel}>Pricing basis</span>
-              <select
-                className={styles.detailInput}
-                value={row.basis || ''}
-                onChange={(e) => onSaveField('basis', e.target.value)}
-              >
-                <option value="">-</option>
-                {bases.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
-              </select>
-              <span className={styles.pricingModalHint}>
-                {hasBasis
-                  ? (row._unit
-                    ? `The line this service leads with, and the one the Units box below counts for. Charged per ${unitNoun.replace(/s$/, '')}.`
-                    : percent
-                      ? 'The line this service leads with. A cut of the deal size typed on the Deal Pricing subtab.'
-                      : 'The line this service leads with. A flat figure, whatever the account’s size.')
-                  : 'The line this service leads with — the one the rate card’s own columns show. Pick it here, or leave it: the first row you fill in on the breakdown below sets it.'}
-              </span>
-            </label>
-
-            {/* The count the per-unit rate multiplies. Read-only: the number
-                belongs to the account being priced, and a figure typed over
-                it here prices the service against something the estimate
-                on the Deal Pricing subtab isn't. It still says where it came
-                from, because the Year 1 column is meaningless without it. */}
-            <ReadOnlyField
-              label={row._unitLabel ? `Units (${unitNoun})` : 'Units'}
-              hint={!row._unit
-                ? (hasBasis
-                  ? `${row.basisLabel} isn’t priced per unit, so there’s nothing to count.`
-                  : 'Pick a per-unit basis first.')
-                : row.units === null
-                  ? `No ${unitNoun} to price against — put a figure in the ${row._unitLabel || 'units'} box on the Deal Pricing subtab.`
-                  : row._unitsOwn
-                    ? 'Set against this service for this estimate, whatever the shared count says. Clear it in the Units column on the Deal Pricing subtab.'
-                    : row._unitsTyped
-                      ? 'A standing figure on the rate card.'
-                      : `From the ${row._unitLabel} box on the Deal Pricing subtab.`}
-            >
-              {!row._unit || row.units === null
-                ? <span className={styles.serviceMutedCell}>-</span>
-                : `${row.units.toLocaleString('en-US')} ${unitNoun}`}
-            </ReadOnlyField>
-
-          </div>
-
           <div className={styles.pricingModalSectionTitle}>Fee breakdown</div>
           <FeeBreakdown
             row={row}
