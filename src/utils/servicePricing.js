@@ -646,6 +646,41 @@ export function pricingLines(entry) {
 }
 
 /**
+ * Every basis a service actually carries money on, in reading order.
+ *
+ * A recurring line names the service's basis by itself — writePricingLines
+ * promotes the first one onto the row — but a SETUP line never did, so a
+ * service sold as one fee up front and nothing after (a remote assessment
+ * quoted at $45,000) stored a setup line on the flat basis and left `basis`
+ * empty. The rate card then showed a dash in the Pricing Basis column for a
+ * service whose breakdown plainly said "Flat fee", and the only way to make
+ * the column agree with the panel was to go and pick the basis by hand.
+ *
+ * So read both halves: the recurring lines first (the headline one leads,
+ * because that is the price the card's own rate columns show), then any
+ * basis that only a setup line names. Deriving rather than storing keeps it
+ * honest in both directions — clear the last rate off a basis and it stops
+ * being listed, the same as it would have if it had never been typed.
+ *
+ * A basis picked off the dropdown before any rate is typed is NOT here:
+ * this answers "what is priced", and that choice has no money on it yet.
+ * Callers that want the user's pick to lead read `entry.basis` first — see
+ * the Pricing Basis column.
+ */
+export function pricedBases(entry) {
+  const out = [];
+  const seen = new Set();
+  const add = (key) => {
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+  for (const line of pricingLines(entry)) add(line.basis);
+  for (const line of entry?.setupLines || []) add(line?.basis);
+  return out;
+}
+
+/**
  * Write an ordered list of recurring lines back onto a stored row.
  *
  * The first line becomes the row's `basis`/`rate`/`rateHigh` — its headline

@@ -7,6 +7,7 @@ import {
   PRICING_BASES,
   basisFor,
   basisUsage,
+  pricedBases,
   estimateScope,
   formatMoney,
   formatRate,
@@ -162,7 +163,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   const allRows = useMemo(() => serviceRows
     .map(({ name, meta, bucket }) => {
       const entry = pricingFor(pricing, name, bases);
-      const basis = basisFor(entry.basis, bases);
+      // What the service is actually priced on, setup lines included. A
+      // basis the user picked off the dropdown still leads even before a
+      // rate is typed against it — that pick is a choice, not a leftover —
+      // but a service nobody has picked one for reads its basis off the
+      // breakdown instead of showing a dash beside real money.
+      const priced = pricedBases(entry);
+      const basisKey = entry.basis || priced[0] || '';
+      const basis = basisFor(basisKey, bases);
+      const extraBases = priced.filter(k => k !== basisKey);
       const est = allEstimates.get(name);
       const ownUnits = parseMoney(serviceUnits[name]);
       return {
@@ -171,7 +180,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         serviceBucket: bucket,
         serviceType: meta?.serviceType || '',
         years: meta?.years || '',
-        basis: entry.basis,
+        basis: basisKey,
         basisLabel: basis?.label || '',
         rate: entry.rate,
         rateHigh: entry.rateHigh,
@@ -188,7 +197,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _breakdown: est?.breakdown || [],
         _recurringFee: est?.priced ? est.recurringFee : null,
         _recurringFeeHigh: est?.priced ? est.recurringFeeHigh : null,
-        _extraLines: entry.lines.length,
+        // The bases beyond the headline one, named so the column can say
+        // how many lines the fee is really spread over — a setup line is
+        // one of them, and used not to be counted.
+        _extraLines: extraBases.length,
+        _extraBasisLabels: extraBases.map(k => basisFor(k, bases)?.label || k),
         notes: entry.notes,
         // What the panel prices against: the deal's own figure for this
         // service first, then the card's standing one, then the shared
@@ -248,11 +261,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                   this column and its rate in the two beside it — so without
                   this a fee off this card reads as arithmetic nobody can
                   follow. The count is the cue; the panel behind the ⤢ has
-                  the rows. */}
+                  the rows. Setup lines count: they are money on a basis the
+                  rate columns never show. */}
               {row._extraLines > 0 && (
                 <span
                   className={styles.pricingBasisMore}
-                  title={`Priced on ${row._extraLines + 1} lines: ${row._breakdown.map(p => p.basisLabel).join(', ')}. The rate columns show the first. Open the service to see the breakdown.`}
+                  title={`Priced on ${row._extraLines + 1} lines: ${[row.basisLabel, ...row._extraBasisLabels].join(', ')}. The rate columns show the first. Open the service to see the breakdown.`}
                 >{`+${row._extraLines}`}</span>
               )}
             </div>
