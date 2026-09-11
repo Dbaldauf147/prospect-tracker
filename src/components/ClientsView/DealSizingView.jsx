@@ -523,6 +523,22 @@ export function DealSizingView({
   // service coverage already make — but the tick is a working decision that
   // gets taken back, so they stay one checkbox away rather than gone.
   const [showUntracked, setShowUntracked] = useState(false);
+  // Which clients the book-wide edits write to. Empty is the page as it was —
+  // the bar acts on every client listed — and the moment a box is ticked it
+  // acts on the ticks instead, because "put GRESB quant in front of the whole
+  // book" and "put it in front of these nine" are the same job and only one
+  // of them was doable without forty trips to the Services column.
+  //
+  // Held as ROW ids rather than client objects: the rows are rebuilt on every
+  // re-price, and a selection holding the old objects would go stale the
+  // first time a rate changed.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  // The order the table is showing right now, for Shift-click ranges, and the
+  // last box ticked without Shift, which a range runs from. Refs because
+  // neither is read while rendering — storing the table's own order in state
+  // would re-render every row on every sort.
+  const displayedOrderRef = useRef([]);
+  const selectionAnchorRef = useRef(null);
 
   // The map is written through the same mirrored store the Clients tab's
   // other per-client fields use, so a scope set in one window (or on another
@@ -810,6 +826,82 @@ export function DealSizingView({
     return list;
   }, [rows, onlyScoped, query]);
 
+  // The clients the bulk bar writes to: the ticked ones, or every client
+  // listed when nothing is ticked.
+  //
+  // Intersected with what is on screen rather than taken from the raw
+  // selection. A tick made before a search was typed still names a client,
+  // but writing to one the user can no longer see is the exact thing the
+  // "every client listed" wording has always existed to prevent — so a client
+  // filtered away is out of the write, and the bar says how many that is
+  // rather than letting the count quietly disagree with the boxes.
+  const selectedVisible = useMemo(
+    () => (selectedIds.size ? visible.filter(r => selectedIds.has(r.id)) : []),
+    [visible, selectedIds],
+  );
+  const usingSelection = selectedVisible.length > 0;
+  const targets = usingSelection ? selectedVisible : visible;
+  const selectedOffList = selectedIds.size - selectedVisible.length;
+  const allVisibleSelected = visible.length > 0 && selectedVisible.length === visible.length;
+  // What the bulk bar's controls say they will act on, written once: four
+  // labels and three tooltips read it, and they have to agree.
+  const targetLabel = usingSelection
+    ? `the ${selectedVisible.length} selected client${selectedVisible.length === 1 ? '' : 's'}`
+    : 'every client listed';
+
+  const toggleSelectAllVisible = useCallback(() => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      // Only ever the clients on screen: "select all" under a search means
+      // the search's results, never the rows it hid.
+      if (visible.length > 0 && visible.every(r => next.has(r.id))) {
+        for (const r of visible) next.delete(r.id);
+      } else {
+        for (const r of visible) next.add(r.id);
+      }
+      return next;
+    });
+    selectionAnchorRef.current = null;
+  }, [visible]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    selectionAnchorRef.current = null;
+  }, []);
+
+  // Tick one client, or — with Shift held — every client between the last one
+  // ticked and this one, in the order the table is showing them. The range
+  // takes the state this box is about to move to, which is how a file list or
+  // a spreadsheet behaves and therefore what the hand expects.
+  //
+  // The range is worked out HERE rather than inside the state updater. An
+  // updater runs during the next render, by which point the anchor below has
+  // already been moved to this row — so a range computed in there is always
+  // this row to itself, and Shift does nothing at all.
+  const toggleSelected = useCallback((row, shift) => {
+    const order = displayedOrderRef.current;
+    const anchor = selectionAnchorRef.current;
+    const to = order.indexOf(row.id);
+    const from = anchor == null ? -1 : order.indexOf(anchor);
+    const ids = (shift && from !== -1 && to !== -1)
+      ? order.slice(Math.min(from, to), Math.max(from, to) + 1)
+      : [row.id];
+    const makeSelected = !selectedIds.has(row.id);
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (makeSelected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+    selectionAnchorRef.current = row.id;
+  }, [selectedIds]);
+
+  const handleDisplayedRows = useCallback((list) => {
+    displayedOrderRef.current = (list || []).map(r => r?.id).filter(id => id != null);
+  }, []);
+
   // Totals over what's on screen, so narrowing to one bucket of clients
   // re-totals to that bucket rather than always reporting the whole book.
   const totals = useMemo(
@@ -817,18 +909,19 @@ export function DealSizingView({
     [visible],
   );
 
-  // What the bulk bar would do, worked out from the clients actually listed
-  // below it. Recomputed as the pick changes so the button can say what it is
-  // about to do rather than reporting it afterwards.
+  // What the bulk bar would do, worked out from the clients it is pointed at
+  // — the ticked ones, or everything listed below it. Recomputed as the pick
+  // changes so the button can say what it is about to do rather than
+  // reporting it afterwards.
   const bulkPlan = useMemo(() => {
     if (!bulkService) return null;
-    const clients2 = visible.map(r => r.client);
+    const clients2 = targets.map(r => r.client);
     const scopeOf = (c) => scopeFor(c.company);
     return {
       ...planBulkAdd({ clients: clients2, service: bulkService, scopeOf, skipSold: bulkSkipSold, oppStagesByClient }),
       have: planBulkRemove({ clients: clients2, service: bulkService, scopeOf }),
     };
-  }, [bulkService, bulkSkipSold, visible, scopeFor, oppStagesByClient]);
+  }, [bulkService, bulkSkipSold, targets, scopeFor, oppStagesByClient]);
 
   const addToAll = useCallback(() => {
     if (!bulkPlan?.add.length) return;
@@ -846,18 +939,19 @@ export function DealSizingView({
     );
   }, [bulkPlan, bulkService, scopeFor, applyScopes]);
 
-  // Start the whole book over: every service picked against every client
-  // listed, taken off in one write. Independent of the service picker above —
-  // it is about what has already been picked, not about a service being put
-  // in front of the book — so it reads the listed clients directly.
+  // Start over: every service picked against every client the bar is pointed
+  // at, taken off in one write. Independent of the service picker above — it
+  // is about what has already been picked, not about a service being put in
+  // front of anyone — so it reads the targeted clients directly.
   const clearPlan = useMemo(
-    () => planClearServices({ clients: visible.map(r => r.client), scopeOf: (c) => scopeFor(c.company) }),
-    [visible, scopeFor],
+    () => planClearServices({ clients: targets.map(r => r.client), scopeOf: (c) => scopeFor(c.company) }),
+    [targets, scopeFor],
   );
 
-  // What the status write would do to the clients listed. Recomputed as the
-  // pick changes so the button can say what it is about to do rather than
-  // reporting it afterwards — the same contract the bulk add works to.
+  // What the status write would do to the clients the bar is pointed at.
+  // Recomputed as the pick changes so the button can say what it is about to
+  // do rather than reporting it afterwards — the same contract the bulk add
+  // works to.
   //
   // The services per client come from the target: the one service picked in
   // the bar, or everything that client has scoped. Scope mode reads the
@@ -866,12 +960,12 @@ export function DealSizingView({
   // not a service to hang a status on.
   const statusPlan = useMemo(() => {
     if (!bulkStatus) return null;
-    const byRow = new Map(visible.map(r => [r.client, r.estimate.services]));
+    const byRow = new Map(targets.map(r => [r.client, r.estimate.services]));
     const servicesOf = bulkStatusTarget === 'scope'
       ? (c) => byRow.get(c) || []
       : () => (bulkService ? [bulkService] : []);
-    return planBulkStatus({ clients: visible.map(r => r.client), status: bulkStatus, servicesOf });
-  }, [bulkStatus, bulkStatusTarget, bulkService, visible]);
+    return planBulkStatus({ clients: targets.map(r => r.client), status: bulkStatus, servicesOf });
+  }, [bulkStatus, bulkStatusTarget, bulkService, targets]);
 
   // Apply it. One write per client — there is no bulk prospect write, and a
   // status is a single field on a record the rest of the app is subscribed
@@ -911,7 +1005,7 @@ export function DealSizingView({
     // whole page in a click and the rows it clears scroll off screen — so it
     // asks first, and says what it is keeping.
     const ok = window.confirm(
-      `Clear the services picked for ${n} client${n === 1 ? '' : 's'}?\n\n`
+      `Clear the services picked for ${n} ${usingSelection ? 'selected ' : ''}client${n === 1 ? '' : 's'}?\n\n`
       + 'Typed counts and deal sizes stay. This can be undone.',
     );
     if (!ok) return;
@@ -919,7 +1013,7 @@ export function DealSizingView({
       clearPlan.map(c => [c.company, clearServices(scopeFor(c.company))]),
       `Cleared the services on ${n} client${n === 1 ? '' : 's'}.`,
     );
-  }, [clearPlan, scopeFor, applyScopes]);
+  }, [clearPlan, scopeFor, applyScopes, usingSelection]);
 
   const toggleRow = useCallback((id) => {
     setExpandedIds(prev => {
@@ -930,6 +1024,50 @@ export function DealSizingView({
   }, []);
 
   const columns = useMemo(() => [
+    {
+      // Which clients the bar above writes to. Always on screen rather than
+      // behind a "bulk edit" mode: the bar is always on screen too, and a
+      // mode would mean noticing the edit is book-wide, turning something on,
+      // and only then picking — three steps to answer a question the boxes
+      // answer by being there. Nothing ticked keeps the page as it was, so
+      // the column costs an existing user nothing.
+      key: '__select__', label: '', defaultWidth: 34,
+      renderHeader: () => (
+        <input
+          type="checkbox"
+          checked={allVisibleSelected}
+          ref={el => { if (el) el.indeterminate = selectedVisible.length > 0 && !allVisibleSelected; }}
+          disabled={visible.length === 0}
+          onChange={toggleSelectAllVisible}
+          onClick={e => e.stopPropagation()}
+          title={allVisibleSelected
+            ? 'Clear every client on screen'
+            : `Select the ${visible.length} client${visible.length === 1 ? '' : 's'} on screen`}
+          style={{ margin: 0, cursor: visible.length ? 'pointer' : 'default' }}
+        />
+      ),
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.id)}
+          // Stopped so ticking a box doesn't also expand the row underneath
+          // it. The tick itself is left to onChange, which for a checkbox
+          // carries the click that caused it — and so its Shift key. Doing
+          // the Shift case in onClick instead means preventDefault, which
+          // does NOT stop React's change from firing straight after: the
+          // range lands and the single-row toggle immediately undoes one end
+          // of it.
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => toggleSelected(row, !!e.nativeEvent?.shiftKey)}
+          title="Select this client for the bulk edits above. Hold Shift and click another row to take the whole range."
+          aria-label={`Select ${row.company || 'this client'} for the bulk edits`}
+          style={{ margin: 0, cursor: 'pointer' }}
+        />
+      ),
+      // Never exported: it is this session's selection, not anything about
+      // the client.
+      exportValue: () => '',
+    },
     {
       key: 'expander', label: '', defaultWidth: 34,
       render: (row) => (
@@ -1280,7 +1418,8 @@ export function DealSizingView({
           )
       ),
     },
-  ], [expandedIds, onSelectProspect, bases, analysisFor, statusFor, setServiceStatus, updateProspect]);
+  ], [expandedIds, onSelectProspect, bases, analysisFor, statusFor, setServiceStatus, updateProspect,
+    selectedIds, selectedVisible, allVisibleSelected, visible, toggleSelectAllVisible, toggleSelected]);
 
   const renderExpansion = useCallback((row) => {
     const { estimate, scope, client, company } = row;
@@ -1561,13 +1700,62 @@ export function DealSizingView({
         )}
       </div>
 
-      {/* The book-wide edits: one service put in front of every client listed,
+      {/* The book-wide edits: one service put in front of a set of clients,
           and the way to start over. These are the only controls on the page
-          that write to every client at once, so they say what they will do
-          before they do it, and what they did afterwards — with a way back. */}
+          that write to many clients at once, so they say who they will write
+          to and what they will do before they do it, and what they did
+          afterwards — with a way back. */}
       <div style={{ border: '1px solid #E2E8F0', background: '#fff', borderRadius: 10, padding: '0.6rem 0.75rem', marginBottom: '0.75rem' }}>
+        {/* Who the whole bar is pointed at, said once at the top rather than
+            repeated in each control's label: every button below writes to
+            exactly this set, and a reader who has ticked nine boxes should not
+            have to check three buttons to be sure of it. */}
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem', paddingBottom: '0.5rem', borderBottom: '1px solid #F1F5F9' }}>
+          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>These edits write to</span>
+          <span
+            title={usingSelection
+              ? 'The clients ticked in the table below. Untick them all to go back to writing to everything listed.'
+              : 'Nothing is ticked, so the edits below act on every client the filters leave on screen. Tick the boxes in the table to pick out a few.'}
+            style={{
+              fontSize: '0.74rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 999,
+              border: '1px solid ' + (usingSelection ? '#BFDBFE' : '#E2E8F0'),
+              background: usingSelection ? '#EFF6FF' : '#F8FAFC',
+              color: usingSelection ? '#1E40AF' : '#475569',
+            }}
+          >{usingSelection
+            ? `${selectedVisible.length} selected client${selectedVisible.length === 1 ? '' : 's'}`
+            : `all ${visible.length} client${visible.length === 1 ? '' : 's'} listed`}</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.74rem', color: '#475569' }}>
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={el => { if (el) el.indeterminate = usingSelection && !allVisibleSelected; }}
+              disabled={visible.length === 0}
+              onChange={toggleSelectAllVisible}
+            />
+            <span title="Tick every client the search and filters leave on screen. Clients filtered off the page are never selected — a bulk edit that reaches a row you cannot see is the thing this bar exists to avoid.">
+              Select all listed
+            </span>
+          </label>
+          {selectedIds.size > 0 && (
+            <button
+              type="button"
+              onClick={clearSelection}
+              style={{ background: 'none', border: 'none', padding: 0, color: '#1D4ED8', fontWeight: 600, fontFamily: 'inherit', fontSize: '0.74rem', textDecoration: 'underline', cursor: 'pointer' }}
+            >Clear selection</button>
+          )}
+          {/* Ticked earlier, filtered away since. Named rather than silently
+              dropped: the alternative is a button that says "Add to 4" while
+              the user remembers ticking eleven. */}
+          {selectedOffList > 0 && (
+            <span
+              title="These clients are ticked but the current search, the scope filter or the Don't Track toggle has taken them off screen. They are left out of the edits below until they are listed again."
+              style={{ fontSize: '0.72rem', color: '#B45309' }}
+            >{selectedOffList} ticked but not listed &middot; left out</span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Add one service to every client listed</span>
+          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Add one service to {targetLabel}</span>
           <ServiceTypeahead
             value={bulkService}
             buckets={serviceBuckets}
@@ -1590,7 +1778,9 @@ export function DealSizingView({
               color: bulkPlan?.add.length ? '#fff' : '#94A3B8',
               cursor: bulkPlan?.add.length ? 'pointer' : 'default',
             }}
-          >{bulkPlan?.add.length ? `Add to ${bulkPlan.add.length} client${bulkPlan.add.length === 1 ? '' : 's'}` : 'Add to all'}</button>
+          >{bulkPlan?.add.length
+            ? `Add to ${bulkPlan.add.length} client${bulkPlan.add.length === 1 ? '' : 's'}`
+            : (usingSelection ? 'Add to selected' : 'Add to all')}</button>
           {bulkPlan?.have.length > 0 && (
             <button
               type="button"
@@ -1605,8 +1795,8 @@ export function DealSizingView({
             onClick={clearAllServices}
             disabled={!clearPlan.length}
             title={clearPlan.length
-              ? `Take every service off the ${clearPlan.length} listed client${clearPlan.length === 1 ? '' : 's'} that has any picked, and start the sizing over. Typed counts and deal sizes stay, and it can be undone.`
-              : 'No client listed has any services picked'}
+              ? `Take every service off the ${clearPlan.length} ${usingSelection ? 'selected' : 'listed'} client${clearPlan.length === 1 ? '' : 's'} that has any picked, and start the sizing over. Typed counts and deal sizes stay, and it can be undone.`
+              : `No ${usingSelection ? 'selected' : 'listed'} client has any services picked`}
             style={{
               marginLeft: 'auto',
               padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
@@ -1615,7 +1805,7 @@ export function DealSizingView({
               color: clearPlan.length ? '#B91C1C' : '#94A3B8',
               cursor: clearPlan.length ? 'pointer' : 'default',
             }}
-          >Clear all services{clearPlan.length ? ` (${clearPlan.length})` : ''}</button>
+          >{usingSelection ? 'Clear services on selected' : 'Clear all services'}{clearPlan.length ? ` (${clearPlan.length})` : ''}</button>
         </div>
 
         {/* The breakdown. Every client the pick would NOT change is accounted
@@ -1638,7 +1828,7 @@ export function DealSizingView({
               </span>
             )}
             {bulkPlan.add.length === 0 && (
-              <span style={{ color: '#94A3B8' }}>Nothing to do for the clients listed below.</span>
+              <span style={{ color: '#94A3B8' }}>Nothing to do for {targetLabel}.</span>
             )}
           </div>
         )}
@@ -1653,7 +1843,7 @@ export function DealSizingView({
             the same map — so this is the column's own action done to the
             whole list, never a new kind of edit. */}
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #F1F5F9' }}>
-          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Set the service status on every client listed</span>
+          <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155' }}>Set the service status on {targetLabel}</span>
           <select
             value={bulkStatusTarget}
             onChange={e => { setBulkStatusTarget(e.target.value); setBulkUndo(null); }}
@@ -1713,7 +1903,7 @@ export function DealSizingView({
               </span>
             )}
             {statusPlan.change.length === 0 && statusPlan.skipped.length === 0 && (
-              <span style={{ color: '#94A3B8' }}>Nothing to do for the clients listed below.</span>
+              <span style={{ color: '#94A3B8' }}>Nothing to do for {targetLabel}.</span>
             )}
           </div>
         )}
@@ -1764,9 +1954,10 @@ export function DealSizingView({
         exportFileName="Client deal sizing"
         columns={columns}
         rows={visible}
-        alwaysVisible={['company']}
+        alwaysVisible={['__select__', 'company']}
         defaultSort={{ key: 'contractValue', direction: 'desc' }}
         onRowClick={(row) => toggleRow(row.id)}
+        onDisplayedRowsChange={handleDisplayedRows}
         expandedRowIds={expandedIds}
         renderExpansion={renderExpansion}
         settings={settings}
