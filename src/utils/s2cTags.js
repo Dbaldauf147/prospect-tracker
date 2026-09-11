@@ -278,3 +278,82 @@ export function s2cTagSuggestions(tags = {}, field) {
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
+
+/**
+ * Add — or fill in — one line item by hand, returning a new map.
+ *
+ * The table's rows are the workbook's line items, which is fine right up
+ * until the thing you need to tag isn't in the workbook: a service quoted
+ * outside the SIA, one the parser didn't pick up, one you know is coming.
+ * Before this there was no way to say so; the only line items that could be
+ * tagged were the ones a file had already named.
+ *
+ * Merges rather than replaces, so adding a name that is already on the table
+ * fills in the tags given and leaves the rest — typing an existing line item
+ * in is a way to answer it, not a way to wipe it.
+ *
+ * Nothing is stored for a name with neither a tag nor a note against it: an
+ * entry needs content to survive `hasS2cContent`, and a row that vanishes on
+ * the next load is worse than a row that was never added. The caller checks
+ * the return for that — an unchanged map means nothing was added.
+ */
+export function addS2cLineItem(tags, lineItem, values = {}) {
+  const key = s2cTagKey(lineItem);
+  if (!key) return tags || {};
+  const next = { ...(tags || {}) };
+  const entry = { ...(next[key] || {}) };
+
+  for (const f of TAG_KEYS) {
+    const v = String(values?.[f] ?? '').trim();
+    if (v) entry[f] = v;
+  }
+  const note = String(values?.[NOTES_KEY] ?? '').trim();
+  if (note) entry[NOTES_KEY] = note;
+
+  // The spelling typed in wins the display form, the same way an edit through
+  // setS2cTag refreshes it: the person adding the row is naming it.
+  const spelling = String(lineItem ?? '').trim();
+  if (spelling) entry[LABEL_KEY] = spelling;
+
+  if (!hasS2cContent(entry)) return tags || {};
+  next[key] = entry;
+  return next;
+}
+
+/**
+ * The suggestions that match what has been typed, best first.
+ *
+ * Prefix matches lead, substring matches follow, each group keeping the
+ * alphabetical order it arrived in. Typing "inv" should put "Invoice
+ * Validation" above "Monthly Invoice Check" — a prefix is what somebody
+ * spelling out a name they half remember is producing.
+ *
+ * An empty query offers everything, so focusing a blank cell shows the
+ * column's vocabulary rather than nothing. That is the whole reason the
+ * suggestions exist: free text keeps forty spellings of one segment out only
+ * if the thirty-ninth person can see the first.
+ */
+export function s2cSuggestionMatches(values = [], query = '') {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return [...values];
+  const starts = [], contains = [];
+  for (const v of values) {
+    const lower = String(v).toLowerCase();
+    if (lower.startsWith(q)) starts.push(v);
+    else if (lower.includes(q)) contains.push(v);
+  }
+  return [...starts, ...contains];
+}
+
+/**
+ * Does one cell pass one column's filter? Blank filter passes everything.
+ *
+ * Substring rather than equality on purpose: the column filters are typed
+ * into as well as picked from, so half a name has to narrow the table or
+ * typing it does nothing until the last character lands.
+ */
+export function s2cCellMatches(value, query) {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return true;
+  return String(value ?? '').toLowerCase().includes(q);
+}

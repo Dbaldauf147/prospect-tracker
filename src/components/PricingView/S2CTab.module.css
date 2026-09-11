@@ -302,3 +302,179 @@
   padding: 0.4rem 0.55rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Predictive tag entry and the per-column filters ──────────────────────
+   A tag cell is a combobox: the column's own vocabulary shown as you focus
+   it, narrowed as you type, and still free text underneath. The filter row
+   under the headings uses the same list to answer the other direction of the
+   question — not "what is this line item" but "which line items say this". */
+
+.comboWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Fixed, not absolute: the list is anchored to the viewport by JS because the
+   table scrolls inside .gridWrap and the page scrolls inside .wrapper, and an
+   absolute list would be clipped by both. */
+.comboList {
+  position: fixed;
+  z-index: 60;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  padding: 0.15rem 0;
+}
+
+.comboOption,
+.comboOptionOn {
+  padding: 0.3rem 0.55rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comboOptionOn { background: #dbeafe; }
+
+.comboEmpty {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: normal;
+}
+
+/* The filter row, under the column headings it filters. */
+.grid th.filterHeader,
+.grid th.filterHeaderTag {
+  padding: 0.2rem 0.25rem;
+  background: #f8fafc;
+}
+
+.grid th.filterHeaderTag { background: #eff6ff; }
+
+.filterWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.filterInput,
+.filterInputOn {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.2rem 1.2rem 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.filterInput:focus,
+.filterInputOn:focus { outline: none; border-color: var(--color-accent); }
+
+/* A filter is applied — say so, or a table narrowed by a box somebody has
+   scrolled past reads as a table missing rows. */
+.filterInputOn {
+  border-color: var(--color-accent);
+  background: #eef2ff;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.filterClear {
+  position: absolute;
+  top: 50%;
+  right: 0.15rem;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.filterClear:hover { color: #b91c1c; }
+
+.siaCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ── Adding a line item by hand ───────────────────────────────────────── */
+
+.addBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  background: #f8fafc;
+}
+
+.addRow {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.addField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 190px;
+  min-width: 150px;
+}
+
+.addLabel {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.addInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+}
+
+.addInput:focus { outline: none; border-color: var(--color-accent); }
+
+.addActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.addHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.addError {
+  font-size: var(--font-size-xs);
+  color: #b91c1c;
+}
