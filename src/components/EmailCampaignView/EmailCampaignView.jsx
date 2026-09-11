@@ -103,9 +103,10 @@ const ACTIONS_COL_WIDTH = 36;
 const MIN_COL_WIDTH = 60;
 
 // Column prefs live per user, under one key each.
-// Whether the stats block above the contact table is collapsed. Kept per
+// Whether the summary cards above the contact table are collapsed. Kept per
 // user so a roster somebody works through row by row stays scrolled to the
-// table rather than to the numbers they've already read.
+// table rather than to the numbers they've already read. Never hides the
+// roster: the point of folding the cards away is to reach it sooner.
 const DETAILS_COLLAPSED_LS = 'email-campaign:details-collapsed';
 
 const COLS_LS = {
@@ -240,7 +241,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [colOrder, setColOrder] = useState(() => readCols('order', []));
   const [colWidths, setColWidths] = useState(() => readCols('widths', {}));
   // Collapses the summary cards (and the tracking nudge under them) so the
-  // contact table starts higher up the page.
+  // contact table starts higher up the page. The table, the box that adds to
+  // it and its column controls are deliberately outside this — see the roster
+  // further down.
   const [detailsCollapsed, setDetailsCollapsed] = useState(() => {
     try { return userLsGet(DETAILS_COLLAPSED_LS) === '1'; } catch { return false; }
   });
@@ -1968,19 +1971,18 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       {/* Results */}
       {displayResults && (
         <div>
-          {/* Collapse the campaign's body away — the summary cards and the
-              contact roster both — leaving the headline figures inline here so
-              nothing has to be reopened to read them. Between the cards and a
-              long list of contacts a campaign fills the screen, and the reason
-              to collapse it is to reach what's underneath. The choice sticks
-              per user. */}
+          {/* Collapse the summary cards away — and only them — leaving the
+              headline figures inline here so nothing has to be reopened to
+              read them. The point of the button is to start the contact
+              table higher up the page, which is why the table itself is not
+              behind it. The choice sticks per user. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
             <button
               onClick={() => setDetailsCollapsed(v => !v)}
               aria-expanded={!detailsCollapsed}
               title={detailsCollapsed
-                ? 'Show the campaign summary cards and its contact list'
-                : 'Hide the campaign summary cards and its contact list, leaving the headline figures'}
+                ? 'Show the campaign summary cards'
+                : 'Hide the campaign summary cards, leaving the headline figures. The contact list stays either way.'}
               style={{
                 padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
@@ -1989,7 +1991,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               }}
             >
               <span style={{ fontSize: '0.6rem' }}>{detailsCollapsed ? '▶' : '▼'}</span>
-              {detailsCollapsed ? 'Show details' : 'Hide details'}
+              {detailsCollapsed ? 'Show summary' : 'Hide summary'}
             </button>
             {detailsCollapsed && (
               <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
@@ -2398,9 +2400,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             {/* What the filters are currently leaving on the table. A table
                 quietly showing eight of twenty-two rows is the thing a filter
                 row does wrong, so the count says so out loud and offers the
-                way back. With the table collapsed there is nothing on screen
-                for it to describe, so it goes with the table. */}
-            {!detailsCollapsed && filtersOn > 0 && (
+                way back. */}
+            {filtersOn > 0 && (
               <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
                 <span title={`${filtersOn} column filter${filtersOn === 1 ? '' : 's'} set. The rest of the campaign is still here — the filters only decide what the table shows.`}>
                   Showing <strong style={{ color: 'var(--color-text)' }}>{sortedContacts.length}</strong> of {(displayResults.contacts || []).length}
@@ -2419,10 +2420,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
             {/* The same Columns picker the contacts tables use: show / hide,
                 star a default set, drag to reorder, Reset to get back. Widths
-                are set by dragging a header's right edge. It goes with the
-                table rather than with the box beside it — there is nothing to
-                configure the columns of while the table is collapsed. */}
-            {!detailsCollapsed && (
+                are set by dragging a header's right edge. */}
             <div style={{ marginLeft: filtersOn > 0 ? 0 : 'auto' }}>
               <ColumnToggle
                 align="right"
@@ -2440,15 +2438,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 onResetColumns={resetCols}
               />
             </div>
-            )}
           </div>
 
           {/* An empty roster — a just-created campaign, or one every contact has
               been removed from. The table renders nothing at all in that case,
-              so say what to do next instead of showing a blank panel. Shown
-              collapsed or not, for the same reason the box above it is: an
-              empty roster has no details to hide, and this is the line that
-              says the box is what to do about it. */}
+              so say what to do next instead of showing a blank panel. */}
           {!(displayResults.contacts || []).length && (
             <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
               No contacts in this campaign yet — add an email above to start tracking who it goes to.
@@ -2456,13 +2450,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           )}
 
           {/* The rest of the roster — the duplicate warning that describes the
-              table, and the table itself. Collapsed together with the cards:
-              on a campaign with a long contact list this is nearly the whole
-              page, and "Hide details" is asked for to get past it to what's
-              below. Everything that acts on the campaign as a whole (Export
-              CSV, Add unsent to Draft, Save) stays put — those don't need the
-              rows on screen to be worth clicking. */}
-          {!detailsCollapsed && (
+              table, and the table itself. Always on screen.
+              
+              It used to collapse along with the summary cards, on the grounds
+              that a long contact list fills the page and "Hide details" is
+              asked for to get past it. But the table has been capped at 500px
+              with its own scrollbar for as long as it has existed, so a long
+              roster never was what filled the page — the cards above it were,
+              which is what this toggle's own description says it hides. What
+              collapsing the table actually did was take away the only place a
+              campaign says WHO is in it: which addresses are on the list, who
+              has been emailed, who replied, who is on hold. The stat line the
+              toggle leaves behind counts them and cannot name one.
+              
+              And the choice persists per user, so somebody who hid the cards
+              once — to reach the table sooner, which is the whole point of
+              the button — had the table taken away on every campaign from
+              then on, with nothing on screen saying where it had gone. */}
           <>
           {/* Duplicate contacts warning */}
           {dupKeys.size > 0 && (
@@ -2601,7 +2605,6 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
           )}
           </>
-          )}
         </div>
       )}
 
