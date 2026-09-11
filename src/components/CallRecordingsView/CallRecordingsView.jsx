@@ -31,7 +31,7 @@
 // <video> element plays straight from it, and the transcription service
 // fetches it directly too.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { secureGet, secureSet, secureClear } from '../../utils/secureStorage';
@@ -69,6 +69,7 @@ import { runGranolaSync } from '../../utils/runGranolaSync';
 import { runCallSummary, pushSummaryToOpp, recordCallOnOpp } from '../../utils/runCallSummary';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildActiveOppsIndex, activeOppsForCompany } from '../../utils/targetAccountOpps';
+import { lazyView } from '../../utils/lazyView';
 import { setOppFields, bulkSetOppFields } from '../../utils/opps2Store';
 import { clearLastCallPatch, backfillLastCallPatches } from '../../utils/lastCallOnOpp';
 import {
@@ -87,7 +88,13 @@ const DEFAULT_FOLDER = '/Recordings';
 // The subtabs, as a guard on the persisted setting: a value from an older
 // build (or a hand-edited settings doc) must fall back to the card list
 // rather than leaving the page rendering nothing.
-const SUBTABS = new Set(['calls', 'history', 'breakdown']);
+// The HubSpot activity feed, which used to be its own sidebar entry and is
+// now the Activity subtab here. Lazy like the route views are: somebody
+// working through calls shouldn't pay to download the feed, and lazyView
+// carries the post-deploy chunk-reload handling every split view needs.
+const ActivityView = lazyView(() => import('../ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
+
+const SUBTABS = new Set(['calls', 'history', 'breakdown', 'activity']);
 // Refresh a little early so a long page session doesn't hit a 401 mid-click.
 const EXPIRY_SKEW_MS = 120000;
 const POLL_MS = 5000;
@@ -606,7 +613,7 @@ function fmtClock(sec) {
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export function CallRecordingsView({ prospects = [], settings = {}, updateSettings, onSelectProspect }) {
+export function CallRecordingsView({ prospects = [], settings = {}, updateSettings, onSelectProspect, initialTab = '' }) {
   const { user } = useAuth();
   // 'granola' | 'onedrive' | 'local'. Granola is the default because it is
   // where call data is supposed to come from; the other two need a
@@ -615,8 +622,17 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
   // 'calls' is the card list, which shows what the ACTIVE source can see
   // right now. 'history' is every call ever stored, whatever it came from
   // and whether or not that source is still reachable. 'breakdown' picks
-  // one stored call and reports who did the talking on it.
-  const [tab, setTab] = useState(SUBTABS.has(settings.callRecordingsTab) ? settings.callRecordingsTab : 'calls');
+  // one stored call and reports who did the talking on it. 'activity' is
+  // the HubSpot activity feed.
+  //
+  // A caller can name the subtab to open (App routes the old `activity`
+  // view key here that way, so existing links still land on the feed);
+  // otherwise the page comes back to whichever subtab was last used.
+  const [tab, setTab] = useState(
+    SUBTABS.has(initialTab) ? initialTab
+      : SUBTABS.has(settings.callRecordingsTab) ? settings.callRecordingsTab
+      : 'calls',
+  );
   const [historyQuery, setHistoryQuery] = useState('');
   // Which triage pile the History table is showing: all / untagged /
   // tagged / na. Not persisted — it is how you are working through the
@@ -1162,6 +1178,15 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
     setTab(next);
     updateSettings?.({ callRecordingsTab: next });
   }
+
+  // A navigation that names a subtab while this page is already open —
+  // a playbook step pointing at the activity feed, say — has to move the
+  // subtab, since the useState above only reads initialTab on mount.
+  // Deliberately not persisted: it is where the link sent you, not a
+  // choice you made about where the page should open next time.
+  useEffect(() => {
+    if (initialTab && SUBTABS.has(initialTab)) setTab(initialTab);
+  }, [initialTab]);
 
   // ---- History ---------------------------------------------------------
   // Every call ever stored, not just the ones the active source can see.
@@ -2155,6 +2180,10 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
 
   return (
     <div className={styles.wrapper}>
+      {/* The title and the whole call-source toolbar belong to the call
+          subtabs: the activity feed has a header of its own and none of
+          Granola, OneDrive or auto-summarize means anything to it. */}
+      {tab !== 'activity' && (
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Call Recordings</h1>
@@ -2269,11 +2298,13 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           )}
         </div>
       </div>
+      )}
 
       {/* Auto-N/A rules. A calendar is mostly recurrences, and every one
           of them asks the triage queue the same question it asked last
-          week — so answer it once, by name. */}
-      {showNaRules && (
+          week — so answer it once, by name. Hidden with the toolbar that
+          opens it. */}
+      {showNaRules && tab !== 'activity' && (
         <div className={styles.naRules}>
           <div className={styles.naRulesHead}>
             Mark calls N/A automatically by meeting name
@@ -2365,6 +2396,9 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
           { key: 'calls', label: 'Calls', count: visible.length },
           { key: 'history', label: 'History', count: historyRows.length },
           { key: 'breakdown', label: 'Call breakdown', count: breakdownRows.length },
+          // No count: the feed keeps its own All Activity / Today's
+          // Outbound tallies, and it hasn't loaded yet from out here.
+          { key: 'activity', label: 'Activity', count: null },
         ].map(t => (
           <button
             key={t.key}
@@ -2375,10 +2409,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               ? 'The calls this source can see right now'
               : t.key === 'history'
                 ? 'Every call ever stored, whatever it came from'
-                : 'Pick a call and see how much of it was you talking'}
+                : t.key === 'breakdown'
+                  ? 'Pick a call and see how much of it was you talking'
+                  : 'Emails and calls from HubSpot, with today’s calendar'}
           >
             {t.label}
-            <span className={styles.subtabCount}>{t.count}</span>
+            {t.count != null && <span className={styles.subtabCount}>{t.count}</span>}
           </button>
         ))}
       </div>
@@ -2843,6 +2879,16 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             )}
           </div>
         </div>
+      )}
+
+      {/* The activity feed, formerly its own sidebar entry. Unmounted
+          when it isn't showing: it holds a large HubSpot feed and its own
+          Firestore listener, and neither should be running while somebody
+          is working through calls. */}
+      {tab === 'activity' && (
+        <Suspense fallback={<div className={styles.transcriptStatus} style={{ padding: '0 1.25rem' }}>Loading activity…</div>}>
+          <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+        </Suspense>
       )}
 
       {/* Hidden rather than unmounted: a recording mid-playback and a
