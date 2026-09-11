@@ -27,6 +27,7 @@ import {
   S2C_TAG_FIELDS, s2cTagKey, hasAnyTag, setS2cTag, clearS2cTags,
   collectS2cLineItems, countTagged, s2cTagSuggestions, migrateS2cTags,
   setS2cNote, s2cNote, hasS2cNote, hasS2cContent,
+  addS2cLineItem, s2cSuggestionMatches, s2cCellMatches,
 } from '../src/utils/s2cTags.js';
 
 let passed = 0, failed = 0;
@@ -255,6 +256,92 @@ const workbook = [
   // The remembered spelling must never leak into a tag column's suggestions.
   check('suggest: the label is not offered as a tag',
     s2cTagSuggestions({ a: { label: 'CCM NAM', serviceSegment: 'Ops' } }, 'serviceSegment'), ['Ops']);
+}
+
+// ── Adding a line item by hand ────────────────────────────────────────────
+//
+// The table's rows are the workbook's line items, so before this the only
+// things that could be tagged were the things a file had already named. The
+// rules worth pinning are the ones that decide whether a hand-added row is
+// still there on the next load, and whether typing in a name that already
+// exists answers that row or wipes it.
+{
+  const added = addS2cLineItem({}, '  Carbon Accounting  ', { serviceSegment: 'Advisory' });
+  check('add: stored under the line-item key',
+    added, { 'carbon accounting': { serviceSegment: 'Advisory', label: 'Carbon Accounting' } });
+  // The spelling typed in is the display form, or the row comes back as a
+  // lower-cased key the moment there is no workbook to read a name off.
+  check('add: the typed spelling is remembered', added['carbon accounting'].label, 'Carbon Accounting');
+  check('add: it reads as tagged', hasAnyTag(added['carbon accounting']), true);
+
+  check('add: all three tags and a note at once',
+    addS2cLineItem({}, 'Benchmarking', {
+      serviceSegment: 'Sustainability', productName: 'ESG', deliverable: 'Report', notes: 'Quoted outside the SIA',
+    }),
+    { benchmarking: {
+      serviceSegment: 'Sustainability', productName: 'ESG', deliverable: 'Report',
+      notes: 'Quoted outside the SIA', label: 'Benchmarking',
+    } });
+
+  // A note alone is content, the same as it is everywhere else: somebody
+  // wrote something, and dropping it would throw the writing away.
+  check('add: a note alone is enough to keep the row',
+    addS2cLineItem({}, 'Waste', { notes: 'ask Dan' }),
+    { waste: { notes: 'ask Dan', label: 'Waste' } });
+
+  // Nothing to store means nothing stored — a row that vanishes on the next
+  // load is worse than a row that was never added, so the map comes back
+  // untouched and the caller can say so.
+  const before = { x: { serviceSegment: 'Ops' } };
+  check('add: an empty line item is not stored', addS2cLineItem(before, 'Nothing', {}) === before, true);
+  check('add: whitespace is not a tag', addS2cLineItem(before, 'Nothing', { productName: '  ' }) === before, true);
+  check('add: a nameless line item is not stored', addS2cLineItem(before, '   ', { productName: 'X' }) === before, true);
+
+  // Typing in a name the table already carries is a way to answer it, not a
+  // way to wipe it: the tags given fill in, the rest stay.
+  const existing = { 'ccm nam': { serviceSegment: 'Ops', notes: 'keep me' } };
+  check('add: an existing line item merges rather than replaces',
+    addS2cLineItem(existing, 'CCM NAM', { deliverable: 'Report' }),
+    { 'ccm nam': { serviceSegment: 'Ops', notes: 'keep me', deliverable: 'Report', label: 'CCM NAM' } });
+  check('add: the original map is not mutated', existing['ccm nam'].deliverable, undefined);
+
+  // And a hand-added line item is a row on the table like any other, marked
+  // as not coming from the workbook.
+  const rows = collectS2cLineItems({ options: [], tags: added });
+  check('add: it gets a row', rows.map(r => r.lineItem), ['Carbon Accounting']);
+  check('add: marked as not in the workbook', rows[0].reachable, false);
+}
+
+// ── Predictive matching ───────────────────────────────────────────────────
+//
+// Free text only stays free of forty spellings of one segment if the
+// thirty-ninth person can see the first, so an empty query offers the whole
+// column rather than nothing.
+{
+  const values = ['Advisory', 'Invoice Validation', 'Monthly Invoice Check', 'Sourcing'];
+  check('match: an empty query offers everything', s2cSuggestionMatches(values, ''), values);
+  check('match: whitespace is an empty query', s2cSuggestionMatches(values, '   '), values);
+  // A prefix is what somebody spelling out a name they half remember is
+  // producing, so prefix matches lead.
+  check('match: prefixes lead, substrings follow',
+    s2cSuggestionMatches(values, 'inv'), ['Invoice Validation', 'Monthly Invoice Check']);
+  check('match: case-insensitive', s2cSuggestionMatches(values, 'SOUR'), ['Sourcing']);
+  check('match: no match', s2cSuggestionMatches(values, 'zzz'), []);
+  check('match: nothing to match against', s2cSuggestionMatches([], 'a'), []);
+  check('match: the input is not mutated', values.length, 4);
+}
+
+// ── One column's filter ───────────────────────────────────────────────────
+{
+  check('filter: a blank filter passes everything', s2cCellMatches('Sourcing', ''), true);
+  check('filter: blank passes an empty cell too', s2cCellMatches('', ''), true);
+  check('filter: whitespace is blank', s2cCellMatches('', '   '), true);
+  // Substring, not equality: the filter is typed into as well as picked from,
+  // so half a name has to narrow or typing does nothing until the last letter.
+  check('filter: substring', s2cCellMatches('Invoice Validation', 'valid'), true);
+  check('filter: case-insensitive', s2cCellMatches('Invoice Validation', 'INVOICE'), true);
+  check('filter: no match', s2cCellMatches('Sourcing', 'advisory'), false);
+  check('filter: an untagged cell matches nothing typed', s2cCellMatches(undefined, 'a'), false);
 }
 
 if (failed === 0) console.log(`PASS  s2cTags: ${passed} assertions`);
