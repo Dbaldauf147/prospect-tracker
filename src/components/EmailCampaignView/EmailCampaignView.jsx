@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } fr
 import { apiFetch } from '../../utils/apiFetch';
 import { ColumnToggle } from '../common/ColumnToggle';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
+import { ContactSuggestInput } from '../common/ContactSuggestInput';
 import {
   collectSuggestions, rowMatchesFilters, activeFilterCount, filtersForColumns,
 } from '../../utils/columnFilter';
@@ -659,13 +660,21 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // roster) and un-tombstoned so a later refresh keeps it. Then the latest
   // activity for the campaign's subject is pulled so any added email that was
   // in fact sent this subject immediately shows its Sent / Replied status.
-  async function addContacts(raw) {
+  //
+  // `hints` carries what a picked suggestion already knew about the person —
+  // their name and employer — so a contact chosen from the list arrives as
+  // "Drew Gadigian, Cerberus" rather than as an address the page then has to
+  // guess a greeting from. Typed addresses simply have no hint.
+  async function addContacts(raw, hints = []) {
     if (!results) return;
     const wanted = String(raw || '')
       .split(/[;,\s]+/)
       .map(e => e.trim())
       .filter(e => /.+@.+\..+/.test(e));
     if (wanted.length === 0) { setError('Enter a valid email address to add.'); return; }
+    const known = new Map((hints || [])
+      .map(h => [normEmail(h?.email), h])
+      .filter(([k]) => k));
     const existing = new Set((results.contacts || [])
       .flatMap(c => String(c.email || '').split(';').map(normEmail).filter(Boolean)));
     const additions = [];
@@ -674,8 +683,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       const key = normEmail(e);
       if (!key || existing.has(key) || seen.has(key)) continue;
       seen.add(key);
+      const hint = known.get(key);
       additions.push({
-        email: e, name: '', sentDate: '', replied: false, eventStatus: '', recipientCount: 1,
+        email: e,
+        name: String(hint?.name || '').trim(),
+        // Stored rather than looked up every render: the roster outlives the
+        // contacts cache, and a campaign whose companies vanish when somebody
+        // clears it is a campaign that got worse for no reason the user did.
+        company: String(hint?.company || '').trim(),
+        sentDate: '', replied: false, eventStatus: '', recipientCount: 1,
         // Contactable, with nothing recorded against them yet.
         outreach: '', holdUntil: '', notes: '',
       });
@@ -1225,6 +1241,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Every address already in this campaign. The suggestion list leaves them
+  // out: somebody already on the roster is not somebody to add, and offering
+  // them offers an action whose only answer is "that email is already in the
+  // campaign".
+  const rosterEmails = useMemo(
+    () => (displayResults?.contacts || [])
+      .flatMap(c => String(c?.email || '').split(';').map(e => e.trim()).filter(Boolean)),
+    [displayResults?.contacts],
+  );
 
   const companyByEmail = useMemo(() => {
     const map = new Map();
@@ -2334,13 +2360,27 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               and the collapse is a saved preference, so it stayed that way
               across every campaign until somebody thought to expand. */}
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <input
-              type="text"
+            {/* Type any part of a name, an address or a company and the box
+                offers the HubSpot contacts this browser has cached — the
+                address is the one thing nobody remembers. Picking one adds
+                them to the campaign there and then, with the name and
+                employer the suggestion showed.
+
+                Still a text box underneath: an address HubSpot has never
+                heard of goes in by typing it, and a pasted list of addresses
+                still goes in whole. */}
+            <ContactSuggestInput
               value={addEmail}
-              onChange={e => setAddEmail(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addContacts(addEmail); setAddEmail(''); } }}
-              placeholder="Add an email to this campaign…"
-              style={{ flex: 1, maxWidth: 340, padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit' }}
+              onChange={setAddEmail}
+              contacts={hubspotContacts}
+              exclude={rosterEmails}
+              onSubmit={() => { addContacts(addEmail); setAddEmail(''); }}
+              onPick={(c) => { addContacts(c.email, [c]); setAddEmail(''); }}
+              placeholder={hubspotContacts.length
+                ? 'Add a contact by name, email or company…'
+                : 'Add an email to this campaign…'}
+              emptyHint="No contact on file matches — type the full address to add them anyway."
+              style={{ padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit' }}
             />
             <button
               onClick={() => { addContacts(addEmail); setAddEmail(''); }}
