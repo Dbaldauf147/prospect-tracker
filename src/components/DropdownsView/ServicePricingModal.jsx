@@ -282,6 +282,7 @@ export function ServicePricingModal({
   onSaveLine,
   onSaveSetupLine,
   onToggleScope,
+  onToggleNoFee,
   onClose,
 }) {
   const panelRef = useRef(null);
@@ -323,6 +324,15 @@ export function ServicePricingModal({
         </div>
 
         <div className={styles.basesBody}>
+          {/* Said above the grid the mark emptied, because otherwise this
+              panel is a screen of blank rate boxes with no reason on it. */}
+          {row.noFee && (
+            <div className={styles.pricingNoFeeNote}>
+              <strong>Marked no fee.</strong> This service is delivered at no charge: it prices to
+              $0 on every deal and no longer reads as one nobody has got round to pricing. Typing a
+              rate below takes the mark off.
+            </div>
+          )}
           <div className={styles.pricingModalSectionTitle}>Fee breakdown</div>
           <FeeBreakdown
             row={row}
@@ -347,6 +357,18 @@ export function ServicePricingModal({
             <label className={styles.pricingModalScope} title="Include this service in the deal estimate on the Deal Pricing subtab">
               <input type="checkbox" checked={row._scoped} onChange={onToggleScope} />
               In scope for this estimate
+            </label>
+          )}
+          {/* Beside the scope checkbox because they are the two answers
+              this panel gives that aren't a number: is it in the deal, and
+              does it charge anything. */}
+          {onToggleNoFee && (
+            <label
+              className={styles.pricingModalScope}
+              title="This service is delivered at no charge. It prices to $0 instead of reading as unpriced — and marking it clears the rates below, which unmarking won't bring back."
+            >
+              <input type="checkbox" checked={!!row.noFee} onChange={onToggleNoFee} />
+              No fee
             </label>
           )}
           <span className={styles.basesFooterSpacer} />

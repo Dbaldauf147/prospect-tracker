@@ -17,6 +17,8 @@ import {
   resolvePricingBases,
   pricingBasesTopUp,
   PRICING_BASES_VERSION,
+  planNoFee,
+  setNoFee,
   setPricingField,
   setPricingLine,
   setPricingSetupLine,
@@ -43,6 +45,25 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'rateHigh',     label: 'High Annual Recurring Fee', width: 175 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
 ];
+
+// What the bulk bar can set across a selection: the card columns whose
+// value is the same sentence on every row it applies to. A rate is here
+// because "every one of these is $450 a site" is a real thing to say once;
+// the setup lines are not, because they are a grid rather than a field, and
+// the per-service panel is where a grid gets edited.
+const BULK_FIELDS = [
+  { key: 'basis',    label: 'Pricing Basis', kind: 'basis' },
+  { key: 'rate',     label: 'Low Annual Recurring Fee',  kind: 'money' },
+  { key: 'rateHigh', label: 'High Annual Recurring Fee', kind: 'money' },
+  { key: 'notes',    label: 'Pricing Notes', kind: 'text' },
+];
+
+// "Alpha, Beta and 3 more" — a list short enough to read inside a confirm
+// box, which is the only place the names of a bulk write are ever shown.
+function nameList(names, max = 3) {
+  if (names.length <= max) return names.join(', ');
+  return `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
+}
 
 // The setup fee, the minimum fee and a fee typed outright are all on the
 // card too, but not as columns: three more of them pushed the notes off the
@@ -132,6 +153,24 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // off the left edge.
   const [pricingPanelFor, setPricingPanelFor] = useState(null);
 
+  // ── Bulk edit ────────────────────────────────────────────────────────
+  //
+  // A rate card is a list of a hundred and fifty services, and half the
+  // edits made to one are the same edit made to a dozen rows: a bucket of
+  // services that all price per site, a set that is bundled in and charges
+  // nothing. Ticking rows and saying it once is the difference between
+  // that and twelve trips through the panel.
+  //
+  // The mode is a toggle rather than a permanently visible checkbox column,
+  // because the column costs the table width it hasn't got and the table's
+  // ordinary gesture — click a row, price that service — is the one it
+  // takes away.
+  const [bulkOn, setBulkOn] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkField, setBulkField] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkStatus, setBulkStatus] = useState(null);
+
   // What every service comes to under the estimate on the Deal Pricing
   // subtab. Nothing in the table shows these — they are one deal's numbers
   // and the table is the card — but the service panel does, because a rate
@@ -152,7 +191,15 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // multiply yet. Reading it here rather than testing the basis keeps a
   // basis picked before any rate is typed from counting as a price.
   const pricedCount = useMemo(
-    () => serviceRows.filter(r => allEstimates.get(r.name)?.priced).length,
+    () => serviceRows.filter(r => allEstimates.get(r.name)?.priced && !allEstimates.get(r.name)?.noFee).length,
+    [serviceRows, allEstimates],
+  );
+
+  // The rows that answer "nothing" rather than saying nothing. Counted
+  // beside the priced ones so the header can tell the two apart — see the
+  // note on the count.
+  const noFeeCount = useMemo(
+    () => serviceRows.filter(r => allEstimates.get(r.name)?.noFee).length,
     [serviceRows, allEstimates],
   );
 
@@ -177,6 +224,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       return {
         id: name,
         name,
+        // Charged at nothing, on purpose — the answer "this one is free",
+        // which an empty rate card can't give. Read off the card rather
+        // than off the estimate so the badge is the mark itself.
+        noFee: entry.noFee,
         serviceBucket: bucket,
         serviceType: meta?.serviceType || '',
         years: meta?.years || '',
@@ -228,6 +279,100 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     [allRows, term],
   );
 
+  // The selection as names the Solutions list still has. Held as names
+  // because that is what the rate card is keyed on, and intersected with
+  // the live rows because a service retired or renamed on the Services
+  // subtab while it was ticked would otherwise be written to under a name
+  // nothing lists — and counted in a total that promises otherwise.
+  const selectedNames = useMemo(
+    () => allRows.filter(r => selected.has(r.name)).map(r => r.name),
+    [allRows, selected],
+  );
+  const selectedCount = selectedNames.length;
+
+  // "Select all" means all the search left on screen, not all 150 — the
+  // search box is how you narrow to the set you meant to pick.
+  const visibleNames = useMemo(() => rows.map(r => r.name), [rows]);
+  const visibleSelectedCount = useMemo(
+    () => visibleNames.filter(n => selected.has(n)).length,
+    [visibleNames, selected],
+  );
+  const allVisibleSelected = visibleNames.length > 0 && visibleSelectedCount === visibleNames.length;
+
+  function toggleRow(name) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) for (const n of visibleNames) next.delete(n);
+      else for (const n of visibleNames) next.add(n);
+      return next;
+    });
+  }
+
+  // Mark the selection no fee, or take the mark off.
+  //
+  // Counted before it is written, and the count offered is the count that
+  // changes: rows already marked are left alone rather than padding the
+  // number. Marking clears whatever rates those rows carry — the mark is
+  // the price, so nothing is left hiding under it — which is the one part
+  // of this that loses something, so it is the one part that asks first.
+  function applyNoFee(on) {
+    const plan = planNoFee({ names: selectedNames, pricing, on, bases });
+    if (plan.change.length === 0) {
+      setBulkStatus({ type: 'ok', message: on
+        ? `Already marked no fee — nothing to change (${plan.same.length} selected).`
+        : `None of the ${plan.same.length} selected carry the mark.` });
+      return;
+    }
+    if (on && plan.clearing.length > 0 && !window.confirm(
+      `Mark ${plan.change.length} service${plan.change.length === 1 ? '' : 's'} as charging no fee?\n\n`
+      + `${plan.clearing.length} of them ${plan.clearing.length === 1 ? 'carries a rate' : 'carry rates'} today `
+      + `(${nameList(plan.clearing)}). Marking clears the basis, rates and setup lines on those rows, and `
+      + `unmarking later won't bring them back.\n\nThe pricing notes are kept.`,
+    )) return;
+    updateSettings?.({ servicePricing: setNoFee(pricing, plan.change, on) });
+    const cleared = on && plan.clearing.length > 0 ? `, clearing ${plan.clearing.length} rate card${plan.clearing.length === 1 ? '' : 's'}` : '';
+    setBulkStatus({ type: 'ok', message: on
+      ? `Marked ${plan.change.length} no fee${cleared}.`
+      : `Took the mark off ${plan.change.length} — ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
+  }
+
+  const bulkColumn = BULK_FIELDS.find(f => f.key === bulkField) || null;
+
+  // Set one card field across the selection. Same write path as the cell
+  // editor — an edit made here and an edit typed into the column are the
+  // same edit — so a rate typed onto a row marked no fee takes that mark
+  // off here exactly as it would there, and the status line says how many.
+  function applyBulkField() {
+    if (!bulkColumn || selectedCount === 0) return;
+    const typed = bulkValue.trim();
+    if (bulkColumn.kind === 'money' && typed !== '' && parseMoney(typed) === null) {
+      setBulkStatus({ type: 'error', message: `"${typed}" isn't a number.` });
+      return;
+    }
+    const unmarks = typed === '' || bulkColumn.key === 'notes'
+      ? []
+      : selectedNames.filter(n => pricing?.[n]?.noFee === true);
+    if (unmarks.length > 0 && !window.confirm(
+      `${unmarks.length} of the selected service${unmarks.length === 1 ? ' is' : 's are'} marked no fee `
+      + `(${nameList(unmarks)}). Setting a ${bulkColumn.label.toLowerCase()} on ${unmarks.length === 1 ? 'it' : 'them'} `
+      + `takes that mark off. Go ahead?`,
+    )) return;
+    let next = pricing;
+    for (const name of selectedNames) next = setPricingField(next, name, bulkColumn.key, typed, bases);
+    updateSettings?.({ servicePricing: next });
+    const what = typed === '' ? `Cleared ${bulkColumn.label}` : `Set ${bulkColumn.label}`;
+    const undone = unmarks.length > 0 ? `, taking the no-fee mark off ${unmarks.length}` : '';
+    setBulkStatus({ type: 'ok', message: `${what} on ${selectedCount} service${selectedCount === 1 ? '' : 's'}${undone}.` });
+  }
+
   const columns = PRICING_TABLE_COLUMNS.map(col => {
     const base = { key: col.key, label: col.label, defaultWidth: col.width };
     switch (col.key) {
@@ -263,6 +408,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                   follow. The count is the cue; the panel behind the ⤢ has
                   the rows. Setup lines count: they are money on a basis the
                   rate columns never show. */}
+              {/* The mark, where the price would be. In this column rather
+                  than a column of its own: it IS the answer to "what is
+                  this charged on", and the row's rate cells are empty
+                  under it — the mark cleared them. */}
+              {row.noFee && (
+                <span
+                  className={styles.pricingNoFeeBadge}
+                  title="Marked no fee: this service is delivered at no charge, so it prices to $0 and no longer reads as one nobody has priced. Pick a basis or type a rate to take the mark off."
+                >No fee</span>
+              )}
               {row._extraLines > 0 && (
                 <span
                   className={styles.pricingBasisMore}
@@ -321,6 +476,29 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     }
   });
 
+  // The checkbox column, while the mode is on. Appended rather than
+  // prepended — DataTable pins a `__select__` column to the far left
+  // itself — and never part of an export: it is this session's selection,
+  // not anything about the service.
+  const tableColumns = bulkOn
+    ? [...columns, {
+      key: '__select__',
+      label: '',
+      defaultWidth: 34,
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selected.has(row.name)}
+          onChange={() => toggleRow(row.name)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+          aria-label={`Select ${row.name} for the bulk edit`}
+        />
+      ),
+      exportValue: () => '',
+    }]
+    : columns;
+
   return (
     <>
       <div className={styles.searchRow}>
@@ -337,11 +515,122 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           onClick={() => setBasesOpen(true)}
           title="Add, rename, reorder or remove the options in the Pricing Basis column"
         >Pricing bases ({bases.length})</button>
+        {serviceRows.length > 0 && (
+          <button
+            type="button"
+            className={bulkOn ? styles.bulkToggleOn : styles.showHiddenBtn}
+            onClick={() => { setBulkOn(v => !v); setBulkStatus(null); }}
+            title="Tick several services and set a field — or mark them as charging no fee — in one go"
+          >
+            {bulkOn ? 'Done selecting' : 'Bulk edit'}
+            {/* The count follows the button out of the mode: the selection
+                survives the toggle, so hiding it would leave services
+                ticked with nothing on screen saying so. */}
+            {!bulkOn && selectedCount > 0 && ` (${selectedCount} selected)`}
+          </button>
+        )}
         <span className={styles.resultCount}>
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
           {` · ${pricedCount} priced`}
+          {/* Counted apart from "priced", because they are two different
+              answers: a priced service has a rate, a no-fee one has a
+              decision. Both are answers; only an unpriced row is a gap. */}
+          {noFeeCount > 0 && ` · ${noFeeCount} no fee`}
         </span>
       </div>
+
+      {bulkOn && (
+        <div className={styles.bulkBar}>
+          <label className={styles.bulkSelectAll} title="Select every service the search leaves on screen">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={el => { if (el) el.indeterminate = visibleSelectedCount > 0 && !allVisibleSelected; }}
+              disabled={visibleNames.length === 0}
+              onChange={toggleSelectAllVisible}
+              style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+            />
+            Select all ({visibleNames.length})
+          </label>
+          <span className={styles.bulkCount} data-on={selectedCount > 0 ? 'true' : 'false'}>
+            {selectedCount} selected
+          </span>
+
+          <button
+            type="button"
+            className={styles.bulkNoFee}
+            disabled={selectedCount === 0}
+            onClick={() => applyNoFee(true)}
+            title="Say these services are delivered at no charge. They price to $0 and stop being listed as services nobody has priced — which is what an empty rate card means instead."
+          >Mark no fee</button>
+          <button
+            type="button"
+            className={styles.bulkApply}
+            disabled={selectedCount === 0}
+            onClick={() => applyNoFee(false)}
+            title="Take the no-fee mark off. The rates the mark cleared don't come back — the services go back to unpriced."
+          >Clear no fee</button>
+
+          <span className={styles.bulkDivider} aria-hidden="true" />
+
+          <select
+            className={styles.bulkInput}
+            value={bulkField}
+            onChange={(e) => { setBulkField(e.target.value); setBulkValue(''); setBulkStatus(null); }}
+          >
+            <option value="">Field to set…</option>
+            {BULK_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
+          {bulkColumn && (bulkColumn.kind === 'basis' ? (
+            <select
+              className={styles.bulkInput}
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+            >
+              <option value="">(clear the basis)</option>
+              {bases.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
+            </select>
+          ) : (
+            /* Text even for the rates, so a figure pasted the way a
+               spreadsheet writes it ("$1,250") is parsed rather than
+               refused by the browser before it can be. */
+            <input
+              className={styles.bulkInput}
+              type="text"
+              inputMode={bulkColumn.kind === 'money' ? 'decimal' : 'text'}
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+              placeholder={bulkColumn.kind === 'money' ? `${bulkColumn.label} (blank clears)` : 'Note (blank clears)'}
+            />
+          ))}
+          <button
+            type="button"
+            className={styles.bulkApply}
+            disabled={!bulkColumn || selectedCount === 0}
+            onClick={applyBulkField}
+            title={bulkColumn
+              ? `Write this into the ${bulkColumn.label} of every selected service`
+              : 'Pick a field to set'}
+          >Apply to {selectedCount}</button>
+
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              className={styles.bulkClear}
+              onClick={() => { setSelected(new Set()); setBulkStatus(null); }}
+            >Clear selection</button>
+          )}
+          {bulkStatus && (
+            <span className={bulkStatus.type === 'error' ? styles.bulkError : styles.bulkOk} role="status">
+              {bulkStatus.message}
+            </span>
+          )}
+          <span className={styles.bulkNote}>
+            Click a row to tick it. Every write here is a rate card edit, so it reaches every deal
+            priced off these services.
+          </span>
+        </div>
+      )}
 
       {/* Said once, at the top: this table is the standing price of a
           service, and the deal that price is being quoted on is a subtab
@@ -356,14 +645,22 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       <div className={styles.serviceTableWrap}>
         <DataTable
           tableId={PRICING_TABLE_ID}
-          columns={columns}
+          columns={tableColumns}
           rows={rows}
-          alwaysVisible={['name']}
+          // Not hideable while the mode is on: the Columns menu would
+          // otherwise offer to remove the only way to pick a row, from a
+          // mode whose entire job is picking rows.
+          alwaysVisible={bulkOn ? ['__select__', 'name'] : ['name']}
           // Every cell that does something with a click swallows it first,
           // so this fires for the row itself — the name, the read-only
-          // cells, and the padding around the editors.
-          onRowClick={(row) => setPricingPanelFor(row.name)}
-          rowClassName={(row) => (row._scoped ? styles.pricingRowScoped : undefined)}
+          // cells, and the padding around the editors. While the mode is
+          // on it ticks the row instead of opening the panel: picking
+          // twelve rows would otherwise be twelve modals to dismiss.
+          onRowClick={(row) => (bulkOn ? toggleRow(row.name) : setPricingPanelFor(row.name))}
+          rowClassName={(row) => [
+            row._scoped ? styles.pricingRowScoped : '',
+            bulkOn && selected.has(row.name) ? styles.pricingRowPicked : '',
+          ].filter(Boolean).join(' ') || undefined}
           exportFileName="Services Pricing"
           settings={settings}
           updateSettings={updateSettings}
@@ -397,6 +694,17 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             onSaveField={(field, value) => savePricingField(row.name, field, value)}
             onSaveLine={(basisKey, patch) => savePricingLine(row.name, basisKey, patch)}
             onSaveSetupLine={(basisKey, patch) => savePricingSetupLine(row.name, basisKey, patch)}
+            // The same write the bulk bar makes, on one service: marking
+            // clears the rates, so it asks first when there are any.
+            onToggleNoFee={() => {
+              const on = !row.noFee;
+              if (on && pricedBases(pricingFor(pricing, row.name, bases)).length > 0
+                && !window.confirm(
+                  `Mark "${row.name}" as charging no fee? That clears the basis, rates and setup lines below, `
+                  + `and unmarking later won't bring them back. The pricing notes are kept.`,
+                )) return;
+              updateSettings?.({ servicePricing: setNoFee(pricing, [row.name], on) });
+            }}
             onClose={() => setPricingPanelFor(null)}
           />
         );
