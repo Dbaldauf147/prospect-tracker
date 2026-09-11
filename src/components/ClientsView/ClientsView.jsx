@@ -39,6 +39,7 @@ const CommissionsView = lazyView(() => import('./CommissionsView').then(m => ({ 
 const ContractServicesView = lazyView(() => import('./ContractServicesView').then(m => ({ default: m.ContractServicesView })));
 const ContractLanguageView = lazyView(() => import('./ContractLanguageView').then(m => ({ default: m.ContractLanguageView })));
 const DealSizingView = lazyView(() => import('./DealSizingView').then(m => ({ default: m.DealSizingView })));
+const ServiceOpportunityView = lazyView(() => import('./ServiceOpportunityView').then(m => ({ default: m.ServiceOpportunityView })));
 
 
 const MS_PER_DAY = 86400000;
@@ -571,7 +572,7 @@ const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 // bar and never to the check, so picking it and reloading landed on Clients.
 const SUBTAB_KEYS = new Set([
   'clients', 'oldclients', 'deals', 'commissions', 'postsale',
-  'dealsizing', 'contractservices', 'contractlanguage',
+  'dealsizing', 'serviceopportunity', 'contractservices', 'contractlanguage',
 ]);
 
 function readSavedSubtab() {
@@ -1349,6 +1350,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         { key: 'commissions', label: 'Commissions' },
         { key: 'postsale', label: 'Post-Sale Follow-Up' },
         { key: 'dealsizing', label: 'Deal Sizing' },
+        { key: 'serviceopportunity', label: 'Service Opportunity' },
         { key: 'contractservices', label: 'Contract Services' },
         { key: 'contractlanguage', label: 'Contract Language' },
       ].map(t => {
@@ -1420,6 +1422,23 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
             settings={settings}
             updateSettings={updateSettings}
             updateProspect={updateProspect}
+            onSelectProspect={onSelectProspect}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (subtab === 'serviceopportunity') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <Suspense fallback={<div className="loading">Loading view…</div>}>
+          <ServiceOpportunityView
+            prospects={prospects}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
             onSelectProspect={onSelectProspect}
           />
         </Suspense>
