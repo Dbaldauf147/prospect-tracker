@@ -47,6 +47,7 @@ import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../..
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
 import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope, tenureCoverage } from './ownershipScope.js';
 import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatus.js';
+import { EUROPE_VOLUME_GWH, largeEuropeanMarkets, largeEuropeanMarketLabel } from './europeVolume.js';
 import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx';
 import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
 import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
@@ -7350,6 +7351,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           regulatedRateOpportunitySpend: Math.round(g.regulatedRateOpportunitySpend),
           regRateSavings,
           consumption: Math.round(g.consumption),
+          // Every site's load in this bucket, regulated and unclassified
+          // ones included — the deregulated `consumption` above is a
+          // subset of it. Carried onto the row so thresholds that ask
+          // "how much of this commodity sits in this market" (the
+          // European 10 GWh call-out) see the same number the portfolio
+          // does, not just the slice the classifier has placed.
+          totalConsumption: Math.round(g.anyConsumption),
           spend: Math.round(g.spend),
           // What the savings columns are actually a percentage of.
           savingsEligibleSpend: Math.round(g.savingsEligibleSpend),
@@ -10613,6 +10621,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (naElectricMWh > 100_000) {
       summaryFindings.push(`A VPPA should be explored: North America electric consumption ${Math.round(naElectricMWh).toLocaleString()} MWh exceeds 100,000 MWh threshold`);
     }
+    // European countries carrying real volume. Per commodity, per
+    // country, biggest first — see europeVolume.js for why the basis is
+    // total consumption rather than the deregulated slice, and why gas
+    // is compared in kWh-equivalent. Europe quotes a TBD band, so the
+    // savings columns can't rank these markets; this is what does.
+    const bigEuropeElectric = largeEuropeanMarkets(electricRows, 'electric');
+    const bigEuropeGas = largeEuropeanMarkets(gasRows, 'gas');
+    if (bigEuropeElectric.length) {
+      summaryFindings.push(`European electric markets above ${EUROPE_VOLUME_GWH} GWh/yr: ${bigEuropeElectric.map(largeEuropeanMarketLabel).join(', ')}`);
+    }
+    if (bigEuropeGas.length) {
+      summaryFindings.push(`European gas markets above ${EUROPE_VOLUME_GWH} GWh/yr: ${bigEuropeGas.map(largeEuropeanMarketLabel).join(', ')}`);
+    }
     if (riskMgmtStates.length) {
       summaryFindings.push(`Risk Management should be considered (>10,000 MWh): ${riskMgmtStates.join(', ')}`);
     }
@@ -10745,6 +10766,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           regulatedRateOpportunitySpend: sum('regulatedRateOpportunitySpend'),
           regRateSavings: sum('regRateSavings'),
           consumption: sum('consumption'),
+          totalConsumption: sum('totalConsumption'),
           spend: sum('spend'),
           savingsEligibleSpend: sum('savingsEligibleSpend'),
           range: '',
@@ -13810,6 +13832,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           trigger: 'State-level deregulated electric consumption: NAM markets only (US states, Canadian provinces, Mexico); international markets are excluded',
           threshold: '> 10,000 MWh / yr',
           action: 'Risk Management strategy (hedge layering, structured product) should be considered.',
+        },
+        {
+          alert: 'Large European market',
+          commodity: 'Electric and natural gas (per European country)',
+          trigger: 'Country-level total consumption — every site in the country, regulated and unclassified included — for a country in the Europe / Europe-Asia region. Gas is compared in kWh-equivalent (1 Dth = 293.0 kWh)',
+          threshold: `> ${EUROPE_VOLUME_GWH} GWh / yr, per commodity`,
+          action: 'Volume worth a look in this country. Europe quotes a TBD savings band, so no savings column ranks these markets and this is what does — it reports load, not sourceability: read the country\'s row for whether the market is open to us.',
         },
         {
           alert: 'Wholesale Plus',
