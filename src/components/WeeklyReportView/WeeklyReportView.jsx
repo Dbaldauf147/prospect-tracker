@@ -30,6 +30,10 @@ import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
+import {
+  fmtDollars, fmtCompactMoney, fmtRecordedAt, oppLabel,
+  funnelOutcomeFor, isFunnelReady, emailFunnelSummary, emailSnapshotPayload,
+} from '../../utils/weeklyReportEmailSnapshot';
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
 import { CloseRateTrend } from './CloseRateTrend';
 import { svgToPngDataUrl } from '../../utils/svgToPng';
@@ -88,14 +92,6 @@ function renderNarrative(md) {
   });
   flushList();
   return out;
-}
-
-// When a tile's number came from the Activity tab's recording rather
-// than the live feed, the tile says so — and when: a stale recording
-// explains a number that doesn't match what you did this morning.
-function fmtRecordedAt(ms) {
-  if (!Number.isFinite(ms)) return 'from Activity';
-  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 // A tile can carry a standing weekly target. `goal` is the number to hit
@@ -170,17 +166,6 @@ function StatTile({ value, label, accent, sub, subTitle, goal = null, onGoal }) 
 }
 
 
-// Exact dollars for the KPI detail lines; compact for the headline figure,
-// where "$1.9M" reads at a glance and the extra digits don't.
-const fmtDollars = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '-');
-function fmtCompactMoney(n) {
-  if (!Number.isFinite(n)) return '-';
-  const a = Math.abs(n);
-  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '')}M`;
-  if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}K`;
-  return `$${Math.round(n).toLocaleString('en-US')}`;
-}
-
 // One headline KPI: the number, a verdict chip, and the arithmetic behind
 // it. `status` ('ahead' | 'behind' | null) colours the card and the chip;
 // without one the card stays neutral rather than guessing a verdict.
@@ -205,14 +190,13 @@ function KpiTile({ label, value, status, chip, lines = [] }) {
 // A named change list with the account/scope + a per-row suffix.
 function ChangeList({ title, items, suffix }) {
   if (!items || !items.length) return null;
-  const who = (x) => [x.account, x.scope].filter(Boolean).join(': ') || `Opp ${x.id}`;
   return (
     <div className={styles.changeGroup}>
       <div className={styles.changeTitle}>{title} <span className={styles.changeCount}>{items.length}</span></div>
       <ul className={styles.changeItems}>
         {items.slice(0, 30).map((x, i) => (
           <li key={x.id || i}>
-            <span className={styles.changeWho}>{who(x)}</span>
+            <span className={styles.changeWho}>{oppLabel(x)}</span>
             {suffix ? <span className={styles.changeSuffix}>{suffix(x)}</span> : null}
           </li>
         ))}
@@ -398,19 +382,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     hasBfo: !!(bfo && Array.isArray(bfo.rows) && bfo.rows.length),
     closeRates: closeRatesByStage(oppsRecords),
   }), [pipeline, bfo, oppsRecords]);
-  const funnelOutcome = useMemo(() => ({
-    soldLabel: 'Closed YTD',
-    // Null, not 0, when nothing is cached: the funnel then draws what the
-    // pipeline alone is worth and says the closed figure is missing, rather
-    // than adding to a hollow zero.
-    soldAmount: kpis.progressToTarget.soldYTD,
-    soldCount: kpis.progressToTarget.deals,
-    target: kpis.target || 0,
-  }), [kpis]);
-  // Nothing to draw without stage rows — or with rows that are all zero,
-  // which is what a dashboard record seeded but never filled in looks like.
-  const funnelReady = funnelStages.length > 0
-    && funnelStages.some(st => st.amtActual > 0 || st.countActual > 0);
+  const funnelOutcome = useMemo(() => funnelOutcomeFor(kpis), [kpis]);
+  const funnelReady = isFunnelReady(funnelStages);
   const kpiCards = useMemo(() => {
     const { progressToTarget: p, coverageRatio: c, projectedYearEnd: j } = kpis;
     const yearGone = (v) => (v == null ? '' : `${v.toFixed(0)}% of the year gone`);
@@ -492,44 +465,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // are formatted here rather than server-side for the same reason the KPI
   // cards are: a second copy of the arithmetic is free to disagree with
   // what's on screen.
-  const funnelSummary = useMemo(() => {
-    if (!funnelReady) return null;
-    const ordered = funnelStages
-      .filter(st => Number.isFinite(st.stageNum))
-      .sort((a, b) => a.stageNum - b.stageNum);
-    if (!ordered.length) return null;
-
-    // Same arithmetic as the funnel's exit block: each stage's pipeline
-    // times the close rate that stage actually runs at, summed.
-    const rated = ordered.filter(st => Number(st.closeRate) > 0);
-    const weighted = rated.length
-      ? rated.reduce((a, st) => a + (Number(st.amtActual) || 0) * Number(st.closeRate), 0)
-      : null;
-    const sold = funnelOutcome.soldAmount;
-    const total = sold != null && weighted != null ? sold + weighted : null;
-    const target = Number(funnelOutcome.target) || 0;
-
-    const lives = ordered.map(st => (Number(st.lifeActual) > 0 ? Number(st.lifeActual) : 0));
-
-    return {
-      stages: ordered.map((st, i) => ({
-        label: st.label,
-        count: Number(st.countActual) || 0,
-        amount: fmtDollars(Number(st.amtActual) || 0),
-        life: lives[i] > 0 ? `${Math.round(lives[i])} days` : null,
-        closeRate: Number(st.closeRate) > 0 ? `${Math.round(Number(st.closeRate) * 100)}%` : null,
-      })),
-      outcome: {
-        soldLabel: funnelOutcome.soldLabel,
-        sold: sold == null ? null : fmtCompactMoney(sold),
-        weighted: weighted == null ? null : fmtCompactMoney(weighted),
-        total: total == null ? null : fmtCompactMoney(total),
-        note: total != null && target > 0
-          ? `${Math.round((total / target) * 100)}% of ${fmtCompactMoney(target)} target`
-          : null,
-      },
-    };
-  }, [funnelReady, funnelStages, funnelOutcome]);
+  const funnelSummary = useMemo(
+    () => emailFunnelSummary(funnelStages, funnelOutcome),
+    [funnelStages, funnelOutcome],
+  );
 
   // ---- The funnel as a picture, for the email ----------------------------
   // No mail client renders an inline <svg>, so the chart drawn below is
@@ -620,64 +559,23 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // caches that only exist in this browser, so rather than have the server
   // recompute them (a second copy of the same arithmetic, free to drift)
   // the tab publishes what it rendered and the cron mails that back.
-  const emailSnapshot = useMemo(() => {
-    const who = (x) => [x.account, x.scope].filter(Boolean).join(': ') || `Opp ${x.id}`;
-    const list = (arr, fmt) => (Array.isArray(arr) ? arr : []).map(fmt);
-    return {
-      scope: mode,
-      periodLabel: label,
-      periodStart: bounds.start,
-      periodEnd: bounds.end,
-      // Not the tab's own cards: the email leads with the dollars sold and
-      // carries only the line under each figure that gives it a scale. See
-      // emailKpiCards for why the tab's working is left on the tab.
-      kpiCards: kpisReady ? emailKpiCards(kpis) : [],
-      funnel: funnelSummary,
-      // The chart itself. Absent when it couldn't be captured — the email
-      // still carries the same figures as a table underneath it.
-      funnelImage: funnelSummary && funnelImage
-        ? { src: funnelImage.src, width: funnelImage.width, height: funnelImage.height, alt: funnelImage.alt }
-        : null,
-      // The close-rate trend, straight under the funnel as it is on the tab.
-      // Independent of the funnel: it reads the Opps cache alone, so a
-      // report with no stage volumes cached still carries the trend.
-      closeRateTrend: closeRateTrendSummary,
-      // `emailsSent.count`, not the raw live count: for a week the HubSpot
-      // feed no longer covers, the Activity tab's recording is the only
-      // thing that can answer, and the tile on screen reads off it. Mailing
-      // the live count instead is what made a week of sent mail arrive as 0.
-      tiles: [
-        {
-          label: 'Emails sent',
-          value: emailsSent.count,
-          goal: weeklyTargets.emails ?? null,
-          accent: 'blue',
-          sub: emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null,
-        },
-        { label: 'New opps', value: oppChanges.newOpps.length, goal: weeklyTargets.newOpps ?? null, accent: 'green' },
-      ],
-      oppChanges: {
-        closed: list(oppChanges.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),
-        newOpps: list(oppChanges.newOpps, x => `${who(x)}${x.stage ? ` (${x.stage})` : ''}`),
-        stageChanges: list(oppChanges.stageChanges, x => `${who(x)} → ${x.stage}`),
-        closeDateMoves: list(oppChanges.closeDateMoves, x => `${who(x)}${x.closeDate ? ` → ${x.closeDate}` : ''}`),
-        amountUpdates: list(oppChanges.amountUpdates, x => `${who(x)}${x.amount ? ` → ${x.amount}` : ''}`),
-        bfoTags: list(oppChanges.bfoTags, x => `${who(x)}${x.bfo ? ` → ${x.bfo}` : ''}`),
-      },
-      goals: {
-        created: list(goalsProg.created, g => String(g.text || '').trim()).filter(Boolean),
-        completed: list(goalsProg.archived, g => String(g.text || '').trim()).filter(Boolean),
-        // The tab caps the active list at 12; the email shows the same ones
-        // rather than a longer list the reader can't reconcile with it.
-        active: list(goalsProg.active.slice(0, 12), g => (
-          `${g.priority != null ? `#${g.priority} ` : ''}${String(g.text || '').trim()}`
-        )).filter(Boolean),
-      },
-      // Only ship a recap that was written for this period; a stale one
-      // would describe a different week under this week's heading.
-      narrative: narrativeStale ? '' : narrative,
-    };
-  }, [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
+  const emailSnapshot = useMemo(() => emailSnapshotPayload({
+    scope: mode,
+    periodLabel: label,
+    periodStart: bounds.start,
+    periodEnd: bounds.end,
+    kpiCards: kpisReady ? emailKpiCards(kpis) : [],
+    funnelSummary,
+    funnelImage,
+    closeRateTrend: closeRateTrendSummary,
+    emailsSent,
+    weeklyTargets,
+    oppChanges,
+    goalsProgress: goalsProg,
+    // Only ship a recap that was written for this period; a stale one
+    // would describe a different week under this week's heading.
+    narrative: narrativeStale ? '' : narrative,
+  }), [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
     emailsSent, oppChanges, goalsProg, weeklyTargets, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
