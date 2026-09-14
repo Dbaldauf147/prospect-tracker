@@ -47,7 +47,7 @@ eq(withCompanyOverride({}, '101', '   '), null, 'whitespace is not a name to pin
 eq(withCompanyOverride({ 101: { _companyOverride: 'Revantage' } }, '101', ''), {},
   'clearing the only local field drops the contact from the map entirely');
 eq(withCompanyOverride({ 101: { _companyOverride: 'Revantage' } }, '101', null), {},
-  'null clears it too — the popup passes null when the field is emptied');
+  'null clears it too - the popup passes null when the field is emptied');
 eq(withCompanyOverride({ 101: { _companyOverride: 'Revantage', _newCompany: 'Acme' } }, '101', ''),
   { 101: { _newCompany: 'Acme' } },
   'clearing the pin leaves the contact\'s other local fields alone');

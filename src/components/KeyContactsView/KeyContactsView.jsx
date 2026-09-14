@@ -1391,14 +1391,14 @@ function KeyContactsViewInner({
   // every selected contact, in ONE settings write. The popup saves a
   // contact at a time, which is right for one contact and wrong for 26:
   // each write builds its patch from the settings it captured, so a
-  // burst of them ends with the last writer's copy — most of the answers
+  // burst of them ends with the last writer's copy - most of the answers
   // silently lost. Returns how many contacts actually changed.
   //
   // A record holds an answer and a sale status, and a mark sets one half
-  // without disturbing the other — recordForVerdict applies it exactly as
+  // without disturbing the other - recordForVerdict applies it exactly as
   // the popup's own buttons would, per contact, so a Yes already recorded
   // survives a bulk Not sold.
-  // Returns { touched, wanted } — how many contacts' answers changed, and
+  // Returns { touched, wanted } - how many contacts' answers changed, and
   // per contact which of the chosen tags the mark leaves them wanting ON and
   // which OFF. The caller writes the tags from `wanted` rather than from one
   // direction for the whole batch, so a Yes marked over a Not sold records
@@ -1417,7 +1417,7 @@ function KeyContactsViewInner({
       const off = [];
       for (const tag of tags) {
         // The record may already be saved under the other spelling of this
-        // tag — the popup writes the vocabulary's, this picker writes
+        // tag - the popup writes the vocabulary's, this picker writes
         // HubSpot's. Read through either and write back onto the key that's
         // already there, or the answer lands somewhere the popup can't see.
         const storedKey = tagRecordKeyFor(map, tag);
@@ -1435,7 +1435,7 @@ function KeyContactsViewInner({
     return { touched, wanted };
   }
 
-  // Bulk tag apply — the Tags field of the Mass Edit toolbar. Replace
+  // Bulk tag apply - the Tags field of the Mass Edit toolbar. Replace
   // is destructive (it drops tags the user never picked, including
   // Hide), so it asks first; add / remove do exactly what they say and
   // don't.
@@ -1443,13 +1443,13 @@ function KeyContactsViewInner({
   // Three of the four Mark options are destructive too, and less obviously:
   // No, Not sure and Not sold each take the HubSpot tag off every selected
   // contact as a side effect of recording the answer. That's the intended
-  // rule — a Not sold is a hold-off, and keeping the tag off is what makes
-  // it hold — but "Mark Not sold" doesn't look like "untag 22 people", so it
+  // rule - a Not sold is a hold-off, and keeping the tag off is what makes
+  // it hold - but "Mark Not sold" doesn't look like "untag 22 people", so it
   // asks first as well.
   //
   // The verdict modes are two writes in one: the answer goes to settings
   // for every selected contact, and the HubSpot tag follows it on or off
-  // (see MASS_TAG_VERDICTS). The counts differ on purpose — marking 26
+  // (see MASS_TAG_VERDICTS). The counts differ on purpose - marking 26
   // contacts "Not sold" for a tag only 4 of them carry is 26 answers and
   // 4 tag removals, and the status line says both.
   async function handleMassTagApply() {
@@ -1475,7 +1475,7 @@ function KeyContactsViewInner({
     const ids = [...massSelected];
     // The answers are the user's own and don't depend on HubSpot taking
     // the tag change, so they're recorded whatever the writes below do.
-    // A contact who already had the tag off still gets the answer — that
+    // A contact who already had the tag off still gets the answer - that
     // case IS the point of the mode.
     const { touched: marked, wanted } = verdict
       ? saveMassTagVerdicts(ids, tags, verdict.mode)
@@ -1499,7 +1499,7 @@ function KeyContactsViewInner({
     }
     // The API registers a tag that isn't in the Dan's Tags allowed values
     // and retries, so "go add it by hand" is only the right advice when
-    // that didn't happen — and the API's own message says so when it did.
+    // that didn't happen - and the API's own message says so when it did.
     // Keep the manual instruction only for an allowed-options failure that
     // came back without one.
     const hint = errors > 0
@@ -1511,10 +1511,10 @@ function KeyContactsViewInner({
       ? verdict.verb
       : (massTagMode === 'add' ? 'Tagged' : massTagMode === 'remove' ? 'Untagged' : 'Retagged');
     // A verdict counts the answers written, then reports the tag half
-    // separately — "already up to date" against the answer count would
+    // separately - "already up to date" against the answer count would
     // read as "nothing to do" on the run that did the most work.
     // A verdict counts the answers written, then reports the tag half
-    // separately — and reports both directions, because a Mark Yes over a
+    // separately - and reports both directions, because a Mark Yes over a
     // Not sold records the Yes while leaving the tag alone.
     const tagMoves = [
       tagsAdded > 0 ? `tag added to ${tagsAdded}` : '',
@@ -1526,7 +1526,7 @@ function KeyContactsViewInner({
       : `${verb} ${updated} contact${updated === 1 ? '' : 's'}`
         + (unchanged > 0 ? ` · ${unchanged} already up to date in HubSpot` : '');
     // A contact HubSpot has no record of was left alone rather than written
-    // from a guess — say so, because silence there reads as success.
+    // from a guess - say so, because silence there reads as success.
     const skippedNote = skipped > 0
       ? ` · ${skipped} skipped (HubSpot has no contact with that ID)`
       : '';
@@ -1536,7 +1536,7 @@ function KeyContactsViewInner({
     });
     setMassProcessing(false);
     // Clear the chosen tags, keep the chosen contacts. Tagging a group is
-    // rarely one tag — add EU, then Decision Maker, then Dan Key Target —
+    // rarely one tag - add EU, then Decision Maker, then Dan Key Target -
     // and dropping the selection on every apply meant re-ticking the whole
     // list between them. The tags themselves do clear, so the next apply
     // can't repeat the last one by accident.
@@ -1575,7 +1575,7 @@ function KeyContactsViewInner({
     setMassProcessing(false);
     // Same as the tag path: the typed value clears, the selection stays, so
     // a second field can be set on the same contacts without picking them
-    // again. Hide is the one that still clears — those rows leave the list,
+    // again. Hide is the one that still clears - those rows leave the list,
     // so holding their ids selected would only strand the count.
     setMassValue('');
   }
@@ -1583,13 +1583,13 @@ function KeyContactsViewInner({
   // The contact currently being edited in the in-place modal. We open
   // the same `ContactEditModal` the prospect modal uses so edits made
   // here propagate through the shared HubSpot cache + Firestore
-  // settings — the prospect modal's contact list listens to the same
+  // settings - the prospect modal's contact list listens to the same
   // `hubspot-cache-updated` event we do, so a save here lights up
   // there automatically (and vice-versa).
   const [editingContact, setEditingContact] = useState(null);
   // "Company ↗" in the contact popup: close the contact and open the
   // company it names. The two are full-screen modals, so this reads as
-  // navigation rather than a stack — going back is the company popup's own
+  // navigation rather than a stack - going back is the company popup's own
   // contact list, which lands on the same person.
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);
@@ -1599,7 +1599,7 @@ function KeyContactsViewInner({
   }, [prospects, onSelectProspect]);
   // ContactEditModal calls onSave with { silent: true } from its
   // tag-autosave path so each tag toggle persists without dropping
-  // the user out of the popup. We have to honour that flag — the
+  // the user out of the popup. We have to honour that flag - the
   // previous version always called setEditingContact(null), which
   // closed the modal on every tick.
   const handleContactSaved = useCallback((updated, opts) => {
@@ -1626,7 +1626,7 @@ function KeyContactsViewInner({
   // Per-contact "Custom" free-text field, stored in Firestore settings
   // under `customField` keyed by HubSpot contact id. Shared with the
   // {custom} email variable (DraftEmailView) and the HubSpot Contacts
-  // grid's Custom column. Mirrors handleSaveContactEvents — an
+  // grid's Custom column. Mirrors handleSaveContactEvents - an
   // empty / whitespace value deletes the key (same as contactNotes).
   const handleSaveContactCustom = useCallback((cid, val) => {
     const cur = settings?.customField || {};
@@ -1670,13 +1670,13 @@ function KeyContactsViewInner({
   }, [settings?.contactReportsTo, updateSettings]);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || defaultViewMode);
   useEffect(() => { try { localStorage.setItem(lsKey('view-mode'), viewMode); } catch {} }, [viewMode]);
-  // Travel mode (All Contacts only) — a third view alongside All Contacts /
+  // Travel mode (All Contacts only) - a third view alongside All Contacts /
   // By Company. Pick a state and/or city and the flat contacts table
   // narrows to people in that area, so a trip can be planned around who's
   // nearby. The chosen location persists alongside the other view prefs.
   const travelEnabled = storagePrefix === 'all-contacts';
   const isTravel = travelEnabled && viewMode === 'travel';
-  // "By Location" rollup — contacts counted by State and City. Like
+  // "By Location" rollup - contacts counted by State and City. Like
   // Travel, it's an All Contacts–only view.
   const isGeography = travelEnabled && viewMode === 'geography';
   // Everything that isn't the By Company rollup or the By Location rollup
@@ -1697,7 +1697,7 @@ function KeyContactsViewInner({
   const [travelCity, setTravelCity] = useState(() => localStorage.getItem(lsKey('travel-city')) || '');
   useEffect(() => { try { localStorage.setItem(lsKey('travel-state'), travelState); } catch {} }, [travelState]);
   useEffect(() => { try { localStorage.setItem(lsKey('travel-city'), travelCity); } catch {} }, [travelCity]);
-  // "Only city/state needing cleanup" filter — narrows the contacts
+  // "Only city/state needing cleanup" filter - narrows the contacts
   // list to rows whose City or State fails the standard-format checks.
   const [onlyLocationFlagged, setOnlyLocationFlagged] = useState(() => localStorage.getItem(lsKey('only-loc-flagged')) === '1');
   useEffect(() => { try { localStorage.setItem(lsKey('only-loc-flagged'), onlyLocationFlagged ? '1' : '0'); } catch {} }, [onlyLocationFlagged]);
@@ -1713,7 +1713,7 @@ function KeyContactsViewInner({
   const DEFAULT_CONTACT_COL_WIDTHS = {
     name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, emailCampaigns: 240,
   };
-  // Column visibility — every contact column except Name (always
+  // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
   // Active, Client, and All tabs each remember their own set. City /
   // State sit alongside Location so a user who wants the combined
@@ -1724,8 +1724,8 @@ function KeyContactsViewInner({
   //
   // The five one-time migrations below are what the visible-list model
   // costs. Every column this page has gained since a user last touched
-  // their layout — Last Outreach, New Company, Expected Email, Reached
-  // Out, Custom, Email Campaigns, Tagged % — needed a hand-written,
+  // their layout - Last Outreach, New Company, Expected Email, Reached
+  // Out, Custom, Email Campaigns, Tagged % - needed a hand-written,
   // sticky-flagged injection, because a key missing from a saved visible
   // list is indistinguishable from a column the user hid. Storing hidden
   // keys removes the guess: anything not on the list shows, so the next
@@ -1746,7 +1746,7 @@ function KeyContactsViewInner({
           next = [...next, 'lastOutreach'];
         }
         // One-time migration for the Changed Jobs "New Company" +
-        // "Expected Email" columns — inject them (right after Company) for
+        // "Expected Email" columns - inject them (right after Company) for
         // users whose saved visibility predates the feature. Sticky flag
         // so re-hiding them sticks.
         if (showNewCompanyEmail) {
@@ -1776,7 +1776,7 @@ function KeyContactsViewInner({
             }
           }
         }
-        // Same one-time migration for the All Contacts "custom" column —
+        // Same one-time migration for the All Contacts "custom" column -
         // existing users have a saved set that predates it, so inject it
         // once (just before tags, to match DEFAULT_VISIBLE_COLS order).
         if (storagePrefix === 'all-contacts') {
@@ -1789,19 +1789,19 @@ function KeyContactsViewInner({
               : [...next, 'custom'];
           }
           // One-time migration for the new All Contacts "Email Campaigns"
-          // column — append it (after Last Outreach) for users whose saved
+          // column - append it (after Last Outreach) for users whose saved
           // visibility predates it. Sticky flag so re-hiding it sticks.
           const campMigKey = lsKey('visible-cols-mig-emailCampaigns');
           if (!localStorage.getItem(campMigKey) && !next.includes('emailCampaigns')) {
             try { localStorage.setItem(campMigKey, '1'); } catch {}
             next = [...next, 'emailCampaigns'];
           }
-          // Same for the "Tagged %" column — surfaced once, after Tags, for
+          // Same for the "Tagged %" column - surfaced once, after Tags, for
           // users whose saved visibility predates it. Sticky flag so hiding
           // it again sticks.
           const taggedMigKey = lsKey('visible-cols-mig-taggedPct');
           if (!localStorage.getItem(taggedMigKey) && !next.includes('taggedPct')) {
-            try { localStorage.setItem(taggedMigKey, '1'); } catch { /* private mode — column just re-offers next load */ }
+            try { localStorage.setItem(taggedMigKey, '1'); } catch { /* private mode - column just re-offers next load */ }
             const tIdx = next.indexOf('tags');
             next = tIdx >= 0
               ? [...next.slice(0, tIdx + 1), 'taggedPct', ...next.slice(tIdx + 1)]
@@ -1815,7 +1815,7 @@ function KeyContactsViewInner({
   }
 
   // Every column this page can show, in its default order. Hoisted out of
-  // the table's render so the picker and the table read one list — they
+  // the table's render so the picker and the table read one list - they
   // used to keep two, and the picker's copy was missing Tags and Tagged %,
   // which is why neither could be hidden.
   const contactColumns = useMemo(
@@ -1854,7 +1854,7 @@ function KeyContactsViewInner({
 
   // The columns still in the layout, in the user's order. Deleted columns
   // are dropped here so they don't render, don't export and don't appear in
-  // the picker's main list — they come back through Restore or Reset.
+  // the picker's main list - they come back through Restore or Reset.
   const orderedContactColumns = useMemo(
     () => orderColumns(contactColumns.filter(c => !removedCols.has(c.key)), colOrder),
     [contactColumns, removedCols, colOrder],
@@ -1904,14 +1904,14 @@ function KeyContactsViewInner({
   }
   function reorderVisibleCols(nextKeys) {
     // The picker lists only the columns still in the layout, so merge
-    // rather than replace — a restored column belongs where it sat, not
+    // rather than replace - a restored column belongs where it sat, not
     // at the far right.
     const merged = mergeColumnOrder(colOrder, nextKeys);
     setColOrder(merged);
     writeStoredList('col-order', merged);
   }
   // Reset: every deleted column back, the default order back, and
-  // visibility set to the user's starred view — or to everything when
+  // visibility set to the user's starred view - or to everything when
   // they haven't starred any, which is what Reset has always done.
   function resetVisibleCols() {
     const { hidden, removed } = resetToStarred({
@@ -1999,7 +1999,7 @@ function KeyContactsViewInner({
 
   // Keep an open popup pointed at the live contact. It opens on the row's
   // cached HubSpot record, and the cache replaces those records wholesale
-  // on every refresh — a mass edit run over the selection, a tag write,
+  // on every refresh - a mass edit run over the selection, a tag write,
   // a sync. Without this the popup goes on showing the copy it opened
   // with while the table behind it shows the new one, which is how its
   // Tagged % and the table's come to disagree.
@@ -2017,7 +2017,7 @@ function KeyContactsViewInner({
   // value in the cache, plus the app's own tag vocabulary.
   //
   // It used to be the cache alone, on the reasoning that HubSpot rejects
-  // values outside the property's allowed options — but that left a tag
+  // values outside the property's allowed options - but that left a tag
   // nobody carries YET unpickable, which is exactly the state a newly
   // added tag (NAM Only) starts in. The only way to reach one was to type
   // it into the search box, where a slip of the shift key writes "Nam
@@ -3342,10 +3342,10 @@ function KeyContactsViewInner({
                     onChange={e => setMassTagMode(e.target.value)}
                     title={'Add keeps existing tags · Remove strips only the chosen tags · Replace overwrites the whole tag list'
                       + '\n\nThe Mark options record the same answers as the contact popup, across every selected contact:'
-                      + '\nYes — the area is theirs · No — doesn\'t apply to them · Not sure — haven\'t worked it out'
-                      + '\nSold — their company has bought it · Not sold — theirs, but their company hasn\'t bought it'
+                      + '\nYes - the area is theirs · No - doesn\'t apply to them · Not sure - haven\'t worked it out'
+                      + '\nSold - their company has bought it · Not sold - theirs, but their company hasn\'t bought it'
                       + '\n\nYes and Sold put the tag on, so they come back in a general pull; No, Not sure and Not sold take it off.'
-                      + '\nA Yes marked over an existing Not sold records the Yes and leaves the tag off — that hold-off is the point.'}
+                      + '\nA Yes marked over an existing Not sold records the Yes and leaves the tag off - that hold-off is the point.'}
                     style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
                   >
                     <optgroup label="Tag in HubSpot">
@@ -3419,7 +3419,7 @@ function KeyContactsViewInner({
                         <button
                           type="button"
                           onMouseDown={e => { e.preventDefault(); toggleMassTag(massTagQuery.trim()); setMassTagQuery(''); }}
-                          title="Tag with a value that isn't in the list. It's registered on HubSpot's Dan's Tags property on the first write, so it doesn't have to be added there by hand — but it's added exactly as typed, so check the spelling."
+                          title="Tag with a value that isn't in the list. It's registered on HubSpot's Dan's Tags property on the first write, so it doesn't have to be added there by hand - but it's added exactly as typed, so check the spelling."
                           style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.72rem', border: 'none', borderTop: '1px solid #F1F5F9', background: '#F8FAFC', color: '#1D4ED8', cursor: 'pointer', fontFamily: 'inherit' }}
                         >Use "{massTagQuery.trim()}"</button>
                       )}

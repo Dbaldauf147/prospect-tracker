@@ -17,7 +17,7 @@ function eq(actual, expected, name) {
   if (a === b) { passed++; console.log(`PASS  ${name}`); }
   else { failed++; console.log(`FAIL  ${name}\n        expected ${b}\n        got      ${a}`); }
 }
-function ok(cond, name, detail = '') { eq(!!cond, true, `${name}${cond ? '' : ` — ${detail}`}`); }
+function ok(cond, name, detail = '') { eq(!!cond, true, `${name}${cond ? '' : ` - ${detail}`}`); }
 
 const tree = normalizeTree(DEFAULT_EFFICIENCY_TREE);
 const layout = layoutTree(tree);
@@ -71,11 +71,11 @@ ok(forward.every(e => e.y2 === at(e.toId).y), 'and arriving at the top of the ne
 const loop = layout.edges.find(e => e.fromId === 'persistence' && e.toId === 'gate3');
 ok(loop, 'the verification loop is drawn');
 eq(loop.back, true, 'and marked as a back edge, not an ordinary arrow');
-eq(loop.label, 'Re-survey scheduled — take the next measure', 'carrying the branch label');
+eq(loop.label, 'Re-survey scheduled - take the next measure', 'carrying the branch label');
 
 const rejoin = layout.edges.filter(e => e.toId === 'gate4');
 eq(rejoin.length, 5, 'all five tiers arrow into the economics gate');
-eq(rejoin.filter(e => e.back).length, 0, 'and none of those is a back edge — they all come from above');
+eq(rejoin.filter(e => e.back).length, 0, 'and none of those is a back edge - they all come from above');
 
 // Back edges leave and re-enter on the right, clear of the boxes.
 const backs = layout.edges.filter(e => e.back);

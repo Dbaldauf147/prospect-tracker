@@ -99,7 +99,7 @@ function ok(value, name) { eq(!!value, true, name); }
 
   ok(out.clipped, 'an over-length transcript is marked clipped');
   ok(out.text.includes('OPENING-MARKER'), 'the opening survives clipping');
-  ok(out.text.includes('CLOSING-MARKER'), 'the close survives clipping — that is where commitments land');
+  ok(out.text.includes('CLOSING-MARKER'), 'the close survives clipping - that is where commitments land');
   ok(out.text.includes('middle of the call omitted'), 'the gap is marked in the text the model reads');
   ok(out.text.length < long.length, 'the clipped transcript is shorter than the original');
 }

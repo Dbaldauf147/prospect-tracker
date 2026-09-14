@@ -193,7 +193,7 @@ function parseDroppedText(text) {
     let lastname = '';
     if (name) {
       if (name.includes(',')) {
-        // "Last, First" — common for Outlook contact cards.
+        // "Last, First" - common for Outlook contact cards.
         const [lastPart, firstPart = ''] = name.split(',').map(s => s.trim());
         lastname = lastPart;
         firstname = firstPart;
@@ -3267,7 +3267,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         const hasName = mappedVals.includes('firstname') || mappedVals.includes('lastname') || mappedVals.includes('fullName');
         const hasCompany = mappedVals.includes('company');
         // Without an Email column we can still import as long as Name + Company
-        // are mapped — addresses are estimated from each company's recorded
+        // are mapped - addresses are estimated from each company's recorded
         // pattern, and any that can't be estimated are flagged in the grid and
         // blocked from the HubSpot push until the user fills them in.
         const canEstimate = !hasEmail && hasName && hasCompany;

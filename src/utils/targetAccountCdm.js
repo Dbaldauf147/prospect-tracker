@@ -171,8 +171,8 @@ export function describeTargetCdmConflict(conflict, cdm) {
     : `${cdms.slice(0, -1).join(', ')} and ${cdms[cdms.length - 1]}`;
   const mine = String(cdm || '').trim();
   const tail = mine
-    ? `The CDM here is ${mine} — check who covers this account.`
-    : 'No CDM is set here — check who covers this account.';
+    ? `The CDM here is ${mine} - check who covers this account.`
+    : 'No CDM is set here - check who covers this account.';
   const matchNote = conflict?.source === 'fuzzy'
     ? ' Matched by company name; map the target account on My Accounts to pin it.'
     : '';

@@ -144,7 +144,7 @@ eq(dr.removed, true, 'a later amendment’s removal supersedes the master’s ad
 // Order is the whole basis of that: oldest first, so reversing the input
 // reverses the verdict. Callers must pass documents in the order analyzed.
 const reversed = mergeExtractedServices([amendment, master], CATALOG);
-eq(reversed.find(r => r.match?.key === 'Demand response').removed, false, 'reversed order lets the master re-add it — documents are replayed in the order given');
+eq(reversed.find(r => r.match?.key === 'Demand response').removed, false, 'reversed order lets the master re-add it - documents are replayed in the order given');
 
 // An unmatched service still gets a row, keyed by name so a reviewer can map it.
 const unmatched = mergeExtractedServices([

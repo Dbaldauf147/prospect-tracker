@@ -309,7 +309,7 @@ function DeadlineLanes({ lanes, ax, todayTime, onPick = null }) {
                   role={pick ? 'button' : undefined}
                   tabIndex={pick ? 0 : undefined}
                   style={pick ? { cursor: 'pointer' } : undefined}
-                  aria-label={pick ? `${lane.label} ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'} — open the list` : undefined}
+                  aria-label={pick ? `${lane.label} ${mdY(p.date)}: ${p.count} site${p.count === 1 ? '' : 's'} - open the list` : undefined}
                 >
                   {/* Hollow for a projected filing — it's the ordinance's
                       cycle carried forward, not a date the jurisdiction has
@@ -565,7 +565,7 @@ function MandateEditor({ govId, category, mandate, overrides, onSave, onDone }) 
   return (
     <div className={styles.mdEdit}>
       <div className={styles.mdEditIntro}>
-        Corrects the {CATEGORY_LABEL[category]} reference for {mandate?.government || 'this jurisdiction'} —
+        Corrects the {CATEGORY_LABEL[category]} reference for {mandate?.government || 'this jurisdiction'} -
         for every site here, every export, and everyone else signed in.
       </div>
       {field('Policy', (
@@ -1498,7 +1498,7 @@ export function BuildingComplianceScreening({
   // the printable report, distinct from the raw-data workbook.
   async function exportExcelReport() {
     try {
-      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length, companyName: [companyLabel || companyName, scopeLabel].filter(Boolean).join(' \u2014 ') });
+      await exportComplianceReportXlsx(results, { generatedAt: new Date().toLocaleString(), siteCount: results.length, companyName: [companyLabel || companyName, scopeLabel].filter(Boolean).join(' - ') });
     } catch (err) {
       console.error('Excel report export failed', err);
       alert('Could not build the Excel report: ' + (err?.message || 'unknown error'));
@@ -1664,7 +1664,7 @@ export function BuildingComplianceScreening({
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
             {(companyLabel || scopeLabel) && (
               <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>
-                {[companyLabel, scopeLabel].filter(Boolean).join(' \u2014 ')}
+                {[companyLabel, scopeLabel].filter(Boolean).join(' - ')}
               </div>
             )}
             <h1 className={styles.title} style={{ color: '#fff' }}>Building Compliance Screening &amp; Roadmap</h1>
@@ -1714,7 +1714,7 @@ export function BuildingComplianceScreening({
               <strong>Every loaded site is leased.</strong>
               <div className={styles.noMatchSub}>
                 All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} marked
-                Leased, so excluding leased buildings leaves nothing to screen — these obligations fall on the owner.
+                Leased, so excluding leased buildings leaves nothing to screen - these obligations fall on the owner.
                 Switch to {' '}<strong>All sites</strong> above to screen them anyway.
               </div>
             </div>
@@ -1949,7 +1949,7 @@ export function BuildingComplianceScreening({
               The Whole Building Utility Data Collection (WBUDC) service supports BPS and BBS offerings via
               whole-building data collection; applicability depends on whether the site&apos;s utilities provide
               this option. Each site&apos;s utility is the one the Whole Building Data file names for its zip
-              code, and a site counts here only where that file says the utility hands the commodity over —
+              code, and a site counts here only where that file says the utility hands the commodity over -
               <strong> Electric? = Yes</strong> for EP, <strong>Gas? = Yes</strong> for NG.
             </div>
             {/* Held back until the reference is in. The counts are a different
@@ -2194,7 +2194,7 @@ export function BuildingComplianceScreening({
           )}
         </>
       )}
-      {/* Print-only page furniture — the one thing the PDF carries that the
+      {/* Print-only page furniture - the one thing the PDF carries that the
           screen has no use for. */}
       {printJob && (
         <div className={`${styles.printOnly} ${styles.printFooter}`}>

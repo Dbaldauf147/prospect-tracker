@@ -79,7 +79,7 @@ function ok(cond, name) { eq(!!cond, true, name); }
   const base = getTreeLibrary({});
   const { library, id } = addTree(base, { name: 'Water', tree: blankTree() });
   eq(library.trees.map(t => t.name), [TEMPLATE_TREE_NAME, 'Water'], 'the new tree is a subtab beside the first');
-  eq(library.activeId, base.activeId, 'adding one does not switch to it — the caller decides that');
+  eq(library.activeId, base.activeId, 'adding one does not switch to it - the caller decides that');
   eq(activeEntry(setActiveTree(library, id)).name, 'Water', 'and switching to it opens it');
   eq(setActiveTree(library, 'nope').activeId, library.activeId, 'switching to a tree that is gone changes nothing');
 
@@ -106,7 +106,7 @@ function ok(cond, name) { eq(!!cond, true, name); }
 // ── deleting, and the one tree that can't go ─────────────────────────────
 {
   const base = getTreeLibrary({});
-  eq(removeTree(base, base.activeId), base, 'the last tree stays — the page has to open on something');
+  eq(removeTree(base, base.activeId), base, 'the last tree stays - the page has to open on something');
 
   const { library, id } = addTree(base, { name: 'Water' });
   const after = removeTree(setActiveTree(library, id), id);

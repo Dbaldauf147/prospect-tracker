@@ -83,7 +83,7 @@ const bucket = (over = {}) => ({
   });
   eq(both.gaps.map(g => g.key), ['electric', 'gas'], 'both commodities report when both are short');
   eq([both.gaps[1].noUtility, both.gaps[1].noPlace], [700, 16],
-    'the two Unknown reasons stay apart — they have different fixes');
+    'the two Unknown reasons stay apart - they have different fixes');
 }
 
 {

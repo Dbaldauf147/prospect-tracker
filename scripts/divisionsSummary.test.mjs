@@ -262,8 +262,8 @@ function build(facts, savings) {
   eq(ws.getCell(pickerRow, 2).value, 'Retail',
     'the picker opens on the largest named division rather than on a blank cell');
 
-  const elecHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix — electric consumption (kWh/yr)') + 1;
-  const gasHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix — gas consumption (Dth/yr)') + 1;
+  const elecHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix - electric consumption (kWh/yr)') + 1;
+  const gasHeaderRow = rowOf(row => row.getCell(1).value === 'State × division matrix - gas consumption (Dth/yr)') + 1;
   ok(elecHeaderRow > pickerRow && gasHeaderRow > elecHeaderRow, 'both matrices are written below the picker');
   eq([1, 2, 3, 4].map(c => ws.getCell(elecHeaderRow, c).value),
     ['ST / Prov / Country', 'Retail', 'Industrial', ALL_DIVISIONS_LABEL],
@@ -564,10 +564,10 @@ function build(facts, savings) {
     return found;
   };
   const titleRow = (title) => rowOf(row => row.getCell(1).value === title);
-  const elecHeader = titleRow('State × division matrix — electric consumption (kWh/yr)') + 1;
-  const elecDeregHeader = titleRow('State × division matrix — deregulated electric consumption (kWh/yr)') + 1;
-  const gasHeader = titleRow('State × division matrix — gas consumption (Dth/yr)') + 1;
-  const gasDeregHeader = titleRow('State × division matrix — deregulated gas consumption (Dth/yr)') + 1;
+  const elecHeader = titleRow('State × division matrix - electric consumption (kWh/yr)') + 1;
+  const elecDeregHeader = titleRow('State × division matrix - deregulated electric consumption (kWh/yr)') + 1;
+  const gasHeader = titleRow('State × division matrix - gas consumption (Dth/yr)') + 1;
+  const gasDeregHeader = titleRow('State × division matrix - deregulated gas consumption (Dth/yr)') + 1;
   ok(elecHeader > 1 && elecDeregHeader > elecHeader && gasHeader > elecDeregHeader && gasDeregHeader > gasHeader,
     'all four matrices are written, in order');
   eq([1, 2, 3, 4].map(c => ws.getCell(elecDeregHeader, c).value),

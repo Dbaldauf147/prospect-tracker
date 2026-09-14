@@ -131,11 +131,11 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
           reminderMinutes: draft.meeting?.reminderMinutes || 0,
         });
         downloadFile(`${safeFileName(draft.subject)}.ics`, ics, 'text/calendar;charset=utf-8');
-        onResult({ type: 'success', message: `${draft.name}.ics downloading — double-click it to open the meeting in Outlook, then Send.` });
+        onResult({ type: 'success', message: `${draft.name}.ics downloading - double-click it to open the meeting in Outlook, then Send.` });
       } else {
         const eml = buildEml({ ...draft, signature });
         downloadFile(`${safeFileName(draft.subject)}.eml`, eml, 'message/rfc822');
-        onResult({ type: 'success', message: `${draft.name}.eml downloading — double-click it to open the draft in Outlook.` });
+        onResult({ type: 'success', message: `${draft.name}.eml downloading - double-click it to open the draft in Outlook.` });
       }
     } catch (err) {
       onResult({ type: 'error', message: `Could not build that draft: ${err?.message || err}` });
@@ -234,7 +234,7 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
           {showPreview && (
             draft.bodyHtml.trim()
               ? <div className={styles.preview} dangerouslySetInnerHTML={{ __html: draft.bodyHtml }} />
-              : <div className={`${styles.preview} ${styles.emptyPreview}`}>This template has no body — the subject and attendees are the whole message.</div>
+              : <div className={`${styles.preview} ${styles.emptyPreview}`}>This template has no body - the subject and attendees are the whole message.</div>
           )}
         </>
       )}
@@ -292,7 +292,7 @@ function DraftCard({ draft, isEdited, onSave, onReset, signature, organizer, onR
             )}
             <p className={styles.hint}>
               {rawHtml
-                ? 'Raw HTML — what Outlook receives, signature aside.'
+                ? 'Raw HTML - what Outlook receives, signature aside.'
                 : 'Type straight into the table cells. Tab moves between them.'}
             </p>
           </div>

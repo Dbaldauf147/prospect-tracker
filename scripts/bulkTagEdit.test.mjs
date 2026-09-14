@@ -146,7 +146,7 @@ function eq(actual, expected, name) {
   eq(after(undefined, 'yes'), true, 'Mark Yes on an unanswered tag turns the tag on');
   eq(after({ answer: 'no', status: '' }, 'yes'), true, 'Mark Yes over a No turns the tag on');
   eq(after({ answer: '', status: 'notsold' }, 'yes'), false,
-    'Mark Yes over a Not sold keeps the tag OFF — the hold-off stands');
+    'Mark Yes over a Not sold keeps the tag OFF - the hold-off stands');
   eq(recordForVerdict({ answer: '', status: 'notsold' }, 'yes'),
     { answer: 'yes', status: 'notsold' },
     'Mark Yes over a Not sold still records the Yes: theirs, not bought yet');

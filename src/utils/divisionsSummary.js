@@ -389,7 +389,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
 
   // ---- 1. Energy procurement savings opportunity -------------------------
   r = section(ws, r, NC, 'Energy Procurement Savings Opportunity by Division',
-    'Deregulated sites, annual deregulated spend and the indicative savings range each division carries. Savings apply to deregulated spend only, and never to a leased location — a regulated market, or a division whose deregulated spend is all leased, resolves to $0 rather than being left blank, so the columns still add up.');
+    'Deregulated sites, annual deregulated spend and the indicative savings range each division carries. Savings apply to deregulated spend only, and never to a leased location - a regulated market, or a division whose deregulated spend is all leased, resolves to $0 rather than being left blank, so the columns still add up.');
   r = table(ws, r, {
     columns: [
       { label: 'Division', key: 'name', align: 'left', width: 30 },
@@ -419,7 +419,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
   // be read across — the spend column above covers a subset of the sites
   // this volume covers, so dividing one by the other is not a rate.
   r = section(ws, r, NC, 'Energy Consumption by Division',
-    'Annual electric and gas volume across EVERY site in the division, regulated and deregulated alike — unlike the spend above, which covers deregulated sites only. "Sites with data" is how many sites carry a consumption figure at all; the rest contribute nothing to the total. "Modelled" is the part of the total that came from the property-type estimate rather than off the uploaded file — a total that is largely modelled is an indication of size, not a meter reading. "Deregulated" is the volume at sites the market classifier places in a competitive market, the same per-site verdict the Deregulated Sites column above counts on: a site in a competitive state with no utility and no supplier on file can\'t be confirmed either way and is NOT counted, so this reads as a floor rather than an estimate. Gas is reported in Dth (1 Dth = 10 therms), as on the Site Detail tab.');
+    'Annual electric and gas volume across EVERY site in the division, regulated and deregulated alike - unlike the spend above, which covers deregulated sites only. "Sites with data" is how many sites carry a consumption figure at all; the rest contribute nothing to the total. "Modelled" is the part of the total that came from the property-type estimate rather than off the uploaded file - a total that is largely modelled is an indication of size, not a meter reading. "Deregulated" is the volume at sites the market classifier places in a competitive market, the same per-site verdict the Deregulated Sites column above counts on: a site in a competitive state with no utility and no supplier on file can\'t be confirmed either way and is NOT counted, so this reads as a floor rather than an estimate. Gas is reported in Dth (1 Dth = 10 therms), as on the Site Detail tab.');
   r = table(ws, r, {
     columns: [
       { label: 'Division', key: 'name', align: 'left', width: 30 },
@@ -498,7 +498,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
 
   // ---- 4. Interval data --------------------------------------------------
   r = section(ws, r, NC, 'Interval Data by Division',
-    'How good the numbers above are, per division: the share of sites whose electric utility is mapped to a known utility, and the share confirmed to have utility interval data. "Unknown" is a utility with a blank Status or one absent from the Utility Name Mapping table — neither confirmed nor ruled out.');
+    'How good the numbers above are, per division: the share of sites whose electric utility is mapped to a known utility, and the share confirmed to have utility interval data. "Unknown" is a utility with a blank Status or one absent from the Utility Name Mapping table - neither confirmed nor ruled out.');
   r = table(ws, r, {
     columns: [
       { label: 'Division', key: 'name', align: 'left', width: 30 },
@@ -543,7 +543,7 @@ export function buildDivisionsSheet(wb, summary, meta = {}) {
 // table reads correctly in a viewer that doesn't recalculate on open.
 function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
   let r = section(ws, startRow, NC, 'Sites by ISO / RTO Market, by Division',
-    'Pick a market from the dropdown: the table under it counts each division\'s sites in that market. The full matrix below is what it reads — every market the portfolio is in, by division. Markets are resolved from each site\'s US ZIP via the EPA eGRID subregion crosswalk; a site outside the US, or on a ZIP the crosswalk doesn\'t carry, counts as Unknown.');
+    'Pick a market from the dropdown: the table under it counts each division\'s sites in that market. The full matrix below is what it reads - every market the portfolio is in, by division. Markets are resolved from each site\'s US ZIP via the EPA eGRID subregion crosswalk; a site outside the US, or on a ZIP the crosswalk doesn\'t carry, counts as Unknown.');
 
   const headers = [...isoLabels, ALL_ISO_LABEL];
   // Default the picker to the market the most sites sit in, so the sheet
@@ -710,7 +710,7 @@ function isoSection(ws, startRow, NC, divisions, isoLabels, totals) {
 // recalculate on open.
 function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, totals) {
   let r = section(ws, startRow, NC, 'Consumption by State, by Division',
-    'Pick a division from the dropdown: the table under it reports that division\'s annual electric and gas volume in every state the portfolio touches, and how much of each sits in a competitive market. Same figures as the Energy Consumption section above, split by state instead of totalled — every site, regulated and deregulated alike, so the volume columns read higher than the deregulated spend the savings run on. "Deregulated" counts only sites the market classifier confirms, so a competitive state with no utility or supplier on file reads low rather than assumed. The four matrices below are what the table reads. Electric is kWh/yr and gas is Dth/yr, as on the Site Detail tab.');
+    'Pick a division from the dropdown: the table under it reports that division\'s annual electric and gas volume in every state the portfolio touches, and how much of each sits in a competitive market. Same figures as the Energy Consumption section above, split by state instead of totalled - every site, regulated and deregulated alike, so the volume columns read higher than the deregulated spend the savings run on. "Deregulated" counts only sites the market classifier confirms, so a competitive state with no utility or supplier on file reads low rather than assumed. The four matrices below are what the table reads. Electric is kWh/yr and gas is Dth/yr, as on the Site Detail tab.');
 
   if (!divisions.length || !stateLabels.length) {
     ws.mergeCells(r, 1, r, NC);
@@ -754,10 +754,10 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
   // one description so the ranges and the row indexes the table's formulas
   // use can't drift apart as they did when they were spelled out twice.
   const MATRICES = [
-    { key: 'kwh', title: 'State × division matrix — electric consumption (kWh/yr)' },
-    { key: 'kwhDereg', title: 'State × division matrix — deregulated electric consumption (kWh/yr)' },
-    { key: 'therms', title: 'State × division matrix — gas consumption (Dth/yr)' },
-    { key: 'thermsDereg', title: 'State × division matrix — deregulated gas consumption (Dth/yr)' },
+    { key: 'kwh', title: 'State × division matrix - electric consumption (kWh/yr)' },
+    { key: 'kwhDereg', title: 'State × division matrix - deregulated electric consumption (kWh/yr)' },
+    { key: 'therms', title: 'State × division matrix - gas consumption (Dth/yr)' },
+    { key: 'thermsDereg', title: 'State × division matrix - deregulated gas consumption (Dth/yr)' },
   ];
   let cursor = selectedTotalRow + 2;
   for (const m of MATRICES) {
@@ -937,7 +937,7 @@ function consumptionByStateSection(ws, startRow, NC, divisions, stateLabels, tot
   const after = lastMatrixRow + 2;
   ws.mergeCells(after, 1, after, NC);
   const note = ws.getCell(after, 1);
-  note.value = `A state a division has sites in but no consumption figures for reads as a zero rather than dropping out — the "Sites with data" columns in the Energy Consumption section say how much of each total is measured at all. The deregulated matrices count only sites the market classifier confirms as competitive, so a state can carry load with none of it deregulated either because it is a regulated market or because no utility or supplier is on file to place its sites. A site whose State / Province and Country both came through blank files under "${UNKNOWN_STATE_LABEL}".`;
+  note.value = `A state a division has sites in but no consumption figures for reads as a zero rather than dropping out - the "Sites with data" columns in the Energy Consumption section say how much of each total is measured at all. The deregulated matrices count only sites the market classifier confirms as competitive, so a state can carry load with none of it deregulated either because it is a regulated market or because no utility or supplier is on file to place its sites. A site whose State / Province and Country both came through blank files under "${UNKNOWN_STATE_LABEL}".`;
   note.font = { name: FONT, italic: true, size: 9, color: { argb: 'FF94A3B8' } };
   note.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
   ws.getRow(after).height = 26;

@@ -63,7 +63,7 @@ check('other: a do-not-reply mailbox with an ordinary subject',
 check('a real reply classifies as nothing',
   classifyAutoReply(mail('Re: Q3 energy procurement', 'dana@acme.com')), null);
 check('a reply merely MENTIONING the office is not an auto-reply',
-  classifyAutoReply(mail('Re: Q3 energy procurement — I am out of the office next week, but call me', 'dana@acme.com')), null);
+  classifyAutoReply(mail('Re: Q3 energy procurement - I am out of the office next week, but call me', 'dana@acme.com')), null);
 check('an empty email is not an auto-reply', classifyAutoReply({}), null);
 
 // ---- the union is unchanged from the boolean it replaced -----------------
@@ -95,7 +95,7 @@ const CORPUS = [
   mail('Q3', 'mailer-daemon@x.com'), mail('Q3', 'noreply@x.com'),
   mail('Q3', 'do-not-reply@x.com'), mail('Q3', 'bounces@x.com'),
   mail('Re: Q3 energy procurement', 'dana@acme.com'),
-  mail('Interested — can we talk Thursday?', 'p.okafor@harbor.com'),
+  mail('Interested - can we talk Thursday?', 'p.okafor@harbor.com'),
   mail('', ''),
 ];
 const disagreements = CORPUS.filter(e => isAutoReply(e) !== legacyIsAutoReply(e))

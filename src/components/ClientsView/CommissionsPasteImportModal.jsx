@@ -325,12 +325,12 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
 
             {/* Cells where the row on file and the paste disagree. These
                 aren't duplicates, so they're spelled out rather than quietly
-                resolved — the mode below decides which value survives. */}
+                resolved - the mode below decides which value survives. */}
             {summary.conflictCells > 0 && (
               <div style={{ padding: '0.5rem 0.7rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, fontSize: '0.72rem', color: '#92400E', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <div>
                   <strong>{summary.conflictCells}</strong> cell{summary.conflictCells === 1 ? '' : 's'} on {conflictRows.length} project{conflictRows.length === 1 ? '' : 's'} already {summary.conflictCells === 1 ? 'carries' : 'carry'} a <em>different</em> value
-                  {dupeMode === 'fill' ? ' — kept as-is unless you pick another mode below:' : ' — the pasted value will win:'}
+                  {dupeMode === 'fill' ? ' - kept as-is unless you pick another mode below:' : ' - the pasted value will win:'}
                 </div>
                 <div style={{ maxHeight: 90, overflowY: 'auto', color: '#78350F' }}>
                   {conflictRows.slice(0, 8).map(r => (
@@ -350,7 +350,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
             {mergedRows.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.25rem 1rem', padding: '0.4rem 0.6rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.72rem', color: '#334155' }}>
                 <span style={{ fontWeight: 600, alignSelf: 'center' }}>When a project already exists:</span>
-                <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer', maxWidth: 340 }} title="Fill in the cells this project has no value for yet and leave everything already recorded alone — a pasted figure that repeats or contradicts one on file changes nothing. Months an earlier paste recorded are kept either way.">
+                <label style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '0.3rem', cursor: 'pointer', maxWidth: 340 }} title="Fill in the cells this project has no value for yet and leave everything already recorded alone - a pasted figure that repeats or contradicts one on file changes nothing. Months an earlier paste recorded are kept either way.">
                   <input type="radio" name="commissions-dupe-mode" checked={dupeMode === 'fill'} onChange={() => setDupeMode('fill')} style={{ marginTop: 2, cursor: 'pointer' }} />
                   <span><strong>Fill blanks only</strong> (default): keep every figure already on file</span>
                 </label>
@@ -415,7 +415,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
                   ? "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file has its existing months cleared, then repopulated from only this paste (Account Name / BFO Name / Scope kept)."
                   : dupeMode === 'update'
                     ? "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file is merged into cell by cell: each pasted value updates the row, and any months this paste doesn't include are kept."
-                    : "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file fills in only the cells it had no value for — every figure already recorded, and every project this paste doesn't mention, is left alone."} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: nothingToImport ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: nothingToImport ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                    : "New rows are added; a project name repeated within this paste is imported as its own flagged row; a project already on file fills in only the cells it had no value for - every figure already recorded, and every project this paste doesn't mention, is left alone."} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: nothingToImport ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: nothingToImport ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
                   {mergedRows.length > 0
                     ? `Add ${importedRowCount} · ${dupeMode === 'replace' ? 'replace' : dupeMode === 'update' ? 'update' : 'fill'} ${mergedRows.length} →`
                     : `Import ${importedRowCount} row${importedRowCount === 1 ? '' : 's'} →`}

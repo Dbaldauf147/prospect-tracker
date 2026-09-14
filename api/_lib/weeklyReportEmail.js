@@ -60,7 +60,7 @@ export async function sendWeeklyReportEmail({ to, subject, message, snapshot, re
     message,
     funnelImageSrc: attachment ? `cid:${FUNNEL_CID}` : '',
   });
-  const label = snapshot?.periodLabel ? ` — ${snapshot.periodLabel}` : '';
+  const label = snapshot?.periodLabel ? ` - ${snapshot.periodLabel}` : '';
   return sendEmail({
     to,
     subject: staleSubject(String(subject || `Weekly Report${label}`), freshnessNote(snapshot)),

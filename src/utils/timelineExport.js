@@ -37,7 +37,7 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-// The stage table that sits under the graphic in the report — the same data,
+// The stage table that sits under the graphic in the report - the same data,
 // readable when the timeline is too wide to print at a legible size.
 function stageTable(stages) {
   const rows = stages.map((stage, i) => `
@@ -88,7 +88,7 @@ export function buildTimelineReportHtml(template, meta = {}) {
   .bandSub { font-size: 13px; font-weight: 600; opacity: 0.92; margin-top: 3px; }
   .body { padding: 24px 28px 28px; }
   .graphic { width: 100%; overflow-x: auto; margin-bottom: 18px; }
-  /* Direct child only — a descendant selector would also hit the Schneider
+  /* Direct child only - a descendant selector would also hit the Schneider
      lockup nested inside the graphic and stretch it to the full width. */
   .graphic > svg { width: 100%; height: auto; min-width: 900px; }
   h2 {
@@ -173,7 +173,7 @@ export function openTimelineReport(template, meta = {}) {
   return true;
 }
 
-// Vector export — the file to drop into a slide.
+// Vector export - the file to drop into a slide.
 export function downloadTimelineSvg(template) {
   const svg = buildTimelineSvg(template, { branded: true });
   if (!svg) return false;

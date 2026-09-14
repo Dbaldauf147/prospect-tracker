@@ -54,17 +54,17 @@ export const COMMODITIES = [
     eia: {
       dataset: 'petroleum/pri/spt',
       series: 'RWTC',
-      source: 'EIA — WTI spot, Cushing OK',
+      source: 'EIA - WTI spot, Cushing OK',
       label: 'WTI crude (spot)',
     },
     stooq: {
       symbol: 'cl.f',
-      source: 'Stooq — WTI front-month future (CL.F)',
+      source: 'Stooq - WTI front-month future (CL.F)',
       label: 'WTI crude (front-month)',
     },
     yahoo: {
       symbol: 'CL=F',
-      source: 'Yahoo Finance — WTI front-month future (CL=F)',
+      source: 'Yahoo Finance - WTI front-month future (CL=F)',
       label: 'WTI crude (front-month)',
     },
   },
@@ -82,17 +82,17 @@ export const COMMODITIES = [
     eia: {
       dataset: 'natural-gas/pri/fut',
       series: 'RNGWHHD',
-      source: 'EIA — Henry Hub spot',
+      source: 'EIA - Henry Hub spot',
       label: 'Henry Hub natural gas (spot)',
     },
     stooq: {
       symbol: 'ng.f',
-      source: 'Stooq — Henry Hub front-month future (NG.F)',
+      source: 'Stooq - Henry Hub front-month future (NG.F)',
       label: 'Henry Hub natural gas (front-month)',
     },
     yahoo: {
       symbol: 'NG=F',
-      source: 'Yahoo Finance — Henry Hub front-month future (NG=F)',
+      source: 'Yahoo Finance - Henry Hub front-month future (NG=F)',
       label: 'Henry Hub natural gas (front-month)',
     },
   },
@@ -224,7 +224,7 @@ export async function fetchCommoditySeries(spec, { now = Date.now(), fetchImpl }
     }
   }
   const why = attempts.map(a => `${a.name}: ${a.status}${a.error ? ` (${a.error})` : ''}`).join('; ');
-  throw new Error(`No price source answered for ${spec.name} — ${why}`);
+  throw new Error(`No price source answered for ${spec.name} - ${why}`);
 }
 
 /**
@@ -246,7 +246,7 @@ export async function fetchAllSeries({ now = Date.now(), fetchImpl, commodities 
   const series = settled.filter(r => r.ok).map(r => r.series);
   const failures = settled.filter(r => !r.ok).map(r => ({ name: r.spec.name, error: r.error }));
   if (series.length === 0) {
-    throw new Error(failures.map(f => `${f.name} — ${f.error}`).join(' | ') || 'No commodities configured');
+    throw new Error(failures.map(f => `${f.name} - ${f.error}`).join(' | ') || 'No commodities configured');
   }
   return { series, failures };
 }
@@ -424,14 +424,14 @@ function weeklyTableHtml(weeks) {
  *
  * Both commodities, each with its week move, because the whole point of a
  * commodity mail on a phone is not having to open it. A commodity that
- * failed simply isn't named — the section inside says what happened.
+ * failed simply isn't named - the section inside says what happened.
  */
 export function commodityEmailSubject(sections, { windowDays = WINDOW_DAYS } = {}) {
   const parts = sections.map(({ spec, stats }) => {
     const wk = stats.changeWeek;
     return `${spec.name} ${perUnit(stats.latest.close, spec.unit)}${wk ? ` (${signed(wk.pct, 1)}%)` : ''}`;
   });
-  return `${parts.join(' · ')} — ${windowDays}-day recap`;
+  return `${parts.join(' · ')} - ${windowDays}-day recap`;
 }
 
 // One commodity's block: headline, the three changes, the window's
@@ -440,7 +440,7 @@ export function commoditySectionHtml({ spec, stats, weeks, source, label, window
   const wk = stats.changeWeek;
   const headlineColor = !wk ? FLAT : wk.abs > 0 ? UP : wk.abs < 0 ? DOWN : FLAT;
   return `
-    <h2 style="color:#009530;margin:0 0 2px;font-size:20px">${esc(label)} — last ${windowDays} days</h2>
+    <h2 style="color:#009530;margin:0 0 2px;font-size:20px">${esc(label)} - last ${windowDays} days</h2>
     <div style="font-size:12px;color:#94A3B8;margin:0 0 16px">${esc(stats.days)} trading days, ${esc(fmtDay(stats.first.date))} to ${esc(fmtDay(stats.latest.date))}</div>
 
     <div style="font-size:34px;font-weight:700;color:${headlineColor};line-height:1.1">${esc(money(stats.latest.close))}<span style="font-size:15px;font-weight:400;color:#94A3B8"> /${esc(spec.unit)}</span></div>

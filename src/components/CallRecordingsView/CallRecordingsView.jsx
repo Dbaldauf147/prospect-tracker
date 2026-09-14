@@ -313,7 +313,7 @@ function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
 
   return (
     <div className={styles.fillerBlock}>
-      <div className={styles.breakdownLabel}>Filler words — in your turns only</div>
+      <div className={styles.breakdownLabel}>Filler words - in your turns only</div>
 
       {use.words === 0 ? (
         <div className={styles.breakdownCaveat}>
@@ -378,7 +378,7 @@ function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
                     type="button"
                     className={styles.fillerIgnore}
                     onClick={() => onToggleIgnored?.(f.id)}
-                    title={`Ignore “${f.label}” — take it out of every filler number on this tab`}
+                    title={`Ignore “${f.label}” - take it out of every filler number on this tab`}
                   >
                     Ignore
                   </button>
@@ -390,7 +390,7 @@ function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
           {use.moments.length > 0 && (
             <>
               <div className={styles.breakdownLabel}>
-                Where they cluster — your {use.moments.length === 1 ? 'turn' : `${use.moments.length} turns`} with the most
+                Where they cluster - your {use.moments.length === 1 ? 'turn' : `${use.moments.length} turns`} with the most
               </div>
               {use.moments.map((m, i) => (
                 <div key={`${m.start ?? 'x'}-${i}`} className={styles.fillerMoment}>
@@ -411,7 +411,7 @@ function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
           {use.fillers > 0 && (
             <div className={styles.breakdownCaveat}>
               Counted from the transcript as it was stored, so it is only as complete as the notetaker that
-              wrote it — some clean up hesitations before you ever see them. Compare this with your own other
+              wrote it - some clean up hesitations before you ever see them. Compare this with your own other
               calls rather than a published benchmark. “So” and “well” count only when they open a sentence,
               and “right” only as a tag question, so ordinary uses of those words aren’t held against you.
               Any word you don’t count as filler can be ignored, and every number here drops it.
@@ -451,7 +451,7 @@ function FillerWords({ use, totals, ignored, onToggleIgnored, onRestoreAll }) {
             )}
           </div>
           <div className={styles.breakdownCaveat}>
-            Left out of every filler number on this tab — this call, the columns beside it and the average
+            Left out of every filler number on this tab - this call, the columns beside it and the average
             above them{use.hidden > 0 ? `, which drops ${use.hidden} filler${use.hidden === 1 ? '' : 's'} from this call` : ''}.
             {' '}Click one to count it again.
           </div>
@@ -558,8 +558,8 @@ function BreakdownDetail({ row, fillerStats, ignoredFillers, onToggleIgnored, on
           <div className={styles.breakdownLabel}>
             Speaker by speaker
             {basis === 'words'
-              ? ' — share of words spoken'
-              : ' — share of talking time'}
+              ? ' - share of words spoken'
+              : ' - share of talking time'}
           </div>
           {speakers.map(s => (
             <div key={s.name} className={styles.speakerRow}>
@@ -585,7 +585,7 @@ function BreakdownDetail({ row, fillerStats, ignoredFillers, onToggleIgnored, on
               silently as talk time. */}
           {basis === 'words' && (
             <div className={styles.breakdownCaveat}>
-              This transcript carried no timings, so every share here is a share of words — someone who
+              This transcript carried no timings, so every share here is a share of words - someone who
               talks fast and says little will look quieter than they were.
             </div>
           )}
@@ -1423,7 +1423,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       label: 'Duration',
       defaultWidth: 90,
       getSortValue: r => r.durationSeconds,
-      render: r => fmtDuration(r.durationSeconds) || <span className={styles.transcriptStatus}>—</span>,
+      render: r => fmtDuration(r.durationSeconds) || <span className={styles.transcriptStatus}>-</span>,
     },
     {
       key: 'attendees',
@@ -1431,7 +1431,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       defaultWidth: 240,
       render: r => (r.attendees
         ? <span title={r.attendeeEmails || r.attendees}>{r.attendees}</span>
-        : <span className={styles.transcriptStatus}>{r.attendeeCount === 0 ? 'None recorded' : '—'}</span>),
+        : <span className={styles.transcriptStatus}>{r.attendeeCount === 0 ? 'None recorded' : '-'}</span>),
     },
     {
       key: 'stageLabel',
@@ -1448,12 +1448,12 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       defaultWidth: 100,
       getSortValue: r => r.youShare,
       render: (r) => {
-        if (r.youShare == null) return <span className={styles.transcriptStatus}>—</span>;
+        if (r.youShare == null) return <span className={styles.transcriptStatus}>-</span>;
         // The basis has to travel with the number: a words-based split is
         // a different measurement and would overstate a fast talker.
         return (
           <span title={r.talkBasis === 'words'
-            ? 'Share of words spoken — this transcript carried no timings'
+            ? 'Share of words spoken - this transcript carried no timings'
             : 'Share of talking time'}>
             {formatShare(r.youShare)}{r.talkBasis === 'words' ? ' (words)' : ''}
           </span>
@@ -1468,7 +1468,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       getSortValue: r => new Date(r.pushedToOppAt || 0).getTime() || null,
       render: r => (r.pushedToOppAt
         ? fmtWhen(r.pushedToOppAt)
-        : <span className={styles.transcriptStatus}>—</span>),
+        : <span className={styles.transcriptStatus}>-</span>),
     },
     { key: 'folders', label: 'Granola folders', defaultWidth: 150 },
   ], [expandedHistory]);
@@ -1514,7 +1514,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
             <div className={styles.historyLabel}>Follow-ups</div>
             <ul className={styles.historyList}>
               {followUps.map((f, i) => {
-                const owner = typeof f === 'object' && f?.owner ? ` — ${f.owner}` : '';
+                const owner = typeof f === 'object' && f?.owner ? ` - ${f.owner}` : '';
                 const due = typeof f === 'object' && f?.due ? ` (${f.due})` : '';
                 return <li key={i}>{textOf(f)}{owner}{due}</li>;
               })}
@@ -1635,7 +1635,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
       }
       const { patches, opps: count, calls } = backfillLastCallPatches(recordsRef.current, opps);
       if (count === 0) {
-        setSyncNote('Every opp with a mapped call already names it — nothing to backfill.');
+        setSyncNote('Every opp with a mapped call already names it - nothing to backfill.');
         return;
       }
       // One load/save for the whole batch: a loop of single-opp writes
@@ -2198,7 +2198,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
         <div className={styles.toolbar}>
           <label
             className={styles.autoPush}
-            title="When on, a transcribed call is summarized in the background — up to three per hourly check, newest first — so its summary is on the opp without anyone opening this page. Calls marked N/A are left alone."
+            title="When on, a transcribed call is summarized in the background - up to three per hourly check, newest first - so its summary is on the opp without anyone opening this page. Calls marked N/A are left alone."
           >
             <input
               type="checkbox"
@@ -2603,7 +2603,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
               {/* The cache note comes before the advice: what you are
                   looking at right now, then what to do about it. */}
               {historyCache?.rows?.length
-                ? ' Showing the copy this browser saved last time — it may be out of date.'
+                ? ' Showing the copy this browser saved last time - it may be out of date.'
                 : ''}
               {readFailure && ` ${readFailure.advice}`}
             </div>
@@ -2683,7 +2683,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                 only readable next to the calls it came from. */}
             {!recordsReadError && fillerStats.measured > 0 && (
               <div className={styles.breakdownSummary}>
-                <strong>{formatRate(fillerStats.per100Words)}</strong> filler words per 100 you spoke —{' '}
+                <strong>{formatRate(fillerStats.per100Words)}</strong> filler words per 100 you spoke -{' '}
                 {fillerStats.fillers.toLocaleString()} in all, across {fillerStats.measured} call
                 {fillerStats.measured === 1 ? '' : 's'}
                 {fillerStats.byFiller[0] && <> · most often “{fillerStats.byFiller[0].label}”</>}
@@ -2776,7 +2776,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                       <th scope="col" className={styles.pickNum} title="Share of the call you spoke">You</th>
                       <th scope="col" className={styles.pickNum} title="Filler words in your turns">Filler</th>
                       <th scope="col" className={styles.pickNum} title="Filler words per 100 words you spoke">/100w</th>
-                      <th scope="col" className={styles.pickNum} title="Filler words per minute of your talk time — only for calls where every one of your turns was timed">/min</th>
+                      <th scope="col" className={styles.pickNum} title="Filler words per minute of your talk time - only for calls where every one of your turns was timed">/min</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2818,23 +2818,23 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                             </span>
                           </td>
                           <td className={styles.pickNum} data-measured={r.measurable ? 'true' : 'false'} data-share="true">
-                            {r.measurable ? formatShare(r.youShare) : '—'}
+                            {r.measurable ? formatShare(r.youShare) : '-'}
                           </td>
                           <td className={styles.pickNum} data-measured={use ? 'true' : 'false'}>
-                            {use ? use.fillers.toLocaleString() : '—'}
+                            {use ? use.fillers.toLocaleString() : '-'}
                           </td>
                           <td
                             className={styles.pickNum}
                             data-measured={use ? 'true' : 'false'}
                             data-thin={thin ? 'true' : 'false'}
                             title={thin
-                              ? `Only ${use.words} words — too few for this rate to compare with the others`
+                              ? `Only ${use.words} words - too few for this rate to compare with the others`
                               : undefined}
                           >
-                            {use ? formatRate(use.per100Words) : '—'}
+                            {use ? formatRate(use.per100Words) : '-'}
                           </td>
                           <td className={styles.pickNum} data-measured={use?.perMinute != null ? 'true' : 'false'}>
-                            {use?.perMinute != null ? formatRate(use.perMinute) : '—'}
+                            {use?.perMinute != null ? formatRate(use.perMinute) : '-'}
                           </td>
                         </tr>
                       );
@@ -2975,7 +2975,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                       className={styles.oppChipNa}
                       title={isAutoNa(stored)
                         ? `Marked N/A automatically by the rule “${stored.oppNaRule}”`
-                        : 'Marked as belonging to no opportunity — this call is done being triaged'}
+                        : 'Marked as belonging to no opportunity - this call is done being triaged'}
                     >N/A{isAutoNa(stored) ? ' ⟳' : ''}</span>
                   )}
                   <span className={styles.cardActions}>
@@ -3088,7 +3088,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                     bury the one thing this line is for. */}
                 {notStored && (
                   <div className={styles.error} style={{ margin: '0 0 0.5rem' }}>
-                    <strong>Not saved.</strong> What you see here for this call is in this browser only —
+                    <strong>Not saved.</strong> What you see here for this call is in this browser only -
                     a refresh will lose it. {notStored.error}
                   </div>
                 )}
@@ -3341,7 +3341,7 @@ export function CallRecordingsView({ prospects = [], settings = {}, updateSettin
                   <div className={styles.transcript}>
                     <div className={styles.transcriptStatus}>
                       Granola sent this note without a transcript, so there is nothing to summarise and no
-                      talk-time split. Meetings imported on the Activity page carry no transcript by design —
+                      talk-time split. Meetings imported on the Activity page carry no transcript by design -
                       use Sync calls here to fetch them. If they still arrive empty, the Granola plan may not
                       include transcript access.
                     </div>

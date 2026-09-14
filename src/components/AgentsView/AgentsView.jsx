@@ -152,13 +152,13 @@ const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://s
 // reason, and feeds the BFO Activity "Leads" subtab in the same pass
 // (the Status Update + Duplicate Leads prompts compare against it).
 const DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
-2.  Click Printable View. A new tab opens — go to that tab and set the number of records to 250 so the whole list is on one page.
+2.  Click Printable View. A new tab opens - go to that tab and set the number of records to 250 so the whole list is on one page.
 3.  Copy the entire table, starting with the Name header and going down to the bottom right-hand corner of the last row.
 4.  Navigate to https://prospect-tracker-ashen.vercel.app/, open the Contacts page and select the Marketing Leads subtab.
 5.  Paste the copied table anywhere on that page (Ctrl+V / Cmd+V, not inside a cell). A column-mapping box opens: check that Name, Email, Job Title, Company, Status, Created Date, Last Lead Source, Owner, Country and Qualification Source Detail each point at the matching pasted column, then click Import.
-6.  Leads already saved are skipped by email, so pasting the whole list is safe — only the new ones are added. If a message says leads were skipped because they match a hidden lead, report which ones rather than unhiding them.
-7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below, and any lead still missing from Marketing Leads is added there as you paste — the confirmation line names them.
-8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle — those were captured before the import ran — so say so, and I will re-copy the prompts to pick the new leads up.`
+6.  Leads already saved are skipped by email, so pasting the whole list is safe - only the new ones are added. If a message says leads were skipped because they match a hidden lead, report which ones rather than unhiding them.
+7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below, and any lead still missing from Marketing Leads is added there as you paste - the confirmation line names them.
+8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle - those were captured before the import ran - so say so, and I will re-copy the prompts to pick the new leads up.`
 
 const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
 2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
@@ -173,7 +173,7 @@ const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforc
 5.  Repeat for every lead listed below.`;
 
 const DEFAULT_AI_PROMPT_DUPLICATE_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
-2.  Each lead listed below appears more than once on the Leads list — the same person with more than one Lead record — and at least one of those copies carries the wrong Status. Search the list by Name to find every copy (the name may be written "Last, First" on one and "First Last" on another).
+2.  Each lead listed below appears more than once on the Leads list - the same person with more than one Lead record - and at least one of those copies carries the wrong Status. Search the list by Name to find every copy (the name may be written "Last, First" on one and "First Last" on another).
 3.  For each copy, compare its Status in Salesforce against the Marketing Leads Status shown below. The Marketing Leads Status (from this website's Marketing Leads page) is the source of truth.
 4.  Open each copy whose Status differs, go to the Assessment tab, set the Status to the Marketing Leads Status, and Save. A copy that already agrees is left alone.
 5.  Do NOT merge or delete any Lead record. When every copy carries the right status, report back the list of leads that have duplicate records, with each record's URL, so the duplicates can be merged by hand.
@@ -488,21 +488,21 @@ The two "Leased" levels are the point of this column. "Leased" on its own descri
 
 - Leased – Whole Building: the company occupies all of it. A standalone or single-tenant building, a triple-net (NNN) lease, a ground lease, a build-to-suit, a sale-leaseback, a leased plant, warehouse, restaurant or hotel. The company is behind its own meters.
 - Leased – Suite: the company occupies part of it. A floor or a few floors, a suite or unit number in the address, a unit in a multi-tenant estate, an in-line retail unit, a serviced or coworking office. The landlord runs the central plant and the common areas.
-- Leased: you have established it is leased but not which of the two. This is a complete answer, not a failed one — use it rather than guessing a level.
+- Leased: you have established it is leased but not which of the two. This is a complete answer, not a failed one - use it rather than guessing a level.
 - Owned: freehold, owner-occupied, or the company or a subsidiary is the owner of record.
 
 Rules for this column:
 
 - Never default to "Owned". A row with no tenure evidence is already read as owned downstream, so writing "Owned" on a guess adds a claim and changes nothing else. Leave the cell BLANK and put "Not disclosed" in Tenure Evidence.
-- Never put anything outside the four values in the cell — not "Owned/Leased", "Both", "Mixed", "TBD" or "Not disclosed". Those are read as unrecognized and flag the row.
+- Never put anything outside the four values in the cell - not "Owned/Leased", "Both", "Mixed", "TBD" or "Not disclosed". Those are read as unrecognized and flag the row.
 - A plain hyphen is read the same as the dash above, and case does not matter. "Leased - Suite" is fine.
 - Where one address is part owned and part leased (an owned plant with a leased office beside it), split it into two rows rather than hedging in one.
-- Where the row is a Suite, any square footage must be the LEASED PREMISES, not the whole building. If you only have the building's area, leave the cell blank and say so in Notes — a tower's floor area on a floor tenant's row overstates them by an order of magnitude.
+- Where the row is a Suite, any square footage must be the LEASED PREMISES, not the whole building. If you only have the building's area, leave the cell blank and say so in Notes - a tower's floor area on a floor tenant's row overstates them by an order of magnitude.
 
 Add two supporting columns beside it:
 
-- Tenure Evidence — the disclosure the value came from, in a few words: "10-K Item 2, listed as leased", "county assessor: owner of record is the company", "sale-leaseback announced 2023", "Not disclosed".
-- Tenure Source — the URL or filing reference.
+- Tenure Evidence - the disclosure the value came from, in a few words: "10-K Item 2, listed as leased", "county assessor: owner of record is the company", "sale-leaseback announced 2023", "Not disclosed".
+- Tenure Source - the URL or filing reference.
 
 Where to look, in order:
 
@@ -513,7 +513,7 @@ Where to look, in order:
 5. Press releases and trade press on build-to-suit, sale-leaseback and new-facility announcements, which usually say outright which it is.
 6. Commercial listings for the building itself. A site advertised alongside other tenants is a Suite; a building marketed as single-tenant is a Whole Building.
 
-If all you can establish is a bare "Leased", the level is inferred from Property Type downstream — offices, laboratories, medical office, industrial flex, mixed use, malls and neighbourhood retail are treated as suites, everything else as whole buildings. Where you think that default is wrong for a row, say so in Notes.
+If all you can establish is a bare "Leased", the level is inferred from Property Type downstream - offices, laboratories, medical office, industrial flex, mixed use, malls and neighbourhood retail are treated as suites, everything else as whole buildings. Where you think that default is wrong for a row, say so in Notes.
 
 Two things that are not sites and must not get rows: a registered-agent or "c/o" address at a law firm or corporate services provider, and a mailing address with no building behind it. List them separately with a note instead.`,
   },
@@ -521,8 +521,8 @@ Two things that are not sites and must not get rows: a registered-agent or "c/o"
     id: 'seed-big-site-list-python',
     title: 'Big Site List Python',
     body: `**Build a global site register for: \`{COMPANY_NAME}\`**
-Company website: \`{URL — leave blank if you want me to find it}\`
-Position as at: \`{DATE — default: today}\`
+Company website: \`{URL - leave blank if you want me to find it}\`
+Position as at: \`{DATE - default: today}\`
 
 ### 1. Scope
 
@@ -532,11 +532,11 @@ centres, data centres, retail, hotels, and any other property type the company h
 
 Before you start, tell me which of these the company is, because it changes what "its sites" means:
 
-- **An occupier** (manufacturer, retailer, services firm) — one register of the sites it uses.
-- **A property owner or investment manager** (REIT, developer, fund) — TWO registers on separate
+- **An occupier** (manufacturer, retailer, services firm) - one register of the sites it uses.
+- **A property owner or investment manager** (REIT, developer, fund) - TWO registers on separate
   tabs: (a) the investment portfolio it owns or manages, and (b) the corporate offices it occupies
   to run itself. Flag any office that sits inside a building the company owns.
-- **An operator with franchisees** — mark which sites are company-operated vs franchised, or say
+- **An operator with franchisees** - mark which sites are company-operated vs franchised, or say
   plainly that the split isn't public.
 
 ### 2. Required columns
@@ -550,23 +550,23 @@ Before you start, tell me which of these the company is, because it changes what
 | Postal / ZIP Code | |
 | Country | |
 | Property Type | Must match the controlled vocabulary in rule 6 exactly |
-| Owned / Leased | One of: Owned / Leased – Suite / Leased – Whole Building / Leased — see rule 4 |
+| Owned / Leased | One of: Owned / Leased – Suite / Leased – Whole Building / Leased - see rule 4 |
 | Square Footage | See rule 5 |
 
-Also add these supporting columns — they are what make the file auditable:
+Also add these supporting columns - they are what make the file auditable:
 
 | Column | Notes |
 |---|---|
 | Site Type (Function) | What happens there, in the company's own words |
-| Company's Own Type | The company's own facility label, kept verbatim — see rule 6 |
+| Company's Own Type | The company's own facility label, kept verbatim - see rule 6 |
 | Tenure Evidence | The specific disclosure behind the Owned/Leased value |
 | Sq Ft Source | Where the area figure came from |
-| Address Confidence | High / Medium / Unverified — see rule 3 |
+| Address Confidence | High / Medium / Unverified - see rule 3 |
 | Status | Active / Under construction / Idled / Announced |
 | Notes | Anything that affects how the row should be read |
 | Source | The page or filing this row came from |
 
-### 3. Accuracy rules — these matter more than completeness
+### 3. Accuracy rules - these matter more than completeness
 
 - **Never invent an address or postal code.** If a company doesn't publish one, leave it blank
   and mark the row Unverified rather than guessing from the city.
@@ -574,9 +574,9 @@ Also add these supporting columns — they are what make the file auditable:
   **Medium** = street address solid but postal code inferred from location; **Unverified** = not
   found. Highlight Unverified rows.
 - Watch ambiguous postal formats. A bare five-digit code is used by the US, Germany, France, Spain
-  and Italy — don't infer a country from it alone.
+  and Italy - don't infer a country from it alone.
 - If sources disagree, keep both, pick the more likely one, and say so in Notes.
-- Reproduce obvious errors on the company's own site as published, with a flag — don't silently
+- Reproduce obvious errors on the company's own site as published, with a flag - don't silently
   "correct" them.
 
 ### 4. Owned vs leased, and how much of the building
@@ -590,31 +590,31 @@ floor of an office tower and a company on a net lease of an entire plant, and th
 same building: the floor tenant holds one electric meter and its own plug load, the net-lease
 tenant holds the building and nearly all of its meters.
 
-- **Leased – Whole Building** — the company occupies all of it: standalone or single-tenant,
+- **Leased – Whole Building** - the company occupies all of it: standalone or single-tenant,
   triple-net (NNN), ground lease, build-to-suit, sale-leaseback, a leased plant, warehouse,
   restaurant or hotel. Behind its own meters.
-- **Leased – Suite** — the company occupies part of it: a floor or several, a suite or unit
+- **Leased – Suite** - the company occupies part of it: a floor or several, a suite or unit
   number in the address, a unit in a multi-tenant estate, in-line retail, a serviced or coworking
   office. The landlord runs the central plant and the common areas.
-- **Leased** — established as a lease, level not established. A complete answer, not a failed one.
-- **Owned** — freehold, owner-occupied, or the company or a subsidiary is owner of record.
+- **Leased** - established as a lease, level not established. A complete answer, not a failed one.
+- **Owned** - freehold, owner-occupied, or the company or a subsidiary is owner of record.
 
 Use only what's actually disclosed, and cite it in Tenure Evidence. Good sources, in order:
 
 1. Item 2 (Properties) of a 10-K or 20-F, which usually footnotes leased sites
-2. The leases note (ASC 842 / IFRS 16) — the scale of the leased estate, rarely the sites
+2. The leases note (ASC 842 / IFRS 16) - the scale of the leased estate, rarely the sites
 3. Schedule III for REITs (owned only, aggregated by geography)
 4. Annual reports, sustainability and CDP reports, investor decks
-5. Local land registry / assessor records — an owner of record settles it either way
+5. Local land registry / assessor records - an owner of record settles it either way
 6. Build-to-suit and sale-leaseback announcements, which usually say outright which it is
 7. Commercial listings for the building: advertised with other tenants is a Suite, marketed as
    single-tenant is a Whole Building
 
-Where tenure isn't public — which is normal for offices, service centres and private companies —
+Where tenure isn't public - which is normal for offices, service centres and private companies -
 leave the cell **blank** and write "Not disclosed" in Tenure Evidence, with what would resolve it.
 Don't dress up an assumption as a fact, and in particular **never default to Owned**: a blank is
 already read as owned downstream, so a guessed "Owned" adds a claim and changes nothing else.
-Nothing outside the four values belongs in the cell — not "Owned/Leased", "Both", "Mixed" or
+Nothing outside the four values belongs in the cell - not "Owned/Leased", "Both", "Mixed" or
 "TBD". Where one address is part owned and part leased, split it into two rows.
 
 A bare "Leased" resolves downstream by Property Type: offices, laboratories, medical office,
@@ -628,13 +628,13 @@ tab and leave the per-site column blank rather than dividing it up. Flag any fig
 wrong for the building described.
 
 On a **Leased – Suite** row the figure must be the leased premises, not the building. If all you
-have is the building's area, leave the cell blank and say so in Notes — a tower's floor area on a
+have is the building's area, leave the cell blank and say so in Notes - a tower's floor area on a
 floor tenant's row overstates them by an order of magnitude.
 
-### 6. Property Type — controlled vocabulary
+### 6. Property Type - controlled vocabulary
 
 Property Type must match one of the following 32 values exactly. Do not invent new categories,
-and do not reword them — the whole point is that registers for different companies stay
+and do not reword them - the whole point is that registers for different companies stay
 comparable.
 
 > University / College Campus · Industrial (Heavy Manufacturing) · Data Center ·
@@ -653,12 +653,12 @@ How to apply it:
   office tower "Mixed-Use, Retail" because there are shops on the ground floor. That's a marketing
   label. An office building with a coffee shop in the lobby is an office.
 - **Keep the company's own label** in the "Company's Own Type" column. Where a company runs its own
-  facility taxonomy — port location, production advantaged, dedicated or leased, select suites —
+  facility taxonomy - port location, production advantaged, dedicated or leased, select suites -
   that's operational or commercial information, not a property class, and it's worth preserving
   rather than flattening into this list.
 - **Split offices by height**: High-Rise, Mid-Rise, or Small (Low-Rise), on floor count.
-- **Reserve Mixed Use for genuine multi-component estates** — a campus or district with materially
-  different uses — not for a single building with incidental retail.
+- **Reserve Mixed Use for genuine multi-component estates** - a campus or district with materially
+  different uses - not for a single building with incidental retail.
 - If a site genuinely straddles two categories, pick the dominant one and explain in Notes.
 - Add a **Reference** tab listing all 32 values, and put a data-validation drop-down on the
   Property Type column pointing at it, so a non-approved value can't be typed in later.
@@ -690,11 +690,11 @@ If there are more than roughly 150 sites, don't try to research them one at a ti
 
 A single Excel workbook containing:
 
-- **Site Register** — the columns above, with autofilter and frozen header
-- **Summary** — counts by country, type and tenure, as live formulas
-- **Reference** — the 32 Property Type values, with a drop-down on the register bound to it
-- **Excluded** — divested or closed sites (if any)
-- **Notes & Sources** — method, every source used, key judgement calls, and an explicit list of
+- **Site Register** - the columns above, with autofilter and frozen header
+- **Summary** - counts by country, type and tenure, as live formulas
+- **Reference** - the 32 Property Type values, with a drop-down on the register bound to it
+- **Excluded** - divested or closed sites (if any)
+- **Notes & Sources** - method, every source used, key judgement calls, and an explicit list of
   what you could NOT verify
 
 In your reply, lead with the two or three things I'd most want to know: how complete it is, the
@@ -3401,7 +3401,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               : `Last run ${agentsLastRunLabel} (${agentsDaysSince} day${agentsDaysSince === 1 ? '' : 's'} ago).`}
             {' '}Work through the prompts below, then mark the run to clear this
             alert: it comes back every {AGENTS_RUN_INTERVAL_BUSINESS_DAYS} business days.
-            {' '}Not now? Snooze it instead &mdash; the run stays owed and the alert
+            {' '}Not now? Snooze it instead - the run stays owed and the alert
             comes back when the snooze is up.
           </div>
           <div className={styles.runAlertActions} ref={snoozeMenuRef}>
@@ -3556,7 +3556,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       )}
       {senderEmail ? (
         <p className={styles.subnote}>
-          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. Meetings come from HubSpot and from the Granola notes the Call Recordings page has stored &mdash; a Granola call that nobody has logged in HubSpot yet is added if it ties to an opportunity, badged <em>Granola</em>, and linked to its note. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
+          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. Meetings come from HubSpot and from the Granola notes the Call Recordings page has stored - a Granola call that nobody has logged in HubSpot yet is added if it ties to an opportunity, badged <em>Granola</em>, and linked to its note. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
         </p>
       ) : (
         <div className={styles.staleBanner}>
@@ -3657,7 +3657,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                       href={r.granolaUrl}
                       target="_blank"
                       rel="noreferrer"
-                      title="From a Granola note on the Call Recordings page — open the note"
+                      title="From a Granola note on the Call Recordings page - open the note"
                       style={{
                         marginLeft: 6, padding: '0 5px', fontSize: '0.62rem', fontWeight: 700,
                         color: '#5B21B6', background: '#EDE9FE', border: '1px solid #C4B5FD',
@@ -3869,7 +3869,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       <section className={styles.section}>
         <h2 className={styles.sectionHeader}>Import Marketing Leads</h2>
         <p className={styles.subnote}>
-          Pulls the Salesforce Leads list into the app: the assistant copies the Leads printable view and pastes it into the Contacts page&rsquo;s <strong>Marketing Leads</strong> subtab, then into the BFO Activity page&rsquo;s <strong>Leads</strong> subtab. Leads already saved are skipped by email, so the whole list can be pasted every time. This is the only prompt that brings <em>new</em> leads in &mdash; the three below act on leads the app already holds, so run this first. Leads it imports won&rsquo;t appear in the lists below until you copy the prompts again. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+          Pulls the Salesforce Leads list into the app: the assistant copies the Leads printable view and pastes it into the Contacts page&rsquo;s <strong>Marketing Leads</strong> subtab, then into the BFO Activity page&rsquo;s <strong>Leads</strong> subtab. Leads already saved are skipped by email, so the whole list can be pasted every time. This is the only prompt that brings <em>new</em> leads in - the three below act on leads the app already holds, so run this first. Leads it imports won&rsquo;t appear in the lists below until you copy the prompts again. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
         </p>
         {revealedPrompts.importMarketingLeads && (
           <textarea
@@ -4061,7 +4061,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{duplicateLeadRows.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Leads that appear more than once on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab &mdash; the same person carrying more than one Salesforce Lead record &mdash; where at least one of those copies disagrees with that lead&rsquo;s Marketing Leads Status (the source of truth on the Contacts page). Duplicates whose copies all agree aren&rsquo;t listed: there&rsquo;s no status to fix on them. Neither are leads the Marketing Leads page doesn&rsquo;t carry, which there&rsquo;s nothing to compare against. Paste the Salesforce Leads printable view into the Leads subtab to feed this. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
+          Leads that appear more than once on the BFO Activity page&rsquo;s <strong>Leads</strong> subtab - the same person carrying more than one Salesforce Lead record - where at least one of those copies disagrees with that lead&rsquo;s Marketing Leads Status (the source of truth on the Contacts page). Duplicates whose copies all agree aren&rsquo;t listed: there&rsquo;s no status to fix on them. Neither are leads the Marketing Leads page doesn&rsquo;t carry, which there&rsquo;s nothing to compare against. Paste the Salesforce Leads printable view into the Leads subtab to feed this. The prompt is always part of &ldquo;Copy all prompts.&rdquo;
         </p>
         {revealedPrompts.duplicateLeads && (
           <textarea
@@ -4614,7 +4614,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <div className={styles.warning}>
                 <strong>⚠ No BFO Activity data to check against</strong>
                 <div className={styles.warningHint}>
-                  This list only holds opps still open in BFO, and there are no BFO Activity rows with an Opportunity Name column to test that against &mdash; so nothing is listed. Paste the BFO Opportunity printable view into the <strong>BFO Activity</strong> tab (the &ldquo;Update BFO Activity&rdquo; prompt below walks through it), then come back.
+                  This list only holds opps still open in BFO, and there are no BFO Activity rows with an Opportunity Name column to test that against - so nothing is listed. Paste the BFO Opportunity printable view into the <strong>BFO Activity</strong> tab (the &ldquo;Update BFO Activity&rdquo; prompt below walks through it), then come back.
                 </div>
               </div>
             )}
@@ -4659,7 +4659,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                   {closeNotSoldOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
                       <td colSpan={7}>{closeNotSoldBfoReady
-                        ? 'No Not-Sold opps with a matching BFO Activity row — every Not-Sold opp is already closed out in BFO.'
+                        ? 'No Not-Sold opps with a matching BFO Activity row - every Not-Sold opp is already closed out in BFO.'
                         : 'Nothing to show until the BFO Activity tab has data: without it there is no way to tell which Not-Sold opps are still open in BFO.'}</td>
                     </tr>
                   ) : closeNotSoldOpps.map(o => (

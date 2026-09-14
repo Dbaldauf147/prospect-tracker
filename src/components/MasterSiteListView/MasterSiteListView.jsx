@@ -43,7 +43,7 @@ const COLUMNS = [
   { key: 'iso', label: 'ISO / RTO', kind: 'iso', title: 'Wholesale electricity market (ISO/RTO) resolved from the ZIP via EPA eGRID subregions. A badge flags when the ZIP straddles markets (seam) or the subregion is ambiguous (verify).' },
   { key: '__utility__', label: 'Indicative Utility', kind: 'utility', title: 'Indicative electric utility pulled from the Utility Lookup zip table' },
   { key: '__status__', label: 'Status', kind: 'status', title: 'Regulated vs Deregulated, derived from the indicative utility' },
-  { key: '__equipment__', label: 'Est. Equipment', kind: 'equipment', title: "Equipment estimated for this site from its Subsector — the property type the reference table keys on. Blank when the Subsector doesn't resolve to one of those types." },
+  { key: '__equipment__', label: 'Est. Equipment', kind: 'equipment', title: "Equipment estimated for this site from its Subsector - the property type the reference table keys on. Blank when the Subsector doesn't resolve to one of those types." },
 ];
 
 // Sensible starting widths (px) per column; anything missing uses 140.

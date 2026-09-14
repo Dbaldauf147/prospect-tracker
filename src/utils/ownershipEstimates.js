@@ -332,6 +332,6 @@ export function tenureEstimateNote(tenure, propertyType) {
     return 'Leased suite: sized on the tenant\'s premises and the meters it holds, not on the building. '
       + 'Base-building load, landlord accounts and central plant are excluded.' + resolved;
   }
-  return 'Leased whole building: the tenant is behind its own meters, so this is close to the owned figure — '
+  return 'Leased whole building: the tenant is behind its own meters, so this is close to the owned figure - '
     + 'less the water account and the structure the landlord keeps.' + resolved;
 }

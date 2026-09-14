@@ -233,19 +233,19 @@ ${lines}
 
 // `buffer` is whatever ExcelJS's writeBuffer returned (ArrayBuffer in
 // the browser). Returns a new ArrayBuffer with the chart injected. On
-// any failure the original buffer is returned and a warning logged —
+// any failure the original buffer is returned and a warning logged -
 // the caller's export still produces a valid (chart-less) workbook.
 //
 // Single-chart options (back-compat):
-//   sheetName  — target worksheet (must already exist)
-//   title      — chart title
-//   catRef     — fully-qualified range for category axis labels
-//   lineSeries — array of { name, color, marker?, markerSize?, dash?, valRef }
-//   areaSeries — array of { name?, color, alpha?, noFill?, valRef } (rendered as a stacked area chart)
-//   yMin, yMax — explicit value-axis bounds (optional)
-//   hideLegendIndices — series indices to suppress from the legend
-//   numFmt     — Excel format string for the value axis labels (default "$"#,##0)
-//   anchor     — { col, colOff, row, rowOff, cx, cy } in EMU
+//   sheetName  - target worksheet (must already exist)
+//   title      - chart title
+//   catRef     - fully-qualified range for category axis labels
+//   lineSeries - array of { name, color, marker?, markerSize?, dash?, valRef }
+//   areaSeries - array of { name?, color, alpha?, noFill?, valRef } (rendered as a stacked area chart)
+//   yMin, yMax - explicit value-axis bounds (optional)
+//   hideLegendIndices - series indices to suppress from the legend
+//   numFmt     - Excel format string for the value axis labels (default "$"#,##0)
+//   anchor     - { col, colOff, row, rowOff, cx, cy } in EMU
 //
 // Multi-chart shape (preferred when stacking charts on one sheet):
 //   sheetName + charts: [{ title, catRef, lineSeries, areaSeries,
@@ -350,7 +350,7 @@ export async function injectLiveLineChart(buffer, options) {
     // worksheet-level <extLst> when x14 conditional-formatting
     // features are used (data bars produce an inner extLst inside
     // <cfRule> AND a worksheet-level extLst for the
-    // <x14:conditionalFormattings> block) — a naive "insert before
+    // <x14:conditionalFormattings> block) - a naive "insert before
     // </worksheet>" puts <drawing> after that extLst, and a naive
     // "insert before first <extLst>" puts <drawing> *inside* the
     // dataBar cfRule. Excel rejects both → the entire sheet renders

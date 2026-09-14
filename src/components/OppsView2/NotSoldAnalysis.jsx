@@ -408,7 +408,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             to place a loss that never got a Close Date, so it sits out. */}
         {data.undated > 0 && (
           <span className={styles.resultCount} style={{ color: '#92400E' }}>
-            {data.undated} not counted — no Close Date
+            {data.undated} not counted - no Close Date
           </span>
         )}
       </div>

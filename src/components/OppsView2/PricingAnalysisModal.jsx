@@ -67,7 +67,7 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.95rem', fontWeight: 700 }}>
-              Estimated fee — {account || analysis.account || 'this opp'}
+              Estimated fee - {account || analysis.account || 'this opp'}
             </div>
             {/* What the number was worked out against, in one line: the
                 counts are the assumptions the whole estimate rests on, and
@@ -185,7 +185,7 @@ export function PricingAnalysisModal({ analysis, account, onClose }) {
             padding: '8px 16px', background: '#FEF3C7', color: '#92400E',
             fontSize: '0.72rem', lineHeight: 1.4,
           }}>
-            Not counted — nothing priced them when this was saved: {analysis.unpriced.join(', ')}
+            Not counted - nothing priced them when this was saved: {analysis.unpriced.join(', ')}
           </div>
         )}
       </div>

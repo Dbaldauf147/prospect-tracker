@@ -378,15 +378,15 @@ function ServiceTypeahead({ value, buckets, onPick }) {
 
 // Why a scoped client shows no money. One sentence, on every cell it
 // applies to, because a blank figure with no reason on it reads as a bug.
-const ON_CARD_WHY = 'The company card already has a status against a service in this scope — sold, in flight, turned down or N/A — so there is no new business here to size. Not counted in the totals above. Expand the row to see which service.';
+const ON_CARD_WHY = 'The company card already has a status against a service in this scope - sold, in flight, turned down or N/A - so there is no new business here to size. Not counted in the totals above. Expand the row to see which service.';
 
 // A money figure that may be a range, rendered as one cell. A blank scope
 // shows a dash rather than $0: "nothing picked" and "picked, worth nothing"
 // are different answers and a zero would flatten them into one. A client the
 // card has already ruled on shows the same dash, with the reason on it.
 function Money({ low, high, scoped, onCard, bold }) {
-  if (onCard) return <span style={{ color: '#CBD5E1' }} title={ON_CARD_WHY}>—</span>;
-  if (!scoped) return <span style={{ color: '#CBD5E1' }}>—</span>;
+  if (onCard) return <span style={{ color: '#CBD5E1' }} title={ON_CARD_WHY}>-</span>;
+  if (!scoped) return <span style={{ color: '#CBD5E1' }}>-</span>;
   return (
     <span style={{ fontWeight: bold ? 700 : 600, color: low > 0 ? '#0F172A' : '#94A3B8', whiteSpace: 'nowrap' }}>
       {formatMoneyRange(low, high)}
@@ -1159,7 +1159,7 @@ export function DealSizingView({
         .join('; '),
       render: (row) => {
         const counts = countsUsed(row.estimate, bases);
-        if (!counts.length) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        if (!counts.length) return <span style={{ color: '#CBD5E1' }}>-</span>;
         return (
           <span style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
             {counts.map((c) => {
@@ -1176,7 +1176,7 @@ export function DealSizingView({
                     // it is what the client has — but saying so is the whole
                     // point of the column, and a silent chip beside the money
                     // reads as if it produced some of it.
-                    : `${c.count.toLocaleString()} ${c.unitLabel.toLowerCase()} ${where}, but nothing in this scope is priced ${c.label.toLowerCase()} — this count isn't feeding any figure.`}
+                    : `${c.count.toLocaleString()} ${c.unitLabel.toLowerCase()} ${where}, but nothing in this scope is priced ${c.label.toLowerCase()} - this count isn't feeding any figure.`}
                   style={{
                     fontSize: '0.7rem', padding: '0.05rem 0.4rem', borderRadius: 999,
                     whiteSpace: 'nowrap',
@@ -1223,19 +1223,19 @@ export function DealSizingView({
         ].filter(Boolean).join(', ');
       },
       render: (row) => {
-        if (!row.serviceCount) return <span style={{ color: '#CBD5E1' }}>—</span>;
+        if (!row.serviceCount) return <span style={{ color: '#CBD5E1' }}>-</span>;
         const counts = row.statusCounts;
         const chips = [
-          ['sold', counts.sold, 'already buy this — sizing it as new business counts revenue you already have'],
+          ['sold', counts.sold, 'already buy this - sizing it as new business counts revenue you already have'],
           ['inProgress', counts.inProgress, 'are already in flight for this client'],
           ['notSold', counts.notSold, 'have been put to this client and turned down'],
           // N/A was counted but never shown before. It has to be visible now
           // that it sets a client aside: a suppressed row reading "Not
           // explored" would look like a bug rather than a rule.
-          ['na', counts.na, 'are marked N/A on the card — deliberately not applicable to this client'],
+          ['na', counts.na, 'are marked N/A on the card - deliberately not applicable to this client'],
         ].filter(([, n]) => n > 0);
         if (!chips.length) {
-          return <span style={{ fontSize: '0.7rem', color: '#94A3B8' }} title="None of the services in this scope has a status on the company card — all new ground.">Not explored</span>;
+          return <span style={{ fontSize: '0.7rem', color: '#94A3B8' }} title="None of the services in this scope has a status on the company card - all new ground.">Not explored</span>;
         }
         return (
           <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -1277,7 +1277,7 @@ export function DealSizingView({
             <span
               style={{ color: '#CBD5E1' }}
               title="Nothing is scoped for this client, so there is no service to set a status against."
-            >—</span>
+            >-</span>
           );
         }
         const { names, effective, manual } = statusFor(row);
@@ -1295,7 +1295,7 @@ export function DealSizingView({
             title={!canEdit
               ? 'No company record behind this client, so there is nowhere to save a status.'
               : effective === MIXED_STATUS
-                ? `The ${names.length} services in this scope have different statuses. Expand the row to set them one at a time — picking here would overwrite all of them with one answer.`
+                ? `The ${names.length} services in this scope have different statuses. Expand the row to set them one at a time - picking here would overwrite all of them with one answer.`
                 : `Sets the company card's Services Explored status for ${scopeWords}. Any status at all means this scope is no longer new business, so the row stops being sized and its money leaves the totals. “- (auto)” clears what was typed and falls back to whatever a matching opp says.`}
             onPick={(next) => setServiceStatus(row.client, names, next)}
           />
@@ -1330,7 +1330,7 @@ export function DealSizingView({
         if (!meta) {
           return (
             <span
-              title="No Master Analysis saved against this client yet. Build one on the Utility Lookup page and save it to the company — the site counts this estimate runs on come from that work."
+              title="No Master Analysis saved against this client yet. Build one on the Utility Lookup page and save it to the company - the site counts this estimate runs on come from that work."
               style={{ color: '#CBD5E1', fontSize: '0.72rem' }}
             >-</span>
           );
@@ -1387,7 +1387,7 @@ export function DealSizingView({
       render: (row) => (
         row.serviceCount && (row.estimate.setup || row.estimate.setupHigh) && !row.onCard
           ? <span style={{ color: '#475569' }}>{formatMoneyRange(row.estimate.setup, row.estimate.setupHigh)}</span>
-          : <span style={{ color: '#CBD5E1' }} title={row.onCard ? ON_CARD_WHY : undefined}>—</span>
+          : <span style={{ color: '#CBD5E1' }} title={row.onCard ? ON_CARD_WHY : undefined}>-</span>
       ),
     },
     {
@@ -1399,7 +1399,7 @@ export function DealSizingView({
       exportValue: (row) => row.warnings.map(w => w.detail).join(' '),
       render: (row) => (
         row.warnings.length === 0
-          ? <span style={{ color: '#CBD5E1' }}>—</span>
+          ? <span style={{ color: '#CBD5E1' }}>-</span>
           : (
             <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {row.warnings.map(w => (
@@ -1451,7 +1451,7 @@ export function DealSizingView({
                 <strong>Not sized.</strong> The company card already has a status against{' '}
                 {scopeStatuses(client, scope, oppStagesByClient.get(client)).filter(x => x.bucket !== 'none')
                   .map(x => `${x.name} (${x.status})`).join(', ')}
-                {' '}&mdash; so this scope isn&rsquo;t new business. The figures below are what it
+                {' '}- so this scope isn&rsquo;t new business. The figures below are what it
                 <em> would</em> be worth; none of them is counted in the totals at the top of the page.
               </div>
             )}
@@ -1468,9 +1468,9 @@ export function DealSizingView({
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem 0', minWidth: 220 }}>Service</th>
                     <th
                       style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 170 }}
-                      title="What this service is charged on, and at what rate, from Dropdowns › Services Pricing. It is the rate card itself — the same figure for every client — while the money to its right is what that rate comes to for this one."
+                      title="What this service is charged on, and at what rate, from Dropdowns › Services Pricing. It is the rate card itself - the same figure for every client - while the money to its right is what that rate comes to for this one."
                     >Pricing basis</th>
-                    <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 110 }} title="Overrides the count this service would otherwise price against — for a rollout that covers part of the portfolio. On a row whose fee was typed on the rate card it is how many of them the deal carries, each at that fee, and blank means one.">Units</th>
+                    <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 110 }} title="Overrides the count this service would otherwise price against - for a rollout that covers part of the portfolio. On a row whose fee was typed on the rate card it is how many of them the deal carries, each at that fee, and blank means one.">Units</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0.4rem 0.35rem', minWidth: 190, textAlign: 'right' }}>Year 1 fee</th>
                     <th style={{ ...cellReset, fontWeight: 600, padding: '0.2rem 0 0.35rem', minWidth: 190, textAlign: 'right' }}>Deal value</th>
                   </tr>
@@ -1491,7 +1491,7 @@ export function DealSizingView({
                             disabled={!client?.id || typeof updateProspect !== 'function'}
                             title={!client?.id || typeof updateProspect !== 'function'
                               ? 'No company record behind this client, so there is nowhere to save a status.'
-                              : `What the company card says about ${line.name} for ${company}, and where to change it. That is history rather than part of this estimate — but a service they already buy is not new business, so a status here takes this scope out of the totals. “- (auto)” falls back to whatever a matching opp says.`}
+                              : `What the company card says about ${line.name} for ${company}, and where to change it. That is history rather than part of this estimate - but a service they already buy is not new business, so a status here takes this scope out of the totals. “- (auto)” falls back to whatever a matching opp says.`}
                             onPick={(next) => setServiceStatus(client, [line.name], next)}
                           />
                         </div>
@@ -1519,7 +1519,7 @@ export function DealSizingView({
                           return (
                             <span style={{ display: 'block', whiteSpace: 'normal' }}>
                               <span style={{ display: 'block', color: '#0F172A', fontSize: '0.74rem' }}>
-                                {sentence || <span style={{ color: '#B45309' }}>{basis.label} — no rate set</span>}
+                                {sentence || <span style={{ color: '#B45309' }}>{basis.label} - no rate set</span>}
                               </span>
                             </span>
                           );
@@ -1530,7 +1530,7 @@ export function DealSizingView({
                           <CountInput
                             width={92}
                             value={scope.serviceUnits[line.name] ?? ''}
-                            placeholder={estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '—'}
+                            placeholder={estimate.counts[line.unit] != null ? String(estimate.counts[line.unit]) : '-'}
                             title={`How many ${unitWord(line.unit, bases)} this service is charged on. Blank prices it against the shared count.`}
                             onCommit={(typed) => {
                               const next = { ...scope.serviceUnits };
@@ -1539,10 +1539,10 @@ export function DealSizingView({
                               patchScope(company, { serviceUnits: next });
                             }}
                           />
-                        ) : <span style={{ color: '#CBD5E1' }}>—</span>}
+                        ) : <span style={{ color: '#CBD5E1' }}>-</span>}
                       </td>
                       <td style={{ ...cellReset, padding: '0.35rem 0.4rem', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                        {line.priced ? formatMoneyRange(line.fee, line.feeHigh) : <span style={{ color: '#CBD5E1' }}>—</span>}
+                        {line.priced ? formatMoneyRange(line.fee, line.feeHigh) : <span style={{ color: '#CBD5E1' }}>-</span>}
                         {(line.setup > 0 || line.setupHigh > 0) && (
                           <div style={{ display: 'block', fontSize: '0.7rem', color: '#64748B' }} title="Setup fee, billed once. Included in Year 1 and in the deal value, never multiplied by the term.">
                             + {formatMoneyRange(line.setup, line.setupHigh)} setup
@@ -1550,7 +1550,7 @@ export function DealSizingView({
                         )}
                       </td>
                       <td style={{ ...cellReset, padding: '0.35rem 0 0.35rem 0.4rem', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                        {line.priced ? formatMoneyRange(line.value, line.valueHigh) : <span style={{ color: '#CBD5E1' }}>—</span>}
+                        {line.priced ? formatMoneyRange(line.value, line.valueHigh) : <span style={{ color: '#CBD5E1' }}>-</span>}
                       </td>
                     </tr>
                   ))}
@@ -1588,7 +1588,7 @@ export function DealSizingView({
                       <span style={{ flex: '0 0 96px' }}>{label}</span>
                       <CountInput
                         value={scope.counts[unit] ?? ''}
-                        placeholder={recordValue ? String(recordValue) : '—'}
+                        placeholder={recordValue ? String(recordValue) : '-'}
                         onCommit={(typed) => {
                           const next = { ...scope.counts };
                           if (typed === '') delete next[unit];
@@ -1645,7 +1645,7 @@ export function DealSizingView({
               )}
               {estimate.missing.length > 0 && (
                 <div style={{ display: 'block', whiteSpace: 'normal', fontSize: '0.72rem', color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '0.4rem 0.55rem' }}>
-                  {estimate.missing.join(', ')} {estimate.missing.length === 1 ? 'is' : 'are'} no longer in the service catalog — renamed or retired since this scope was set. Re-pick to replace {estimate.missing.length === 1 ? 'it' : 'them'}.
+                  {estimate.missing.join(', ')} {estimate.missing.length === 1 ? 'is' : 'are'} no longer in the service catalog - renamed or retired since this scope was set. Re-pick to replace {estimate.missing.length === 1 ? 'it' : 'them'}.
                 </div>
               )}
             </div>
@@ -1684,7 +1684,7 @@ export function DealSizingView({
           <div style={tileNum}>{formatMoneyRange(totals.year1, totals.year1High)}</div>
           <div style={tileLabel}>Year 1</div>
         </div>
-        <div style={tile} title="The same scopes across their contract terms — a recurring fee multiplied by its years, a project once, setup once.">
+        <div style={tile} title="The same scopes across their contract terms - a recurring fee multiplied by its years, a project once, setup once.">
           <div style={tileNum}>{formatMoneyRange(totals.contractValue, totals.contractValueHigh)}</div>
           <div style={tileLabel}>Est. deal value</div>
         </div>
@@ -1693,7 +1693,7 @@ export function DealSizingView({
           <div style={tileLabel}>Recurring / yr</div>
         </div>
         {totals.unpriced > 0 && (
-          <div style={{ ...tile, borderColor: '#FDE68A', background: '#FFFBEB' }} title="Services picked against a client that have no rate on the pricing page. They contribute nothing to the totals — price them and these figures go up.">
+          <div style={{ ...tile, borderColor: '#FDE68A', background: '#FFFBEB' }} title="Services picked against a client that have no rate on the pricing page. They contribute nothing to the totals - price them and these figures go up.">
             <div style={{ ...tileNum, color: '#92400E' }}>{totals.unpriced}</div>
             <div style={{ ...tileLabel, color: '#92400E' }}>Unpriced picks</div>
           </div>
@@ -1733,7 +1733,7 @@ export function DealSizingView({
               disabled={visible.length === 0}
               onChange={toggleSelectAllVisible}
             />
-            <span title="Tick every client the search and filters leave on screen. Clients filtered off the page are never selected — a bulk edit that reaches a row you cannot see is the thing this bar exists to avoid.">
+            <span title="Tick every client the search and filters leave on screen. Clients filtered off the page are never selected - a bulk edit that reaches a row you cannot see is the thing this bar exists to avoid.">
               Select all listed
             </span>
           </label>
@@ -1815,16 +1815,16 @@ export function DealSizingView({
           <div style={{ fontSize: '0.73rem', color: '#64748B', marginTop: '0.45rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <span><strong style={{ color: '#0F172A' }}>{bulkPlan.add.length}</strong> will get it</span>
             {bulkPlan.scoped.length > 0 && (
-              <span title="Already in this client's scope — adding it again changes nothing.">
+              <span title="Already in this client's scope - adding it again changes nothing.">
                 <strong style={{ color: '#334155' }}>{bulkPlan.scoped.length}</strong> already scoped
               </span>
             )}
             {bulkPlan.sold.length > 0 && (
               <span title={bulkSkipSold
-                ? 'The company card says these clients already buy it, so they are being left out of the add — they get no row of their own on this scope. Untick the box to bring them in with their status showing.'
+                ? 'The company card says these clients already buy it, so they are being left out of the add - they get no row of their own on this scope. Untick the box to bring them in with their status showing.'
                 : 'The company card says these clients already buy it, and they are being included. Their row will show that status and no figures: the card has ruled on the scope, so it is not new business to size.'}>
                 <strong style={{ color: bulkSkipSold ? '#B45309' : '#166534' }}>{bulkPlan.sold.length}</strong>
-                {bulkSkipSold ? ' already buy it — skipped' : ' already buy it — included, status only'}
+                {bulkSkipSold ? ' already buy it - skipped' : ' already buy it - included, status only'}
               </span>
             )}
             {bulkPlan.add.length === 0 && (
@@ -1865,7 +1865,7 @@ export function DealSizingView({
             onClick={applyBulkStatus}
             disabled={statusBusy || !statusPlan?.change.length}
             title={bulkStatusTarget === 'service' && !bulkService
-              ? 'Pick a service in the box above first — this writes the status for that one service.'
+              ? 'Pick a service in the box above first - this writes the status for that one service.'
               : 'Writes this status to each client’s company card. A scope the card has ruled on is not new business, so every client this touches stops being sized and its money leaves the totals above. It can be undone.'}
             style={{
               padding: '0.35rem 0.8rem', borderRadius: 6, fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
@@ -1934,7 +1934,7 @@ export function DealSizingView({
         {untrackedCount > 0 && (
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.76rem', color: '#475569' }}>
             <input type="checkbox" checked={showUntracked} onChange={e => setShowUntracked(e.target.checked)} />
-            <span title={`${untrackedCount} client${untrackedCount === 1 ? ' is' : 's are'} ticked Don't Track on the Clients tab. They are left out of this page and its totals — tick this to size them anyway.`}>
+            <span title={`${untrackedCount} client${untrackedCount === 1 ? ' is' : 's are'} ticked Don't Track on the Clients tab. They are left out of this page and its totals - tick this to size them anyway.`}>
               Show Don&rsquo;t Track clients <span style={{ color: '#94A3B8' }}>({untrackedCount})</span>
             </span>
           </label>
@@ -1985,7 +1985,7 @@ export function DealSizingView({
             setPicking(prev => (prev ? { ...prev, scope: { ...prev.scope, services: parseMulti(next) } } : prev));
           }}
           onClose={() => setPicking(null)}
-          note={`Sizing a deal for ${picking.company || 'this client'}. Picking here doesn't change the company's Services Explored — it only sets what this estimate prices.`}
+          note={`Sizing a deal for ${picking.company || 'this client'}. Picking here doesn't change the company's Services Explored - it only sets what this estimate prices.`}
         />
       )}
     </div>

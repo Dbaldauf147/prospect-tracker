@@ -423,7 +423,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
         return {
           ...base,
           render: (row) => (
-            <span className={styles.pricingNameText} title={`${row.name} — click the row to tick it in or out of the scope`}>
+            <span className={styles.pricingNameText} title={`${row.name} - click the row to tick it in or out of the scope`}>
               {row.name}
             </span>
           ),
@@ -436,7 +436,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           render: (row) => (
             <div className={styles.pricingBasisCell}>
               {row.basisLabel
-                ? <span title={`${row.basisLabel} — set on the Services Pricing subtab`}>{row.basisLabel}</span>
+                ? <span title={`${row.basisLabel} - set on the Services Pricing subtab`}>{row.basisLabel}</span>
                 : <span className={styles.serviceMutedCell} title="Not priced yet. Set a basis and a rate on the Services Pricing subtab.">-</span>}
               {row._extraLines > 0 && (
                 <span
@@ -458,7 +458,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             const rate = formatRate(row._entry, bases);
             if (!rate) {
               return (
-                <span className={styles.serviceMutedCell} title="No rate on the card yet — set one on the Services Pricing subtab.">-</span>
+                <span className={styles.serviceMutedCell} title="No rate on the card yet - set one on the Services Pricing subtab.">-</span>
               );
             }
             // The rate itself, not the arithmetic: a per-unit phrase
@@ -467,7 +467,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             // goes in the tooltip, where it can be read in full.
             return (
               <span title={row._how
-                ? `${row._how} — from the rate card on the Services Pricing subtab.`
+                ? `${row._how} - from the rate card on the Services Pricing subtab.`
                 : 'From the rate card on the Services Pricing subtab.'}
               >{rate}</span>
             );
@@ -506,7 +506,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
                   )}
                 placeholder={row._unitLabel}
                 title={row._unitsOwn
-                  ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone — no other deal and no account record moves. Clear the cell to go back to that count.`
+                  ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone - no other deal and no account record moves. Clear the cell to go back to that count.`
                   : row._unitsTyped
                     ? `A standing figure on the rate card: ${row.units.toLocaleString('en-US')} ${unit} on every deal. Type here to charge this estimate on its own number instead.`
                     : `From the ${row._unitLabel} box above. Type a figure to charge this service on its own number of ${unit} in this estimate.`}
@@ -539,7 +539,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             ? (
               <span
                 className={styles.serviceMutedCell}
-                title={`Not priced yet${row._note ? ` — ${row._note.toLowerCase()}` : ''}. Set a basis and a rate on the Services Pricing subtab.`}
+                title={`Not priced yet${row._note ? ` - ${row._note.toLowerCase()}` : ''}. Set a basis and a rate on the Services Pricing subtab.`}
               >-</span>
             )
             : (
@@ -617,7 +617,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
               label={u.label}
               value={counts?.[u.unit] ?? ''}
               title={`${u.label} this estimate prices against`
-                + (countSources[u.unit] ? ` — filled from ${countSources[u.unit]}.` : '.')
+                + (countSources[u.unit] ? ` - filled from ${countSources[u.unit]}.` : '.')
                 + ' Editing it re-prices this estimate only: the account record and every other deal stay as they are.'}
               onCommit={(v) => setCount(u.unit, v)}
             />
@@ -697,7 +697,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             <span
               className={styles.pricingTotalValueMain}
               title={'The first twelve months: each recurring service’s annual fee, every one-off project in full, and every setup fee. The sum of the Estimated Year 1 Fee column plus the setup fees beside it.'
-                + (totals.ranged ? ' A range, because some of these services are quoted on a low and a high rate — each end is the sum of that end.' : '')}
+                + (totals.ranged ? ' A range, because some of these services are quoted on a low and a high rate - each end is the sum of that end.' : '')}
             >{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}</span>
           </div>
         </div>
@@ -715,7 +715,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             <span className={styles.projectPanelHint}>
               How many of each. A row left blank is priced on the shared{' '}
               {sharedProjects === null
-                ? 'Projects count above, which is empty — so it comes out at $0 until one of them has a number.'
+                ? 'Projects count above, which is empty - so it comes out at $0 until one of them has a number.'
                 : `Projects count above (${sharedProjects.toLocaleString('en-US')}).`}
               {' '}Numbers here belong to this estimate: no other deal and no rate card moves.
             </span>
@@ -780,7 +780,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
       {oppImport && (
         <div className={styles.oppImportNote}>
           <strong>{oppImport.account}</strong>
-          {' — ticked '}{oppImport.services}{' service'}{oppImport.services === 1 ? '' : 's'}
+          {' - ticked '}{oppImport.services}{' service'}{oppImport.services === 1 ? '' : 's'}
           {pinnedNames && ' and pinned them to the top of the table'}
           {oppImport.filled.length > 0 && (
             <>{'; filled '}{oppImport.filled.map(f => `${f.label} ${f.value.toLocaleString('en-US')} from ${f.source}`).join(', ')}</>
@@ -788,7 +788,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           {oppImport.dealSizeSource && <>{'; deal size from '}{oppImport.dealSizeSource}</>}.
           {oppImport.missing.length > 0 && (
             <span className={styles.oppImportGap}>
-              {' Nothing on file for '}{oppImport.missing.join(', ')} — the services priced on {oppImport.missing.length === 1 ? 'it' : 'those'} count as $0 until you enter {oppImport.missing.length === 1 ? 'it' : 'them'} above.
+              {' Nothing on file for '}{oppImport.missing.join(', ')} - the services priced on {oppImport.missing.length === 1 ? 'it' : 'those'} count as $0 until you enter {oppImport.missing.length === 1 ? 'it' : 'them'} above.
             </span>
           )}
           {oppImport.unmatchedTokens.length > 0 && (
@@ -798,7 +798,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           )}
           {saved?.ok && (
             <span className={styles.oppSavedNote}>
-              {' Saved to the '}{oppImport.account}{' opp — '}{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}
+              {' Saved to the '}{oppImport.account}{' opp - '}{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}
               {' in Estimated Fee, with this working behind it.'}
             </span>
           )}
@@ -812,7 +812,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
               type="button"
               className={styles.unpinBtn}
               onClick={() => setPinnedNames(null)}
-              title="Let the pinned services fall back into the table's own order — the scope and the estimate stay as they are"
+              title="Let the pinned services fall back into the table's own order - the scope and the estimate stay as they are"
             >Unpin</button>
           )}
         </div>
@@ -823,7 +823,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           is short by however many of them are ticked. */}
       {totals.unpriced.length > 0 && (
         <div className={styles.pricingWarn}>
-          Not counted — no pricing basis or rate set yet on the Services Pricing subtab: {totals.unpriced.join(', ')}
+          Not counted - no pricing basis or rate set yet on the Services Pricing subtab: {totals.unpriced.join(', ')}
         </div>
       )}
 

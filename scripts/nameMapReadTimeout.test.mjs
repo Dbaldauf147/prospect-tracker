@@ -62,7 +62,7 @@ const settledWithin = (p, ms) => Promise.race([
   read.catch(() => {});
   const outcome = await settledWithin(read, 150);
   ok(outcome.state === 'pending',
-    'an IDB miss whose Firestore backup never answers leaves the read pending — it does not fail');
+    'an IDB miss whose Firestore backup never answers leaves the read pending - it does not fail');
   ok(fs.calls.some((c) => c.op === 'getDoc' && c.path === BACKUP),
     'and the call it is stuck on is the backup read, not IndexedDB');
 }

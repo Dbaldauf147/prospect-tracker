@@ -101,15 +101,15 @@ export const wedgedClientError = () => firstError;
 // own HTTP error rather than the assertion.
 export function wedgedClientMessage(saved, detail = '') {
   if (saved) {
-    return 'Saved — but the live database connection in this tab has crashed '
+    return 'Saved - but the live database connection in this tab has crashed '
       + '(a Firebase SDK bug, not your data). This change was written over a direct connection instead. '
       + 'Reload the page to start syncing again; until you do, changes made in other tabs '
       + 'or on other devices won\'t show up here.';
   }
   return 'This change could not be saved: the live database connection in this tab has crashed '
     + '(a Firebase SDK bug, not your data). '
-    + (detail ? `The direct connection was refused too — ${detail}. ` : '')
-    + 'Reload the page and try again — a backup of your pre-save state was saved locally.';
+    + (detail ? `The direct connection was refused too - ${detail}. ` : '')
+    + 'Reload the page and try again - a backup of your pre-save state was saved locally.';
 }
 
 // Whether the UI has yet said anything about the crash. A save that still

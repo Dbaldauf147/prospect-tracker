@@ -35,7 +35,7 @@ eq(isAuditableId(null), false, 'nor null');
   ];
   const out = auditablePeople(people);
   eq(out.map(c => c.id), ['101', '102'],
-    'the contacts the step flags, by their HubSpot id — vid included');
+    'the contacts the step flags, by their HubSpot id - vid included');
   eq(out[0], { id: '101', name: 'Ada', email: 'ada@example.com' },
     'each carrying enough to name them before anything is called');
   eq(out.map(c => c.name).includes('Cleo'), false, 'a fully-tagged contact is not flagged, so it is not queued');

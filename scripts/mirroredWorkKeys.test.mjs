@@ -31,7 +31,7 @@ function eq(actual, expected, name) {
   if (a === b) { passed++; console.log(`PASS  ${name}`); }
   else { failed++; console.log(`FAIL  ${name}\n        expected ${b}\n        got      ${a}`); }
 }
-const ok = (c, name, extra = '') => eq(!!c, true, `${name}${c ? '' : ` — ${extra}`}`);
+const ok = (c, name, extra = '') => eq(!!c, true, `${name}${c ? '' : ` - ${extra}`}`);
 
 function allSource() {
   const out = [];

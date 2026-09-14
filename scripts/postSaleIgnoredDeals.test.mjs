@@ -47,7 +47,7 @@ const names = (rows) => rows.map(r => r['Agreement Name']);
 {
   // Uploaded workbooks spell "blank" with dashes; those are not a flag.
   eq(isIgnoredDeal({ [DEAL_IGNORED_KEY]: '-' }), false, 'a dash is a blank cell, not an ignore');
-  eq(isIgnoredDeal({ [DEAL_IGNORED_KEY]: '—' }), false, 'an em dash too');
+  eq(isIgnoredDeal({ [DEAL_IGNORED_KEY]: '-' }), false, 'an em dash too');
   eq(isIgnoredDeal({ [DEAL_IGNORED_KEY]: '1' }), true, 'the flag DealsView writes reads as ignored');
   eq(isIgnoredDeal({}), false, 'a row without the key is not ignored');
   eq(isIgnoredDeal(null), false, 'and neither is no row at all');

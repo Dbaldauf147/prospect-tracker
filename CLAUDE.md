@@ -11,3 +11,30 @@
 5. Don't push directly to `master` — the remote rejects it (HTTP 403). Everything lands through a PR.
 
 Branches stay one-PR-per-change so each fix can be reviewed and merged independently — don't pile unrelated changes onto a previous branch.
+
+
+## No em dashes on the site
+
+**Nothing the app shows may contain an em dash (`—`, U+2014).** Not in
+labels, tooltips, placeholders, headings, empty-cell dashes, error
+messages, or the emails the app sends. Use a hyphen, a comma, or two
+sentences.
+
+This is enforced: `scripts/noEmDash.test.mjs` scans every non-comment
+character of `src/` and `api/` and fails the suite on a violation, so it
+cannot drift back in.
+
+Two exceptions, both narrow:
+
+- **Code comments are exempt.** They are notes between the people working
+  on this and are never shown to anybody using the app, so the existing
+  house style stands.
+- **Code that READS an em dash** out of text somebody else wrote (a news
+  headline, a pasted spreadsheet cell) keeps the character, because there
+  it is data rather than voice. Mark the line `// em-dash-ok: <why>`.
+  There are five such lines today; adding a sixth should feel like a
+  decision.
+
+En dashes (`–`) are untouched by this: they separate the two ends of a
+range (`$3,906 – $4,340`, `Mon, Sep 7 – Sun, Sep 13`) and that is a
+different character doing a different job.

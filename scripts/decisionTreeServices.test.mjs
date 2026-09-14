@@ -36,7 +36,7 @@ eq(normalizeServices(['x'.repeat(300)])[0].length, 120, 'and each name is capped
 // than with `services: undefined` for the view to guard against.
 const seed = normalizeTree(DEFAULT_EFFICIENCY_TREE);
 ok(Object.values(seed.nodes).every(n => Array.isArray(n.services)), 'every step of the template has a tag list');
-eq(treeStats(seed).tagged, 0, 'the shipped template tags nothing — the services are the user\'s');
+eq(treeStats(seed).tagged, 0, 'the shipped template tags nothing - the services are the user\'s');
 
 // ── tagging and untagging ────────────────────────────────────────────────
 {

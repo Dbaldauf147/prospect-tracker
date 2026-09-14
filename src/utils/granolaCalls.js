@@ -121,7 +121,7 @@ const PROBE_TIMED_OUT = {
   configured: true,
   ok: false,
   timedOut: true,
-  error: 'The check for Granola timed out — that may be this page, not Granola. '
+  error: 'The check for Granola timed out - that may be this page, not Granola. '
     + 'Calls already synced still show below: use Check again, or Sync calls to try anyway.',
 };
 

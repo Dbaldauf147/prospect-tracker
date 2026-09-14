@@ -27,7 +27,7 @@ const turn = (speaker, startSec, endSec, text = 'some words here') => ({
 
 const call = (over = {}) => ({
   id: 'c1',
-  name: 'Discovery — Acme',
+  name: 'Discovery - Acme',
   source: 'granola',
   recordedAt: '2026-07-01T15:00:00.000Z',
   durationSeconds: 1800,
@@ -67,7 +67,7 @@ const call = (over = {}) => ({
   eq(unnamed.measurable, false, 'a call with no "You" turns cannot answer me-versus-them');
   eq(unnamed.blocked, 'you-unknown', 'an unattributable call says the turns were not attributed');
   eq(unnamed.youShare, null, 'and reports null rather than a misleading 0%');
-  eq(unnamed.speakerCount, 2, 'its speakers are still counted — the split exists, the "You" does not');
+  eq(unnamed.speakerCount, 2, 'its speakers are still counted - the split exists, the "You" does not');
   // Calls synced before the ingest read Granola's nested speaker object
   // all look like this, and re-reading the note is what fixes them.
   ok(unnamed.blockedReason.includes('Re-sync everything'),
@@ -108,8 +108,8 @@ const call = (over = {}) => ({
 // --- filtering ----------------------------------------------------------
 {
   const rows = callBreakdownRows([
-    call({ id: 'a', name: 'Discovery — Acme', company: 'Acme Corp' }),
-    call({ id: 'b', name: 'Renewal', company: 'Globex', oppLabel: 'Globex — 2027 renewal' }),
+    call({ id: 'a', name: 'Discovery - Acme', company: 'Acme Corp' }),
+    call({ id: 'b', name: 'Renewal', company: 'Globex', oppLabel: 'Globex - 2027 renewal' }),
   ]);
   eq(filterBreakdownRows(rows, 'globex').map(r => r.id), ['b'], 'the filter searches the company');
   eq(filterBreakdownRows(rows, 'renewal').map(r => r.id), ['b'], 'and the opportunity');

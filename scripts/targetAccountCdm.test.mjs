@@ -41,7 +41,7 @@ const SETTINGS = { targetCdmColumn: 'CDM' };
 eq('the mapped CDM column is what a row reports',
   rowTargetCdms({ 'Account Name': 'Apollo', CDM: 'Jane Smith', Owner: 'Someone Else' }, { cdmColumn: 'CDM' }),
   ['Jane Smith']);
-eq('a mapped New Sales rep column is reported alongside it — either name covering the account is a clash',
+eq('a mapped New Sales rep column is reported alongside it - either name covering the account is a clash',
   rowTargetCdms({ CDM: 'Jane Smith', 'New Sales rep': 'Ravi Patel' }, { cdmColumn: 'CDM', repColumn: 'New Sales rep' }),
   ['Jane Smith', 'Ravi Patel']);
 eq('the same name in both columns is reported once',
@@ -88,7 +88,7 @@ check('an account with no rep on the list raises nothing',
   resolve({ id: 'p3', company: 'KKR' }, 'Dan Baldauf') === null);
 check('a company that is not on the targets list at all raises nothing',
   resolve({ id: 'p4', company: 'Vista Equity Partners' }, 'Dan Baldauf') === null);
-check('a lookalike name does not warn — "Blackstone" is not "Blackstone GP Stakes"',
+check('a lookalike name does not warn - "Blackstone" is not "Blackstone GP Stakes"',
   resolve({ id: 'p5', company: 'Blackstone' }, 'Dan Baldauf') === null);
 eq('a corporate-suffix difference still matches the row',
   resolve({ id: 'p6', company: 'Apollo Global Management, Inc.' }, 'Dan Baldauf')?.cdms, ['Jane Smith']);
@@ -141,13 +141,13 @@ eq('no conflict, no badge', targetCdmConflictLabel(null), '');
 
 eq('the tooltip names the account, the rep, and the CDM on this record',
   describeTargetCdmConflict(apollo, 'Dan Baldauf'),
-  '"Apollo Global Management" on the Target Accounts tab is assigned to Jane Smith. The CDM here is Dan Baldauf — check who covers this account. Matched by company name; map the target account on My Accounts to pin it.');
+  '"Apollo Global Management" on the Target Accounts tab is assigned to Jane Smith. The CDM here is Dan Baldauf - check who covers this account. Matched by company name; map the target account on My Accounts to pin it.');
 eq('a blank CDM here is spelled out rather than left as an empty phrase',
   describeTargetCdmConflict({ cdms: ['Jane Smith'], accounts: [{ company: 'Apollo', cdms: ['Jane Smith'] }], source: 'mapped' }, ''),
-  '"Apollo" on the Target Accounts tab is assigned to Jane Smith. No CDM is set here — check who covers this account.');
+  '"Apollo" on the Target Accounts tab is assigned to Jane Smith. No CDM is set here - check who covers this account.');
 eq('two reps read as a list',
   describeTargetCdmConflict({ cdms: ['Jane Smith', 'Ravi Patel'], accounts: [{ company: 'Apollo', cdms: ['Jane Smith', 'Ravi Patel'] }], source: 'mapped' }, 'Dan Baldauf'),
-  '"Apollo" on the Target Accounts tab is assigned to Jane Smith and Ravi Patel. The CDM here is Dan Baldauf — check who covers this account.');
+  '"Apollo" on the Target Accounts tab is assigned to Jane Smith and Ravi Patel. The CDM here is Dan Baldauf - check who covers this account.');
 eq('no conflict, no tooltip', describeTargetCdmConflict(null, 'Dan Baldauf'), '');
 
 console.log(failures === 0 ? '\nAll target-account CDM warning tests passed.' : `\n${failures} test(s) failed.`);

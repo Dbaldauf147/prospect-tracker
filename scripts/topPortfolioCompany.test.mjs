@@ -71,7 +71,7 @@ eq(pickTopPortfolioCompany([pc('City Only', 50, 'Springfield', '')], new Map()),
 // ---- the status filter ------------------------------------------------------
 
 eq(TOP_PC_EXCLUDED_STATUSES, ['Lost - Not Sold', 'Hold Off', 'Client', 'Old Client'],
-  'closed, parked and won — now or before — are all out of the running');
+  'closed, parked and won - now or before - are all out of the running');
 
 const PROSPECTS = [
   { company: 'Northwind Logistics', status: 'Lost - Not Sold' },
@@ -294,7 +294,7 @@ eq([computePortfolioFitScore(composite[1], 1000, 200, { min: 2020, max: 2022 }),
 [37, 39], 'the full-portfolio basis scores Mid 37, Small 39');
 eq([computePortfolioFitScore(composite[1], 100, 20, { min: 2021, max: 2022 }),
   computePortfolioFitScore(composite[2], 100, 20, { min: 2021, max: 2022 })],
-[84, 45], '…an eligible-only basis would score them 84 and 45 — a different winner');
+[84, 45], '…an eligible-only basis would score them 84 and 45 - a different winner');
 eq(top.companyName, 'Domestic Small', 'the pick follows the full-portfolio basis');
 eq(top.score, 39, 'and reports the score All PCs shows for it');
 eq(top.skippedRegion, 1, 'the ineligible row still counted toward the maxima');

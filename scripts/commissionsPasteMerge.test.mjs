@@ -16,7 +16,7 @@ const ok = (c, n) => (c ? (pass += 1, console.log('PASS ', n)) : (fail += 1, con
 const eq = (a, b, n) => ok(JSON.stringify(a) === JSON.stringify(b), `${n} (got ${JSON.stringify(a)})`);
 
 // --- the dedup key ----------------------------------------------------------
-eq(normProjectName('  Acme   — Phase 1 '), 'acme — phase 1', 'the key trims, collapses whitespace and case-folds');
+eq(normProjectName('  Acme   - Phase 1 '), 'acme - phase 1', 'the key trims, collapses whitespace and case-folds');
 ok(PERIOD_KEYS.has('July Revenue') && PERIOD_KEYS.has('July') && PERIOD_KEYS.has('FY Revenue'), 'months, monthly revenue and the FY total are period cells');
 ok(!PERIOD_KEYS.has('Account Name') && !PERIOD_KEYS.has('%'), 'identity and lookup columns are not period cells');
 

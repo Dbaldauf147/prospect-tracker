@@ -125,7 +125,7 @@ async function restError(res) {
 // Create or overwrite one document by path, over HTTPS. A PATCH with no
 // update mask replaces the document, which is what the analysis chunks
 // want: each write IS the whole document. Throws with the status and the
-// server's own message, which is the point — unlike the SDK, this cannot
+// server's own message, which is the point - unlike the SDK, this cannot
 // fail silently.
 export async function restSetDoc(docPath, data, timeoutMs = FIRESTORE_REST_TIMEOUT_MS) {
   const token = await idToken(timeoutMs);

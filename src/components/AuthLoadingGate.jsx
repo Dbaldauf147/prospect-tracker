@@ -55,14 +55,14 @@ export function AuthLoadingGate({ stalled }) {
     <div style={{ maxWidth: 720, margin: '3rem auto', padding: '1.5rem', color: '#0F172A' }}>
       <h1 style={{ fontSize: '1.15rem', margin: '0 0 0.5rem' }}>Still waiting on sign-in</h1>
       <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.5 }}>
-        The app itself loaded fine — it is waiting for Firebase to say who is
+        The app itself loaded fine - it is waiting for Firebase to say who is
         signed in, and that has not come back. It is almost always the network
         rather than your account: a VPN or corporate proxy, or an extension
         blocking Google domains. Your data is untouched, and nothing has been
         written.
       </p>
       <ul style={{ color: '#475569', fontSize: 13, lineHeight: 1.6, paddingLeft: '1.1rem' }}>
-        <li>Reload — a slow first connection sometimes just needs the second try.</li>
+        <li>Reload - a slow first connection sometimes just needs the second try.</li>
         <li>Try the page off the VPN, or in a private window with extensions off.</li>
         <li>
           If it only happens on this browser, clear the saved session below: a
@@ -76,7 +76,7 @@ export function AuthLoadingGate({ stalled }) {
         </button>
       </div>
       <p style={{ color: '#94A3B8', fontSize: 12, marginTop: '0.9rem' }}>
-        Still loading in the background — if it does come back, the app opens by itself.
+        Still loading in the background - if it does come back, the app opens by itself.
       </p>
     </div>
   );

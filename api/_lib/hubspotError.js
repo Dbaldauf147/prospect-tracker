@@ -188,7 +188,7 @@ export function rejectedOptionValues(bodyText, property) {
 export function describeHubSpotError(status, bodyText) {
   const raw = String(bodyText || '').trim();
   let body = null;
-  try { body = JSON.parse(raw); } catch { /* not JSON — fall through */ }
+  try { body = JSON.parse(raw); } catch { /* not JSON - fall through */ }
   if (!body || typeof body !== 'object') {
     return truncate(raw) || `HubSpot returned HTTP ${status || 0} with no details`;
   }
@@ -207,7 +207,7 @@ export function describeHubSpotError(status, bodyText) {
     // own tail rather than the sentence saying where to go.
     const fix = 'Add it in HubSpot under Settings → Integrations → Private Apps → Auth, then save the app.';
     const budget = 420 - fix.length - 1;
-    // Rather than sever the list mid-scope-name, drop it — the scope we
+    // Rather than sever the list mid-scope-name, drop it - the scope we
     // recommend is the only one the user needs.
     if (lead.length > budget && preferred) lead = `The HubSpot private app needs the ${preferred} scope.`;
     return `${truncate(lead, budget)} ${fix}`;

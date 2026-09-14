@@ -31,8 +31,8 @@ const btnStyle = {
 // a placeholder is barely a claim at all.
 const SOURCE_NOTE = {
   template: (s) => `From the “${s.templateName}” timeline`,
-  rollout: () => 'No timeline attached — sized from the service’s Rollout Time',
-  unknown: () => 'No timeline and no Rollout Time — shown as one month as a placeholder',
+  rollout: () => 'No timeline attached - sized from the service’s Rollout Time',
+  unknown: () => 'No timeline and no Rollout Time - shown as one month as a placeholder',
 };
 
 export function DealTimelineModal({
@@ -243,7 +243,7 @@ export function DealTimelineModal({
             {/* First control in the row because it re-dates everything to its
                 right: the whole plan hangs off when the paperwork lands. */}
             <label
-              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it — and it's saved on the opp, so it's here next time and on the Follow Up Notes popup. Unset plans from today."
+              title="Target date the agreement is signed. The plan starts from it, so every band and the Excel move with it - and it's saved on the opp, so it's here next time and on the Follow Up Notes popup. Unset plans from today."
               style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}
             >
               Target signature
@@ -355,7 +355,7 @@ export function DealTimelineModal({
           {plan.cycleBroken && (
             <div style={{ padding: '0.5rem 0.7rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 4, fontSize: '0.78rem', color: '#92400E' }}>
               These services depend on each other in a loop, so there’s no order that satisfies every
-              dependency. The loop was broken at one service to lay the rest out — fix the Dependent
+              dependency. The loop was broken at one service to lay the rest out - fix the Dependent
               Rollout Services on Dropdowns › Services and this will sequence properly.
             </div>
           )}
@@ -368,7 +368,7 @@ export function DealTimelineModal({
           )}
           {multi.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-              {multi.map(s => `${s.name} has ${s.extraTemplates.length + 1} timelines attached — using “${s.templateName}”`).join(' · ')}.
+              {multi.map(s => `${s.name} has ${s.extraTemplates.length + 1} timelines attached - using “${s.templateName}”`).join(' · ')}.
             </div>
           )}
           {/* An agreement step sitting months ahead of the band it belongs
@@ -398,7 +398,7 @@ export function DealTimelineModal({
           {plan.excluded.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {plan.excluded.length} service{plan.excluded.length === 1 ? '' : 's'} hidden by hand and left out of the
-              chart and the Excel — still scheduled, so nothing waiting on {plan.excluded.length === 1 ? 'it' : 'them'} moved:
+              chart and the Excel - still scheduled, so nothing waiting on {plan.excluded.length === 1 ? 'it' : 'them'} moved:
               {' '}{plan.excluded.map(s => s.name).join(', ')}.
             </div>
           )}
@@ -415,7 +415,7 @@ export function DealTimelineModal({
               <div style={{ overflow: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 4, background: '#fff' }}>
                 {plan.services.length === 0
                   ? <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
-                      Every service is hidden. Click one in the list below — or “Show {plan.excluded.length} hidden” above — to draw it again.
+                      Every service is hidden. Click one in the list below - or “Show {plan.excluded.length} hidden” above - to draw it again.
                     </div>
                   : svg
                   ? <div style={{ minWidth: 'min-content' }} dangerouslySetInnerHTML={{ __html: svg }} />
@@ -430,13 +430,13 @@ export function DealTimelineModal({
                   with nothing to click can't say it's clickable, so the list
                   that names the services is where that lives. */}
               <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                Click a service to hide its band from the chart and the Excel. The dates don’t move — a hidden
+                Click a service to hide its band from the chart and the Excel. The dates don’t move - a hidden
                 service still holds back everything that waits on it.
                 {/* Only worth explaining where something actually waits on
                     more than one thing, which is where the distinction bites. */}
                 {rows.some(s => s.waitsOn.length > 1) && (
                   <> Under <strong>Waits on</strong>, the <strong>bold</strong> prerequisite is the one setting that
-                  service’s start — shortening any of the others won’t move it.</>
+                  service’s start - shortening any of the others won’t move it.</>
                 )}
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
@@ -476,7 +476,7 @@ export function DealTimelineModal({
                         {s.name}
                         {off && (
                           <span
-                            title="Hidden from the chart and the Excel. Still scheduled — the services waiting on it didn’t move."
+                            title="Hidden from the chart and the Excel. Still scheduled - the services waiting on it didn’t move."
                             style={{
                               marginLeft: 6, padding: '1px 6px', borderRadius: 999, fontSize: '0.66rem',
                               fontWeight: 700, background: 'var(--color-bg)', color: 'var(--color-text-muted)',
@@ -486,7 +486,7 @@ export function DealTimelineModal({
                         )}
                         {!s.inScope && (
                           <span
-                            title="Not in this deal’s Scope — pulled in because something here depends on it"
+                            title="Not in this deal’s Scope - pulled in because something here depends on it"
                             style={{
                               marginLeft: 6, padding: '1px 6px', borderRadius: 999, fontSize: '0.66rem',
                               fontWeight: 700, background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE',
@@ -514,7 +514,7 @@ export function DealTimelineModal({
                           <span
                             key={`${w.service}-${i}`}
                             title={w.until == null ? undefined : w.governs
-                              ? `Free from month ${w.until + 1} — this is what sets the start of ${s.name}. Shortening any other prerequisite won't move it.`
+                              ? `Free from month ${w.until + 1} - this is what sets the start of ${s.name}. Shortening any other prerequisite won't move it.`
                               : `Free from month ${w.until + 1}, which is earlier than ${s.name} can start, so this one isn't the constraint.`}
                             style={{
                               fontWeight: !off && w.governs && s.waitsOn.length > 1 ? 700 : 400,
@@ -546,7 +546,7 @@ export function DealTimelineModal({
                               >(anchor missing)</span>
                             )}
                           </span>
-                        )) : '—'}
+                        )) : '-'}
                       </td>
                       <td style={{ padding: '0.3rem 0.4rem', color: off ? 'inherit' : s.source === 'template' ? 'var(--color-text)' : '#92400E' }}>
                         {(SOURCE_NOTE[s.source] || SOURCE_NOTE.unknown)(s)}

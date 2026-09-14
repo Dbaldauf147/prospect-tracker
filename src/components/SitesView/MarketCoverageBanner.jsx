@@ -26,7 +26,7 @@ function gapLine(gap, total) {
   return (
     <li key={gap.key} style={{ marginTop: '0.15rem' }}>
       <strong>{gap.label}: {share(gap.unknown, total, gap.pct)} sites are unclassified</strong>
-      {bits.length ? <> — {bits.join(', ')}</> : null}
+      {bits.length ? <> - {bits.join(', ')}</> : null}
       {gap.deregulated > 0
         ? <>. Only {gap.deregulated.toLocaleString()} {gap.deregulated === 1 ? 'site' : 'sites'} {gap.deregulated === 1 ? 'is' : 'are'} counted as deregulated.</>
         : <>. Nothing is counted as deregulated.</>}
@@ -79,7 +79,7 @@ export function MarketCoverageBanner({ warning, onLoadUtilityFile, onDismiss }) 
         )}
         {anyNoPlace && (
           <div style={{ marginTop: '0.3rem' }}>
-            Sites with no recognized state or country have no market reference to read at all —
+            Sites with no recognized state or country have no market reference to read at all -
             those are fixed in the geography columns of the upload.
           </div>
         )}

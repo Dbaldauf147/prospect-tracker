@@ -1590,7 +1590,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
-              const noStatus = s === '' || s === '-' || s === '\u2014' || s === '\u2013';
+              const noStatus = s === '' || s === '-' || s === '\u2014' || s === '\u2013'; // em-dash-ok: reads pasted cells
               if (row.daysUntilExpiration != null && row.daysUntilExpiration < RENEWAL_WARNING_DAYS && noStatus) {
                 return { background: '#FEE2E2' };
               }

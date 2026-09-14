@@ -327,7 +327,7 @@ export async function loadWholeBuildingLookup() {
 // How a row's whole-building match reads in an export.
 export const MATCH_LABEL = {
   matched: 'Matched',
-  sole: 'Matched on zip — only utility there',
+  sole: 'Matched on zip - only utility there',
   'no-utility': 'Utility not in file',
   'no-zip': 'Zip not in file',
   unnamed: 'No utility on site',

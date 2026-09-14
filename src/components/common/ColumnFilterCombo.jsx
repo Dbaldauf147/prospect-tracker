@@ -132,7 +132,7 @@ export function ColumnFilterCombo({ value, onChange, suggestions, label, placeho
         aria-autocomplete={list.length ? 'list' : undefined}
         aria-label={`Filter by ${label}`}
         title={list.length
-          ? `Filter by ${label} — type to narrow, or pick from what this column already holds`
+          ? `Filter by ${label} - type to narrow, or pick from what this column already holds`
           : `Filter by ${label}`}
         autoComplete="off"
         value={value ?? ''}

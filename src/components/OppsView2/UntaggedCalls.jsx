@@ -157,7 +157,7 @@ function CallRow({ call, opps, closedOpps, onTag, onNa, busy }) {
           style={btn}
           disabled={busy}
           onClick={() => onNa(call)}
-          title="This call belongs to no opportunity — an internal meeting, a training session. It leaves the queue rather than sitting in it."
+          title="This call belongs to no opportunity - an internal meeting, a training session. It leaves the queue rather than sitting in it."
         >Not a deal</button>
       </div>
     </div>

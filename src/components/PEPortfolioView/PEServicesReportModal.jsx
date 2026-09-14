@@ -39,7 +39,7 @@ const btn = (primary = false) => ({
 
 function StatusChip({ status, bucket }) {
   if (!status) {
-    return <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>;
+    return <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>;
   }
   const colors = serviceStatusColor(status);
   const meta = serviceBucket(bucket);

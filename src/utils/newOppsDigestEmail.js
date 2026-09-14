@@ -100,7 +100,7 @@ export function buildNewOppsDigestTableHtml(records) {
 // Full email body for the Outlook draft: greeting ("Hey Keith,"), optional
 // intro message, the digest table, then the user's saved email signature
 // (the same `settings.emailSignature` HTML the Draft Email tab appends to
-// its drafts — see DraftEmailView's buildStyledBodyHtml).
+// its drafts - see DraftEmailView's buildStyledBodyHtml).
 export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = '', signature = '' } = {}) {
   // Explicit <br> blank lines (rather than CSS margins, which Outlook can
   // collapse) so a clear empty line separates the greeting from the table
@@ -113,7 +113,7 @@ export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = 
     : '';
   const table = buildNewOppsDigestTableHtml(records);
   // The signature is stored as trusted HTML (pasted by the user in the
-  // Draft Email tab's signature editor) — appended verbatim, same as the
+  // Draft Email tab's signature editor) - appended verbatim, same as the
   // Draft Email .eml export does.
   const sigBlock = signature ? `<br><br><div>${signature}</div>` : '';
   return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${intro}${table}${sigBlock}</div>`;

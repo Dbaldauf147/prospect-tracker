@@ -93,7 +93,7 @@ export function OppImportModal({ records, loading, error, onPick, onClose }) {
                 <span className={styles.oppPickerScope}>
                   {opp.Scope
                     ? opp.Scope
-                    : <em className={styles.serviceMutedCell}>No scope — nothing to tick</em>}
+                    : <em className={styles.serviceMutedCell}>No scope - nothing to tick</em>}
                 </span>
                 <span className={styles.oppPickerAmount}>{quoted === null ? '' : formatMoney(quoted)}</span>
               </button>

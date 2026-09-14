@@ -87,7 +87,7 @@ export function injectTracking(html, { trackingId, baseUrl }) {
     }
   );
 
-  // Invisible open pixel. Not display:none — several clients skip loading
+  // Invisible open pixel. Not display:none - several clients skip loading
   // hidden images; a 1x1 with tiny dimensions loads far more reliably.
   const pixel =
     `<img src="${baseUrl}/api/track-open?id=${encodeURIComponent(trackingId)}" ` +
@@ -146,7 +146,7 @@ export function requestMeta(req) {
 /**
  * Record an open or click against a tracking doc. Uses a transaction so
  * concurrent hits keep the counters exact; the event arrays are capped.
- * Missing / unknown ids are a no-op — the caller still returns a valid
+ * Missing / unknown ids are a no-op - the caller still returns a valid
  * pixel/redirect so the recipient's experience is never affected.
  */
 export async function recordEvent(trackingId, type, meta, extra = {}) {

@@ -2674,7 +2674,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       ? queued.map(c => String(c.id))
       : contacts.map(c => String(c.id || c.vid || '')).filter(id => id && !id.startsWith('local-'));
     if (ids.length === 0) {
-      setAuditError('No synced contacts to audit — hit Sync Now first.');
+      setAuditError('No synced contacts to audit - hit Sync Now first.');
       return;
     }
     setAuditState({ done: 0, total: ids.length });
@@ -2858,7 +2858,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         {auditQueue.length > 0 && (
           <div style={{ fontSize: '0.72rem', color: '#334155', marginTop: '0.4rem' }}>
             Auditing <strong>{auditQueue.length}</strong> contact{auditQueue.length === 1 ? '' : 's'} sent from Prospecting → Map and tag your contacts
-            {auditQueue.length <= 6 && <> — {auditQueue.map(c => c.name || c.email || c.id).join(', ')}</>}.{' '}
+            {auditQueue.length <= 6 && <> - {auditQueue.map(c => c.name || c.email || c.id).join(', ')}</>}.{' '}
             <button
               type="button"
               onClick={() => { clearQueuedAuditContacts(); setAuditResult(null); }}
@@ -2874,7 +2874,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           <div style={{ marginTop: '0.6rem' }}>
             <div style={{ fontSize: '0.78rem', color: '#0F172A' }}>
               <strong>{auditResult.lostCount.toLocaleString()}</strong> of {auditResult.examined.toLocaleString()} contacts are missing tags
-              {auditResult.lostCount > 0 && <> — <strong>{auditResult.tagsLost.toLocaleString()}</strong> tags in total</>}
+              {auditResult.lostCount > 0 && <> - <strong>{auditResult.tagsLost.toLocaleString()}</strong> tags in total</>}
               {auditResult.firstAt && <>, between {auditResult.firstAt.replace('T', ' ').slice(0, 16)} and {auditResult.lastAt.replace('T', ' ').slice(0, 16)} UTC</>}.
             </div>
             {auditResult.lostCount > 0 && (
@@ -2903,7 +2903,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                       {auditResult.rows.slice(0, 200).map(r => (
                         <tr key={r.id} style={{ borderTop: '1px solid #F1F5F9' }}>
                           <td style={{ padding: '0.3rem 0.5rem' }}>{r.name || r.email || r.id}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{r.current || '—'}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{r.current || '-'}</td>
                           <td style={{ padding: '0.3rem 0.5rem', color: '#B91C1C' }}>{r.removed.join('; ')}</td>
                           <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', color: '#475569' }}>{r.at.replace('T', ' ').slice(0, 16)}</td>
                         </tr>
@@ -2913,7 +2913,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 </div>
                 {auditResult.rows.length > 200 && (
                   <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: '0.3rem' }}>
-                    Showing the 200 worst-hit — the CSV has all {auditResult.rows.length.toLocaleString()}.
+                    Showing the 200 worst-hit - the CSV has all {auditResult.rows.length.toLocaleString()}.
                   </div>
                 )}
 
@@ -2973,7 +2973,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                           return (
                             <tr key={p.id} style={{ borderTop: '1px solid #F1F5F9' }}>
                               <td style={{ padding: '0.3rem 0.5rem' }}>{row?.name || row?.email || p.id}</td>
-                              <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{p.from || '—'}</td>
+                              <td style={{ padding: '0.3rem 0.5rem', color: '#64748B' }}>{p.from || '-'}</td>
                               <td style={{ padding: '0.3rem 0.5rem', color: '#166534' }}>{p.to}</td>
                             </tr>
                           );

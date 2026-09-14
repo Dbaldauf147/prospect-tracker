@@ -195,7 +195,7 @@ function MetricPanel({ metric, onOpenBreakdown }) {
       <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: '0.45rem', lineHeight: 1.45 }}>
         {pace == null ? (
           <span style={{ color: '#94A3B8' }}>
-            No commission window on file (Comm Start / End Date), so there’s no pace to measure against — only the contract total above.
+            No commission window on file (Comm Start / End Date), so there’s no pace to measure against - only the contract total above.
           </span>
         ) : (
           <>
@@ -452,7 +452,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
   const agreement = String(deal?.['Agreement Name'] ?? '').trim();
   const sourceNote = mapped
     ? `${projects.length} mapped commission row${projects.length === 1 ? '' : 's'}`
-    : 'from the deal’s stored cell — no Commissions rows mapped';
+    : 'from the deal’s stored cell - no Commissions rows mapped';
 
   const paceWindowNote = elapsed != null && span
     ? `month ${elapsed} of ${span}`
@@ -505,7 +505,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', padding: '0.9rem 1.1rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>
-              {dealName} — commissions &amp; revenue history
+              {dealName} - commissions &amp; revenue history
             </div>
             <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.5 }}>
               {agreement && agreement !== dealName && <>{agreement} · </>}
@@ -541,7 +541,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                   type="button"
                   // Clicking the active one clears it back to unset.
                   onClick={() => onUpdateDeal(dealTrackStatusPatch(on ? '' : s.key))}
-                  title={on ? `${s.label} — click to clear` : `Mark this deal ${s.label}`}
+                  title={on ? `${s.label} - click to clear` : `Mark this deal ${s.label}`}
                   style={{
                     padding: '2px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
                     fontSize: '0.7rem', fontWeight: 700,
@@ -553,7 +553,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
               );
             })}
             {status.key === '' && (
-              <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>not set — pick one to fill Comm Status and flag this deal on the grid</span>
+              <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>not set - pick one to fill Comm Status and flag this deal on the grid</span>
             )}
           </div>
         )}
@@ -580,7 +580,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                 <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.1rem' }}>
                   Actuals as recorded on the Commissions tab, with the running total after each month.
                   {projMonths > 0 && ' Shaded columns are projected, not recorded.'}
-                  {saved && ' Underlined months were projected and have since been recorded — hover for the comparison.'}
+                  {saved && ' Underlined months were projected and have since been recorded - hover for the comparison.'}
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.35rem 0.5rem' }}>
@@ -618,7 +618,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                       onClick={saveProjection}
                       disabled={savedMatchesInputs}
                       title={projMonths > 0
-                        ? `Save this projection through ${monthLabel(projEnd)} — recorded months will replace the projected ones as they come in`
+                        ? `Save this projection through ${monthLabel(projEnd)} - recorded months will replace the projected ones as they come in`
                         : 'Save a zero-month projection (clears the saved range)'}
                       style={{
                         padding: '2px 9px', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
@@ -649,7 +649,7 @@ export function DealHistoryModal({ deal, commissionsRows, onClose, onOpenBreakdo
                 {monthLabel(saved.start)} – {monthLabel(saved.end)} at {fmtCurrency(saved.revenue)}/mo revenue · {fmtCurrency(saved.commission)}/mo commission.{' '}
                 {savedMonthsLeft === 0
                   ? <strong style={{ color: '#166534' }}>All of it has been recorded.</strong>
-                  : <>Recorded months replace the projected ones as they land — <strong style={{ color: '#334155' }}>{savedMonthsLeft} left</strong>.</>}
+                  : <>Recorded months replace the projected ones as they land - <strong style={{ color: '#334155' }}>{savedMonthsLeft} left</strong>.</>}
               </div>
             )}
 

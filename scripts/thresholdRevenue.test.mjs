@@ -41,7 +41,7 @@ eq(pickThresholdRevenue({}), { label: '', entity: '', source: 'none' },
 // --- ties and unreadable figures --------------------------------------------
 eq(pickThresholdRevenue({ own: '$2B', parent: '$2,000,000,000', parentName: 'Holdco' }),
   { label: '$2B', entity: '', source: 'own' },
-  'a tie reads as the company’s own — same number, simpler basis');
+  'a tie reads as the company’s own - same number, simpler basis');
 eq(pickThresholdRevenue({ own: 'private', parent: '$4B', parentName: 'Holdco' }),
   { label: '$4B', entity: 'Holdco', source: 'parent' },
   'an unreadable own figure loses to a readable parent');

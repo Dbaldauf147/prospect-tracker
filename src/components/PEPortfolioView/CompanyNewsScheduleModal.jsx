@@ -340,7 +340,7 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
                 </div>
               </div>
               <div style={{ fontSize: '0.66rem', color: '#94A3B8' }}>
-                A test send researches every tracked company live, so it can take a minute — and it
+                A test send researches every tracked company live, so it can take a minute - and it
                 doesn&apos;t move the schedule&apos;s window, so the next real digest still covers these dates.
               </div>
             </div>

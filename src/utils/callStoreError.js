@@ -40,12 +40,12 @@ const CODES = {
   'permission-denied': {
     permanent: true,
     read: 'Reloading won’t change this: the database refused the read. The security rules that grant '
-      + 'access to your saved calls live in firestore.rules — check that ruleset has been deployed to Firebase.',
+      + 'access to your saved calls live in firestore.rules - check that ruleset has been deployed to Firebase.',
     write: 'Nothing was saved, and trying again won’t help: the database refused the write. The security '
-      + 'rules that grant access to your saved calls live in firestore.rules — check that ruleset has been '
+      + 'rules that grant access to your saved calls live in firestore.rules - check that ruleset has been '
       + 'deployed to Firebase.',
     delete: 'Nothing was deleted, and trying again won’t help: the database refused it. The security '
-      + 'rules that grant access to your saved calls live in firestore.rules — check that ruleset has been '
+      + 'rules that grant access to your saved calls live in firestore.rules - check that ruleset has been '
       + 'deployed to Firebase.',
   },
   // The credential, not the rules. A retry re-sends the same bad token.
@@ -58,8 +58,8 @@ const CODES = {
   unavailable: {
     permanent: false,
     read: 'Reload once you’re back online.',
-    write: 'Nothing was saved — you appear to be offline. This will need doing again once you’re back.',
-    delete: 'Nothing was deleted — you appear to be offline. Try again once you’re back.',
+    write: 'Nothing was saved - you appear to be offline. This will need doing again once you’re back.',
+    delete: 'Nothing was deleted - you appear to be offline. Try again once you’re back.',
   },
   'deadline-exceeded': {
     permanent: false,

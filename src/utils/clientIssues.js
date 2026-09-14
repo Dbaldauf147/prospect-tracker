@@ -115,7 +115,7 @@ export { RENEWAL_WARNING_DAYS };
 // dash placeholder. Matches the noStatus check in ClientsView.
 function hasNoClientStatus(statusMap, clientKey) {
   const s = String(statusMap?.[clientKey] || '').trim();
-  return s === '' || s === '-' || s === '\u2014' || s === '\u2013';
+  return s === '' || s === '-' || s === '\u2014' || s === '\u2013'; // em-dash-ok: reads pasted cells
 }
 
 // Issue #4: a client whose soonest active contract renews within
@@ -651,7 +651,7 @@ function detectIncompleteHandoff({ dealsList = [], prospects = [] }) {
       prospectId: idByCompany.get(normClientName(company)) || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `Handoff ${done}/${total}${agreement ? ` on ${agreement}` : ''} \u2014 still outstanding: ${missing.map(f => f.label).join(', ')}`,
+      detail: `Handoff ${done}/${total}${agreement ? ` on ${agreement}` : ''} - still outstanding: ${missing.map(f => f.label).join(', ')}`,
     });
   }
   return issues;

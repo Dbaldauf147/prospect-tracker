@@ -181,7 +181,7 @@ function recorder(result = true) {
   w.push('ESG');
   check('a click in the timer counts', w.pending() === 1);
   await clock.advance(600);
-  check('and still counts once it is in the air — never a gap at zero', w.pending() === 1);
+  check('and still counts once it is in the air - never a gap at zero', w.pending() === 1);
   release();
   await clock.settle();
   check('back to nothing when it lands', w.pending() === 0);
@@ -200,7 +200,7 @@ const writes = [
 ];
 check('the echo of the first click, arriving after the second was accepted, is stale',
   isStaleTagEcho({ incoming: 'ESG', saved: 'ESG;Procurement', writes, now }) === true);
-check('the echo of the newest write is not stale — it says what we already hold',
+check('the echo of the newest write is not stale - it says what we already hold',
   isStaleTagEcho({ incoming: 'ESG;Procurement', saved: 'ESG;Procurement', writes, now }) === false);
 check('a list this editor never wrote is a real edit from elsewhere, not an echo',
   isStaleTagEcho({ incoming: 'ESG;Dan Key Target', saved: 'ESG;Procurement', writes, now }) === false);

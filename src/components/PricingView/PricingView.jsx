@@ -294,7 +294,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     ? `Add ${buildCount} fee row${buildCount === 1 ? '' : 's'} for ${buildNames.slice(0, 4).join(', ')}${buildNames.length > 4 ? `, +${buildNames.length - 4} more` : ''}. Each row is typed to match the costs carrying its name; its fee and start month derive from them.`
     : automatedNameCount > 0
     ? 'Every Automated Fee Name on this option already has a row in the schedule.'
-    : 'No Automated Fee Names on this option\u2019s cost rows yet \u2014 fill in the Automated Fee Name column above, then build the schedule from it.';
+    : 'No Automated Fee Names on this option\u2019s cost rows yet - fill in the Automated Fee Name column above, then build the schedule from it.';
 
   return (
     <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
@@ -310,7 +310,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
             disabled={buildCount === 0}
             onClick={() => {
               onBuildRows(buildRows);
-              setFlash(`Built ${buildCount} fee row${buildCount === 1 ? '' : 's'} from the Automated Fee Names. Fees derive from the costs carrying each name \u2014 type over any of them to fix a price.`);
+              setFlash(`Built ${buildCount} fee row${buildCount === 1 ? '' : 's'} from the Automated Fee Names. Fees derive from the costs carrying each name - type over any of them to fix a price.`);
               window.setTimeout(() => setFlash(''), 5000);
             }}
             title={buildTitle}
@@ -910,7 +910,7 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
         return (
           <div className={styles.unmappedWarning} role="alert">
             ⚠ {n} line item{n === 1 ? '' : 's'} still need{n === 1 ? 's' : ''} a service
-            {breakdown && <> — {breakdown} (those are the red chips)</>}
+            {breakdown && <> - {breakdown} (those are the red chips)</>}
             . Map {n === 1 ? 'it' : 'them'} below, or tick <strong>Ignore</strong> to set the ones you don't need aside.
           </div>
         );
@@ -998,7 +998,7 @@ function ServicesPicker({ selected, options, onChange }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
       {selected.map(s => {
-        // A pick the Dropdowns catalog no longer lists — renamed or deleted
+        // A pick the Dropdowns catalog no longer lists - renamed or deleted
         // there since this mapping was made. It reads as mapped but feeds
         // the Scope picker a service that doesn't exist, so it's called out
         // in red rather than left looking done.
@@ -1081,7 +1081,7 @@ function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
 }
 
 // Maps CTS Line Item costs to pass-through billing. Pass-through is a
-// property of the (Line Item, Type) pair — not of an individual row — so
+// property of the (Line Item, Type) pair - not of an individual row - so
 // tagging one here bills every matching CTS row at face cost on every option,
 // with no markup and no contribution to Deal margin.
 //
@@ -1092,7 +1092,7 @@ function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
 // picking a pair out by its CTS rather than by name.
 //
 // Suggestions, key building and the "which Type did you mean" resolution live
-// in utils/passThroughTags.js — see scripts/passThroughTags.test.mjs.
+// in utils/passThroughTags.js - see scripts/passThroughTags.test.mjs.
 function PassThroughSection({
   workbook,
   activeOpt,
@@ -1143,7 +1143,7 @@ function PassThroughSection({
     setMessage({
       tone: 'ok',
       text: `${pairLabelShort(r.lineItem, r.type)} now bills at cost on every option.`
-        + (r.known ? '' : ' Nothing in this workbook carries that pair yet — it applies as soon as one does.'),
+        + (r.known ? '' : ' Nothing in this workbook carries that pair yet - it applies as soon as one does.'),
     });
   }
 
@@ -1173,7 +1173,7 @@ function PassThroughSection({
     <section className={styles.linkedSection}>
       <h3 className={styles.linkedSubheading}>Pass-through line items ({pairs.tagged.length})</h3>
       <p className={styles.linkedHint}>
-        Tag a Line Item + Type pair to bill its CTS to the customer at face cost — no markup, and excluded
+        Tag a Line Item + Type pair to bill its CTS to the customer at face cost - no markup, and excluded
         from Deal margin (its revenue and cost cancel out). The mapping applies to every matching row on every
         option and persists across uploaded files, the Clear button, and parser updates. Rows tagged here are
         shaded on the Pricing table and their GM% cell reads <code>pass</code>.
@@ -1188,7 +1188,7 @@ function PassThroughSection({
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); tagDraft(); } }}
           placeholder="Tag a line item as pass-through…"
           className={styles.passTagInput}
-          title="Start typing a Line Item from the loaded workbook. A name carrying both a Setup and a Recurring cost is offered once per Type — pick the one that passes through."
+          title="Start typing a Line Item from the loaded workbook. A name carrying both a Setup and a Recurring cost is offered once per Type - pick the one that passes through."
         />
         <datalist id={pairListId}>
           {suggestions.map(s => <option key={s.key} value={s.value} />)}
@@ -1219,7 +1219,7 @@ function PassThroughSection({
         <div className={styles.linkedEmptyInline}>
           {pairs.all.length === 0
             ? 'No line items yet. Upload a workbook on the Pricing subtab.'
-            : 'Nothing passes through yet — every line item is marked up. Tag one above to bill it at cost.'}
+            : 'Nothing passes through yet - every line item is marked up. Tag one above to bill it at cost.'}
         </div>
       ) : (
         <table className={styles.linkedTable}>
@@ -1248,7 +1248,7 @@ function PassThroughSection({
                     type="button"
                     className={styles.passUntagBtn}
                     onClick={() => untag(row)}
-                    title="Stop passing this pair through — it goes back to being marked up at the usual GM%."
+                    title="Stop passing this pair through - it goes back to being marked up at the usual GM%."
                   >× Untag</button>
                 </td>
               </tr>
@@ -1264,7 +1264,7 @@ function PassThroughSection({
             className={styles.passBrowseToggle}
             aria-expanded={browseOpen}
             onClick={() => setBrowseOpen(o => !o)}
-            title="Every Line Item + Type pair the workbook carries, with its CTS — for finding a pair by what it costs rather than by name."
+            title="Every Line Item + Type pair the workbook carries, with its CTS - for finding a pair by what it costs rather than by name."
           >
             {browseOpen ? '▾' : '▸'} Browse all line items ({pairs.all.length})
           </button>
@@ -1334,7 +1334,7 @@ function PassThroughSection({
 function passTagError(r) {
   if (r.error === 'ambiguous') {
     return `"${r.lineItem}" has more than one Type in this workbook (${r.types.join(', ')}). `
-      + 'Pick which one passes through — they are priced separately.';
+      + 'Pick which one passes through - they are priced separately.';
   }
   if (r.error === 'need-type') {
     return `Nothing in this workbook is called "${r.lineItem}". Pick a Type to tag it anyway, `
@@ -1460,7 +1460,7 @@ function LinkedToPanel({
   // Every Automated Fee Name in play, so each one can carry its own Fee
   // Type / Fee Start Month / Unit default. Names come from the saved
   // (Line Item, Type) defaults, per-row overrides, the alt-fee schedules of
-  // every option, and the hand-added dropdown options — deduped
+  // every option, and the hand-added dropdown options - deduped
   // case-insensitively, first casing seen wins for display. A name the user
   // removed from the dropdown is dropped too, unless something still uses it
   // or it already carries a default.
@@ -1480,7 +1480,7 @@ function LinkedToPanel({
       for (const r of (rows || [])) add(r?.altItem, true);
     }
     for (const c of (linkedToOptionsList?.custom || [])) add(c, false);
-    // Last, so a name already seen somewhere keeps that casing — these keys
+    // Last, so a name already seen somewhere keeps that casing - these keys
     // are lowercased.
     for (const k of Object.keys(feeDefaults || {})) add(k, true);
     const hidden = new Set((linkedToOptionsList?.hidden || []).map(v => String(v).trim().toLowerCase()));
@@ -1512,7 +1512,7 @@ function LinkedToPanel({
     byTag.get(key).push(item);
   }
   // Surface tags referenced by alt-fee rows even when no CTS row links
-  // to them yet — those are the dangling alt-fee tags the user might
+  // to them yet - those are the dangling alt-fee tags the user might
   // want to wire up.
   const altRows = opt ? (altFees[opt.optionNumber] || []) : [];
   const altTags = new Set();
@@ -1555,7 +1555,7 @@ function LinkedToPanel({
           </li>
           <li>
             <strong>Pass-through</strong> is mapped on the same (Line Item, Type) pair, in the section below.
-            A mapped pair bills its CTS at face cost on every option — no markup, and excluded from Deal
+            A mapped pair bills its CTS at face cost on every option - no markup, and excluded from Deal
             margin. There is no per-row toggle on the pricing table.
           </li>
           <li>
@@ -1661,7 +1661,7 @@ function LinkedToPanel({
       <section className={styles.linkedSection}>
         <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
         <p className={styles.linkedHint}>
-          Defaults for the fees themselves — the values in the <strong>Default Linked To</strong> column above.
+          Defaults for the fees themselves - the values in the <strong>Default Linked To</strong> column above.
           Setting a Fee Type or Unit here retypes every Alternative Fee schedule row carrying that name, on every
           option, and pre-fills the rows built for it later (Build from Automated Fee Names, the per-row
           <strong>+ Fee</strong> button, and the schedule an uploaded SIA brings with it). A Fee Type also keeps
@@ -1671,7 +1671,7 @@ function LinkedToPanel({
         </p>
         {feeNameEntries.length === 0 ? (
           <div className={styles.linkedEmptyInline}>
-            No fee names yet. Tag a row&apos;s Automated Fee Name — or save a default above — and it shows up here.
+            No fee names yet. Tag a row&apos;s Automated Fee Name - or save a default above - and it shows up here.
           </div>
         ) : (
           <table className={styles.linkedTable}>
@@ -2072,7 +2072,7 @@ const SUMMARY_COLS = [
     key: 'year1Price',
     label: 'Year 1 (marked-up)',
     defaultWidth: 150,
-    hint: 'What this bucket bills the customer inside the first year, at face value — '
+    hint: 'What this bucket bills the customer inside the first year, at face value - '
       + 'the escalator starts in Year 2. Setup and One Time land whole; Recurring is '
       + 'twelve months; Rolled charges amortize across the term, so only the first '
       + 'year\u2019s slice of one lands here. A term under 12 months bills only what it covers.',
@@ -2090,7 +2090,7 @@ const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // table. Same key shape as LINKED_TO_DEFAULTS_KEY ("lineitem::type",
 // lowercased) so a row can carry both a Default Linked To and a
 // Default Unit. Persisted on its own DB key for the same reason
-// linkedToDefaults are — these mappings outlive workbook reloads.
+// linkedToDefaults are - these mappings outlive workbook reloads.
 const LINKED_TO_UNIT_DEFAULTS_KEY = 'linkedToUnitDefaults';
 // Per (Line Item, Type) Fee Start Month override. Same key shape, kept
 // in its own DB key so it survives workbook reloads / parser bumps.
@@ -2104,8 +2104,8 @@ const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
 const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
 // Per-fee defaults, keyed by Automated Fee Name (lowercased, trimmed):
 // { [feeName]: { type, startMonth, unit } }. Where the keys above describe a
-// COST row's (Line Item, Type) pair, these describe the FEE itself — the
-// values in the Default Linked To column — and pre-fill the Alternative Fee
+// COST row's (Line Item, Type) pair, these describe the FEE itself - the
+// values in the Default Linked To column - and pre-fill the Alternative Fee
 // schedule row built for that name. Its own DB key, for the same reason the
 // rest are: they're user-curated and outlive any one workbook.
 const FEE_DEFAULTS_KEY = 'feeDefaults';
@@ -2122,7 +2122,7 @@ const LINKED_TO_OPTIONS_KEY = 'linkedToOptionsList';
 // parser bumps and Clear-button workbook wipes, just like Linked-To
 // defaults.
 // Per (Line Item, Type) tags shown on the S2C tab: what business the cost
-// belongs to — { [key]: { serviceSegment, productName, deliverable } }. Keyed
+// belongs to - { [key]: { serviceSegment, productName, deliverable } }. Keyed
 // exactly like the Linked To defaults above, and on its own DB key for the
 // same reason: hand-curated, and it outlives any one workbook.
 const S2C_LINE_ITEM_TAGS_KEY = 's2cLineItemTags';
@@ -2150,12 +2150,12 @@ const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
 // requiring the user to re-upload. Stored as a Blob so reload
 // rehydrates it cleanly.
 const WORKBOOK_SOURCE_KEY = 'workbookSourceBlob';
-// Bump this whenever the parser output shape changes — older cached
+// Bump this whenever the parser output shape changes - older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
 const PARSER_VERSION = 10;
 // Every uploaded SIA gets its own id. "Saved to: <opp>" links are
-// stored against it, so a new upload — or a Clear — can never leave an
+// stored against it, so a new upload - or a Clear - can never leave an
 // opp mapped to whatever file replaced it, even when the new file has
 // sheets named exactly like the old one ("Option 1", …).
 function newWorkbookId() {
@@ -2214,22 +2214,22 @@ export function PricingView({ settings } = {}) {
   const [exportingMargin, setExportingMargin] = useState(false);
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
-  const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
-  const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
-  const [feeDefaults, setFeeDefaults] = useState({}); // { [feeName]: { type, startMonth, unit } } — per-fee defaults for the Alternative Fee schedule (see FEE_DEFAULTS_KEY)
+  const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } - overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
+  const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } - sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
+  const [feeDefaults, setFeeDefaults] = useState({}); // { [feeName]: { type, startMonth, unit } } - per-fee defaults for the Alternative Fee schedule (see FEE_DEFAULTS_KEY)
   const [linkedToOptionsList, setLinkedToOptionsList] = useState({ custom: [], hidden: [] }); // user-curated Linked To dropdown vocabulary (see LINKED_TO_OPTIONS_KEY)
-  const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } — open state for the Linked To options manager
+  const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } - open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
-  const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } — line items the user opted to ignore (greyed out, excluded from the unmapped warning)
+  const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
-  // Separate escalator for CTS costs — defaults to 3.85% so margin
+  // Separate escalator for CTS costs - defaults to 3.85% so margin
   // compression year-over-year reflects supplier cost creep, while
   // revenue still escalates at the annual contract rate above.
   const [costEscalator, setCostEscalator] = useState(0.0385);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
-  const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
+  const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel - hidden by default, user opts in via Show
   const [chartUnitCounts, setChartUnitCounts] = useState({}); // per-line-item unit count (keyed by lowercased tag) for the Fee / Unit column
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
@@ -2321,7 +2321,7 @@ export function PricingView({ settings } = {}) {
         }
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
-        // Drop caches written by an older parser — their workbook
+        // Drop caches written by an older parser - their workbook
         // shape may not match what the UI now expects. Linked-To
         // defaults are preserved via the separate key above.
         if (saved.parserVersion !== PARSER_VERSION) {
@@ -2358,7 +2358,7 @@ export function PricingView({ settings } = {}) {
           // Bring the cached schedule back in line with the saved fee
           // defaults before it goes on screen: a row that arrived with an
           // upload, or was built before its fee had a default, is stale
-          // otherwise — and a stale row is one a fee can be typed into,
+          // otherwise - and a stale row is one a fee can be typed into,
           // billing what the live row already bills.
           const hydratedFeeDefaults = (savedFeeDefaults && typeof savedFeeDefaults === 'object')
             ? savedFeeDefaults
@@ -2496,7 +2496,7 @@ export function PricingView({ settings } = {}) {
   }, [lineItemServices]);
 
   // Persist the ignored-line-item set on its own key so it outlives the
-  // main cache (parser bumps, Clear button). No broadcast event — the
+  // main cache (parser bumps, Clear button). No broadcast event - the
   // ignore flag is only consumed inside this view's mapping table.
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -2564,7 +2564,7 @@ export function PricingView({ settings } = {}) {
     const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
-    // CTS row's Start Month (column on the pricing table) — defaults
+    // CTS row's Start Month (column on the pricing table) - defaults
     // to 1. Mirrors how altFeeYearRevenue treats the alt-fee row's
     // startMonth so the per-year cost breakdown lines up with the
     // per-year revenue breakdown for any pass-through link.
@@ -2584,7 +2584,7 @@ export function PricingView({ settings } = {}) {
     // upfront in the year containing startMonth. Rolled variants still
     // amortize their *billing* over the term on the revenue side
     // (autoFee / altFeeYearRevenue handle that), but the cost has
-    // already been incurred — so margin should book it in Y1 instead
+    // already been incurred - so margin should book it in Y1 instead
     // of spreading it monthly.
     if (startMonth > termMonths) return 0;
     if (startMonth >= yearStart && startMonth <= yearEnd) return baseCost;
@@ -2592,7 +2592,7 @@ export function PricingView({ settings } = {}) {
   }
 
   // Per-year revenue (marked-up price) from a single upper-table CTS
-  // item — the price mirror of ctsItemYearCost. Setup / One Time land
+  // item - the price mirror of ctsItemYearCost. Setup / One Time land
   // upfront in the year containing their start month; Recurring
   // (monthly) bills 12 months per year; Rolled variants amortize their
   // billing evenly across the term. Recurring / Rolled revenue escalates
@@ -2665,7 +2665,7 @@ export function PricingView({ settings } = {}) {
   }
 
   // The month a CTS row's cost starts, read the way ctsItemYearCost reads
-  // it — the fee derivation and the margin have to agree on it or the fee
+  // it - the fee derivation and the margin have to agree on it or the fee
   // recovers a different span than the margin charges.
   function ctsItemStartMonth(item) {
     return Math.max(1, Math.round(Number(item?.startMonth) || 1));
@@ -2688,7 +2688,7 @@ export function PricingView({ settings } = {}) {
   //   alt-fee Recurring (monthly)← CTS Recurring (monthly)            (face monthly)
   //                                + CTS Setup Rolled / One Time Rolled
   //                                  (billed across the term, cost booked once)
-  // A recurring row prices to the whole term rather than to year 1 — its
+  // A recurring row prices to the whole term rather than to year 1 - its
   // fee escalates slower than its cost does, so a year-1 derivation drifts
   // under target every year after. See recurringFeePerUnit.
   // Returns null if there is no linked + type-matched markup yet, or
@@ -2704,7 +2704,7 @@ export function PricingView({ settings } = {}) {
     const rowType = (row.type || '').trim();
     if (!rowType) return null;
     const isRecurringRow = /recurring/i.test(rowType);
-    // Setup and One Time are treated as the same bucket — both alt-fee
+    // Setup and One Time are treated as the same bucket - both alt-fee
     // types pull face value from CTS rows of either Setup or One Time
     // (plain, not Rolled). Rolled variants flow into the Recurring
     // bucket and are amortized over the term.
@@ -2808,7 +2808,7 @@ export function PricingView({ settings } = {}) {
   //                (used to compute fee revenue, not cost)
   //   totalFee   = Σ over alt-fee rows of fee × unitCount, with
   //                Recurring (monthly) rows projected over the months they
-  //                bill — from the row's start month through the term,
+  //                bill - from the row's start month through the term,
   //                escalated annually
   //   totalCost  = Σ over linked upper-table CTS rows of their term
   //                cost. CTS values are treated as totals (not
@@ -2868,12 +2868,12 @@ export function PricingView({ settings } = {}) {
       // Effective cost folds tech depr into non-pass-through cost.
       const baseCost = ctsItemEffectiveCost(item);
       // Same start-month treatment as the fee side, and as the per-year
-      // cost the Deal margin row sums — so the two margins can't disagree.
+      // cost the Deal margin row sums - so the two margins can't disagree.
       const startMonth = ctsItemStartMonth(item);
       if (isRecurring) return s + baseCost * billedMonthFactor(costEscalator, termMonths, startMonth);
       if (startMonth > termMonths) return s;
       // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
-      // booked upfront, not amortized — the customer is billed on a
+      // booked upfront, not amortized - the customer is billed on a
       // rolled schedule but our cost has already been incurred.
       return s + baseCost;
     }, 0);
@@ -2980,7 +2980,7 @@ export function PricingView({ settings } = {}) {
       const detail = e?.detail;
       if (detail && typeof detail === 'object') { setOptionLinks(detail); return; }
       // The Firestore mirror dispatches a plain Event when it pulls a newer
-      // copy of the links down at signin — no detail to read, so go and get
+      // copy of the links down at signin - no detail to read, so go and get
       // the value it just wrote.
       loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
     };
@@ -3012,7 +3012,7 @@ export function PricingView({ settings } = {}) {
     if (s.workbook) {
       // Restoring a state export swaps the workbook out too, so the
       // outgoing file's Opp links go with it. The restored workbook is
-      // treated as a fresh upload for linking purposes — a snapshot
+      // treated as a fresh upload for linking purposes - a snapshot
       // built on another device can't own links in this device's map.
       clearLoadedWorkbookOptionLinks(workbook);
       setWorkbook({ ...s.workbook, id: newWorkbookId(), legacyLinks: false });
@@ -3036,7 +3036,7 @@ export function PricingView({ settings } = {}) {
       setFeeDefaults(prev => ({ ...prev, ...s.feeDefaults }));
     }
     if (s.linkedToOptionsList && typeof s.linkedToOptionsList === 'object') {
-      // Same union semantics as the defaults above — fold the snapshot's
+      // Same union semantics as the defaults above - fold the snapshot's
       // curated dropdown options into this device's list.
       setLinkedToOptionsList(prev => {
         const union = (a, b) => {
@@ -3113,7 +3113,7 @@ export function PricingView({ settings } = {}) {
       // count. Pad to 9 rows so the grid keeps its Excel-template feel.
       // Normalize an SIA alt-fee Type string into one of the alt-fee
       // dropdown values so imported rows render as selected (and match
-      // the seeded rows for the fill pass). Idempotent — already-normal
+      // the seeded rows for the fill pass). Idempotent - already-normal
       // values map back to themselves.
       const normAltType = (raw) => {
         const t = String(raw || '').trim();
@@ -3191,7 +3191,7 @@ export function PricingView({ settings } = {}) {
             // values so the seeded row renders as selected. Rolled
             // variants normalize to their base (Setup Rolled → Setup,
             // One Time Rolled → One Time) since the alt-fee table doesn't
-            // expose Rolled types — the user can refine if needed.
+            // expose Rolled types - the user can refine if needed.
             const rawType = String(item.type || '').trim();
             let type = feeDef?.type || '';
             if (!type) {
@@ -3236,12 +3236,12 @@ export function PricingView({ settings } = {}) {
   // loaded in the Pricing tab. Called when the SIA is cleared or replaced
   // so the chip (and the Opps 2 "Pricing Option" column it feeds) doesn't
   // dangle against a workbook that's no longer on screen. One atomic
-  // write covers every option — dropping them one at a time raced, and
+  // write covers every option - dropping them one at a time raced, and
   // a workbook with two linked options could keep one of the links.
   function clearLoadedWorkbookOptionLinks(wb) {
     if (!wb) return Promise.resolve();
     // Untagged legacy links are matched by sheet name, but only for a
-    // workbook that predates link tagging — never for one whose links
+    // workbook that predates link tagging - never for one whose links
     // all carry its id.
     const legacyNames = wb.legacyLinks
       ? (wb.options || []).map(o => (o.sheetName || '').trim()).filter(Boolean)
@@ -3261,7 +3261,7 @@ export function PricingView({ settings } = {}) {
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
     dbDelete(STORE, KEY).catch(() => {});
-    // The source-file blob is tied to the loaded workbook — drop it
+    // The source-file blob is tied to the loaded workbook - drop it
     // alongside. Per-opp copies already saved via "Save to Opp" are
     // kept (they live in the pricing-source-files store keyed by oppId
     // so they survive the Pricing tab being cleared).
@@ -3317,7 +3317,7 @@ export function PricingView({ settings } = {}) {
   }
 
   // Drop a cloned Option from the in-memory workbook. Only options
-  // produced by Clone option (isClone === true) are deletable here —
+  // produced by Clone option (isClone === true) are deletable here -
   // sheets from the source workbook stick around so the user can
   // always re-clone from the original. Active option follows the
   // deletion: if the user was sitting on the clone we switch to the
@@ -3368,7 +3368,7 @@ export function PricingView({ settings } = {}) {
     }
   }
 
-  // 9 empty starter rows that match the Excel template — used when
+  // 9 empty starter rows that match the Excel template - used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
     altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null,
@@ -3455,7 +3455,7 @@ export function PricingView({ settings } = {}) {
 
   // The Alternative Fee schedule's Type dropdown offers three values; the
   // pricing table's Type column carries more (the Rolled variants). Map a
-  // cost row's type onto the schedule type that would price it — Rolled
+  // cost row's type onto the schedule type that would price it - Rolled
   // bills monthly across the term, so it belongs with Recurring, which is
   // the bucket autoFeePerUnitFor already pulls it into. Anything else is
   // left blank rather than guessed: a schedule row with no type derives no
@@ -3469,20 +3469,20 @@ export function PricingView({ settings } = {}) {
     return '';
   }
 
-  // Unit Count to pair with a unit on this option — the same fill the
+  // Unit Count to pair with a unit on this option - the same fill the
   // schedule's own Unit dropdown does when you pick Per Site / Per Account.
   function unitCountForUnit(unit, opt) {
     return altFeeUnitCount(unit, { siteCount: opt?.siteCount, accountCount: opt?.accountCount });
   }
 
   // The whole Alternative Fee schedule this option's Automated Fee Names
-  // imply, minus whatever the schedule already carries — what the "Build
+  // imply, minus whatever the schedule already carries - what the "Build
   // from Automated Fee Names" button appends. Same idea as the per-row
   // "+ Fee" button above, run across every cost line at once: names come
   // off the costs, fees and start months are left to derive from them.
   //
   // Deliberately reads the Automated Fee Name (not mappingNameFor) whatever
-  // Map by is set to — the button says which column it builds from, and a
+  // Map by is set to - the button says which column it builds from, and a
   // cost pinned to some other schedule row still carries the name that names
   // its fee.
   function automatedFeeBuildRows(opt) {
@@ -3538,7 +3538,7 @@ export function PricingView({ settings } = {}) {
       fee: null,
       unit,
       unitCount: unitCountForUnit(unit, opt),
-      // Left blank so autoStartMonthFor keeps deriving it — from the fee's
+      // Left blank so autoStartMonthFor keeps deriving it - from the fee's
       // saved default when there is one, else the linked CTS rows.
       startMonth: null,
     }]);
@@ -3588,7 +3588,7 @@ export function PricingView({ settings } = {}) {
   // different wording, the SIA Fee column pins the row to a specific schedule
   // row instead. An explicit pick wins; '' means "deliberately unmapped";
   // with no pick at all we fall back to the Linked To tag, which is what the
-  // schedule matched on before this column existed — so untouched rows price
+  // schedule matched on before this column existed - so untouched rows price
   // exactly as they did.
   function resolvedSiaFee(item) {
     const ov = overrides[item.id]?.siaFee;
@@ -3773,7 +3773,7 @@ export function PricingView({ settings } = {}) {
   }
 
   // Push a Type / Unit default onto the schedule rows that already carry the
-  // fee's name, on every option — see applyFeeDefaultToRows for the retype
+  // fee's name, on every option - see applyFeeDefaultToRows for the retype
   // and the de-duplication it does.
   function applyFeeDefaultToSchedules(key, field, value) {
     setAltFees(prev => {
@@ -3823,7 +3823,7 @@ export function PricingView({ settings } = {}) {
   }
 
   // Pass-through is mapped per (Line Item, Type) pair on the Linked To
-  // subtab — there is no per-row toggle, so every CTS row carrying the
+  // subtab - there is no per-row toggle, so every CTS row carrying the
   // same Line Item + Type bills the same way on every option.
   function isPassThrough(item) {
     const key = linkedToDefaultKey(item.description, effectiveType(item));
@@ -3831,16 +3831,16 @@ export function PricingView({ settings } = {}) {
   }
 
   // Linked-CTS cost for one option, split per year and with the
-  // pass-through subset carved out — the numbers behind the Alt Fee
+  // pass-through subset carved out - the numbers behind the Alt Fee
   // table's "Deal margin" / "Linked CTS cost" rows.
   //
   // Only CTS rows whose resolved Linked To matches an alt-fee tag count:
   // an unlinked cost line has no fee to be a margin against (the table
   // warns about those separately).
   //
-  //   costByYear               — all linked CTS cost in that year
-  //   passThroughByYear        — the pass-through slice of it (cost side)
-  //   passThroughRevenueByYear — the same rows' revenue side, using the
+  //   costByYear               - all linked CTS cost in that year
+  //   passThroughByYear        - the pass-through slice of it (cost side)
+  //   passThroughRevenueByYear - the same rows' revenue side, using the
   //                              per-unit-rounded cost that actually
   //                              lands in Total fee, so revenue less
   //                              pass-through carries no rounding ghost
@@ -3895,14 +3895,14 @@ export function PricingView({ settings } = {}) {
     return { numYears, costByYear, passThroughByYear, passThroughRevenueByYear };
   }
 
-  // The option's Deal margin — the same cumulative, pass-through-net
+  // The option's Deal margin - the same cumulative, pass-through-net
   // percentage the Alt Fee table's "Deal margin" row shows, with the
   // last year's value (margin over the full term) as `finalMargin`.
   // That's the number quoted as the deal's margin, so it rides along on
   // the snapshot saved to an Opp.
   //
   // Returns nulls rather than zeros when there's nothing to divide by
-  // (no fees, or no linked CTS cost at all) — a deal with no cost side
+  // (no fees, or no linked CTS cost at all) - a deal with no cost side
   // isn't a 100%-margin deal, it's a deal whose margin isn't known here.
   function dealMarginForOption(opt) {
     const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt);
@@ -4005,7 +4005,7 @@ export function PricingView({ settings } = {}) {
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
     }
 
-    // State sheet — JSON snapshot of every piece of state the
+    // State sheet - JSON snapshot of every piece of state the
     // IndexedDB cache persists, chunked into 30k-char cells so each
     // value stays under Excel's 32,767 cell-text limit. Dropping
     // this workbook back rehydrates from this sheet for full
@@ -4104,7 +4104,7 @@ export function PricingView({ settings } = {}) {
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     // Apply $#,##0.00 to every numeric cell from col E (Term Total)
-    // onward — that's columns 4..(4 + term).
+    // onward - that's columns 4..(4 + term).
     const headerRowIdx = 3; // 0-based
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       for (let c = 4; c <= 4 + term; c++) {
@@ -4174,7 +4174,7 @@ export function PricingView({ settings } = {}) {
     URL.revokeObjectURL(url);
   }
 
-  // Margin Request Template export — fills the standard SE template
+  // Margin Request Template export - fills the standard SE template
   // with one block per loaded Pricing Option. Services come from the
   // per-option services bundle, Fee Structure is the option's Alt Fee
   // table summarized, Margin is the term-projected option margin
@@ -4183,8 +4183,8 @@ export function PricingView({ settings } = {}) {
   // for the user to fill in.
   // Fee-margin Excel for the active option: what each fee bills over the
   // term, the cost items behind it, and the margin that falls out. Reads
-  // the same helpers the page renders from — priceFor, ctsItemYearCost,
-  // altFeeYearRevenue, mappingNameFor — so the report can't disagree with
+  // the same helpers the page renders from - priceFor, ctsItemYearCost,
+  // altFeeYearRevenue, mappingNameFor - so the report can't disagree with
   // what's on screen. Every cost item lands in exactly one section: its
   // fee's, or the unmapped block at the end.
   async function exportFeeMargin() {
@@ -4216,7 +4216,7 @@ export function PricingView({ settings } = {}) {
         };
       };
 
-      // Group the schedule's fee rows by name — costs match a name, not a
+      // Group the schedule's fee rows by name - costs match a name, not a
       // row, so two rows sharing a name are one fee line here.
       const feeRows = altFees[optNow.optionNumber] || [];
       const byName = new Map();
@@ -4421,14 +4421,14 @@ export function PricingView({ settings } = {}) {
     const termYrs = termMonths ? termMonths / 12 : 0;
     workbook.options.forEach((opt, idx) => {
       const optionLabel = `Option ${idx + 1}`;
-      // Row 1 of the block — option header strip.
+      // Row 1 of the block - option header strip.
       setLabel(ws.getCell(row, 1), optionLabel);
       ws.mergeCells(row, 2, row, SPAN);
       setValue(ws.getCell(row, 2), opt.sheetName || '', { bg: OPTION_BG });
       ws.getCell(row, 2).font = { name: 'Calibri', bold: true, size: 11, color: { argb: TEXT_DARK } };
       ws.getRow(row).height = 20;
 
-      // Row 2 — Services | (Fee Structure label) | (Fee Structure value, merged with row 3) | Margin label/value
+      // Row 2 - Services | (Fee Structure label) | (Fee Structure value, merged with row 3) | Margin label/value
       setLabel(ws.getCell(row + 1, 1), 'Services', { italic: true });
       const services = (pricingOptionServices?.[opt.sheetName] || []).filter(Boolean);
       setValue(ws.getCell(row + 1, 2), services.length > 0 ? services.join('\n') : '-');
@@ -4444,7 +4444,7 @@ export function PricingView({ settings } = {}) {
         setValue(ws.getCell(row + 1, 6), Math.round(margin * 100) / 100, { align: 'right', numFmt: '0%' });
       }
 
-      // Row 3 — Term | Term value | (Fee Structure value continues) | Escalator label/value
+      // Row 3 - Term | Term value | (Fee Structure value continues) | Escalator label/value
       setLabel(ws.getCell(row + 2, 1), 'Term', { italic: true });
       setValue(ws.getCell(row + 2, 2), termYrs || '-', termYrs ? { numFmt: '0.##" yrs"' } : {});
       // Fee Structure label cell on row 3 stays empty (the value spans
@@ -4495,7 +4495,7 @@ export function PricingView({ settings } = {}) {
   // instead of the margin being typed in by hand. The active Option sheet's
   // own target wins; failing that, the first sheet in the book that has one
   // (the target is usually the same across a workbook's options). Null when
-  // the file has no target — including a workbook parsed before this was
+  // the file has no target - including a workbook parsed before this was
   // read, which simply won't offer the button until it's uploaded again.
   const siaGm = useMemo(() => {
     const opts = workbook?.options || [];
@@ -4505,7 +4505,7 @@ export function PricingView({ settings } = {}) {
     if (!hit || typeof hit.targetGmPct !== 'number') return null;
     return { pct: hit.targetGmPct, sheetName: hit.sheetName, useTargetGm: hit.useTargetGm ?? null };
   }, [workbook, activeOption]);
-  // Whether the box already holds the SIA's number — down to the tenth of a
+  // Whether the box already holds the SIA's number - down to the tenth of a
   // percent the field itself edits in, so a value typed to match still reads
   // as "from SIA" rather than offering to set what is already set.
   const siaGmApplied = !!siaGm && Math.round(siaGm.pct * 1000) === Math.round(globalGmPct * 1000);
@@ -4716,7 +4716,7 @@ export function PricingView({ settings } = {}) {
             <span>
               <strong>{n} line item{n === 1 ? '' : 's'}</strong>
               {' '}on this option {n === 1 ? 'is' : 'are'} neither mapped to a service nor ignored
-              {breakdown && <> — {breakdown}</>}
+              {breakdown && <> - {breakdown}</>}
               . Open <strong>Linked To → Line Item → Services</strong> to fix {n === 1 ? 'it' : 'them'}.
             </span>
           </button>
@@ -4865,7 +4865,7 @@ export function PricingView({ settings } = {}) {
           // Sheet name doubles as the link label so the Pricing-subtab
           // chip matches what Opps 2 displays under "Pricing Option".
           const optionLabel = (opt.sheetName || '').trim();
-          // Only links saved from *this* workbook count — a link left
+          // Only links saved from *this* workbook count - a link left
           // over from a file that also had an "Option 1" must not chip
           // itself onto the one loaded now.
           const linkedOppId = optionLabel

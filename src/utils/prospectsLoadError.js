@@ -9,7 +9,7 @@
 // wording down without rendering React.
 
 const PERMISSION = 'The database refused the read for this account. If you have just been added, signing out and back in picks up the new permissions.';
-const OFFLINE = 'The browser could not reach the database. That is usually the connection, a VPN, or an extension blocking firestore.googleapis.com — the app itself loaded fine.';
+const OFFLINE = 'The browser could not reach the database. That is usually the connection, a VPN, or an extension blocking firestore.googleapis.com - the app itself loaded fine.';
 const UNKNOWN = 'The database returned an error instead of the roster. Reloading is worth a try; if it comes back every time, copy the message below.';
 
 /**

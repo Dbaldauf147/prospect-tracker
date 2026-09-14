@@ -432,7 +432,7 @@ function ParentCompanySection({
         const title = screening
           ? 'The Compliance rows below are derived from this parent’s revenue: every regime here tests the consolidated group, and the parent’s figure is the larger of the two.'
           : researched
-            ? `Either figure can trigger a mandate, so the thresholds test the larger — this company’s own revenue${ownRevenue ? ` (${ownRevenue})` : ''}. The parent’s is on file and takes over if it ever exceeds it.`
+            ? `Either figure can trigger a mandate, so the thresholds test the larger - this company’s own revenue${ownRevenue ? ` (${ownRevenue})` : ''}. The parent’s is on file and takes over if it ever exceeds it.`
             : 'Research the parent’s revenue and the Compliance rows below will be derived from it whenever it exceeds this company’s own.';
         return (
           <span
@@ -1444,7 +1444,7 @@ function SustainabilityTargets({ profile, prospect, listMatched, unnamed }) {
           return (
             <span
               key={label}
-              title={`${name} — ${reported ? 'reported' : 'not reported'}. Set on the company page's Frameworks field.`}
+              title={`${name} - ${reported ? 'reported' : 'not reported'}. Set on the company page's Frameworks field.`}
               style={{
                 fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
                 borderRadius: 4, whiteSpace: 'nowrap',
@@ -1460,7 +1460,7 @@ function SustainabilityTargets({ profile, prospect, listMatched, unnamed }) {
         {profile.otherFrameworks.map(label => (
           <span
             key={label}
-            title={`${label} — found by research. Not one of the three disclosure regimes screened above.`}
+            title={`${label} - found by research. Not one of the three disclosure regimes screened above.`}
             style={{
               fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
               borderRadius: 4, whiteSpace: 'nowrap',
@@ -1478,7 +1478,7 @@ function SustainabilityTargets({ profile, prospect, listMatched, unnamed }) {
         {profile.claimedFrameworks.map(label => (
           <span
             key={`claimed-${label}`}
-            title={`${label} — the research narrative says this company reports under it, but the run found no published report to confirm it. Check the reports below before relying on it.`}
+            title={`${label} - the research narrative says this company reports under it, but the run found no published report to confirm it. Check the reports below before relying on it.`}
             style={{
               fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
               borderRadius: 4, whiteSpace: 'nowrap',
@@ -2408,7 +2408,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                       type="button"
                       onClick={() => { researchRevenue(c.name); researchCompliance(c.name, c.key); }}
                       disabled={!c.key || anyResearching}
-                      title="Research this company's annual revenue, answer all six jurisdiction questions, and fill the EU screening rows below them — the CSRD turnover and headcount figures, and what it imports into the EU for CBAM — in one go."
+                      title="Research this company's annual revenue, answer all six jurisdiction questions, and fill the EU screening rows below them - the CSRD turnover and headcount figures, and what it imports into the EU for CBAM - in one go."
                       style={{
                         flexShrink: 0, padding: '0.4rem 0.8rem', borderRadius: 6,
                         border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff',

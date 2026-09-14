@@ -58,11 +58,11 @@ const run = (records, opts = {}) => oppMeetingsFromRecords(records, {
   eq(rows[0].source, 'granola', 'the row is tagged with where it came from');
   eq(rows[0].granolaUrl, 'https://granola.example/n/1', 'the note link travels with the row');
   eq(rows[0].bfoUrl, 'https://bfo/opp/1', 'the matched opp supplies the BFO link');
-  eq(rows[0].attendees, 'Dana Rowe', 'attendees are the external ones only — colleagues are not who it was with');
+  eq(rows[0].attendees, 'Dana Rowe', 'attendees are the external ones only - colleagues are not who it was with');
 }
 
 eq(run({ rec1: record() }, { resolve: resolveNothing }).length, 0,
-  'a call that ties to nothing is left off — this table is work against the pipeline');
+  'a call that ties to nothing is left off - this table is work against the pipeline');
 
 eq(run({
   rec1: record({

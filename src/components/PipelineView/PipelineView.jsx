@@ -425,7 +425,7 @@ const fmtMoney = (n) => {
 };
 const fmtNum = (n) => (n === null || n === undefined || Number.isNaN(n)) ? '' : n.toLocaleString('en-US');
 
-// Cell that commits its value on blur — text input that round-trips
+// Cell that commits its value on blur - text input that round-trips
 // to numbers, percentages, money, etc. depending on `kind`.
 function formatNumDisplay(v, kind) {
   if (v === null || v === undefined || v === '') return '';
@@ -437,7 +437,7 @@ function formatNumDisplay(v, kind) {
 
 // Editable numeric cell. The input keeps a local draft while typing and
 // commits on blur, but the draft must follow the committed value whenever
-// that value changes underneath it — the page mounts on DEFAULT_STATE and
+// that value changes underneath it - the page mounts on DEFAULT_STATE and
 // only swaps in the saved record once IndexedDB hydration resolves, so a
 // draft that never re-syncs would keep showing the seed defaults while
 // every calculated cell used the saved numbers.

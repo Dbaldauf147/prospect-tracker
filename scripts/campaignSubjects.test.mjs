@@ -48,11 +48,11 @@ check('cleared to nothing keeps the shape',
 const camp = { subjects: ['Q3 update', 'Q3 update: ERCOT'] };
 check('a prefix on the sent subject still matches',
   matchedSubject(camp, 'RE: Q3 update'), 'Q3 update');
-check('the longest — most specific — line wins',
+check('the longest - most specific - line wins',
   matchedSubject(camp, 'FW: Q3 update: ERCOT prices'), 'Q3 update: ERCOT');
 check('case-insensitive both ways', matchedSubject({ subjects: ['Q3 UPDATE'] }, 're: q3 update'), 'Q3 UPDATE');
 check('a second line matches on its own',
-  matchedSubject({ subjects: ['Data center power', 'Retail update'] }, 'Retail update — March'), 'Retail update');
+  matchedSubject({ subjects: ['Data center power', 'Retail update'] }, 'Retail update - March'), 'Retail update');
 check('no line matches', matchedSubject(camp, 'Something else'), '');
 check('an empty sent subject matches nothing', matchedSubject(camp, ''), '');
 check('a bare list works too', matchedSubject(['A line'], 'RE: A line'), 'A line');

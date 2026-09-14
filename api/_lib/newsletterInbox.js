@@ -222,7 +222,7 @@ async function defaultConnect({ user, pass, label }) {
 
   let lock;
   try {
-    // The one mailbox this may open. Anything else — INBOX included — is
+    // The one mailbox this may open. Anything else - INBOX included - is
     // not reachable from here by construction.
     lock = await client.getMailboxLock(label);
   } catch (err) {

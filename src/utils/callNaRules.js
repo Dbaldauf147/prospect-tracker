@@ -162,7 +162,7 @@ export function autoNaPatchFor(call, rules, existing = null, now = new Date()) {
 export function describeNaRules({ rules = [], matches = 0, total = 0 } = {}) {
   const active = normalizeRules(rules);
   if (active.length === 0) {
-    return 'No auto-N/A rules yet. Add the name of a recurring meeting — a weekly 1:1, office hours, a prospecting block — and calls with that name are marked N/A as they arrive.';
+    return 'No auto-N/A rules yet. Add the name of a recurring meeting - a weekly 1:1, office hours, a prospecting block - and calls with that name are marked N/A as they arrive.';
   }
   const ruleCount = `${active.length} rule${active.length === 1 ? '' : 's'}`;
   if (matches === 0) {

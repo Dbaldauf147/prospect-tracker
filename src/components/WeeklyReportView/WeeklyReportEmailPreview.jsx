@@ -60,7 +60,7 @@ export function WeeklyReportEmailPreview({
 
   const width = WIDTHS.find(w => w.key === widthKey) || WIDTHS[0];
   const shownSubject = String(subject || '').trim()
-    || `Weekly Report${snapshot?.periodLabel ? ` — ${snapshot.periodLabel}` : ''}`;
+    || `Weekly Report${snapshot?.periodLabel ? ` - ${snapshot.periodLabel}` : ''}`;
 
   return (
     <div
@@ -118,13 +118,13 @@ export function WeeklyReportEmailPreview({
             />
           ) : (
             <div style={{ padding: '1.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#475569', background: '#fff', borderRadius: 6 }}>
-              Nothing to preview yet — this tab has no report data cached for the selected period.
+              Nothing to preview yet - this tab has no report data cached for the selected period.
             </div>
           )}
         </div>
 
         <div style={{ padding: '0.6rem 1.25rem', borderTop: '1px solid #E2E8F0', fontSize: '0.7rem', color: '#64748B' }}>
-          This is the same HTML the scheduled email sends, rendered here in your browser. Outlook lays out some of it slightly differently — the widths, cards and bars are built for that.
+          This is the same HTML the scheduled email sends, rendered here in your browser. Outlook lays out some of it slightly differently - the widths, cards and bars are built for that.
         </div>
       </div>
     </div>

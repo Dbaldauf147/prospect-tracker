@@ -150,7 +150,7 @@ const dataset = (n, pad = '') => ({
   const mask = maskOf(restCalls.find((c) => c.method === 'PATCH'));
   ok(mask.length === 3, 'the patch names exactly the fields it writes');
   ok(mask.includes('json') && mask.includes('chunkCount') && mask.includes('updatedAt'),
-    'the payload, the chunk count and the timestamp — nothing else');
+    'the payload, the chunk count and the timestamp - nothing else');
   restore();
 }
 

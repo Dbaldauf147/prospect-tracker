@@ -36,7 +36,7 @@ eq(oppTagStateOf({ oppId: '   ' }), 'none', 'whitespace is not an opp id');
 // hiding a tagged call from the tagged list.
 eq(oppTagStateOf({ oppId: 'opp_1', oppNa: true }), 'tagged', 'a real opp wins over a stale N/A flag');
 
-eq(oppTagLabelOf({ oppId: 'opp_1', oppLabel: 'Prologis — Bill payment' }), 'Prologis — Bill payment', 'a tagged call reads as its opp');
+eq(oppTagLabelOf({ oppId: 'opp_1', oppLabel: 'Prologis - Bill payment' }), 'Prologis - Bill payment', 'a tagged call reads as its opp');
 eq(oppTagLabelOf({ oppId: 'opp_1' }), 'Opportunity', 'a tagged call with no label still reads as something');
 eq(oppTagLabelOf({ oppNa: true }), 'N/A', 'an N/A call reads as N/A');
 eq(oppTagLabelOf({}), '', 'an undecided call reads as nothing at all');
@@ -50,9 +50,9 @@ eq(isOppTagged({}), false, 'undecided does not count as triaged');
 // Leaving the loser behind is how a call ends up in two piles, or how an
 // N/A springs back the moment an opp tag is removed.
 
-const tagged = tagOppPatch(OPP, { label: 'Prologis — Bill payment' });
+const tagged = tagOppPatch(OPP, { label: 'Prologis - Bill payment' });
 eq(tagged.oppId, 'opp_1', 'tagging stores the opp id');
-eq(tagged.oppLabel, 'Prologis — Bill payment', 'tagging stores the label');
+eq(tagged.oppLabel, 'Prologis - Bill payment', 'tagging stores the label');
 eq(tagged.oppNa, false, 'tagging clears the N/A flag');
 eq(tagged.oppNaAt, '', 'tagging clears the N/A timestamp');
 eq(tagged.company, 'Prologis', 'a call with no company adopts the opp’s account');
@@ -76,12 +76,12 @@ eq(oppTagStateOf({ ...na, ...cleared }), 'none', 'clearing an N/A call returns i
 // Round trip: tag → N/A → tag. The state has to be exactly right at each
 // step, with nothing left over from the one before.
 let record = {};
-record = { ...record, ...tagOppPatch(OPP, { label: 'Prologis — Bill payment' }) };
+record = { ...record, ...tagOppPatch(OPP, { label: 'Prologis - Bill payment' }) };
 eq(oppTagStateOf(record), 'tagged', 'round trip: tagged');
 record = { ...record, ...markOppNaPatch() };
 eq(oppTagStateOf(record), 'na', 'round trip: N/A replaces the tag outright');
 eq(oppTagLabelOf(record), 'N/A', 'round trip: and the label follows');
-record = { ...record, ...tagOppPatch(OPP, { label: 'Prologis — Bill payment', company: 'Prologis' }) };
+record = { ...record, ...tagOppPatch(OPP, { label: 'Prologis - Bill payment', company: 'Prologis' }) };
 eq(oppTagStateOf(record), 'tagged', 'round trip: tagging again beats the N/A');
 
 // ---- counting and filtering the piles ---------------------------------------
@@ -108,7 +108,7 @@ eq(filterByOppTag(pile, '').length, 6, 'no filter means all');
 // NAME, where a search for it would match a deal somebody called N/A.
 
 const rowOf = (rec) => historyRowFromRecord({ id: 'granola:1', name: 'A call', ...rec });
-eq(rowOf({ oppId: 'opp_1', oppLabel: 'Prologis — Bill payment' }).oppTag, 'tagged', 'a tagged record makes a tagged row');
+eq(rowOf({ oppId: 'opp_1', oppLabel: 'Prologis - Bill payment' }).oppTag, 'tagged', 'a tagged record makes a tagged row');
 eq(rowOf({ oppNa: true }).oppTag, 'na', 'an N/A record makes an N/A row');
 eq(rowOf({}).oppTag, 'none', 'an untriaged record makes a queued row');
 eq(rowOf({ oppNa: true }).oppLabel, '', 'N/A never leaks into the opportunity NAME field');
@@ -120,7 +120,7 @@ eq(
 );
 
 const rows = [
-  rowOf({ oppId: 'opp_1', oppLabel: 'Prologis — Bill payment' }),
+  rowOf({ oppId: 'opp_1', oppLabel: 'Prologis - Bill payment' }),
   rowOf({ oppNa: true }),
   rowOf({}),
   rowOf({}),
@@ -144,7 +144,7 @@ eq(
 );
 eq(filterByOppTag(rows, 'na').length, 1, 'the N/A filter finds an N/A row');
 eq(filterByOppTag(rows, 'untagged').length, 2, 'the queue filter finds only undecided rows');
-eq(filterByOppTag(rows, 'tagged')[0].oppLabel, 'Prologis — Bill payment', 'the tagged filter finds the tagged row');
+eq(filterByOppTag(rows, 'tagged')[0].oppLabel, 'Prologis - Bill payment', 'the tagged filter finds the tagged row');
 
 // A row whose oppTag says one thing and whose raw fields say another
 // trusts the precomputed value: it is what the table rendered from.

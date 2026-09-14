@@ -65,7 +65,7 @@ function TextField({ label, value, placeholder, onCommit }) {
         type="text"
         className={styles.detailInput}
         value={draft}
-        placeholder={placeholder || '—'}
+        placeholder={placeholder || '-'}
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={e => {
@@ -107,7 +107,7 @@ function YesNoField({ label, value, onCommit }) {
         value={value || ''}
         onChange={e => { if (e.target.value !== (value || '')) onCommit(e.target.value); }}
       >
-        <option value="">—</option>
+        <option value="">-</option>
         <option value="Yes">Yes</option>
         <option value="No">No</option>
       </select>
@@ -148,8 +148,8 @@ function WeeksField({ label, value, onCommit }) {
           inputMode="decimal"
           className={styles.detailInput}
           value={draft}
-          placeholder={legacy ? value : '—'}
-          title={legacy ? `"${value}" isn't a number of weeks — type one to replace it` : undefined}
+          placeholder={legacy ? value : '-'}
+          title={legacy ? `"${value}" isn't a number of weeks - type one to replace it` : undefined}
           onChange={e => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={e => {
@@ -285,7 +285,7 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
                 ) : (
                   <span
                     className={styles.detailDepNoSteps}
-                    title={`${name} has no timeline attached, so there are no steps to wait for — ${selfName} waits for all of it.`}
+                    title={`${name} has no timeline attached, so there are no steps to wait for - ${selfName} waits for all of it.`}
                   >after all of it</span>
                 )}
                 {/* And which step of THIS service is the one that waits.
@@ -301,11 +301,11 @@ function DependsEditor({ value, options, selfName, templates, onCommit }) {
                     onChange={e => onCommit(setRefLocalStep(value, name, e.target.value))}
                     title={`Which step of ${selfName} is waiting. Anything before it can run alongside ${name}.`}
                   >
-                    <option value="">— and all of {selfName} waits</option>
+                    <option value="">- and all of {selfName} waits</option>
                     {ownSteps.map(st => (
-                      <option key={st.id} value={st.id}>— and {st.name} is what waits</option>
+                      <option key={st.id} value={st.id}>- and {st.name} is what waits</option>
                     ))}
-                    {localMissing && <option value={localStep}>— and a step that no longer exists waits</option>}
+                    {localMissing && <option value={localStep}>- and a step that no longer exists waits</option>}
                   </select>
                 )}
               </div>
@@ -494,7 +494,7 @@ function StepDuration({ stage, onChange, groupNames, onSetGroup }) {
         step="any"
         className={styles.detailStepDurationNum}
         value={draft}
-        placeholder="—"
+        placeholder="-"
         aria-label={`Duration of step: ${stage.name || 'untitled'}`}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -575,7 +575,7 @@ function GroupHeader({ group, onRename, onRecolor, onUngroup }) {
         type="color"
         className={styles.detailGroupSwatch}
         value={group.color}
-        title={`Colour for “${group.phase}” — used for this heading and its band on the timeline`}
+        title={`Colour for “${group.phase}” - used for this heading and its band on the timeline`}
         aria-label={`Colour for group ${group.phase}`}
         onChange={(e) => onRecolor(e.target.value)}
       />
@@ -840,7 +840,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                           disabled={!canSwapStages(stages, idx, idx - 1)}
                           title={canSwapStages(stages, idx, idx - 1)
                             ? 'Move this step earlier'
-                            : 'First step on this side of signature — use the button below to move it across'}
+                            : 'First step on this side of signature - use the button below to move it across'}
                           aria-label={`Move step ${idx + 1} earlier`}
                         >↑</button>
                         <button
@@ -850,7 +850,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                           disabled={!canSwapStages(stages, idx, idx + 1)}
                           title={canSwapStages(stages, idx, idx + 1)
                             ? 'Move this step later'
-                            : 'Last step on this side of signature — use the button below to move it across'}
+                            : 'Last step on this side of signature - use the button below to move it across'}
                           aria-label={`Move step ${idx + 1} later`}
                         >↓</button>
                         <button
@@ -874,7 +874,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                           type="text"
                           className={styles.detailStepSelect}
                           value={stage.timing}
-                          placeholder="Timing — Aug 2026, Q3, 2 weeks"
+                          placeholder="Timing - Aug 2026, Q3, 2 weeks"
                           onChange={(e) => updateStep(idx, { ...stage, timing: e.target.value })}
                         />
                         <PriorStepsPicker
@@ -892,8 +892,8 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                           className={styles.serviceLinkEditBtn}
                           onClick={() => setStepSide(idx, !stage.preKickoff)}
                           title={stage.preKickoff
-                            ? `Move this into the engagement — after ${signatureLabel.toLowerCase()}`
-                            : `Move this into the run-up — before ${signatureLabel.toLowerCase()}`}
+                            ? `Move this into the engagement - after ${signatureLabel.toLowerCase()}`
+                            : `Move this into the run-up - before ${signatureLabel.toLowerCase()}`}
                         >{stage.preKickoff ? '↓ After signature' : '↑ Before signature'}</button>
                       </div>
                       <StepDuration
@@ -954,7 +954,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
             className={styles.detailInput}
             value={active?.id || ''}
             onChange={(e) => setPickedId(e.target.value)}
-            title={`${serviceName} has ${attached.length} timelines attached — pick which one these steps belong to`}
+            title={`${serviceName} has ${attached.length} timelines attached - pick which one these steps belong to`}
           >
             {attached.map(t => (
               <option key={t.id} value={t.id}>{t.name || 'Untitled timeline'} ({t.stages.length})</option>
@@ -973,7 +973,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
           {alsoOn.length > 0 && (
             <p className={styles.detailStepShared}>
               These steps belong to “{active.name || 'Untitled timeline'}”, which is also
-              attached to {alsoOn.join(', ')} — editing them here changes it for those too.
+              attached to {alsoOn.join(', ')} - editing them here changes it for those too.
             </p>
           )}
           {unusedHere.length > 0 && (
@@ -997,7 +997,7 @@ function TimelineStepsEditor({ serviceName, templates, onSaveTemplates, onOpenTi
                 <button type="button" className={styles.serviceLinkEditBtn} onClick={() => addStep(true)}>+ Add step</button>
               </div>
               {preCount === 0
-                ? <p className={styles.detailEmpty}>Nothing yet — add the work that leads up to signature.</p>
+                ? <p className={styles.detailEmpty}>Nothing yet - add the work that leads up to signature.</p>
                 : renderRuns(preGroups)}
             </div>
           )}
@@ -1323,7 +1323,7 @@ export function ServiceDetailModal({
               ? 'Show it again here, on the company card\'s services board, and in the Opps Scope picker'
               : 'Take it out of this list, the company card\'s services board, and the Opps Scope picker'}
           >{hidden ? 'Show service' : 'Hide service'}</button>
-          <span className={styles.detailFooterNote}>Changes save as you type — no Save button.</span>
+          <span className={styles.detailFooterNote}>Changes save as you type - no Save button.</span>
           <button type="button" className={styles.detailFooterPrimary} onClick={onClose}>Close</button>
         </div>
       </div>

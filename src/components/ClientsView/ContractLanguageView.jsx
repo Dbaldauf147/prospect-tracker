@@ -72,7 +72,7 @@ export function ContractLanguageView({ settings = {}, user }) {
 
   const queueSave = useCallback((service, clauses) => {
     if (!uid) {
-      setSaveState({ status: 'error', error: 'Not signed in — nothing was saved.', code: '' });
+      setSaveState({ status: 'error', error: 'Not signed in - nothing was saved.', code: '' });
       return;
     }
     setSaveState({ status: 'dirty', error: '', code: '' });
@@ -154,9 +154,9 @@ export function ContractLanguageView({ settings = {}, user }) {
         <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Contract Language</h2>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           The wording that goes into a contract for each service. A service can hold several named
-          clauses — a standard one, a pilot, a longer term. {withLanguage > 0
+          clauses - a standard one, a pilot, a longer term. {withLanguage > 0
             ? <><strong>{withLanguage}</strong> service{withLanguage === 1 ? '' : 's'} with language saved.</>
-            : 'Nothing saved yet — pick a service and add a clause.'}
+            : 'Nothing saved yet - pick a service and add a clause.'}
         </div>
       </div>
 
@@ -168,8 +168,8 @@ export function ContractLanguageView({ settings = {}, user }) {
         }}>
           <strong>Couldn’t save.</strong>{' '}
           {saveState.code === 'permission-denied'
-            ? 'Firestore refused the write. The deployed security rules predate this tab — they need the userSettings/{uid}/contractLanguage rule from firestore.rules.'
-            : 'Check your connection and try again — your text is still on screen.'}
+            ? 'Firestore refused the write. The deployed security rules predate this tab - they need the userSettings/{uid}/contractLanguage rule from firestore.rules.'
+            : 'Check your connection and try again - your text is still on screen.'}
           <div style={{ marginTop: 4, opacity: 0.8 }}>{saveState.error}</div>
         </div>
       )}
@@ -317,7 +317,7 @@ function ClauseEditor({ clause, index, onPatch, onRemove }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      window.alert('Could not copy automatically — select the text and copy with Ctrl/Cmd+C.');
+      window.alert('Could not copy automatically - select the text and copy with Ctrl/Cmd+C.');
     }
   }
   return (

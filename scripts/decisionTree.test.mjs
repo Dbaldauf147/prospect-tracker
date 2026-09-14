@@ -69,7 +69,7 @@ eq(treeStats(seed).ends, 2, 'the template has two dead ends');
 const path = pathFromRoot(seed, 'register');
 eq(path.map(p => p.nodeId), ['gate1', 'gate2', 'gate3', 'tier1', 'gate4', 'payback', 'pbSlow', 'register'],
   'the shortest route to the register runs through the gates in order');
-eq(path[1].branchLabel, 'No — this is a choice', 'each step carries the branch you answered to get there');
+eq(path[1].branchLabel, 'No - this is a choice', 'each step carries the branch you answered to get there');
 eq(pathFromRoot(seed, 'gate1').map(p => p.nodeId), ['gate1'], 'the root is its own path');
 eq(pathFromRoot(seed, 'nope'), null, 'a step that does not exist has no path');
 
@@ -87,7 +87,7 @@ const added = addNode(t, { parentId: 'a', title: 'C' });
 ok(added.id && added.id !== 'a' && added.id !== 'b', 'a new step gets an id of its own');
 eq(added.tree.nodes.a.branches.length, 2, 'adding a step under A adds the branch that reaches it');
 eq(added.tree.nodes.a.branches[1].to, added.id, 'and points it at the new step');
-eq(t.nodes.a.branches.length, 1, 'the original tree is untouched — every edit returns a new one');
+eq(t.nodes.a.branches.length, 1, 'the original tree is untouched - every edit returns a new one');
 
 t = updateNode(t, 'b', { title: 'Do this', detail: 'text', kind: 'outcome' });
 eq(t.nodes.b.title, 'Do this', 'a step title can be edited');
@@ -97,7 +97,7 @@ t = addBranch(t, 'b', { label: 'Next' });
 eq(t.nodes.b.branches.map(b => ({ label: b.label, to: b.to })), [{ label: 'Next', to: null }],
   'a fresh branch starts out pointing nowhere');
 t = updateBranch(t, 'b', t.nodes.b.branches[0].id, { to: 'a' });
-eq(t.nodes.b.branches[0].to, 'a', 'a branch can be pointed at an existing step — that is how a flow rejoins');
+eq(t.nodes.b.branches[0].to, 'a', 'a branch can be pointed at an existing step - that is how a flow rejoins');
 t = updateBranch(t, 'b', t.nodes.b.branches[0].id, { to: 'ghost' });
 eq(t.nodes.b.branches[0].to, null, 'pointing a branch at a step that does not exist leaves it unlinked');
 
@@ -135,7 +135,7 @@ eq(orphanIds(cut), ['c'], 'what it led to is listed as unreachable rather than s
 const pruned = deleteNode(chain, 'b', { cascade: true });
 eq(Object.keys(pruned.nodes).sort(), ['a', 'd'], 'a cascading delete takes the limb only that step reached');
 ok(pruned.nodes.d, 'and leaves the limb reached another way alone');
-eq(deleteNode(chain, 'a'), chain, 'the starting step cannot be deleted — the page would have nothing to open on');
+eq(deleteNode(chain, 'a'), chain, 'the starting step cannot be deleted - the page would have nothing to open on');
 eq(deleteNode(chain, 'ghost'), chain, 'deleting something that is not there changes nothing');
 
 // An unreachable step can be adopted as the new start, which is the way back

@@ -74,7 +74,7 @@ const legacyRaw = (raw) => { store.clear(); globalThis.localStorage.setItem(LEGA
   eq(planSheetSyncMigration({}), { [SHEET_SYNC_KEY]: { sheetsUrl: 'legacy', mainFreq: 15, extraSheets: [{ url: 'e' }] } },
     'the whole legacy blob is carried up, extra sheets included');
   eq(planSheetSyncMigration({ [SHEET_SYNC_KEY]: { sheetsUrl: 'stored' } }), null,
-    'an account that already has a copy is left alone — this is what stops a stale browser clobbering another device');
+    'an account that already has a copy is left alone - this is what stops a stale browser clobbering another device');
   eq(planSheetSyncMigration({ [SHEET_SYNC_KEY]: {} }), null,
     'including a deliberately empty one');
 }

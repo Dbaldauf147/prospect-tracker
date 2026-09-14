@@ -80,7 +80,7 @@ export function nextStepLinesFromCall(record) {
     if (!text) return '';
     const owner = (typeof f === 'object' && f?.owner) ? String(f.owner).trim() : '';
     const due = (typeof f === 'object' && f?.due) ? String(f.due).trim() : '';
-    return `${text}${owner ? ` — ${owner}` : ''}${due ? ` (due ${due})` : ''}`;
+    return `${text}${owner ? ` - ${owner}` : ''}${due ? ` (due ${due})` : ''}`;
   }).filter(Boolean);
 
   const lines = fromList.length > 0

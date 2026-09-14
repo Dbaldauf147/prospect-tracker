@@ -853,7 +853,7 @@ export async function loadIndicativeAnalysis(prospectId) {
   // about the real problem. Name it here instead.
   if (missing.length) {
     throw new Error(
-      `This company's saved analysis is incomplete — ${missing.length} of its ${chunkCount} parts `
+      `This company's saved analysis is incomplete - ${missing.length} of its ${chunkCount} parts `
       + `${missing.length === 1 ? 'is' : 'are'} missing (${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}). `
       + 'Re-save it from the Utility Lookup page to replace it.',
     );
@@ -865,7 +865,7 @@ export async function loadIndicativeAnalysis(prospectId) {
   const expected = base64LenForBytes(base.sizeBytes);
   if (base.sizeBytes > 0 && dataBase64.length !== expected) {
     throw new Error(
-      `This company's saved analysis is corrupt — it reassembled to ${dataBase64.length} characters `
+      `This company's saved analysis is corrupt - it reassembled to ${dataBase64.length} characters `
       + `where ${expected} were expected for a ${base.sizeBytes}-byte workbook. `
       + 'Re-save it from the Utility Lookup page to replace it.',
     );

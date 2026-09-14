@@ -377,7 +377,7 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
   const bare = emailKpiCards(headlineKpis(snap({ noYoy: true, quota: { target: 0, closedYTD: null }, coverage: { actual: null } })));
   check('email: no target → the progress card says what to set',
     bare[0].lines[0], 'Set an annual target on Charts → Pipeline.');
-  check('email: no sold figure → an em dash, not a zero', bare[0].value, '—');
+  check('email: no sold figure → an em dash, not a zero', bare[0].value, '-');
   check('email: no target → the coverage card says that too, not "paste BFO"',
     bare[1].lines[0], 'Set an annual target on Charts → Pipeline.');
   // A target with no pipeline behind it is the other half: the fix is a

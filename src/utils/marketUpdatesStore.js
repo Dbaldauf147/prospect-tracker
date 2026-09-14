@@ -100,7 +100,7 @@ async function backUpEntry(entry) {
   if (!userId || !entry?.id) return;
   const bytes = entryBytes(entry);
   if (bytes > MARKET_UPDATE_MAX_SYNC_BYTES) {
-    console.warn(`Market update ${entry.id} is ${bytes} bytes — too big to back up to Firestore; it stays on this device.`);
+    console.warn(`Market update ${entry.id} is ${bytes} bytes - too big to back up to Firestore; it stays on this device.`);
     return;
   }
   try {

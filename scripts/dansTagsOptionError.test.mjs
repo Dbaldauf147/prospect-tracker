@@ -40,7 +40,7 @@ const named = JSON.stringify({
 // ---- recognising the failure ------------------------------------------------
 
 eq(isDansTagsOptionError(400, unnamed, 'Nam only'), true,
-  'the rejected value alone is enough — this is the case that was failing');
+  'the rejected value alone is enough - this is the case that was failing');
 eq(isDansTagsOptionError(400, unnamed, 'Dan Key Target;Nam only'), true,
   'found among several tags in the same write');
 eq(isDansTagsOptionError(400, named, 'NAM Only'), true, 'a body naming dans_tags still matches');

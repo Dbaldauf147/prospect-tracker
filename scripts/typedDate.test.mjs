@@ -48,7 +48,7 @@ eq(parseTypedDate('0/5/2026'), null, 'month zero is rejected');
 eq(parseTypedDate('3/0/2026'), null, 'day zero is rejected');
 eq(parseTypedDate('3/'), null, 'a half-typed date is not a date yet');
 eq(parseTypedDate('abc'), null, 'text that is not a date is rejected');
-eq(parseTypedDate('45000'), null, "a bare number is not read as a year — Date.parse would call this the year 45000");
+eq(parseTypedDate('45000'), null, "a bare number is not read as a year - Date.parse would call this the year 45000");
 eq(parseTypedDate('3'), null, 'a single digit is not a date');
 eq(parseTypedDate('3/5/'), null, 'a trailing separator is not a date yet');
 eq(parseTypedDate('2026-'), null, 'a year on its own is not a date yet');

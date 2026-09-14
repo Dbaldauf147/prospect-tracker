@@ -179,7 +179,7 @@ export function PasteImportModal({ onClose, onImport, initialPaste = '', existin
     if (summary.added === 0 && summary.merged === 0) {
       setParseError(clientMapped
         ? 'Nothing to import: every pasted row was blank or had no Client Name.'
-        : 'Map one pasted column to Client Name — that’s what each row is matched on.');
+        : 'Map one pasted column to Client Name - that’s what each row is matched on.');
       return;
     }
     onImport(records, { overwriteConflicts: conflictMode === 'overwrite' });
@@ -219,7 +219,7 @@ export function PasteImportModal({ onClose, onImport, initialPaste = '', existin
         {stage === 'paste' && (
           <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
             <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-              In Google Sheets, select the rows you want (including the header row) and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste — or just paste anywhere on the Deals page and this opens on the mapping step. Deals already on file are matched by <strong>Client Name</strong> (plus <strong>Agreement Name</strong> where there is one): new values fill in, and values already on the deal are left alone.
+              In Google Sheets, select the rows you want (including the header row) and copy with <strong>Cmd+C</strong> / <strong>Ctrl+C</strong>. Then click in the box below and paste - or just paste anywhere on the Deals page and this opens on the mapping step. Deals already on file are matched by <strong>Client Name</strong> (plus <strong>Agreement Name</strong> where there is one): new values fill in, and values already on the deal are left alone.
             </div>
             <textarea
               value={paste}
@@ -252,17 +252,17 @@ export function PasteImportModal({ onClose, onImport, initialPaste = '', existin
             <div style={{ padding: '0.5rem 0.7rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, fontSize: '0.72rem', color: '#166534', display: 'flex', flexDirection: 'column', gap: 4 }}>
               {!clientMapped ? (
                 <div style={{ color: '#991B1B', fontWeight: 700 }}>
-                  No pasted column maps to <strong>Client Name</strong> — that’s what each row is matched on, so nothing can be imported until one does.
+                  No pasted column maps to <strong>Client Name</strong> - that’s what each row is matched on, so nothing can be imported until one does.
                 </div>
               ) : (
                 <>
                   <div>
                     <strong>{summary.added}</strong> new deal{summary.added === 1 ? '' : 's'} added
-                    {' · '}<strong>{summary.merged}</strong> already on file{summary.merged > 0 && <> — <strong>{summary.filledCells}</strong> blank cell{summary.filledCells === 1 ? '' : 's'} filled in, <strong>{summary.duplicateCells}</strong> duplicate value{summary.duplicateCells === 1 ? '' : 's'} ignored</>}
+                    {' · '}<strong>{summary.merged}</strong> already on file{summary.merged > 0 && <> - <strong>{summary.filledCells}</strong> blank cell{summary.filledCells === 1 ? '' : 's'} filled in, <strong>{summary.duplicateCells}</strong> duplicate value{summary.duplicateCells === 1 ? '' : 's'} ignored</>}
                     {summary.skipped > 0 && <> · <span style={{ color: '#92400E' }}><strong>{summary.skipped}</strong> row{summary.skipped === 1 ? '' : 's'} skipped</span></>}
                   </div>
                   <div style={{ color: '#3F6212' }}>
-                    Deals this paste doesn’t mention are left exactly as they are — nothing is replaced.
+                    Deals this paste doesn’t mention are left exactly as they are - nothing is replaced.
                   </div>
                   {mergedRows.length > 0 && (
                     <div style={{ color: '#3F6212' }}>
@@ -358,7 +358,7 @@ export function PasteImportModal({ onClose, onImport, initialPaste = '', existin
                 <button
                   onClick={handleImport}
                   disabled={nothingToImport}
-                  title="New deals are added and deals already on file fill in their blank cells only. Values already on a deal — and every deal this paste doesn't mention — are left alone."
+                  title="New deals are added and deals already on file fill in their blank cells only. Values already on a deal - and every deal this paste doesn't mention - are left alone."
                   style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: nothingToImport ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: nothingToImport ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
                 >Add {summary.added} · fill {summary.merged} →</button>
               </div>

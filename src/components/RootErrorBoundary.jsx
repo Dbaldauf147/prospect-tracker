@@ -58,7 +58,7 @@ export class RootErrorBoundary extends Component {
             <>
               The tab has been open across a deploy, so part of the app it went to
               load no longer exists under that name. Your data is untouched. A
-              reload picks up the current version — if it was just tried and you
+              reload picks up the current version - if it was just tried and you
               are still here, the deploy itself may be incomplete, so copy the
               details below.
             </>

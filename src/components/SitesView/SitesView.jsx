@@ -434,10 +434,10 @@ function tenureAssumeHint(tenure) {
     return ' Sites are then sized as a tenant\u2019s premises: one electric account, in-suite equipment, and the landlord\u2019s base-building load left out.';
   }
   if (tenure === TENURE.WHOLE) {
-    return ' Sites are then sized as whole buildings behind the tenant\u2019s own meters \u2014 close to owned, less the landlord\u2019s water account and structure.';
+    return ' Sites are then sized as whole buildings behind the tenant\u2019s own meters - close to owned, less the landlord\u2019s water account and structure.';
   }
   if (tenure === TENURE.LEASED) {
-    return ' Each site then takes the lease shape its property type usually implies \u2014 offices and labs as suites, industrial and standalone retail as whole buildings.';
+    return ' Each site then takes the lease shape its property type usually implies - offices and labs as suites, industrial and standalone retail as whole buildings.';
   }
   return '';
 }
@@ -843,7 +843,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
               <div style={{ marginTop: '0.35rem' }}>
                 Pick <strong>{PROPERTY_TYPE_EXCLUDED_LABEL}</strong> for anything with no usage worth
                 modelling: parking lots, ATMs, cell towers. Those sites still count, still screen for
-                compliance and still appear in every export — they just carry no estimated
+                compliance and still appear in every export - they just carry no estimated
                 electricity or gas, so they add nothing to the spend and savings figures. Any usage
                 your own file supplies for them is still used.
               </div>
@@ -879,7 +879,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
                   the {siteCount.toLocaleString()} loaded site{siteCount === 1 ? '' : 's'} has one at all.</>
               )}
               {' '}The {items.length} {items.length === 1 ? 'type' : 'types'} below are kept from
-              earlier uploads — they apply again the moment a file that uses them is loaded, but
+              earlier uploads - they apply again the moment a file that uses them is loaded, but
               changing them now moves nothing on this page. Until a property type reaches these
               sites they get no estimated electricity, gas, cost, account or equipment figures.
             </div>
@@ -912,8 +912,8 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
             <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.15rem', lineHeight: 1.45 }}>
               For a portfolio that is all one building type, or one close enough to estimate from.
               This writes a <strong>{mappedColumn || FILL_HEADERS.propertyType}</strong> column into
-              your {siteCount.toLocaleString()} uploaded site{siteCount === 1 ? '' : 's'} — the same
-              as if the spreadsheet had arrived with it — so the estimates, the exports and this
+              your {siteCount.toLocaleString()} uploaded site{siteCount === 1 ? '' : 's'} - the same
+              as if the spreadsheet had arrived with it - so the estimates, the exports and this
               table all read it from there. You can still change individual sites afterwards with
               Mass edit.
             </div>
@@ -963,7 +963,7 @@ function PropertyTypeMappingModal({ items, value, onSave, onClose, mappedColumn,
               id="pt-bulk-target"
               value=""
               onChange={(e) => setAll(e.target.value)}
-              title="Apply one property type to every row in this table — useful when a file's types all mean the same thing, or all mean nothing"
+              title="Apply one property type to every row in this table - useful when a file's types all mean the same thing, or all mean nothing"
               style={{
                 flex: '1 1 220px', minWidth: 0, padding: '0.3rem 0.4rem', borderRadius: 6, fontFamily: 'inherit',
                 fontSize: '0.78rem', border: '1px solid #CBD5E1', background: '#fff', color: '#0F172A', cursor: 'pointer',
@@ -2800,7 +2800,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const isSupplierPlaceholder = (s) => {
         const t = String(s || '').trim();
         if (!t) return true;
-        if (/^[-\u2013\u2014_]+$/.test(t)) return true;
+        if (/^[-\u2013\u2014_]+$/.test(t)) return true; // em-dash-ok: reads pasted cells
         if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
         return false;
       };
@@ -3542,7 +3542,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setMassStatus({
         type: 'success',
         message: changed === 0
-          ? `Every one of those ${targets.size} site${targets.size === 1 ? '' : 's'} already had that value — nothing changed.`
+          ? `Every one of those ${targets.size} site${targets.size === 1 ? '' : 's'} already had that value - nothing changed.`
           : `${massColumn.label} set on ${changed} site${changed === 1 ? '' : 's'}`
             + `${skipped > 0 ? ` (${skipped} already had it)` : ''}.`,
       });
@@ -5227,7 +5227,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const canonical = priceUomLabel(String(commodity).toLowerCase());
     if (seen.length === 0) return '';
     if (seen.length > 1) {
-      return `⚠ Blended across mixed price units (${seen.join(', ')}) — the average is not in any one of them`;
+      return `⚠ Blended across mixed price units (${seen.join(', ')}) - the average is not in any one of them`;
     }
     if (seen[0] === canonical) return '';
     return `⚠ Quoted ${seen[0]} but carried unconverted and read as ${canonical}`;
@@ -5448,7 +5448,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab: the Gas tab pulls Site Name from there via formula.' },
       { label: 'Company Name', greenHeader: true, hint: 'Company / portfolio the site belongs to. Optional reference field: shown as a column on the Utility Lookup page and used to name the Indicative Savings export file. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
-      { label: 'Division', greenHeader: true, hint: 'Division / business unit / operating brand the site belongs to — one level under Company Name. Optional reference field: shown as its own column on the Utility Lookup page. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
+      { label: 'Division', greenHeader: true, hint: 'Division / business unit / operating brand the site belongs to - one level under Company Name. Optional reference field: shown as its own column on the Utility Lookup page. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'City', greenHeader: true, hint: 'City / town of the site. Optional reference field. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'State / Province', greenHeader: true, hint: 'State or province. Optional reference field: auto-derived from Zip for US / Canada when blank. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
@@ -5456,7 +5456,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
       { label: 'Property Type', greenHeader: true, hint: 'Building / use type. Drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula.', validation: { type: 'list', options: PROPERTY_TYPE_OPTIONS } },
-      { label: 'Ownership', greenHeader: true, hint: 'Whether the building is Owned or Leased. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Variants like "Own", "Owner-Occupied", "Tenant", or "Leasehold" are recognized on upload too. Where you know the lease shape, say so — "Leased – Suite" for part of a building, "Leased – Whole Building" for a whole one on a net lease — and the site is estimated on what the tenant actually holds rather than on the building.', validation: { type: 'list', options: OWNERSHIP_OPTIONS } },
+      { label: 'Ownership', greenHeader: true, hint: 'Whether the building is Owned or Leased. Pick from the dropdown on the Electric Power tab: the Gas tab pulls from there via formula. Variants like "Own", "Owner-Occupied", "Tenant", or "Leasehold" are recognized on upload too. Where you know the lease shape, say so - "Leased – Suite" for part of a building, "Leased – Whole Building" for a whole one on a net lease - and the site is estimated on what the tenant actually holds rather than on the building.', validation: { type: 'list', options: OWNERSHIP_OPTIONS } },
       { label: 'Site Description', greenHeader: true, hint: 'Free-text annotation for the site: building name, internal code, notes, anything that helps identify the row. Passthrough only; shown next to Property Type on the Utility Lookup page. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
       { label: 'Size (ft²)', greenHeader: true, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional: when blank the reference size for the property type is used as-is. Enter on the Electric Power tab: the Gas tab pulls from there via formula.' },
     ];
@@ -6080,8 +6080,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           setSaveStatus({
             state: 'saving',
             message: total > 1
-              ? `The app's database connection is not answering — saving over a plain web request instead (part ${Math.min(done + 1, total)} of ${total})…`
-              : `The app's database connection is not answering — saving over a plain web request instead…`,
+              ? `The app's database connection is not answering - saving over a plain web request instead (part ${Math.min(done + 1, total)} of ${total})…`
+              : `The app's database connection is not answering - saving over a plain web request instead…`,
           });
           return;
         }
@@ -6091,11 +6091,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // Said out loud before the upload rather than after it: if a few
           // bytes didn't land, the minute spent on the workbook is a minute
           // spent finding out the same thing again.
-          setSaveStatus({ state: 'saving', message: `The database did not answer a test write — trying the upload anyway…` });
+          setSaveStatus({ state: 'saving', message: `The database did not answer a test write - trying the upload anyway…` });
         } else if (step === 'shrinking') {
           setSaveStatus({
             state: 'saving',
-            message: `${companyLabel}: the database didn't take the upload in one piece — retrying in ${Math.round(to / 1024)} KB pieces…`,
+            message: `${companyLabel}: the database didn't take the upload in one piece - retrying in ${Math.round(to / 1024)} KB pieces…`,
           });
         } else if (step === 'uploading') {
           setSaveStatus({
@@ -6222,9 +6222,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
         : '';
       const nameMapNote = nameMapUnavailable
-        ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty — the rest of the analysis is complete.'
+        ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty - the rest of the analysis is complete.'
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request — the app\'s usual database connection is not getting through on this network.)' : ''}` });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
@@ -6252,12 +6252,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               // A small write landed and the workbook didn't, at every size
               // down to 64 KB. That is not this app and not the database:
               // something on the way out is dropping the request.
-              ? 'A small test write to the same database was acknowledged, so the connection itself works — '
+              ? 'A small test write to the same database was acknowledged, so the connection itself works - '
                 + 'it is this upload that is not getting through, at every size down to 64 KB. That points at '
                 + 'a proxy, VPN, firewall or extension between this browser and Google that drops larger requests. '
                 + 'Worth trying: another network (a phone hotspot), or an incognito window with extensions off.'
               : 'Even a few bytes to the same database went unanswered, so nothing is reaching Firestore from '
-                + 'this browser at the moment — a blocked connection, or the project over its daily quota.')
+                + 'this browser at the moment - a blocked connection, or the project over its daily quota.')
             + ' The workbook is queued in this browser meanwhile, and ⬇ Master Analysis downloads it without needing the database.'
           : (err?.message || 'Save failed.'),
       });
@@ -6310,7 +6310,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         sheets = toSheets(bytes);
       } catch (parseErr) {
         if (!looksLikeZipDamage(parseErr)) throw parseErr;
-        setImportStatus({ state: 'loading', message: `${label}'s analysis is damaged — trying to recover it…` });
+        setImportStatus({ state: 'loading', message: `${label}'s analysis is damaged - trying to recover it…` });
         const { bytes: repaired, lost } = await salvageWorkbook(bytes);
         rt = readRoundTripState(repaired);
         sheets = toSheets(repaired);
@@ -6319,7 +6319,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // wrong tab.
         const names = describeLostEntries(lost, readSheetNames(repaired));
         salvageNote = names.length
-          ? ` Recovered from a damaged file — ${names.join(', ')} could not be read.`
+          ? ` Recovered from a damaged file - ${names.join(', ')} could not be read.`
           : ' Recovered from a damaged file.';
       }
       const siteListIdx = sheets.findIndex(s => s.sheetName === 'Site List');
@@ -6426,18 +6426,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // company key, read that company's six jurisdiction answers and its
   // researched revenue, and derive which reporting regimes are triggered.
   // Screening answers key off the canonical key while revenue research keys
-  // off a plain slug of the display name — same split the page uses.
+  // off a plain slug of the display name - same split the page uses.
   function corporateComplianceSummary() {
     const screening = settings?.corporateComplianceScreening || {};
     const revenueResearch = settings?.companyRevenueResearch || {};
     const complianceResearch = settings?.companyComplianceResearch || {};
-    // The reference link and findings the user typed against each row —
+    // The reference link and findings the user typed against each row -
     // their own work, and the part of the card a static export was
     // previously dropping entirely. Links are filed by row key for the whole
     // page (the same statute whoever is screened); findings stay per company,
     // so those are looked up one company at a time inside the loop below.
     // Both maps used to be indexed here with a row key against the
-    // per-company map, which resolved to nothing — the export shipped an
+    // per-company map, which resolved to nothing - the export shipped an
     // empty Reference column no matter what was on the card.
     const sharedLinks = settings?.complianceReferenceLinks || {};
     const legacyLinks = settings?.companyComplianceLinks || {};
@@ -6447,10 +6447,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const hqRegionMap = settings?.hqRegionMap || {};
     // Each company's ultimate parent, as recorded on the card. Every regime
     // in this section tests its thresholds at the consolidated group, so the
-    // parent (and its revenue) is part of showing the working — a verdict
+    // parent (and its revenue) is part of showing the working - a verdict
     // reached against a parent's numbers reads as unsupported without it.
     const parentCompanies = settings?.corporateComplianceParent || {};
-    // Saved "Research with Claude" runs — the programme summary, published
+    // Saved "Research with Claude" runs - the programme summary, published
     // reports and researched targets the company page stores.
     const companyResearch = settings?.companyResearch || {};
     const keyOf = (name) => {
@@ -6470,7 +6470,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       e.total += 1;
       e.names.set(rawName, (e.names.get(rawName) || 0) + 1);
       // Same California test the Corporate Compliance page and the Excel
-      // report use — a CA State backed by a US (or absent) country.
+      // report use - a CA State backed by a US (or absent) country.
       if (isCaliforniaSite(site)) {
         e.california += 1;
         const label = [site.siteName, site.city].filter(Boolean).join(': ');
@@ -6500,7 +6500,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const findings = allFindings[e.key] || {};
       const links = (rowKey) => sharedLinks[rowKey] || companyLinks[rowKey] || '';
 
-      // Revenue: the researched figure, else the matched prospect record —
+      // Revenue: the researched figure, else the matched prospect record -
       // the same fallback order the page's cards use.
       const revData = revenueResearch[revSlug(name)] || null;
       const prospect = (prospects || []).find(p => keyOf(p?.company) === e.key) || null;
@@ -6548,7 +6548,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       };
 
       // The same context the card's JurisdictionScreening builds, so every
-      // derived verdict in the workbook is the one the card is showing —
+      // derived verdict in the workbook is the one the card is showing -
       // including the CSRD figures and CBAM import verdicts the compliance
       // research run turned up and the EU answer Wave 2 reads.
       const criterionContext = {
@@ -6575,20 +6575,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Per-jurisdiction detail mirroring the card's table, including each
       // regulation's Applies? verdict. A hand-picked answer (stored under
       // `<jurisdiction>__<regulation-slug>`) always wins over the derived
-      // one — same precedence the card applies.
+      // one - same precedence the card applies.
       const regulations = [];
       const jurisdictions = JURISDICTION_QUESTIONS.map((q) => {
         const answer = answers[q.key] || '';
         const ruledOut = q.key === 'california' && caRuledOut;
 
         // The workings the card spells out above each jurisdiction's
-        // mandates — California's revenue thresholds and one-of-three
+        // mandates - California's revenue thresholds and one-of-three
         // doing-business test, the EU's CSRD screening figures. Always on,
         // exactly as on the card: they're how the jurisdiction's answer is
         // arrived at, so they don't wait for it.
         const criteriaGroups = (JURISDICTION_CRITERIA_GROUPS[q.key] || []).map((group) => {
           // Once revenue has ruled California out, the doing-business leg
-          // can't change any verdict — those rows read N/A rather than
+          // can't change any verdict - those rows read N/A rather than
           // sitting there unanswered. The revenue rows stay live: they're
           // the evidence, and editing one is how the rule-out gets undone.
           const groupNA = ruledOut && group.key === 'doing-business';
@@ -6620,7 +6620,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
         // Mandates surface for Yes and Unknown, and unconditionally for the
         // jurisdictions where seeing the regimes is part of answering the
-        // question — the same ALWAYS_SHOW_REGULATIONS set the card uses.
+        // question - the same ALWAYS_SHOW_REGULATIONS set the card uses.
         // Anything the user has already annotated stays visible regardless.
         const showRegs = answer === 'Yes' || answer === 'Unknown' || ALWAYS_SHOW_REGULATIONS.has(q.key);
         const regs = (REGULATIONS_BY_JURISDICTION[q.key] || []).map((reg) => {
@@ -6684,7 +6684,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         parentRevenueLabel,
         parentRevenueFiscalYear: parentRev?.fiscalYear || '',
         // Which entity's revenue the verdicts below were derived from, and
-        // this company's own figure when they differ — the sheet has to show
+        // this company's own figure when they differ - the sheet has to show
         // both or a reader can't check the working.
         revenueEntity,
         ownRevenueLabel,
@@ -6716,7 +6716,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   async function exportIndicativeSavings({ returnBuffer = false, companyName = null, targetWb = null } = {}) {
     // The button is gated on sitesData.length, but the export reads
-    // from `rows` — which strips entries without a Site Name when a
+    // from `rows` - which strips entries without a Site Name when a
     // mapping is set. If every uploaded row is blank at the site-
     // name column, the export silently returned null and the click
     // looked like it did nothing. Throw so the caller's catch shows
@@ -6725,13 +6725,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
     // Leased locations don't carry a savings projection unless the
-    // toolbar's savings-scope button says they do — see the gate in
+    // toolbar's savings-scope button says they do - see the gate in
     // buildBucket. When they are being left out, the by-state tables grow
     // two columns that show the exclusion rather than leaving the gap
     // between spend and savings unexplained. A portfolio with nothing
     // leased (every upload that didn't map an Ownership column included)
     // exports exactly the sheet it did before, and so does one whose
-    // leased sites are being counted in — with a line in the Savings
+    // leased sites are being counted in - with a line in the Savings
     // Summary band saying which basis this workbook was built on, since
     // the same portfolio can now produce two different headlines.
     const leasedScope = savingsOwnershipScope(rows);
@@ -6749,13 +6749,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // sheet (modeled consumption, rate-derived cost, indicative rates).
     const SE_EST = 'FFB45309';
     // Red for a site whose energy intensity sits 25%+ away from the
-    // estimate its property type carries — the same red the mapping
+    // estimate its property type carries - the same red the mapping
     // sheets use for a hard "no".
     const SE_VAR_OFF = 'FFB91C1C';
 
     // Total line for the three tier-overview tables (Portfolio Overview,
     // NAM, Europe). The tiers partition one population, so the total is
-    // the portfolio in that scope — without it the reader has to add four
+    // the portfolio in that scope - without it the reader has to add four
     // rows by hand to answer "and what is the whole thing?", which is the
     // first question the table invites. Bold on the light green band, with
     // a rule above it, so it reads as a summary rather than a fifth tier.
@@ -6795,7 +6795,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Mexico-specific helpers. Baja California / Baja California Sur
     // run on a grid separate from CFE's national system, so they
     // never count as a CFE sourcing opportunity. CFE is the only
-    // viable counterparty for the rest of Mexico — other utilities
+    // viable counterparty for the rest of Mexico - other utilities
     // are private generators or self-supply and aren't a target.
     // Threshold: 6 GWh/yr (6,000,000 kWh) per site for the
     // procurement opportunity to be worth pursuing.
@@ -6822,20 +6822,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // shared with classifyMarket so a site is labelled by the same
     // state / country this sheet buckets it under.
 
-    // Both commodities use a per-state curated savings range — see
+    // Both commodities use a per-state curated savings range - see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
 
     // Distinct list joined with ", "; trims to a sensible cap so a
     // state with dozens of suppliers doesn't blow up the cell.
     // Placeholder strings that show up in the source data when no
-    // real value is set — em-dash, hyphen, "N/A", etc. We treat them
+    // real value is set - em-dash, hyphen, "N/A", etc. We treat them
     // as empty so they don't pollute the comma-joined Supplier /
     // Utility cells.
     const isPlaceholder = (s) => {
       const t = String(s || '').trim();
       if (!t) return true;
-      if (/^[-\u2013\u2014_]+$/.test(t)) return true; // dashes / em / en / underscore
+      if (/^[-\u2013\u2014_]+$/.test(t)) return true; // em-dash-ok: reads pasted cells (dash / em / en / underscore)
       if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
       return false;
     };
@@ -6879,14 +6879,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Helper: write a single space into an "empty" cell so long text
     // in the cell to the left can't overflow into this cell visually.
     // Excel will normally flag a space inside a number-formatted cell
-    // with the green "number stored as text" triangle — we suppress
+    // with the green "number stored as text" triangle - we suppress
     // that indicator on those cells via ignoredErrors so the sheet
     // stays clean.
     const writeBlank = (cell, hasNumFmt) => {
       cell.value = ' ';
       if (hasNumFmt) cell.ignoredErrors = { numberStoredAsText: true };
     };
-    // Integer-display formats — anything Excel would render with no
+    // Integer-display formats - anything Excel would render with no
     // decimals. Spend / consumption / sites columns all flow through
     // here; rate / price columns ('$0.000') keep their precision.
     const isIntegerFmt = (fmt) => fmt === '#,##0' || fmt === '"$"#,##0';
@@ -6898,9 +6898,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Coerce a value into a real Excel-date-typed cell value when the
     // column is flagged as a date column.
     //  - Date instance → returned as-is.
-    //  - Excel serial number (1-73050, covering 1900 – 2099) — whether
+    //  - Excel serial number (1-73050, covering 1900 – 2099) - whether
     //    arriving as a JS number or a numeric string from xlsxParse's
-    //    raw:true read — gets converted to a JS Date.
+    //    raw:true read - gets converted to a JS Date.
     //  - Date-like string ("3/15/2025", "Mon Jan 15 2024 …") goes
     //    through new Date() and is returned as a Date when parseable.
     //  - Everything else (e.g. 'TBD', blanks, unparseable strings)
@@ -6914,9 +6914,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (Number.isFinite(asNum) && asNum >= 1 && asNum < 73050) {
         // Excel's date epoch is 1899-12-30 (matching its 1900-leap-year
         // bug for any realistic date past 1900-03-01). Adding asNum
-        // days from that epoch — in UTC, to avoid local-timezone DST
+        // days from that epoch - in UTC, to avoid local-timezone DST
         // shifts that would flip the displayed day on either side of
-        // midnight — yields the right calendar day in Excel.
+        // midnight - yields the right calendar day in Excel.
         const ms = Date.UTC(1899, 11, 30) + asNum * 86400000;
         const d = new Date(ms);
         if (Number.isFinite(d.getTime())) return d;
@@ -6949,7 +6949,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       };
       cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
     };
-    // Month-level gate for the Monthly Savings Breakdown sheet —
+    // Month-level gate for the Monthly Savings Breakdown sheet -
     // zeroes any month column whose 1-indexed position is past the
     // term-length × 12 mark.
     const writeMonthGatedConstant = (cell, value, monthNum) => {
@@ -6978,7 +6978,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const siteRows = [];
       for (const r of rows) {
         const state = effectiveStateCode(r);
-        // International (non-US/Canada) sites bucket by country —
+        // International (non-US/Canada) sites bucket by country -
         // pulled from the row's resolved country tag and matched against
         // the COUNTRY_DEREGULATION reference. Falls back to skipping the
         // row when there's neither a state nor a recognized country.
@@ -7040,7 +7040,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           }
           g = {
             // `state` here is the bucket label that lands in the ST /
-            // Prov / Country column — either a US/CA state code or a
+            // Prov / Country column - either a US/CA state code or a
             // country name. Lookup uses bucketKey above so two buckets
             // can't ever collide.
             state: isCountryBucket ? country : state,
@@ -7050,7 +7050,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             lowPct: bandLowPct,
             highPct: bandHighPct,
             // True when the country's Power Rate Optimization column is
-            // Deregulated or Some deregulation — drives the country-
+            // Deregulated or Some deregulation - drives the country-
             // level reg-rate motion below. Always false for US/CA
             // buckets, which use the per-utility curated list instead.
             countryRegRateOpportunity,
@@ -8512,7 +8512,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // raises.
       const nonNaSites = Math.max(0, rows.length - naSites);
       sumHdr.value = nonNaSites > 0
-        ? `NA Overview — ${naSites.toLocaleString()} of ${rows.length.toLocaleString()} sites are in the US / Canada. `
+        ? `NA Overview - ${naSites.toLocaleString()} of ${rows.length.toLocaleString()} sites are in the US / Canada. `
           + `The other ${nonNaSites.toLocaleString()} sit outside North America and are counted on the Portfolio Overview sheet.`
         : 'NA Overview';
       sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
@@ -11447,14 +11447,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               detailRow('Summary', prof.summary, { muted: true });
               detailRow(
                 'Reports',
-                prof.reports.map(r => `${r.title}${r.year ? ` (${r.year})` : ''} — ${r.url}`).join('\n'),
+                prof.reports.map(r => `${r.title}${r.year ? ` (${r.year})` : ''} - ${r.url}`).join('\n'),
               );
             }
 
             const stNoteNum = sumRow++;
             summarySheet.mergeCells(stNoteNum, 1, stNoteNum, SUM_NCOLS);
             const stNote = summarySheet.getCell(stNoteNum, 1);
-            stNote.value = 'Sustainability commitments and disclosures per company, from the company page\u2019s Sustainability Targets field and its saved Claude research. Targets marked * came from research and have not been confirmed on the company page. A framework marked \u201Cclaimed, unverified\u201D is one the research narrative names without finding a published report under it \u2014 check the reports listed before relying on it.';
+            stNote.value = 'Sustainability commitments and disclosures per company, from the company page\u2019s Sustainability Targets field and its saved Claude research. Targets marked * came from research and have not been confirmed on the company page. A framework marked \u201Cclaimed, unverified\u201D is one the research narrative names without finding a published report under it - check the reports listed before relying on it.';
             stNote.font = { name: 'Nunito Sans', italic: true, size: 9.5, color: { argb: SE_SLATE } };
             stNote.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
             summarySheet.getRow(stNoteNum).height = 30;
@@ -11921,7 +11921,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const legendRowIdx = 2 + sitesForDetail.length + 1;
       const legendRow = detailSheet.getRow(legendRowIdx);
       const legendCell = legendRow.getCell(1);
-      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated: annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the Est. rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.\n\nRates: Est. is the indicative market rate for the site’s state / country. Actual is the blended rate the uploaded numbers imply — annual spend ÷ annual consumption — and is shown only where the file supplied a real spend, since a cost this tool derived from the indicative rate would divide back out to that same rate. vs Est. is the signed gap: +20% means the site pays 20% more per unit than the market indication. Note the two are not like for like where the uploaded spend is all-in (supply plus delivery) and the indication is not.\n\nEnergy intensity: consumption ÷ Size (ft²), shown next to the per-ft² estimate the site’s property type carries (the reference profile’s consumption ÷ its reference size — unchanged by the site’s own square footage, since the estimate scales linearly). The vs Est. columns are the signed gap between the two: +30% means the site uses 30% more per ft² than its type suggests. Amber marks a 10–25% gap, red 25%+ — worth checking the consumption figure and the property type on that row. Total intensity is electric plus gas converted at 293.07 kWh per Dth, counting a commodity with no figure as zero, so an electric-only site reads low against a type whose estimate includes gas. Cells stay blank where the site has no square footage, or where its property type carries no consumption profile. Where the consumption itself was modeled (italic amber), the gap is 0% by construction.';
+      legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated: annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the Est. rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.\n\nRates: Est. is the indicative market rate for the site’s state / country. Actual is the blended rate the uploaded numbers imply - annual spend ÷ annual consumption - and is shown only where the file supplied a real spend, since a cost this tool derived from the indicative rate would divide back out to that same rate. vs Est. is the signed gap: +20% means the site pays 20% more per unit than the market indication. Note the two are not like for like where the uploaded spend is all-in (supply plus delivery) and the indication is not.\n\nEnergy intensity: consumption ÷ Size (ft²), shown next to the per-ft² estimate the site’s property type carries (the reference profile’s consumption ÷ its reference size - unchanged by the site’s own square footage, since the estimate scales linearly). The vs Est. columns are the signed gap between the two: +30% means the site uses 30% more per ft² than its type suggests. Amber marks a 10–25% gap, red 25%+ - worth checking the consumption figure and the property type on that row. Total intensity is electric plus gas converted at 293.07 kWh per Dth, counting a commodity with no figure as zero, so an electric-only site reads low against a type whose estimate includes gas. Cells stay blank where the site has no square footage, or where its property type carries no consumption profile. Where the consumption itself was modeled (italic amber), the gap is 0% by construction.';
       legendCell.font = { name: 'Nunito Sans', size: 9, italic: true, color: { argb: SE_EST } };
       legendCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       detailSheet.mergeCells(legendRowIdx, 1, legendRowIdx, Math.min(detailCols.length, 8));
@@ -13567,7 +13567,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // ---- Section 2: Account-count methodology ----
       sectionBanner('2. Utility Account and Equipment Estimates');
-      paragraph('Per-site utility-account counts (Water / Steam / Gas / Electric / Waste) are looked up by property type from a reference table. "Multiple" is treated as 3 for roll-up totals; "0 – 1" ranges as 0.5. "N/A" cells contribute 0 to totals so they do not skew portfolio sums. The displayed cell preserves the original label ("Multiple", "0 – 1", "N/A") rather than substituting the numeric placeholder. The last column is the equipment a typical site of that type carries — the connected assets in the building rather than the bills it sends — looked up from the same property type and applied per site, unscaled by square footage. Land and Debt carry no building and so no equipment.');
+      paragraph('Per-site utility-account counts (Water / Steam / Gas / Electric / Waste) are looked up by property type from a reference table. "Multiple" is treated as 3 for roll-up totals; "0 – 1" ranges as 0.5. "N/A" cells contribute 0 to totals so they do not skew portfolio sums. The displayed cell preserves the original label ("Multiple", "0 – 1", "N/A") rather than substituting the numeric placeholder. The last column is the equipment a typical site of that type carries - the connected assets in the building rather than the bills it sends - looked up from the same property type and applied per site, unscaled by square footage. Land and Debt carry no building and so no equipment.');
       blank();
       headerRow(['Property Type', 'Water', 'Steam', 'Gas', 'Electric', 'Waste', 'Equipment']);
       const accountRows = Object.entries(ACCOUNT_ESTIMATES);
@@ -13583,7 +13583,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // ---- Section 3: Country deregulation reference ----
       sectionBanner('3. Country Deregulation Reference');
-      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend): except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend): the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion, and so does "Not served" — a market we will not buy energy in, which earns no savings whatever its own structure. Those countries are shown grey on the market maps alongside the regulated ones, and named here so the reason is not mistaken for a claim about the market itself.');
+      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend): except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend): the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion, and so does "Not served" - a market we will not buy energy in, which earns no savings whatever its own structure. Those countries are shown grey on the market maps alongside the regulated ones, and named here so the reason is not mistaken for a claim about the market itself.');
       blank();
       headerRow(['Country', 'Region', 'Electric Power', 'Gas', 'Power Rate Optimization', '', '']);
       const countryRows = Object.entries(COUNTRY_DEREGULATION)
@@ -13837,9 +13837,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         {
           alert: 'Large European market',
           commodity: 'Electric and natural gas (per European country)',
-          trigger: 'Country-level total consumption — every site in the country, regulated and unclassified included — for a country in the Europe / Europe-Asia region. Gas is compared in kWh-equivalent (1 Dth = 293.0 kWh)',
+          trigger: 'Country-level total consumption - every site in the country, regulated and unclassified included - for a country in the Europe / Europe-Asia region. Gas is compared in kWh-equivalent (1 Dth = 293.0 kWh)',
           threshold: `> ${EUROPE_VOLUME_GWH} GWh / yr, per commodity`,
-          action: 'Volume worth a look in this country. Europe quotes a TBD savings band, so no savings column ranks these markets and this is what does — it reports load, not sourceability: read the country\'s row for whether the market is open to us.',
+          action: 'Volume worth a look in this country. Europe quotes a TBD savings band, so no savings column ranks these markets and this is what does - it reports load, not sourceability: read the country\'s row for whether the market is open to us.',
         },
         {
           alert: 'Wholesale Plus',
@@ -14526,7 +14526,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       generatedAt: new Date().toLocaleString('en-US'),
       companyName: company,
       scopeNote: divisionFilter
-        ? `Scoped to ${activeDivisionLabel()} — clear the Division filter on the Utility Lookup page to export every division`
+        ? `Scoped to ${activeDivisionLabel()} - clear the Division filter on the Utility Lookup page to export every division`
         : '',
     });
 
@@ -14848,7 +14848,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const noMapNote = nameMapRows.length > 0
         ? ''
         : nameMapUnavailable
-          ? 'The Utility Name Mapping table could not be read on this device, so no site could be mapped or confirmed for interval data — these three sheets are the only ones affected, and re-running the export once the table loads fills them in. '
+          ? 'The Utility Name Mapping table could not be read on this device, so no site could be mapped or confirmed for interval data - these three sheets are the only ones affected, and re-running the export once the table loads fills them in. '
           : 'No utility list is loaded on the Utility Name Mapping tab, so no site can be mapped or confirmed for interval data yet. ';
       sub.value = `${noMapNote}${detailRows.length} site${detailRows.length === 1 ? '' : 's'} · ${coverageLine}. Mapping: ${totMapped} mapped to a known utility · ${totUnmapped} in the table but unmapped · ${totNotInList} not in the mapping list. Interval data: ${totIntervalYes} yes · ${totIntervalNo} no · ${totalSites - totIntervalYes - totIntervalNo} unknown (utility Status blank or not in the mapping list). Each NA state / province is shaded by the share of its portfolio sites whose electric utility is mapped to a known utility (light → dark green); states with no portfolio sites stay light grey.`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
@@ -15443,7 +15443,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               onChange={(e) => setDivisionFilter(e.target.value)}
               title={divisionFilter
                 ? `Every tab and every export on this page is scoped to ${activeDivisionLabel()}. Pick "All divisions" to widen it back out.`
-                : 'Narrow every tab on this page — the site table, the compliance screening, the roadmap and all exports — to a single division.'}
+                : 'Narrow every tab on this page - the site table, the compliance screening, the roadmap and all exports - to a single division.'}
               style={{
                 maxWidth: 240, padding: '0.22rem 0.4rem', fontFamily: 'inherit',
                 fontSize: '0.75rem', fontWeight: divisionFilter ? 700 : 500,
@@ -15529,7 +15529,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               const label = manualAccounts != null ? 'Utility accounts' : 'Est. utility accounts';
               const whyNoEstimate = accountStats.withRawType > 0
                 ? 'Utility accounts are estimated per property type, and none of this upload\u2019s property types is mapped to one of the reference types. Map them with the Property Types button, or type the total here.'
-                : 'Utility accounts are estimated per property type, and no Property Type column is mapped on this upload. Map one with Update Column Mapping — or set it on the sites with Mass edit — or type the total here.';
+                : 'Utility accounts are estimated per property type, and no Property Type column is mapped on this upload. Map one with Update Column Mapping - or set it on the sites with Mass edit - or type the total here.';
               const title = [
                 manualAccounts != null
                   ? `${manualAccounts.toLocaleString()} utility accounts, entered by hand${accountsCompany ? ` for ${accountsCompany}` : ''}. This is what the page shows and what Save to Company writes onto Number of Accounts.`
@@ -15546,7 +15546,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   ? `Biggest contributors:\n${accountStats.byType.slice(0, 6).map(t => `  • ${t.name}: ${fmtAccounts(Math.round(t.accounts * 10) / 10)} across ${t.sites} site${t.sites === 1 ? '' : 's'}`).join('\n')}`
                   : '',
                 accountsKey === UNFILED_ACCOUNTS_KEY
-                  ? 'Click to type the real total. Nothing here names a company yet, so a typed total is held against this page rather than a company — set the Portfolio company (or map a Company Name column) and it files itself under that company instead.'
+                  ? 'Click to type the real total. Nothing here names a company yet, so a typed total is held against this page rather than a company - set the Portfolio company (or map a Company Name column) and it files itself under that company instead.'
                   : `Click to type the real total; it is remembered for ${accountsCompany} across uploads. Clear the box to go back to the estimate.`,
               ].filter(Boolean).join('\n\n');
               return (
@@ -15585,12 +15585,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                         color: shown == null ? '#B45309' : '#0F766E',
                         textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 2,
                       }}
-                    >{shown == null ? '—' : shown.toLocaleString()}</button>
+                    >{shown == null ? '-' : shown.toLocaleString()}</button>
                   )}
                   {manualAccounts != null ? (
                     <>
                       <span
-                        title="Entered by hand — the property-type estimate is not being used."
+                        title="Entered by hand - the property-type estimate is not being used."
                         style={{
                           marginLeft: 4, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase',
                           letterSpacing: '0.03em', padding: '0.05rem 0.35rem', borderRadius: 999,
@@ -15612,7 +15612,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                     </>
                   ) : shown == null ? (
                     <span style={{ color: '#B45309' }}>
-                      {' '}({accountStats.withRawType > 0 ? 'property types unmapped' : 'no property type on this upload'} — click to enter)
+                      {' '}({accountStats.withRawType > 0 ? 'property types unmapped' : 'no property type on this upload'} - click to enter)
                     </span>
                   ) : accountStats.unknown > 0 ? (
                     <span style={{ color: '#B45309' }}>
@@ -15660,7 +15660,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 style={{ color: '#B45309' }}
                 title={`No consumption estimated for these property types (they're still included everywhere): ${unestimatedSites.byType.map(t => `${t.raw} (${t.count})`).join(', ')}`}
               >
-                {' '}(incl. {unestimatedSites.total.toLocaleString()} not estimated — N/A: {unestimatedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
+                {' '}(incl. {unestimatedSites.total.toLocaleString()} not estimated - N/A: {unestimatedSites.byType.slice(0, 3).map(t => t.raw).join(', ')}
                 {unestimatedSites.byType.length > 3 ? ` +${unestimatedSites.byType.length - 3} more` : ''})
               </span>
             )}
@@ -15676,7 +15676,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   borderRadius: 999, padding: '0.05rem 0.5rem', fontWeight: 700,
                   marginLeft: '0.35rem', cursor: 'help', whiteSpace: 'nowrap',
                 }}
-                title={`${contractPriceUomFlags.detail}.\n\nContract prices are carried exactly as the file wrote them — nothing converts between units — but every column that reports one calls it ${priceUomLabel('electric')} or ${priceUomLabel('gas')}. A dekatherm is ten therms, so a $4.50/Dth price read as $/therm reports 10× the real rate; $45/MWh read as $/kWh reports 1000×. The Supplier Contracts rollup also averages prices across sites by consumption, which mixes units where they differ.\n\nRestate the affected prices in ${priceUomLabel('electric')} / ${priceUomLabel('gas')} in the source file, or read those columns as the units listed above.`}
+                title={`${contractPriceUomFlags.detail}.\n\nContract prices are carried exactly as the file wrote them - nothing converts between units - but every column that reports one calls it ${priceUomLabel('electric')} or ${priceUomLabel('gas')}. A dekatherm is ten therms, so a $4.50/Dth price read as $/therm reports 10× the real rate; $45/MWh read as $/kWh reports 1000×. The Supplier Contracts rollup also averages prices across sites by consumption, which mixes units where they differ.\n\nRestate the affected prices in ${priceUomLabel('electric')} / ${priceUomLabel('gas')} in the source file, or read those columns as the units listed above.`}
               >
                 ⚠ {contractPriceUomFlags.total.toLocaleString()} contract price{contractPriceUomFlags.total === 1 ? '' : 's'} not in {priceUomLabel('electric')} or {priceUomLabel('gas')}
               </span>
@@ -16300,7 +16300,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         {sitesData.length > 0 && (
           <span
             style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}
-            title="Double-click a cell in the table to retype it. It writes the uploaded column behind that cell, so the utility, rate, cost and compliance figures derived from it move with it. Utility, rate, market and the property-type estimates are computed, so they aren't editable — change what they read from instead."
+            title="Double-click a cell in the table to retype it. It writes the uploaded column behind that cell, so the utility, rate, cost and compliance figures derived from it move with it. Utility, rate, market and the property-type estimates are computed, so they aren't editable - change what they read from instead."
           >
             or double-click any cell to edit it
           </span>
@@ -16345,7 +16345,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             <option value="">Column to set…</option>
             {editableSiteColumns.map(c => (
               <option key={c.header} value={c.header}>
-                {c.label}{c.sub ? ` — ${c.sub}` : ''}
+                {c.label}{c.sub ? ` - ${c.sub}` : ''}
               </option>
             ))}
           </select>
@@ -16400,7 +16400,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           {/* Said once, here: the edit rewrites the uploaded rows, and
               every derived number on this page is computed from them. */}
           <span className={styles.massNote}>
-            Writes into the uploaded site rows and saves — the utility, rate, cost and compliance
+            Writes into the uploaded site rows and saves - the utility, rate, cost and compliance
             figures re-derive from the new value.
           </span>
         </div>
@@ -16439,7 +16439,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'companyName', label: 'Company Name', required: false, hint: 'Company / portfolio the site belongs to. Surfaced as a column on the Utility Lookup page and used to name the Indicative Savings export file (e.g. "Acme Corp_Indicative Savings Analysis.xlsx").' },
-            { key: 'division', label: 'Division/Portfolio Company', required: false, hint: 'Division / portfolio company / business unit / operating brand the site belongs to — one level under Company Name. Passthrough only; surfaced as its own column on the Utility Lookup page so a portfolio spanning several divisions can be read and filtered apart.' },
+            { key: 'division', label: 'Division/Portfolio Company', required: false, hint: 'Division / portfolio company / business unit / operating brand the site belongs to - one level under Company Name. Passthrough only; surfaced as its own column on the Utility Lookup page so a portfolio spanning several divisions can be read and filtered apart.' },
             { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field: surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
             { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
@@ -16447,7 +16447,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.): drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
             { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
-            { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" (plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L")) are folded onto the canonical labels; anything else is shown as-is so nothing is lost. A value that also names the lease shape — "suite", "floor", "multi-tenant", or "whole building", "single-tenant", "NNN" — is read as that, and the site is estimated on what the tenant holds instead of on the whole building.' },
+            { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" (plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L")) are folded onto the canonical labels; anything else is shown as-is so nothing is lost. A value that also names the lease shape - "suite", "floor", "multi-tenant", or "whole building", "single-tenant", "NNN" - is read as that, and the site is estimated on what the tenant holds instead of on the whole building.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional: when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
@@ -16470,7 +16470,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { key: 'gasProductType', label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract (Fixed, NYMEX + Basis, Index, etc.).' },
           ];
           // The full set of columns that show up on the Utility Lookup
-          // table after import — split into the mapped inputs above
+          // table after import - split into the mapped inputs above
           // and the auto-derived / lookup-driven columns the page
           // generates for free.
           const DERIVED_COLUMNS = [
@@ -16517,8 +16517,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const missingRequired = TARGET_FIELDS
             .filter(t => t.required && !active.mapping[t.key])
             .map(t => t.label);
-          // Consumption comes from a mapped electric/gas column, or — when
-          // none is mapped — is modeled from Property Type. With neither,
+          // Consumption comes from a mapped electric/gas column, or - when
+          // none is mapped - is modeled from Property Type. With neither,
           // every consumption (and therefore cost and savings) figure is
           // null, which is easy to miss until the table renders empty. All
           // three are optional, so this warns rather than blocks.
@@ -16532,7 +16532,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // as on the page after import.
           const noTenureCol = !active.mapping.ownership;
           // "Assume all owned / all leased" shortcut for a file with no
-          // tenure column at all — a single-tenure portfolio (every site
+          // tenure column at all - a single-tenure portfolio (every site
           // owned, or every site leased) is common enough that making the
           // user add a column to the workbook and re-upload is the wrong
           // ask. The assumption is written onto the rows as a real column
@@ -16632,7 +16632,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                 {noTenureCol && (
                   <div style={{ margin: '0 0 0.5rem', padding: '0.45rem 0.6rem', background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 6, fontSize: '0.75rem', color: '#92400E' }}>
                     <strong>⚠ No Tenure (Owned / Leased) column mapped.</strong>{' '}
-                    Nothing is mapped to <strong>Ownership (Owned / Leased)</strong>, so no site will carry a tenure status and the whole list reads as owned outright: the compliance subtabs will screen every building for obligations that fall on the owner, and the Master Analysis will project procurement savings on the full deregulated spend. Map the column if the file has one — this is a warning, not a blocker.
+                    Nothing is mapped to <strong>Ownership (Owned / Leased)</strong>, so no site will carry a tenure status and the whole list reads as owned outright: the compliance subtabs will screen every building for obligations that fall on the owner, and the Master Analysis will project procurement savings on the full deregulated spend. Map the column if the file has one - this is a warning, not a blocker.
                     {/* No column to map, because the whole portfolio is one
                         tenure: say so here instead of editing the file. */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.45rem', flexWrap: 'wrap' }}>

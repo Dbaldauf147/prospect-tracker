@@ -809,7 +809,7 @@ function LookupMappingModal({ grid, onCancel, onConfirm }) {
 // ---- Configurable / resizable table columns ----------------------
 // Column visibility + widths are personal display prefs, so they live in
 // localStorage (keyed per table) rather than the synced Firestore event
-// settings — same approach the Key Contacts table uses.
+// settings - same approach the Key Contacts table uses.
 const LS_PREFIX = 'events-view';
 function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
 function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
@@ -1492,7 +1492,7 @@ export function EventsView({
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
 
-  // HubSpot contacts tagged "Decision Maker" — used to surface the
+  // HubSpot contacts tagged "Decision Maker" - used to surface the
   // decision maker(s) for each lookup company right under its row.
   const decisionMakerContacts = useMemo(
     () => (contacts || []).filter(isDecisionMaker),
@@ -1594,7 +1594,7 @@ export function EventsView({
     () => (selected && Array.isArray(selected.attendees) ? selected.attendees : []),
     [selected],
   );
-  // Mapped attendees that resolve to a synced HubSpot contact — the only
+  // Mapped attendees that resolve to a synced HubSpot contact - the only
   // ones the bulk tag editor can write to.
   const taggableAttendees = useMemo(
     () => attendees.filter(a => a.contactId && contactsById.has(String(a.contactId))),
@@ -1603,7 +1603,7 @@ export function EventsView({
 
   // ---- Add attendees to HubSpot ------------------------------------
   // The email domain(s) a user has explicitly mapped on the matched
-  // Table View prospect record (bare domain, full address, or URL —
+  // Table View prospect record (bare domain, full address, or URL -
   // normalized to a hostname). Defined here so both the Email Domain
   // column and the add-to-HubSpot helpers below can reuse it.
   const savedDomainsFor = (company) => {
@@ -1643,7 +1643,7 @@ export function EventsView({
 
   // The address we'd create this attendee in HubSpot with: their existing
   // email when valid, otherwise one guessed from the company's email
-  // domain + the contact's name — so manually-added attendees that only
+  // domain + the contact's name - so manually-added attendees that only
   // have a known domain (no typed email yet) can still be added. Returns
   // { email, guessed }; email is '' when nothing usable can be built.
   const effectiveAttendeeEmail = (a) => {
@@ -1659,7 +1659,7 @@ export function EventsView({
 
   // Can this attendee be created in HubSpot? Only when it isn't already
   // there (reuses the "In HubSpot" column's attendeeInHubspot check) and
-  // we can resolve an email for it — a typed one, or a guess from the
+  // we can resolve an email for it - a typed one, or a guess from the
   // company's email domain.
   const canAddToHubSpot = (a) => {
     if (attendeeInHubspot(a)) return false;
@@ -1802,7 +1802,7 @@ export function EventsView({
     && visibleTaggable.every(({ a }) => selectedContactIds.has(String(a.contactId)));
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
   // Normalized companies that already have a contact on the attendee
-  // list — their lookup rows are "done" and drop out of the worklist.
+  // list - their lookup rows are "done" and drop out of the worklist.
   const attendeeCompanies = useMemo(() => {
     const set = new Set();
     for (const a of attendees) {
@@ -2397,7 +2397,7 @@ export function EventsView({
                   {lookups.map((l, i) => {
                     const prospect = matchProspect(l.company);
                     // Drop rows whose company already has a contact on the
-                    // attendee list — they're done. Reappears if removed.
+                    // attendee list - they're done. Reappears if removed.
                     if (attendeeCompanies.has(normalizeCompany(l.company))) return null;
                     // Apply the CDM filter (kept on original index i so
                     // edit / remove still target the right row).

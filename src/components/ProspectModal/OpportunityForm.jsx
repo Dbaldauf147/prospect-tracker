@@ -1758,7 +1758,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const lines = String(data.body).split(/\r?\n/);
       for (const line of lines) {
         if (!out.start) {
-          const m = line.match(/^\s*(?:When|Time|Start)\s*[-:\u2013\u2014]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:When|Time|Start)\s*[-:\u2013\u2014]\s*(.+)$/i); // em-dash-ok: parses Outlook agendas
           if (m) {
             const cleaned = m[1].replace(/\s+\([^)]+\)\s*$/, '').trim();
             const d = new Date(cleaned);
@@ -1766,7 +1766,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           }
         }
         if (!out.location) {
-          const m = line.match(/^\s*(?:Where|Location)\s*[-:\u2013\u2014]\s*(.+)$/i);
+          const m = line.match(/^\s*(?:Where|Location)\s*[-:\u2013\u2014]\s*(.+)$/i); // em-dash-ok: parses Outlook agendas
           if (m) out.location = m[1].trim();
         }
       }
@@ -3093,7 +3093,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         </div>
       )}
 
-      {/* Meeting drop zone — drag an Outlook .ics file in to auto-fill */}
+      {/* Meeting drop zone - drag an Outlook .ics file in to auto-fill */}
       <div
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(true); }}
         onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(false); }}

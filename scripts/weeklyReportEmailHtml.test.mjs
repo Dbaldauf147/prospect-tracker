@@ -115,7 +115,7 @@ check('every table is a presentation table with no spacing',
   tables.every(t => t.includes('role="presentation"') && t.includes('cellspacing="0"') && t.includes('cellpadding="0"')),
   true);
 
-// Bars are drawn as table cells with a bgcolor — never as a coloured div
+// Bars are drawn as table cells with a bgcolor - never as a coloured div
 // alone, and never as a picture, which a client can refuse to load.
 //
 // The tallest bar in a series is the scale: 44 emails is the max, so it is
@@ -140,7 +140,7 @@ check('the current month carries the opps accent',
 check('a funnel bar uses the chart’s own stage colour',
   html.includes('bgcolor="#104281"'), true);
 // The stage bars are a fixed column too, and the one column in the report
-// that is decoration rather than figures — so it is also the one a phone
+// that is decoration rather than figures - so it is also the one a phone
 // drops, rather than carrying a 260px column no phone has room for.
 check('a funnel bar is sized in pixels like the trend bars',
   /<td width="\d+" height="12" bgcolor="#104281"/.test(html), true);
@@ -150,7 +150,7 @@ check('the stage-bar column is droppable on a narrow client',
 // ---- The close rate trend -------------------------------------------------
 // The grid under the funnel. Its two colour cues are the stage swatch beside
 // each row's name and the green behind a six-month figure running ahead of
-// its rolling year — both of which have to be cells with a bgcolor, since a
+// its rolling year - both of which have to be cells with a bgcolor, since a
 // coloured span is padding Word drops and a background shorthand is the
 // broken-image placeholder.
 check('a trend row’s swatch is a bgcolor cell, sized in both places',
@@ -159,7 +159,7 @@ check('the total row sits outside the stage ramp',
   html.includes('bgcolor="#64748B"'), true);
 check('the "ahead of the year" green is its own cell inside the column',
   /<td bgcolor="#DCFCE7"/.test(html), true);
-// The arrow is what carries the cue where the colour doesn't — a client that
+// The arrow is what carries the cue where the colour doesn't - a client that
 // strips backgrounds, a reader who can't separate the green from the ink.
 check('and it ships with the arrow, not the colour alone',
   html.includes('&#9650; 44%'), true);
@@ -215,7 +215,7 @@ check('the projected total is readable text under the picture',
     capturedAt: Date.parse('2026-09-03T16:00:00Z'),
     periodEnd: Date.parse('2026-09-06T23:59:59Z'),
     scope: 'week',
-    periodLabel: 'Mon, Aug 31 — Sun, Sep 6, 2026',
+    periodLabel: 'Mon, Aug 31 - Sun, Sep 6, 2026',
     trends: { emailsByWeek: [{ key: '2026-08-31', label: 'Aug 31', value: 0, recorded: true }], newOppsByMonth: [] },
   }, {});
   const banner = stale.indexOf('These numbers are');
@@ -236,7 +236,7 @@ check('the projected total is readable text under the picture',
   const current = renderWeeklyReportHtml({
     capturedAt: Date.parse('2026-09-07T05:00:00Z'),
     periodEnd: Date.parse('2026-09-06T23:59:59Z'),
-    periodLabel: 'Mon, Aug 31 — Sun, Sep 6, 2026',
+    periodLabel: 'Mon, Aug 31 - Sun, Sep 6, 2026',
   }, {});
   check('a current report carries no banner',
     current.includes('These numbers are'), false);

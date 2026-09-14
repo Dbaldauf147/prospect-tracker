@@ -14,8 +14,8 @@ export function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-// The signature the drafts should carry: the user's saved signature, or —
-// for the admin account only — the bundled default, matching how the
+// The signature the drafts should carry: the user's saved signature, or -
+// for the admin account only - the bundled default, matching how the
 // Draft Emails page resolves it. Non-admins with no saved signature get
 // none rather than Dan's personal block.
 export function resolveSignature(settings, isAdmin) {

@@ -438,7 +438,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       {
         key: 'progress',
         label: 'Progress to target',
-        value: p.pct == null ? '—' : `${p.pct.toFixed(1)}%`,
+        value: p.pct == null ? '-' : `${p.pct.toFixed(1)}%`,
         status: p.status,
         chip: p.status ? (p.status === 'ahead' ? 'Ahead of pace' : 'Behind pace') : null,
         lines: progressLines,
@@ -446,7 +446,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       {
         key: 'coverage',
         label: 'Coverage ratio',
-        value: c.actual == null ? '—' : `${c.actual.toFixed(2)}×`,
+        value: c.actual == null ? '-' : `${c.actual.toFixed(2)}×`,
         status: c.status,
         chip: c.status ? (c.status === 'ahead' ? 'At goal' : 'Below goal') : null,
         lines: coverageLines,
@@ -454,7 +454,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       {
         key: 'projected',
         label: 'Projected year-end sales',
-        value: j.amount == null ? '—' : fmtCompactMoney(j.amount),
+        value: j.amount == null ? '-' : fmtCompactMoney(j.amount),
         status: j.status,
         chip: j.status ? (j.status === 'ahead' ? 'Clears target' : 'Short of target') : null,
         lines: projectedLines,
@@ -657,7 +657,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
               type="button"
               className={styles.ghostBtn}
               onClick={() => setEmailModalOpen(true)}
-              title="Send this report on a schedule — e.g. every Monday at 06:00"
+              title="Send this report on a schedule - e.g. every Monday at 06:00"
             >Email this report</button>
             <button
               type="button"
@@ -679,7 +679,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
           <div className={styles.kpiHead}>
             <h2 className={styles.sectionHead}>Where the year stands</h2>
             <span className={styles.kpiHeadNote}>
-              Year to date — not scoped to the week picker
+              Year to date - not scoped to the week picker
             </span>
           </div>
           {kpisReady ? (

@@ -91,7 +91,7 @@ export function splitInlineImages(html) {
  * multipart/related carrying the HTML and every image, which is the shape
  * that makes `cid:` references resolve.
  *
- * Returns { contentType, body } — `contentType` is the value for the
+ * Returns { contentType, body } - `contentType` is the value for the
  * Content-Type header of the section, `body` everything below it.
  */
 export function buildHtmlSection(htmlContent) {

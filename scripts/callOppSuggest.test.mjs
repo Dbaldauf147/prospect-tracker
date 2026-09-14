@@ -45,7 +45,7 @@ const names = (out) => out.map(c => c.opp.Account);
   // title, so this is the token path rather than the phrase one — worth
   // pinning, since it is how most real titles match.
   ok(out[0].reasons.some(r => r.includes('massmutual')), 'naming the word that matched');
-  const exact = suggestOppsForCall({ name: 'MassMutual Financial Group — quarterly review' }, OPPS);
+  const exact = suggestOppsForCall({ name: 'MassMutual Financial Group - quarterly review' }, OPPS);
   ok(exact[0].reasons.some(r => r.includes('call title')), 'a title carrying the whole account name says so');
   // The Kenco opp mentions MassMutual in its notes — worth offering, but
   // never ahead of the account that IS MassMutual.
@@ -118,9 +118,9 @@ const names = (out) => out.map(c => c.opp.Account);
     opp('e', 'Ettinger Engineering', { Scope: 'Gas' }),
     opp('f', 'Ettinger Engineering', { Scope: 'Power' }),
   ];
-  const out = suggestOppsForCall({ name: 'Ettinger Engineering — quarterly' }, many);
+  const out = suggestOppsForCall({ name: 'Ettinger Engineering - quarterly' }, many);
   eq(out.length, 4, 'the list is capped rather than dumping every opp on the account');
-  eq(suggestOppsForCall({ name: 'Ettinger Engineering — quarterly' }, many, { limit: 2 }).length, 2,
+  eq(suggestOppsForCall({ name: 'Ettinger Engineering - quarterly' }, many, { limit: 2 }).length, 2,
     'and the cap is the caller’s to set');
 }
 

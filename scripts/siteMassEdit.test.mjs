@@ -48,7 +48,7 @@ const MAPPING = {
     'an unmapped pass-through column is offered under its own header');
   eq(cols.find(c => c.header === 'Internal Ref').mapped, false, 'and is marked unmapped');
   ok(!cols.some(c => c.header === 'Facility'),
-    'the site name column is never offered — it is the row’s identity, not data to overwrite');
+    'the site name column is never offered - it is the row’s identity, not data to overwrite');
 
   const typed = cols.find(c => c.header === 'Annual kWh');
   eq(typed.type, 'number', 'a consumption column takes a number');
@@ -187,7 +187,7 @@ const file = () => ([
     'and a mapped column is still editable under its own header');
 
   ok(!editors.has('Facility'),
-    'the site name column stays unavailable — the mass bar’s rule, not a second one');
+    'the site name column stays unavailable - the mass bar’s rule, not a second one');
   // Computed columns have no source cell. Offering one would take an edit
   // that the next render overwrites, which is worse than not offering it.
   for (const computed of ['electric_rate', 'electric_market', 'iso', 'totalCost', 'estAccounts', 'gac_opportunity']) {

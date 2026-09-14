@@ -340,7 +340,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const plan = planNoFee({ names: selectedNames, pricing, on, bases });
     if (plan.change.length === 0) {
       setBulkStatus({ type: 'ok', message: on
-        ? `Already marked no fee — nothing to change (${plan.same.length} selected).`
+        ? `Already marked no fee - nothing to change (${plan.same.length} selected).`
         : `None of the ${plan.same.length} selected carry the mark.` });
       return;
     }
@@ -354,7 +354,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const cleared = on && plan.clearing.length > 0 ? `, clearing ${plan.clearing.length} rate card${plan.clearing.length === 1 ? '' : 's'}` : '';
     setBulkStatus({ type: 'ok', message: on
       ? `Marked ${plan.change.length} no fee${cleared}.`
-      : `Took the mark off ${plan.change.length} — ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
+      : `Took the mark off ${plan.change.length} - ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
   }
 
   // Why the box is ticked, which is a different sentence when the bucket
@@ -363,10 +363,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   function noFeeTitle(row) {
     if (row._noFeeByBucket) {
       return `In ${row.serviceBucket}: a retired service is delivered at no charge, so it prices to $0 wherever it is quoted. `
-        + 'Its rate card is kept as it was — move the service to another bucket on the Services subtab and it prices again.';
+        + 'Its rate card is kept as it was - move the service to another bucket on the Services subtab and it prices again.';
     }
     return row.noFee
-      ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off — the rates it cleared don\'t come back.'
+      ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off - the rates it cleared don\'t come back.'
       : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.';
   }
 
@@ -449,7 +449,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                 type="button"
                 className={styles.serviceDetailsBtn}
                 onClick={(e) => { e.stopPropagation(); setPricingPanelFor(row.name); }}
-                title={`Open ${row.name} — every pricing field on one screen`}
+                title={`Open ${row.name} - every pricing field on one screen`}
                 aria-label={`Open pricing for ${row.name}`}
               >⤢</button>
               <span className={styles.pricingNameText} title={row.name}>{row.name}</span>
@@ -521,7 +521,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               title={rateTitle(row, row.basis
                 ? (row._kind === 'percent'
                   ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
-                  : `Dollars — ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
+                  : `Dollars - ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
                 : 'Pick a pricing basis first')}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
             />
@@ -542,7 +542,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               title={rateTitle(row, !row.basis
                   ? 'Pick a pricing basis first'
                   : row.rate === null
-                    ? 'Set the Low Rate first — a range needs both ends.'
+                    ? 'Set the Low Rate first - a range needs both ends.'
                     : row.rateHigh === null
                       ? 'Optional. Type the top of the rate range and every fee for this service reads as a range; leave it blank for a single figure.'
                       : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`)}
@@ -601,7 +601,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             type="button"
             className={bulkOn ? styles.bulkToggleOn : styles.showHiddenBtn}
             onClick={() => { setBulkOn(v => !v); setBulkStatus(null); }}
-            title="Tick several services and set a field — or mark them as charging no fee — in one go"
+            title="Tick several services and set a field - or mark them as charging no fee - in one go"
           >
             {bulkOn ? 'Done selecting' : 'Bulk edit'}
             {/* The count follows the button out of the mode: the selection
@@ -626,7 +626,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           className={styles.resultCount}
           title={coverage.total === 0 ? undefined
             : `${coverage.answered} of ${coverage.total} services are settled (${coverage.answeredPct}%): `
-              + `${coverage.priced} carry a rate and ${coverage.noFee} are marked no fee — priced at zero on purpose. `
+              + `${coverage.priced} carry a rate and ${coverage.noFee} are marked no fee - priced at zero on purpose. `
               + `${coverage.unpriced} still unpriced. `
               + `Counting only the ones with a rate on them, ${coverage.pricedPct}%.`}
         >
@@ -659,14 +659,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             className={styles.bulkNoFee}
             disabled={selectedCount === 0}
             onClick={() => applyNoFee(true)}
-            title="Say these services are delivered at no charge. They price to $0 and stop being listed as services nobody has priced — which is what an empty rate card means instead."
+            title="Say these services are delivered at no charge. They price to $0 and stop being listed as services nobody has priced - which is what an empty rate card means instead."
           >Mark no fee</button>
           <button
             type="button"
             className={styles.bulkApply}
             disabled={selectedCount === 0}
             onClick={() => applyNoFee(false)}
-            title="Take the no-fee mark off. The rates the mark cleared don't come back — the services go back to unpriced."
+            title="Take the no-fee mark off. The rates the mark cleared don't come back - the services go back to unpriced."
           >Clear no fee</button>
 
           <span className={styles.bulkDivider} aria-hidden="true" />
@@ -735,9 +735,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           over. Without it the rate card reads as though it had lost its
           estimator rather than handed it to a tab of its own. */}
       <div className={styles.oppImportNote}>
-        The standing price of each service — what it is charged on, at what rate, and what it costs
-        to stand up. An edit here reaches every deal. To price one deal — tick a scope, enter the
-        account&rsquo;s counts and read the totals — use the <strong>Deal Pricing</strong> subtab.
+        The standing price of each service - what it is charged on, at what rate, and what it costs
+        to stand up. An edit here reaches every deal. To price one deal - tick a scope, enter the
+        account&rsquo;s counts and read the totals - use the <strong>Deal Pricing</strong> subtab.
       </div>
 
       <div className={styles.serviceTableWrap}>

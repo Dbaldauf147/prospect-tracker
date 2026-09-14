@@ -70,7 +70,7 @@ const deal = (over = {}) => ({ 'Client Name': 'Acme', 'Agreement Name': 'MSA', .
   ok(oppYear1ForDeal(map, deal({ [DEAL_BFO_KEY]: '  acme - SUSUP - 2026 ' }) ) != null,
     'the join is case- and whitespace-insensitive');
   eq(oppYear1ForDeal(map, deal({ [DEAL_BFO_KEY]: '-' })), null,
-    'a "-" BFO name matches nothing — it means "no opp yet" on both sides');
+    'a "-" BFO name matches nothing - it means "no opp yet" on both sides');
   eq(oppYear1ForDeal(map, deal()), null, 'a deal with no BFO name matches nothing');
   eq(oppYear1ForDeal(map, deal({ [DEAL_BFO_KEY]: 'Other opp' })), null, 'no match, no figures');
 }

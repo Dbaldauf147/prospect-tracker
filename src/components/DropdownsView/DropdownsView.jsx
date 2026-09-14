@@ -207,7 +207,7 @@ function ServiceBucketCell({ value, options, onCommit }) {
         if (next === current) return;
         onCommit(next);
       }}
-      title="Which box of the services board this service sits in — the same boxes the Opps Scope picker and the company card show"
+      title="Which box of the services board this service sits in - the same boxes the Opps Scope picker and the company card show"
       style={{
         width: '100%',
         padding: '3px 4px',
@@ -270,7 +270,7 @@ function ServiceWeeksCell({ value, onCommit }) {
       <span
         onClick={(e) => { swallowClick(e); startEdit(); }}
         title={legacy
-          ? `"${value}" isn't a number of weeks — click to replace it with one`
+          ? `"${value}" isn't a number of weeks - click to replace it with one`
           : 'Click to edit: rollout time in weeks'}
         style={{ display: 'inline-block', width: '100%', cursor: 'text', minHeight: '1em' }}
       >
@@ -483,7 +483,7 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
   const refined = (name) => !!stepByService.get(name.trim().toLowerCase());
   const label = (name) => (refined(name) ? `${name} ›` : name);
   const depTitle = (name) => (refined(name)
-    ? `${name} — waits on one step of it, not all of it. Open ${selfName} to see or change which.`
+    ? `${name} - waits on one step of it, not all of it. Open ${selfName} to see or change which.`
     : name);
 
   const chip = (name, stale) => (
@@ -500,7 +500,7 @@ function ServiceDependsCell({ value, options, selfName, onCommit }) {
         ref={cellRef}
         onClick={(e) => { swallowClick(e); openPicker(); }}
         title={selected.length > 0
-          ? `Rolled out before ${selfName}: ${selected.map(label).join(', ')}. Click to change which services; a "›" marks one this waits only part-way through — open ${selfName} to pick the step.`
+          ? `Rolled out before ${selfName}: ${selected.map(label).join(', ')}. Click to change which services; a "›" marks one this waits only part-way through - open ${selfName} to pick the step.`
           : `Click to pick the services that must be rolled out before ${selfName}`}
         style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, width: '100%', cursor: 'pointer', minHeight: '1em', overflow: 'hidden' }}
       >
@@ -694,7 +694,7 @@ function ServiceNameCell({ name, url, onSaveUrl, onOpenDetails }) {
         type="button"
         className={styles.serviceDetailsBtn}
         onClick={(e) => { swallowClick(e); onOpenDetails(); }}
-        title={`Open ${name} — every field on one screen`}
+        title={`Open ${name} - every field on one screen`}
         aria-label={`Open details for ${name}`}
       >⤢</button>
       {url ? (
@@ -712,7 +712,7 @@ function ServiceNameCell({ name, url, onSaveUrl, onOpenDetails }) {
       ) : (
         <span
           onClick={(e) => { swallowClick(e); onOpenDetails(); }}
-          title={`Open ${name} — every field on one screen`}
+          title={`Open ${name} - every field on one screen`}
           style={{ color: 'var(--color-text)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >{name}</span>
       )}
@@ -1314,7 +1314,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
       if (hiddenServices.has(existing)) toggleHideService(existing);
       setServiceSearch(existing);
       setDetailName(existing);
-      setAddServiceNote(`“${existing}” is already in the list — here it is.`);
+      setAddServiceNote(`“${existing}” is already in the list - here it is.`);
       return;
     }
     const updates = {
@@ -1331,7 +1331,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     // screen behind the popup — and still there when the popup closes.
     setServiceSearch(name);
     setDetailName(name);
-    setAddServiceNote(`Added “${name}” — clear the search box for the full list.`);
+    setAddServiceNote(`Added “${name}” - clear the search box for the full list.`);
   }
 
   const filteredServiceRows = useMemo(() => {

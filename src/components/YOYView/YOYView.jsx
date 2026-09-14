@@ -317,7 +317,7 @@ function quotedStoredSource(key, saved) {
     // A rebuild that comes out identical to the live month reconstructed
     // nothing: nothing datable placed any opp on one side of the month end.
     return saved._matchesLive
-      ? 'Rebuilt from Opps, but identical to today’s live pipeline — today’s figures under this month’s label'
+      ? 'Rebuilt from Opps, but identical to today’s live pipeline - today’s figures under this month’s label'
       : 'Rebuilt from Opps as the pipeline stood at month end';
   }
   const seed = QUOTED_HISTORICAL_SEED[key];
@@ -1838,7 +1838,7 @@ export function YOYView() {
       : 'Live Opps (source rows)';
     const notes = [
       { Series: 'Quoted Weak / OK / Expected', 'Where the number comes from': 'Sum of Quoted Amount on open (non-Sold/Not Sold/Closed/Lost) opps, split by the Chance? column. Divided by 1,000 for the $K axis.', 'Raw rows in this file': oppSheet },
-      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent": the same $ also sits in its Chance bucket. On a rebuilt month that is the stage each opp held at that month end, from its stage history — not the stage it sits in today.', 'Raw rows in this file': oppSheet },
+      { Series: 'Agreements Sent', 'Where the number comes from': 'Sum of Quoted Amount on open opps whose Stage is "Agreement Sent": the same $ also sits in its Chance bucket. On a rebuilt month that is the stage each opp held at that month end, from its stage history - not the stage it sits in today.', 'Raw rows in this file': oppSheet },
       { Series: 'BFO Pipe Total', 'Where the number comes from': 'Sum of the Amount column across every row pasted into BFO Activity. Plotted on the right-hand axis.', 'Raw rows in this file': live === false ? (capture?.useCapturedBfo ? 'BFO Activity (captured at month end)' : 'Not available: BFO Activity was not captured for this month') : 'BFO Activity' },
     ];
     if (live === false && useCaptured) {
@@ -2587,7 +2587,7 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
             {sameAsLive.length > 0 && (
               <span
                 className={styles.quotedSameAsLiveNote}
-                title={`${sameAsLive.map(r => `${r.month} ${r.year}`).join(', ')} ${sameAsLive.length > 1 ? 'were' : 'was'} never captured at month end, so ${sameAsLive.length > 1 ? 'they are' : 'it is'} rebuilt from today’s Opps — and the rebuild comes out identical to the live month. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so ${sameAsLive.length > 1 ? 'these points are' : 'this point is'} today’s pipeline under an earlier label. Type the real figures in through “Edit values” to pin them.`}
+                title={`${sameAsLive.map(r => `${r.month} ${r.year}`).join(', ')} ${sameAsLive.length > 1 ? 'were' : 'was'} never captured at month end, so ${sameAsLive.length > 1 ? 'they are' : 'it is'} rebuilt from today’s Opps - and the rebuild comes out identical to the live month. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so ${sameAsLive.length > 1 ? 'these points are' : 'this point is'} today’s pipeline under an earlier label. Type the real figures in through “Edit values” to pin them.`}
               >
                 ⚠ {sameAsLive.map(r => r.month).join(', ')}: rebuild = today’s live figures
               </span>
@@ -2632,9 +2632,9 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
                   note: row._live
                     ? 'Live: computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._matchesLive
-                        ? 'Never captured at its month end, so this point is rebuilt from today’s Opps — and the rebuild lands on exactly the live month’s figures. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so it is today’s pipeline under this month’s label rather than a reading of its own. Type the real figures in through “Edit values” to pin them.'
+                        ? 'Never captured at its month end, so this point is rebuilt from today’s Opps - and the rebuild lands on exactly the live month’s figures. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so it is today’s pipeline under this month’s label rather than a reading of its own. Type the real figures in through “Edit values” to pin them.'
                         : row._hasData
-                          ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end — each under the Stage it was in then, from its stage history.'
+                          ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end - each under the Stage it was in then, from its stage history.'
                           : 'No values recorded for this month yet.'),
                 })}
               />

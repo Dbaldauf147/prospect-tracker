@@ -26,7 +26,7 @@ function eq(actual, expected, name) {
   const existing = [{ id: 'doc1', company: 'Prologis', tier: 'Tier 1' }];
   const plan = planProspectReconcile([{ company: 'Prologis', status: 'Client' }], existing);
   eq(plan.updates, [{ id: 'doc1', record: { company: 'Prologis', status: 'Client' } }],
-    'a company in both keeps its document — and so does everything keyed to it');
+    'a company in both keeps its document - and so does everything keyed to it');
   eq(plan.creates, [], 'it is not also created');
   eq(plan.deletes, [], 'and not deleted');
 }
@@ -105,7 +105,7 @@ function eq(actual, expected, name) {
     'nothing in, nothing out');
   eq(planProspectReconcile(null, null).counts.created, 0, 'and nulls do not throw');
   const wipe = planProspectReconcile([], [{ id: 'a', company: 'Ventas' }]);
-  eq(wipe.counts.deleted, 1, 'an empty file empties the roster — which is why it is confirmed first');
+  eq(wipe.counts.deleted, 1, 'an empty file empties the roster - which is why it is confirmed first');
 }
 
 // ── The ranking itself ─────────────────────────────────────────────────

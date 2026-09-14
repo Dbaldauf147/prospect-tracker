@@ -43,7 +43,7 @@ eq('junk entries are dropped rather than reaching the boards',
 const tracked = coverageTrackedSet({ coverageServices: ['LEED', 'SE metering', '  Sensor audit  '] });
 
 check('a tracked service is marked', isCoverageTracked(tracked, 'LEED'));
-check('casing does not matter — the boards and the table trim and case alike',
+check('casing does not matter - the boards and the table trim and case alike',
   isCoverageTracked(tracked, 'se metering'));
 check('nor does surrounding whitespace', isCoverageTracked(tracked, '  LEED '));
 check('a stored value with whitespace still matches a clean name',

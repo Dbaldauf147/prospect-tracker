@@ -91,7 +91,7 @@ export function FullBackupPanel() {
       setLastAt(at);
       setNote({
         tone: 'ok',
-        text: `Saved ${backupFileName(env)} — ${fmtBytes(summary.bytes)}, ${describe(summary)}.`
+        text: `Saved ${backupFileName(env)} - ${fmtBytes(summary.bytes)}, ${describe(summary)}.`
           + (summary.skipped ? ` ${summary.skipped} item(s) couldn't be written to a file; see manifest.skipped inside it.` : ''),
       });
     } catch (err) {
@@ -124,7 +124,7 @@ export function FullBackupPanel() {
       + `It holds: ${describe(summary)}.\n`
       + (otherAccount ? `\nHEADS UP: it was taken by ${summary.email}, and you are signed in as ${user.email}. Its data will be restored into YOUR account.\n` : '')
       + '\nThis overwrites the matching data in this browser. '
-      + 'Anything not in the file is left alone — nothing is deleted.\n\n'
+      + 'Anything not in the file is left alone - nothing is deleted.\n\n'
       + 'The page reloads when it finishes.'
     );
     if (!ok) return;
@@ -133,10 +133,10 @@ export function FullBackupPanel() {
     // other device signed into the account, which is a different decision.
     const restoreCloud = !!env.firestore && window.confirm(
       `This backup also holds cloud data (${describe(summary)}).\n\n`
-      + 'OK — restore the cloud data too: companies are written back under their original ids, '
+      + 'OK - restore the cloud data too: companies are written back under their original ids, '
       + 'Opps 2 is replaced, and your settings document is merged over (a snapshot of the current '
       + 'one is taken first, so this is reversible from the list below).\n\n'
-      + 'Cancel — restore only this browser\'s data and leave the cloud alone.'
+      + 'Cancel - restore only this browser\'s data and leave the cloud alone.'
     );
 
     setBusy('Restoring…');
@@ -176,7 +176,7 @@ export function FullBackupPanel() {
             ? 'You have never downloaded a full backup on this browser.'
             : age === 0
               ? 'Full backup downloaded today.'
-              : `Last full backup: ${age} day${age === 1 ? '' : 's'} ago${stale ? ' — worth taking a fresh one.' : '.'}`}
+              : `Last full backup: ${age} day${age === 1 ? '' : 's'} ago${stale ? ' - worth taking a fresh one.' : '.'}`}
         </span>
       </div>
 

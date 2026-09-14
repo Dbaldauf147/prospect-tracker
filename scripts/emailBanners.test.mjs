@@ -102,7 +102,7 @@ check('the colour is a bgcolor attribute Word honours', html.includes(`bgcolor="
 check('and a style, for every other client', html.includes(`background-color:${SE_GREEN_DARK}`));
 check('the label is in there', html.includes('Energy Market Update'));
 check('the text colour is the readable one', html.includes('color:#FFFFFF'));
-check('the label is NOT force-uppercased — brand bands are title case',
+check('the label is NOT force-uppercased - brand bands are title case',
   !html.includes('text-transform:uppercase'));
 check('it is set in the brand face, with Arial to catch everyone else',
   html.includes("font-family:'Nunito Sans',Nunito,Arial,Helvetica,sans-serif"));

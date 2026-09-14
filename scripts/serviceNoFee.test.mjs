@@ -61,7 +61,7 @@ const PRICED = { basis: 'per_site', rate: 900, rateHigh: 1200, setupLines: [{ ba
   check('the mark comes back off storage', entry.noFee, true);
 
   const est = estimateService({ entry, meta: RECURRING, counts: { sites: 819 }, dealSize: 400000 });
-  check('a marked service is priced — not a gap in the card', est.priced, true);
+  check('a marked service is priced - not a gap in the card', est.priced, true);
   check('at nothing, in year one and across the term',
     [est.fee, est.feeHigh, est.value, est.valueHigh], [0, 0, 0, 0]);
   check('and it says why, where a fee would be', est.note, 'No fee');
@@ -102,7 +102,7 @@ const PRICED = { basis: 'per_site', rate: 900, rateHigh: 1200, setupLines: [{ ba
     setPricingLine(marked, 'Widgets', 'per_site', { rate: 450 }).Widgets.noFee, undefined);
   check('so does a setup rate',
     setPricingSetupLine(marked, 'Widgets', 'flat', { rate: 5000 }).Widgets.noFee, undefined);
-  check('clearing a field does not — an empty card is not a price',
+  check('clearing a field does not - an empty card is not a price',
     setPricingField(marked, 'Widgets', 'basis', '').Widgets.noFee, true);
   check('and editing the notes leaves the mark alone',
     setPricingField(marked, 'Widgets', 'notes', 'free for year one').Widgets.noFee, true);
@@ -183,7 +183,7 @@ const PRICED = { basis: 'per_site', rate: 900, rateHigh: 1200, setupLines: [{ ba
   const plan = planNoFee({ names, pricing, on: true });
   check('a row already marked is left alone rather than padding the count',
     [plan.change, plan.same], [['Alpha', 'Gamma', 'Delta', 'Epsilon'], ['Beta']]);
-  check('and the rows that would lose a rate are named — setup counts as one',
+  check('and the rows that would lose a rate are named - setup counts as one',
     plan.clearing, ['Alpha', 'Gamma']);
 
   const off = planNoFee({ names, pricing, on: false });

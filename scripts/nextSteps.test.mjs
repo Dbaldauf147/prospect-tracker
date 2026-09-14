@@ -49,9 +49,9 @@ function ok(value, name) { eq(!!value, true, name); }
     ],
   });
   eq(lines, [
-    'Send the pricing sheet — Dan (due Friday)',
+    'Send the pricing sheet - Dan (due Friday)',
     'Get the interval data',
-    'Loop in legal — Dana Reid',
+    'Loop in legal - Dana Reid',
   ], 'owner and due ride in the line; an empty follow-up is not a step');
 }
 

@@ -42,7 +42,7 @@ const files = (await readdir(here))
   .sort();
 
 if (files.length === 0) {
-  console.error('No scripts/*.test.mjs found — did this move?');
+  console.error('No scripts/*.test.mjs found - did this move?');
   process.exit(1);
 }
 

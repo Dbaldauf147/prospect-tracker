@@ -26,7 +26,7 @@ function record(overrides = {}) {
   return {
     id: 'granola:not_1',
     source: 'granola',
-    name: 'Acme — quarterly review',
+    name: 'Acme - quarterly review',
     recordedAt: '2026-08-05T14:00:00.000Z',
     durationSeconds: 2700,
     company: 'Acme Corp',
@@ -60,7 +60,7 @@ function record(overrides = {}) {
   eq(externalAttendees(record()), [{ name: 'Dana Reid', email: 'dana@acme.com' }],
     'colleagues on the owner’s own domain are dropped');
   eq(externalAttendees(record({ owner: null })).length, 2,
-    'with no owner every attendee is kept — the safe way round');
+    'with no owner every attendee is kept - the safe way round');
   eq(externalAttendees({}), [], 'a record with no attendees is an empty list');
   eq(externalAttendees(record({ attendees: [OWNER, { name: 'Sam', email: 'sam@se.com' }] })), [],
     'an all-internal call has nobody on the other side');
@@ -69,7 +69,7 @@ function record(overrides = {}) {
 // --- historyRowFromRecord -----------------------------------------------
 {
   const row = historyRowFromRecord(record({ transcript: 'You: hi', summary: 'Went well.' }));
-  eq(row.name, 'Acme — quarterly review', 'the call name carries through');
+  eq(row.name, 'Acme - quarterly review', 'the call name carries through');
   eq(row.sourceLabel, 'Granola', 'the source is labelled for the table and the export');
   eq(row.company, 'Acme Corp', 'the company tag carries through');
   eq(row.durationSeconds, 2700, 'duration stays in seconds, as the formatter expects');
@@ -216,7 +216,7 @@ function record(overrides = {}) {
 
   // Everything the expanded row renders has to survive, or a reload
   // would show rows that expand into nothing.
-  eq(trimmed.summary, 'Short summary.', 'the summary survives — it is on the row itself');
+  eq(trimmed.summary, 'Short summary.', 'the summary survives - it is on the row itself');
   eq(trimmed._record.keyItems, ['One', 'Two'], 'key items survive');
   eq(trimmed._record.followUps, [{ text: 'Send it', owner: 'Dan', due: 'Aug 8' }], 'follow-ups survive whole');
   eq(trimmed._record.nextSteps, 'Follow up Friday.', 'next steps survive');
@@ -254,7 +254,7 @@ function record(overrides = {}) {
   eq(shouldReplaceCache({ ok: true, rowCount: 0, cachedCount: 50 }), false,
     'a good read returning NOTHING does not wipe a non-empty cache');
   eq(shouldReplaceCache({ ok: true, rowCount: 0, cachedCount: 0 }), true,
-    'but an empty read over an empty cache is fine — nothing is lost');
+    'but an empty read over an empty cache is fine - nothing is lost');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

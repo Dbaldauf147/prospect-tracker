@@ -166,7 +166,7 @@ function tokenize(text) {
   for (const raw of chunks) {
     const word = raw.toLowerCase().replace(/[^a-z0-9’']+/g, '');
     if (!word) {
-      // Stray punctuation ("—", "...") still closes a sentence.
+      // Stray punctuation ("-", "...") still closes a sentence.
       if (SENTENCE_END.test(raw)) startsSentence = true;
       continue;
     }
@@ -191,7 +191,7 @@ export function fillersInText(text) {
   const hits = [];
   // Still at the head of a sentence: true at the start, and STAYS true
   // through anything that was itself a filler. "Um, so tell me…" opens
-  // with a discourse "so" as much as "So tell me…" does — a hesitation in
+  // with a discourse "so" as much as "So tell me…" does - a hesitation in
   // front of it doesn't turn it into a conjunction. The first word of
   // real content ends it.
   let opening = true;
