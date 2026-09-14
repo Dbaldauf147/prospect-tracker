@@ -2236,6 +2236,18 @@
   line-height: 1.35;
 }
 
+/* A row that charges nothing: greyed the way the Services subtab greys a
+   retired service, so "settled" and "not in play" look the same across the
+   two tabs — and so an eye scanning for rows nobody has priced yet skips
+   the ones somebody decided to give away.
+
+   Ahead of the scope and bulk tints below, which both say something the
+   reader is doing right now and so have to win on a row that is both. */
+.pricingRowNoFee td {
+  color: var(--color-text-muted);
+  background: #FAFAFA;
+}
+
 /* A row that's in scope: tinted so the deal reads off the table at a
    glance, and its two estimate figures carry the accent to match. */
 .pricingRowScoped td {

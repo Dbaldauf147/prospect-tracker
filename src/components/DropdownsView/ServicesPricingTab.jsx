@@ -12,6 +12,7 @@ import {
   formatMoney,
   formatRate,
   getServicePricing,
+  isNoFeeBucket,
   parseMoney,
   pricingCoverage,
   pricingFor,
@@ -232,8 +233,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         name,
         // Charged at nothing, on purpose — the answer "this one is free",
         // which an empty rate card can't give. Read off the card rather
-        // than off the estimate so the badge is the mark itself.
-        noFee: entry.noFee,
+        // than off the estimate so the badge is the mark itself — except
+        // for a service in the graveyard, which the bucket marks for you
+        // and which prices at zero whether or not anyone ever ticked it.
+        noFee: entry.noFee || isNoFeeBucket(bucket),
+        // Ticked by the bucket rather than by hand, so the tick is not the
+        // user's to take off: move the service to another bucket and its
+        // rate card — still intact underneath — prices it again.
+        _noFeeByBucket: isNoFeeBucket(bucket),
         serviceBucket: bucket,
         serviceType: meta?.serviceType || '',
         years: meta?.years || '',
@@ -350,11 +357,27 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       : `Took the mark off ${plan.change.length} — ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
   }
 
+  // Why the box is ticked, which is a different sentence when the bucket
+  // ticked it: there is no "untick" to offer for a service in the
+  // graveyard, only somewhere else to file it.
+  function noFeeTitle(row) {
+    if (row._noFeeByBucket) {
+      return `In ${row.serviceBucket}: a retired service is delivered at no charge, so it prices to $0 wherever it is quoted. `
+        + 'Its rate card is kept as it was — move the service to another bucket on the Services subtab and it prices again.';
+    }
+    return row.noFee
+      ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off — the rates it cleared don\'t come back.'
+      : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.';
+  }
+
   // The same write on one service, which is what the No Fee column and the
   // pricing panel's checkbox both make. Marking clears that row's rate card
   // rather than sitting on top of it, so a row carrying rates asks first —
   // the one part of this that loses something, on one row as on twelve.
   function toggleNoFee(name, on) {
+    // Nothing to toggle where the bucket is the mark. The checkbox is
+    // disabled, so this only catches the panel and the keyboard.
+    if (isNoFeeBucket(serviceRows.find(r => r.name === name)?.bucket)) return;
     if (on && pricedBases(pricingFor(pricing, name, bases)).length > 0
       && !window.confirm(
         `Mark "${name}" as charging no fee? That clears the basis, rates and setup lines, `
@@ -451,13 +474,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <div
               className={styles.pricingNoFeeCell}
               onClick={(e) => e.stopPropagation()}
-              title={row.noFee
-                ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off — the rates it cleared don\'t come back.'
-                : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.'}
+              title={noFeeTitle(row)}
             >
               <input
                 type="checkbox"
                 checked={!!row.noFee}
+                /* The bucket's own tick: a retired service is not sold, so
+                   there is nothing here to decide. Taking the mark off is
+                   moving the service out of the graveyard, on the Services
+                   subtab, which is where that decision actually lives. */
+                disabled={row._noFeeByBucket}
                 onChange={() => toggleNoFee(row.name, !row.noFee)}
                 aria-label={`${row.name} charges no fee`}
               />
@@ -707,6 +733,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           // twelve rows would otherwise be twelve modals to dismiss.
           onRowClick={(row) => (bulkOn ? toggleRow(row.name) : setPricingPanelFor(row.name))}
           rowClassName={(row) => [
+            // Nothing to price on this row: it reads as settled rather than
+            // as a gap, which is what the mark means. Behind the scope and
+            // bulk tints, both of which say something the reader is doing
+            // right now and have to win.
+            row.noFee ? styles.pricingRowNoFee : '',
             row._scoped ? styles.pricingRowScoped : '',
             bulkOn && selected.has(row.name) ? styles.pricingRowPicked : '',
           ].filter(Boolean).join(' ') || undefined}
