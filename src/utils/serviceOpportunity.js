@@ -41,6 +41,7 @@ import {
   basisFor,
   estimateScope,
   pricingFor,
+  unitLabelsFor,
 } from './servicePricing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import {
@@ -95,6 +96,10 @@ function priceOne({ row, counts, scope, pricing, bases }) {
  *     openClients,     // clients with no status on this service
  *     pricedClients,   // of those, the ones that priced above zero
  *     priced,          // is there a rate on the card at all
+ *     unitsNeeded,     // the shared counts this service reaches for
+ *     unitLabels,      // those counts as the rate card names them
+ *     clientsWithUnits,     // clients holding every count it reaches for
+ *     openClientsWithUnits, // of the open ones, the same
  *     clients }        // per-client detail, biggest first
  */
 export function rollUpServiceOpportunity({
@@ -132,6 +137,19 @@ export function rollUpServiceOpportunity({
       openClients: 0,
       pricedClients: 0,
       priced: false,
+      // Which shared counts pricing this service actually reached for, and
+      // how much of the book holds them. A service priced per meter is
+      // worth nothing against a client whose meter count nobody has ever
+      // entered — and that is a gap in the data, not in the opportunity.
+      // The two are indistinguishable in the money column, which is why
+      // they are counted apart here.
+      //
+      // A client who typed their own count against the service on the
+      // sizing page needs no shared figure, so they are not asked for one
+      // and count as holding what this service needs.
+      unitsNeeded: new Set(),
+      clientsWithUnits: 0,
+      openClientsWithUnits: 0,
       clients: [],
     };
 
@@ -159,6 +177,12 @@ export function rollUpServiceOpportunity({
         out.recurringAnnualHigh += est.recurringAnnualHigh;
         if (est.contractValue > 0 || est.contractValueHigh > 0) out.pricedClients += 1;
       }
+      for (const unit of est.unitsUsed || []) out.unitsNeeded.add(unit);
+      const missingUnits = [...(est.unitsUsed || [])].filter(u => !(counts[u] > 0));
+      if (missingUnits.length === 0) {
+        out.clientsWithUnits += 1;
+        if (open) out.openClientsWithUnits += 1;
+      }
       out.clients.push({
         client,
         company: client?.company || '',
@@ -174,7 +198,8 @@ export function rollUpServiceOpportunity({
         // Which units this client's line actually consulted and hasn't got,
         // so the row can say why a client priced at nothing rather than
         // leaving a zero to be investigated.
-        missingUnits: [...(est.unitsUsed || [])].filter(u => !(counts[u] > 0)),
+        missingUnits,
+        missingUnitLabels: unitLabelsFor(missingUnits, bases),
       });
     }
 
@@ -185,6 +210,10 @@ export function rollUpServiceOpportunity({
       || (Number(b.open) - Number(a.open))
       || a.company.localeCompare(b.company));
     out.ranged = out.contractValueHigh > out.contractValue;
+    // Settled from a Set into the shape the table and the export want: the
+    // keys for arithmetic, the labels for reading.
+    out.unitsNeeded = [...out.unitsNeeded];
+    out.unitLabels = unitLabelsFor(out.unitsNeeded, bases);
     return out;
   });
 }

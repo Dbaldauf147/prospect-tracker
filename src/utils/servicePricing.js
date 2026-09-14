@@ -139,6 +139,19 @@ export const PRICING_BASES = [
 // they never chose to leave out, and without this the only way to see a new
 // default would be Reset to defaults, which throws their own bases away.
 // See pricingBasesTopUp.
+// The human name for a shared count, as the basis that consults it spells
+// it — 'sites_mandate' is "Sites w/ Mandate" on every page that asks for
+// it, and a raw key leaking into the UI is how it stops being.
+export function unitLabelFor(unit, bases = PRICING_BASES) {
+  const key = String(unit || '');
+  if (!key) return '';
+  const hit = (bases || []).find(b => b?.unit === key && b?.unitLabel);
+  return hit ? hit.unitLabel : key;
+}
+
+export const unitLabelsFor = (units, bases = PRICING_BASES) =>
+  [...new Set((units || []).map(u => unitLabelFor(u, bases)).filter(Boolean))];
+
 export const PRICING_BASES_VERSION = 5;
 const BASIS_ADDED_IN = {
   per_project: 2, per_equipment: 2, recurring_annual: 3, per_site_mandate: 4,
