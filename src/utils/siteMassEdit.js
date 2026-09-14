@@ -29,6 +29,7 @@
 // Extension included so this resolves under plain Node for the tests.
 import { PROPERTY_TYPE_OPTIONS } from '../data/propertyTypeEstimates.js';
 import { TENURE_OPTIONS } from './ownershipEstimates.js';
+import { SITE_STATUS_OPTIONS } from './siteStatus.js';
 
 /**
  * The mapped site fields, in the order the picker offers them.
@@ -71,6 +72,15 @@ export const SITE_EDIT_FIELDS = [
     // portfolio-wide gap this editor is for.
     options: TENURE_OPTIONS,
   },
+  {
+    key: 'siteStatus',
+    label: 'Site Status',
+    // What is happening with the building: open, closed, sold, being
+    // built, empty. The seed vocabulary — the page hands in the user's own
+    // list when they have edited it on Dropdowns, since no two estates
+    // word this the same way.
+    options: SITE_STATUS_OPTIONS,
+  },
   { key: 'siteDescription', label: 'Site Description' },
   { key: 'propertySize', label: 'Size (ft²)', type: 'number' },
   { key: 'electric', label: 'Annual Electric Consumption', type: 'number' },
@@ -110,10 +120,13 @@ export const SITE_EDIT_FIELDS = [
  *   headers  — Object.keys of an uploaded row
  *   mapping  — { fieldKey: header }, the page's active column mapping
  *   skip     — headers to leave out (the site name column)
+ *   live     — { [fieldKey]: options } for a field whose vocabulary the
+ *              user edits (Site Status, off Dropdowns › Lists). A field
+ *              with no entry keeps the closed list declared above.
  *
  *   [{ header, label, sub, type, options, mapped }]
  */
-export function siteEditableColumns(headers, mapping = {}, skip = []) {
+export function siteEditableColumns(headers, mapping = {}, skip = [], live = {}) {
   const present = new Set((headers || []).filter(h => typeof h === 'string' && h !== ''));
   const skipped = new Set((skip || []).filter(Boolean));
   const out = [];
@@ -123,6 +136,9 @@ export function siteEditableColumns(headers, mapping = {}, skip = []) {
     const header = mapping?.[field.key];
     if (!header || !present.has(header) || skipped.has(header) || claimed.has(header)) continue;
     claimed.add(header);
+    const options = Array.isArray(live?.[field.key]) && live[field.key].length
+      ? live[field.key]
+      : (field.options || null);
     out.push({
       header,
       label: field.label,
@@ -131,7 +147,7 @@ export function siteEditableColumns(headers, mapping = {}, skip = []) {
       // column it writes to is what they'd look for in the spreadsheet.
       sub: header === field.label ? '' : header,
       type: field.type || 'text',
-      options: field.options || null,
+      options,
       mapped: true,
     });
   }
@@ -253,6 +269,7 @@ export const SITE_CELL_EDIT_FIELDS = {
   propertyType: 'propertyType',
   segment: 'segment',
   ownership: 'ownership',
+  siteStatus: 'siteStatus',
   siteDescription: 'siteDescription',
   propertySize: 'propertySize',
   electric_consumption: 'electric',
