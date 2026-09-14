@@ -137,6 +137,10 @@ export const BODY_LINE_BUDGET = 58;
 // Notes run the full width of the page rather than one of two columns, so
 // a line of them holds about twice what a service line does.
 export const NOTES_CHARS_PER_LINE = 92;
+// The ruled lines an empty Notes section prints, which cost the page the
+// same as three lines of anything else. Kept in step with WRITING_LINES in
+// onePagerDocx.js by this comment and by a test that reads both.
+export const EMPTY_NOTE_LINES = 3;
 
 /**
  * Lines of services this page has room for, given everything above them.
@@ -157,7 +161,10 @@ export function serviceLineBudget({ contacts = 0, reportingLines = 0, contactNot
     + contactNoteLines                   // a note that wraps makes its row taller
     + 2 + 2 + opps                       // Open opportunities: heading, column heads, rows
     + 2                                  // the Current services heading itself
-    + (text ? 2 + Math.ceil(text.length / NOTES_CHARS_PER_LINE) : 0)
+    // The Notes section is on the page whether or not anything was typed
+    // into it: empty, it is ruled lines to write on. So it is charged
+    // either way - the heading plus what it holds.
+    + 2 + (text ? Math.ceil(text.length / NOTES_CHARS_PER_LINE) : EMPTY_NOTE_LINES)
     + 1;                                 // the "+ N more" line, if it comes to that
   // Never below the old fixed budget. A page with a long note and a full
   // contact list should print fewer services, not stop printing them.

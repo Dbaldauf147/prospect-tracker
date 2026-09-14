@@ -297,8 +297,23 @@ function contactsTable({ shown, hidden }, linkId) {
  * held, and the sentence that says "the chiller RFP lands in Q1" is what
  * the reader needs before any of it.
  */
+// How many ruled lines an empty Notes section leaves to write on. Three is
+// what fits without taking the services' room, and it is enough for the
+// thing this space is for: what was agreed, and what happens next.
+const WRITING_LINES = 3;
+
 function notesBlock({ blocks = [], hidden = 0 } = {}) {
-  if (!blocks.length) return '';
+  // Nothing typed is not nothing printed. The section is a place to write
+  // - in the margin of a printed copy, or into the file before sending it
+  // - so it is drawn as ruled lines rather than left off the page. A
+  // heading with a gap under it reads as a rendering fault; a heading with
+  // lines under it reads as an invitation.
+  if (!blocks.length) {
+    return Array.from({ length: WRITING_LINES }, () => para(
+      [run('', { size: 18 })],
+      { rule: 'E2E8F0', spaceBefore: 40, spaceAfter: 140 },
+    )).join('');
+  }
   const drawn = blocks.map(b => (b.type === 'ul'
     // Same glyph and hanging indent the services use, so the two lists on
     // the page are one list style rather than two.
@@ -457,7 +472,8 @@ export function onePagerHeaderXml(model) {
 export function onePagerDocumentXml(model, linkId = null) {
   const body = [
     ownersBand(model.owners, model.clientSince),
-    model.notes?.blocks?.length ? heading('Notes') : '',
+    // Always, even with nothing in it: see notesBlock.
+    heading('Notes'),
     notesBlock(model.notes),
     heading('Key client contacts'),
     contactsTable(model.contacts, linkId),

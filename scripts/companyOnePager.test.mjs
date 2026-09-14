@@ -25,7 +25,7 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
-  cappedServices, linkedinUrl, NOTE_MAX_CHARS, contactRowLines, noteBlocks, MAX_NOTE_LINES } from '../src/utils/companyOnePager.js';
+  cappedServices, linkedinUrl, NOTE_MAX_CHARS, contactRowLines, noteBlocks, MAX_NOTE_LINES, EMPTY_NOTE_LINES } from '../src/utils/companyOnePager.js';
 import {
   onePagerDocumentXml, onePagerHeaderXml, onePagerParts, buildOnePagerDocx, xmlEsc,
   CONTENT_TYPES_XML, DOCUMENT_RELS_XML,
@@ -663,8 +663,18 @@ const full = {
   check('under its own heading', (xml.match(/NOTES/g) || []).length, 2);
   // Above the contacts, which is the whole point of where it sits.
   check('and above Key client contacts', xml.indexOf('Chiller RFP lands in Q1') < xml.indexOf('KEY CLIENT CONTACTS'), true);
-  check('a page with no note draws no heading of its own',
-    (onePagerDocumentXml(onePagerModel({ ...full, notes: '' })).match(/NOTES/g) || []).length, 1);
+  // Nothing typed is not nothing printed: the section is a place to write,
+  // so an empty one prints its heading and ruled lines to write on. Both
+  // NOTES on the page: the section's own heading and the contacts column.
+  const empty = onePagerDocumentXml(onePagerModel({ ...full, notes: '' }));
+  check('an empty note still gets its heading', (empty.match(/NOTES/g) || []).length, 2);
+  check('with lines to write on', (empty.match(/w:color="E2E8F0"/g) || []).length, EMPTY_NOTE_LINES);
+  check('and the lines are above the contacts',
+    empty.indexOf('E2E8F0') < empty.indexOf('KEY CLIENT CONTACTS'), true);
+  // A note that WAS typed replaces them - ruled lines under a paragraph
+  // of prose would read as a second, empty section.
+  check('a written note draws no ruled lines',
+    (onePagerDocumentXml(onePagerModel({ ...full, notes: '- Something' })).match(/w:color="E2E8F0"/g) || []).length, 0);
 }
 
 // ---- the name is a link to the person -------------------------------------
