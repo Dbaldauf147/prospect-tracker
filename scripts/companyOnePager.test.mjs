@@ -26,7 +26,8 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   orgChartRows,
-  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, cappedServices,
+  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
+  cappedServices,
 } from '../src/utils/companyOnePager.js';
 import {
   onePagerDocumentXml, onePagerHeaderXml, buildOnePagerDocx, xmlEsc,
@@ -225,7 +226,9 @@ const full = {
   // matters more here than anywhere else on the page - "In scope today"
   // exists to answer what we already do for these people, and an answer
   // that quietly omits seven of the fifteen is not an answer.
-  const services = Array.from({ length: 20 }, (_, i) => `Service ${i}`);
+  // Long enough to overrun the budget this page actually has, which is
+  // worked out from the contacts and opps above rather than fixed.
+  const services = Array.from({ length: 200 }, (_, i) => `Service ${i}`);
   const oneBucket = onePagerModel({ ...full, services, bucketOf: () => 'Bucket' });
   check('a book too long to bullet is set in commas instead', oneBucket.services.mode, 'commas');
   check('and every service survives the change', oneBucket.services.hidden, 0);
@@ -256,13 +259,21 @@ const full = {
         : /UPR/i.test(n) ? 'Efficiency' : 'Bill Management'),
   });
   check('a mid-sized book lists every service it sold', real.services.hidden, 0);
-  check('inside the same budget',
-    real.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
+  check('inside the budget this page had',
+    real.services.groups.reduce((n, g) => n + g.lines, 0) <= real.services.budget, true);
+  // Fifteen services now BULLET rather than run together: the budget grew
+  // when the page's own furniture shrank, and bullets are the better read
+  // whenever they fit. The comma set is the fallback below, not the default.
+  check('a mid-sized book gets the bullets', real.services.mode, 'bullets');
   const realXml = onePagerDocumentXml(real);
-  check('and prints them run together rather than one per line',
-    realXml.includes('Comp GHG, GHG, Scope 3 estimates'), true);
   check('with no count of what was left out, because none was',
     realXml.includes('more sold.'), false);
+  const commaXml = onePagerDocumentXml(oneBucket);
+  // Several services to a line, in one paragraph Word wraps - that is the
+  // whole point of the comma set. (The book is sorted, so the run reads
+  // "Service 0, Service 1, Service 10".)
+  check('and a book past the budget prints run together rather than one per line',
+    /Service \d+, Service \d+, Service \d+/.test(commaXml), true);
 
   // Past even the comma budget - a book no arrangement fits - the section
   // still owns up to what it left out rather than trailing off.
@@ -275,7 +286,44 @@ const full = {
     huge.services.shown.length + huge.services.hidden, 120);
   check('something is left on the page', huge.services.shown.length > 0, true);
   check('and it stays inside the budget',
-    huge.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
+    huge.services.groups.reduce((n, g) => n + g.lines, 0) <= huge.services.budget, true);
+
+  // ---- the budget is the page's, not a constant ---------------------
+  // This is what went wrong before: the number was measured once on a full
+  // page, the page then lost its band, its second opp line, two heading
+  // counts and its footer, and the number stayed put. A book of fifteen
+  // printed twelve with five and a half inches of white underneath.
+  //
+  // So the budget moves with the page. A sheet with two contacts and one
+  // opp has more room for services than one with five and four, and these
+  // hold that relationship rather than any particular number.
+  const roomy = onePagerModel({
+    ...full, contacts: [contact('Solo')], opps: [opp('One')],
+    services: ['A'], bucketOf: () => 'B',
+  });
+  const crowded = onePagerModel({
+    ...full,
+    contacts: ['A', 'B', 'C', 'D', 'E'].map(n => contact(n)),
+    opps: ['a', 'b', 'c', 'd'].map(n => opp(n)),
+    services: ['A'], bucketOf: () => 'B',
+    notes: 'A note long enough to take a couple of lines of the page, which is room the services do not get. '.repeat(2),
+  });
+  check('a emptier page gives the services more room',
+    roomy.services.budget > crowded.services.budget, true);
+  check('and a crowded one never starves them below the old fixed budget',
+    crowded.services.budget >= MAX_SERVICE_LINES, true);
+  // The fifteen-service book in the report: every one of them, bulleted.
+  check('the book that was being cut now fits whole', real.services.hidden, 0);
+
+  // A bulleted service that is too wide for its column wraps, and the
+  // budget has to know: charging every name one line is what let a budget
+  // of a hundred print a section fifty rows deep and run the page over.
+  const longName = 'Invoice variance testing and recalculation - light';
+  const wrapped = cappedServices([longName], () => 'Bucket', 100);
+  check('a name too wide for the column costs the line it wraps onto',
+    wrapped.groups[0].lines, 1 + Math.ceil(longName.length / BULLET_CHARS_PER_LINE));
+  check('and a short one costs a single line',
+    cappedServices(['GHG'], () => 'Bucket', 100).groups[0].lines, 2);
 
   // A bucket that only half fits keeps what fits: dropping it whole would
   // read as "we sell nothing in Compliance here", which is a different and
@@ -604,19 +652,21 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
   const one = onePagerDocumentXml(onePagerModel(full));
   check('an account with no chart gets no page break',
     (one.match(/w:br w:type="page"/g) || []).length, 0);
-  check('and one footer', (one.match(/Internal use/g) || []).length, 1);
+  // The generated-by line came off the page entirely: it said nothing about
+  // the account, and on a sheet handed to somebody it was a footer about
+  // the tool rather than about the client.
+  check('and no generated-by footer anywhere',
+    (one.match(/Internal use|Prospect Tracker/g) || []).length, 0);
 
   const two = onePagerDocumentXml(onePagerModel({ ...full, orgChart: orgInput() }));
   check('a chart starts a new page', (two.match(/w:br w:type="page"/g) || []).length, 1);
-  // The footer is a paragraph, not a real Word footer part, so a second
-  // page carries none unless one is written onto it - and an internal
-  // sheet that loses its marker halfway through is worse than a repeat.
-  check('each page carries the internal-use line', (two.match(/Internal use/g) || []).length, 2);
+  check('and the chart page carries no footer either',
+    (two.match(/Internal use|Prospect Tracker/g) || []).length, 0);
   check('the chart names the divisions', two.includes('Hilton Select'), true);
   check('and the people on them', two.includes('Nina Patel'), true);
   check('a manager on another box is named', two.includes('Ray Osei'), true);
   check('page one is untouched by page two',
-    two.startsWith(one.slice(0, one.indexOf('Internal use'))), true);
+    two.startsWith(one.slice(0, one.indexOf('<w:sectPr>'))), true);
   // Indentation is what draws the hierarchy, so it has to be in the file.
   check('the chart is indented', /<w:ind w:left="[1-9]/.test(two), true);
 }

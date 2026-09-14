@@ -353,11 +353,6 @@ function servicesBullets({ groups, hidden, mode }) {
 // makes the second page survive an edit to the first.
 const pageBreak = () => '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 
-const footerRule = () => para(
-  [run('Schneider Electric - generated from Prospect Tracker. Internal use.', { color: SE_MUTED, size: 13 })],
-  { spaceBefore: 110, rule: SE_BORDER },
-);
-
 // How far one level of nesting moves right, in twips. 200 is about 0.14",
 // which is enough to read as a step without walking a six-deep chart off
 // the page - and MAX_ORG_INDENT stops it stepping past that anyway.
@@ -479,16 +474,7 @@ export function onePagerDocumentXml(model) {
     servicesBullets(model.services),
     model.notes ? heading('Notes') : '',
     model.notes ? para([run(model.notes, { color: SE_SLATE, size: 18 })]) : '',
-    // Page one closes with its own footer rule whether or not a second
-    // page follows, so page one is the same document it was before the
-    // chart existed. The chart then starts a page and closes with the same
-    // line: unlike the green band above, this is a plain paragraph rather
-    // than a real Word part, so a page that does not carry one has none,
-    // and an internal sheet that loses its "internal use" marker halfway
-    // through is worse than one line repeated.
-    footerRule(),
     orgChartPage(model.orgChart),
-    model.orgChart ? footerRule() : '',
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
     //
