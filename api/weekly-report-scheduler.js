@@ -5,10 +5,13 @@
 // which the Weekly Report tab publishes on every visit. Mirrors
 // api/new-opps-scheduler.js.
 //
-// Unlike the New Opps digest, the report cannot be rebuilt from Firestore
-// on demand — its numbers come from browser-only caches — so a schedule
-// whose owner has never opened the tab has nothing to send. That is
-// recorded as `skipped-no-snapshot` rather than mailed as an empty report.
+// The report is rebuilt from Firestore and HubSpot at send time (see
+// _lib/weeklyReportBuild.js), so a schedule no longer depends on the owner
+// having opened the tab recently. The published snapshot is still the
+// fallback: when the rebuild comes back with no figures at all — an empty
+// or unreadable Firestore side — the last thing the tab published is a
+// better report than a blank one. A schedule with neither is recorded as
+// `skipped-no-snapshot` rather than mailed empty.
 //
 // Protected by CRON_SECRET: when set, Vercel automatically attaches
 // `Authorization: Bearer <CRON_SECRET>` to cron invocations. A matching
@@ -16,6 +19,8 @@
 
 import { adminDb } from './_lib/firebaseAdmin.js';
 import { sendWeeklyReportEmail, freshnessNote } from './_lib/weeklyReportEmail.js';
+import { buildWeeklyReport } from './_lib/weeklyReportBuild.js';
+import { buildSnapshotDoc } from './_lib/weeklyReportSnapshot.js';
 import { computeNextRunZoned as computeNextRun } from './_lib/weeklyReportSchedule.js';
 
 export default async function handler(req, res) {
@@ -55,17 +60,45 @@ export default async function handler(req, res) {
     }
 
     try {
-      const shot = await db.collection('weeklyReportSnapshots').doc(s.ownerUid).get();
-      if (!shot.exists) {
-        await docSnap.ref.update({
-          lastStatus: 'skipped-no-snapshot',
-          lastError: 'No Weekly Report snapshot saved yet',
-          nextRunAt: computeNextRun(s, now),
+      // Rebuild first. A built report covers the period that has actually
+      // finished and is stamped with the moment it was built, so it never
+      // arrives carrying the staleness banner.
+      let snapshot = null;
+      let source = 'rebuilt';
+      let buildErrors = [];
+      try {
+        const built = await buildWeeklyReport(db, s.ownerUid, {
+          now,
+          timeZone: s.timeZone || '',
+          scope: s.frequency === 'daily' ? 'day' : 'week',
         });
-        results.push({ id: s.id, status: 'skipped-no-snapshot' });
-        continue;
+        buildErrors = built.errors || [];
+        if (built.usable) {
+          snapshot = buildSnapshotDoc(built.payload, { uid: s.ownerUid, email: s.ownerEmail });
+        }
+      } catch (err) {
+        buildErrors = [String(err?.message || err).slice(0, 200)];
       }
-      const snapshot = shot.data();
+      if (buildErrors.length) {
+        console.warn(`weekly-report ${s.id}: rebuild issues — ${buildErrors.join('; ')}`);
+      }
+
+      if (!snapshot) {
+        const shot = await db.collection('weeklyReportSnapshots').doc(s.ownerUid).get();
+        if (!shot.exists) {
+          await docSnap.ref.update({
+            lastStatus: 'skipped-no-snapshot',
+            lastError: buildErrors.length
+              ? `Nothing to rebuild from, and no saved snapshot (${buildErrors[0]})`
+              : 'No Weekly Report snapshot saved yet',
+            nextRunAt: computeNextRun(s, now),
+          });
+          results.push({ id: s.id, status: 'skipped-no-snapshot' });
+          continue;
+        }
+        snapshot = shot.data();
+        source = 'snapshot';
+      }
       // A snapshot older than the period it reports still goes out: the
       // report is a standing Monday habit, and silence would read as "no
       // news" rather than as "the tab hasn't been open in a fortnight".
@@ -87,10 +120,13 @@ export default async function handler(req, res) {
         lastError: fresh.stale ? fresh.headline : null,
         lastSnapshotAt: snapshot.capturedAt || null,
         lastSnapshotStale: !!fresh.stale,
+        // 'rebuilt' = computed at send time; 'snapshot' = the tab's last
+        // publish stood in because the rebuild found nothing.
+        lastSource: source,
         lastRecipientCount: s.recipients.length,
         nextRunAt: computeNextRun(s, now),
       });
-      results.push({ id: s.id, status, snapshotAt: snapshot.capturedAt || null });
+      results.push({ id: s.id, status, source, snapshotAt: snapshot.capturedAt || null });
     } catch (err) {
       await docSnap.ref.update({
         lastStatus: 'error',

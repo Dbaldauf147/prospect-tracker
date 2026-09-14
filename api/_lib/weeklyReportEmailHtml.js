@@ -507,6 +507,10 @@ export function narrativeHtml(md) {
 // an eleven-day-old report went out looking exactly like a fresh one.
 const DAY_MS = 24 * 3600 * 1000;
 const STALE_AGE_MS = 8 * DAY_MS;
+// A snapshot this much behind the period it reports is still current
+// enough to send unremarked: the cron runs hourly, so anything inside an
+// hour is as fresh as the schedule can deliver.
+const GRACE_MS = 60 * 60 * 1000;
 const REFRESH_HINT = 'Open Charts → Weekly Report — the numbers republish on every visit, and the next send will carry them.';
 
 export function freshnessNote(snapshot, now = Date.now()) {
@@ -524,9 +528,17 @@ export function freshnessNote(snapshot, now = Date.now()) {
   const when = new Date(at).toUTCString().replace(' GMT', ' UTC');
   const stamp = `Captured ${when}.`;
   const end = Number(snapshot?.periodEnd);
-  // Taken before the period it reports had finished: the rest of that
-  // period is missing, however recently the snapshot was made.
-  const early = Number.isFinite(end) && at < end;
+  // How much of the period the snapshot cannot account for.
+  //
+  // Not simply "captured before the period ended": a report of a week
+  // still running is captured mid-week by definition, and a preview taken
+  // this second is missing nothing at all. What makes a mid-period capture
+  // stale is time that has passed since it EM the report could have reached
+  // `now`, or the end of the period if that came first, and it stopped at
+  // `at` instead. An hour of that is the cron's own cadence and not worth
+  // a banner; three days is the whole back half of a week.
+  const missed = Number.isFinite(end) ? Math.min(end, now) - at : 0;
+  const early = missed > GRACE_MS;
   // Rounded, not floored: a snapshot 10 days and 20 hours old is eleven
   // days old to the person reading it, and the age only ever appears once
   // it is past a week anyway.

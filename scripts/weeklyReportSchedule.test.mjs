@@ -189,6 +189,23 @@ check('captured after the period ends reads fresh',
   freshnessNote({ capturedAt: Date.parse('2026-09-07T05:00:00Z'), periodEnd },
     Date.parse('2026-09-07T11:00:00Z')).stale, false);
 check('a snapshot with no timestamp reads stale', freshnessNote({}).stale, true);
+// A report of a week still running is captured mid-week by definition, so
+// "before the period ended" cannot by itself be the test — otherwise the
+// tab's own live preview of the current week wears a staleness banner, and
+// every snapshot the tab publishes mails with one. What makes a mid-period
+// capture stale is the time that has passed since it.
+{
+  const midWeek = Date.parse('2026-09-16T23:59:59Z'); // a Wednesday-ending window
+  check('a snapshot taken just now for a week still running is not stale',
+    freshnessNote({ capturedAt: Date.parse('2026-09-14T12:00:00Z'), periodEnd: midWeek },
+      Date.parse('2026-09-14T12:00:05Z')).stale, false);
+  check('half an hour later it is still current enough to send',
+    freshnessNote({ capturedAt: Date.parse('2026-09-14T12:00:00Z'), periodEnd: midWeek },
+      Date.parse('2026-09-14T12:30:00Z')).stale, false);
+  check('a day later it has missed a day of the week it reports',
+    freshnessNote({ capturedAt: Date.parse('2026-09-14T12:00:00Z'), periodEnd: midWeek },
+      Date.parse('2026-09-15T12:00:00Z')).stale, true);
+}
 check('a months-old snapshot reads stale',
   freshnessNote({ capturedAt: Date.parse('2026-07-01T00:00:00Z'), periodEnd: null },
     Date.parse('2026-09-07T00:00:00Z')).stale, true);
