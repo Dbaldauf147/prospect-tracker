@@ -8012,22 +8012,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>
                 One-pager Notes
                 <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>
-                  {' '}- printed above Key Contacts on the one-pager. Type &quot;- &quot; to start a bullet.
+                  {' '}- printed above Key Client Contacts on the one-pager. Bulleted as you type.
                 </span>
               </label>
-              {/* smartBullets rather than bulletList: this is free-form,
-                  and a field that bulleted every line would fight anyone
-                  typing a sentence. Typing "- " starts a list, Enter
-                  continues it, and an empty bullet ends it. */}
+              {/* bulletList, not smartBullets: what goes here is a list of
+                  points for a meeting, so the first keystroke is already a
+                  bullet and Enter starts the next one - nobody should have
+                  to type the glyph, or remember the "- " that used to
+                  start one. A line meant as prose is one backspace away. */}
               <CommitOnBlurInput
                 multiline
                 autoGrow
-                smartBullets
+                bulletList
                 className={styles.textarea}
                 value={fields.onePagerNotes}
                 onCommit={v => set('onePagerNotes', v)}
                 rows={3}
-                placeholder={'- Chiller RFP lands in Q1\n- Wants sub-metering on the top 12 sites'}
+                placeholder={'Chiller RFP lands in Q1'}
               />
             </div>
 

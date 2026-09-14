@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, memo } from 'react';
+import { BULLET, bulletBreak, bulletExit, dashToBullet, onBulletLine } from '../../utils/bulletText';
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Drop-in replacement for a controlled
@@ -50,6 +51,27 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
     el.style.height = `${el.scrollHeight}px`;
   }, [local, multiline, autoGrow]);
 
+  // Put `next` in the box and the caret at `pos` NOW, rather than on the
+  // next frame.
+  //
+  // A controlled textarea's value is React's to write, and React writes it
+  // on the next render - so a caret placed in a requestAnimationFrame is
+  // placed after any key pressed in between has already landed at whatever
+  // caret the browser was left with, which is the end of the text. Typing
+  // at speed through a bullet break scrambled the line: the next word went
+  // to the end and the rest of the sentence came back to the middle.
+  //
+  // Writing both here closes that window. React's following render sets
+  // the same string, which it treats as a no-op and leaves the selection
+  // alone.
+  const writeNow = (el, next, pos) => {
+    if (el && el.isConnected) {
+      el.value = next;
+      el.selectionStart = el.selectionEnd = pos;
+    }
+    setLocal(next);
+  };
+
   const handleBlur = () => {
     if (local !== lastExternal.current) {
       lastExternal.current = local;
@@ -60,18 +82,8 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
     if (bulletList && multiline && e.key === 'Enter') {
       e.preventDefault();
       const el = e.currentTarget;
-      const start = el.selectionStart;
-      const end = el.selectionEnd;
-      const insertion = '\n• ';
-      const next = local.slice(0, start) + insertion + local.slice(end);
-      setLocal(next);
-      // Defer cursor placement until after React has written the new value.
-      requestAnimationFrame(() => {
-        if (el && el.isConnected) {
-          const pos = start + insertion.length;
-          el.selectionStart = el.selectionEnd = pos;
-        }
-      });
+      const { next, caret } = bulletBreak(local, el.selectionStart, el.selectionEnd);
+      writeNow(el, next, caret);
       return;
     }
     if (smartBullets && multiline && e.key === 'Enter' && !e.shiftKey) {
@@ -79,36 +91,13 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
       const start = el.selectionStart;
       const end = el.selectionEnd;
       if (start !== end) { /* selection — let the default replace it */ }
-      else {
-        const lineStart = local.lastIndexOf('\n', start - 1) + 1;
-        const lineToCursor = local.slice(lineStart, start);
-        if (lineToCursor.startsWith('• ')) {
-          e.preventDefault();
-          const lineEnd = local.indexOf('\n', start);
-          const lineEndIdx = lineEnd === -1 ? local.length : lineEnd;
-          const fullLine = local.slice(lineStart, lineEndIdx);
-          // Empty bullet → exit list mode (drop the "• " on this line).
-          if (fullLine === '• ') {
-            const next = local.slice(0, lineStart) + local.slice(lineEndIdx);
-            setLocal(next);
-            requestAnimationFrame(() => {
-              if (el && el.isConnected) {
-                el.selectionStart = el.selectionEnd = lineStart;
-              }
-            });
-            return;
-          }
-          // Non-empty bullet → continue the list.
-          const insertion = '\n• ';
-          const next = local.slice(0, start) + insertion + local.slice(end);
-          setLocal(next);
-          requestAnimationFrame(() => {
-            if (el && el.isConnected) {
-              el.selectionStart = el.selectionEnd = start + insertion.length;
-            }
-          });
-          return;
-        }
+      else if (onBulletLine(local, start)) {
+        e.preventDefault();
+        // An empty bullet is how somebody says they are done listing.
+        const exit = bulletExit(local, start);
+        const { next, caret } = exit || bulletBreak(local, start, end);
+        writeNow(el, next, caret);
+        return;
       }
     }
     if (!multiline && e.key === 'Enter') {
@@ -121,34 +110,22 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
   // "• " so the user doesn't have to hunt down the bullet glyph. Only
   // active when smartBullets is enabled.
   const handleChange = (e) => {
-    let next = e.target.value;
+    const typed = e.target.value;
     if (smartBullets && multiline) {
-      const pos = e.target.selectionStart;
-      const lineStart = next.lastIndexOf('\n', pos - 1) + 1;
-      const segment = next.slice(lineStart, pos);
-      if (segment === '- ' || segment === '* ') {
-        next = next.slice(0, lineStart) + '• ' + next.slice(pos);
-        const newPos = lineStart + 2;
-        const el = e.target;
-        requestAnimationFrame(() => {
-          if (el && el.isConnected) {
-            el.selectionStart = el.selectionEnd = newPos;
-          }
-        });
+      const swap = dashToBullet(typed, e.target.selectionStart);
+      if (swap) {
+        writeNow(e.target, swap.next, swap.caret);
+        return;
       }
     }
-    setLocal(next);
+    setLocal(typed);
   };
 
   const handleFocus = (e) => {
     if (bulletList && multiline && !local) {
-      setLocal('• ');
-      requestAnimationFrame(() => {
-        const el = taRef.current;
-        if (el && el.isConnected) {
-          el.selectionStart = el.selectionEnd = 2;
-        }
-      });
+      // Same reasoning as the Enter above: the first letter typed after
+      // focusing an empty box would otherwise land before the glyph.
+      writeNow(e.currentTarget, BULLET, BULLET.length);
     }
     if (onFocus) onFocus(e);
   };
