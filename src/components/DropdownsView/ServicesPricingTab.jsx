@@ -12,6 +12,7 @@ import {
   formatMoney,
   formatRate,
   getServicePricing,
+  isNoFeeBucket,
   parseMoney,
   pricingCoverage,
   pricingFor,
@@ -232,8 +233,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         name,
         // Charged at nothing, on purpose — the answer "this one is free",
         // which an empty rate card can't give. Read off the card rather
-        // than off the estimate so the badge is the mark itself.
-        noFee: entry.noFee,
+        // than off the estimate so the badge is the mark itself — except
+        // for a service in the graveyard, which the bucket marks for you
+        // and which prices at zero whether or not anyone ever ticked it.
+        noFee: entry.noFee || isNoFeeBucket(bucket),
+        // Ticked by the bucket rather than by hand, so the tick is not the
+        // user's to take off: move the service to another bucket and its
+        // rate card — still intact underneath — prices it again.
+        _noFeeByBucket: isNoFeeBucket(bucket),
         serviceBucket: bucket,
         serviceType: meta?.serviceType || '',
         years: meta?.years || '',
@@ -350,11 +357,45 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       : `Took the mark off ${plan.change.length} - ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
   }
 
+  // Why the box is ticked, which is a different sentence when the bucket
+  // ticked it: there is no "untick" to offer for a service in the
+  // graveyard, only somewhere else to file it.
+  function noFeeTitle(row) {
+    if (row._noFeeByBucket) {
+      return `In ${row.serviceBucket}: a retired service is delivered at no charge, so it prices to $0 wherever it is quoted. `
+        + 'Its rate card is kept as it was - move the service to another bucket on the Services subtab and it prices again.';
+    }
+    return row.noFee
+      ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off - the rates it cleared don\'t come back.'
+      : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.';
+  }
+
+  // A rate on a row that charges nothing is struck through: it is still
+  // the standing rate, and it is still what the service would cost if it
+  // came back, but nothing bills it today. Only a row marked by its bucket
+  // reaches this in practice — ticking the box by hand clears the card —
+  // but an older entry whose rate survived the mark reads the same way,
+  // which is exactly what the estimate does with it.
+  function rateDisplay(row, text) {
+    if (!text || !row.noFee) return text;
+    return <s className={styles.pricingRateDormant}>{text}</s>;
+  }
+
+  // …and the tooltip says it in words, ahead of whatever the column would
+  // normally explain about the rate.
+  function rateTitle(row, title) {
+    if (!row.noFee) return title;
+    return `Not charged: this service is no fee, so it prices to $0 whatever the rate card says. ${title}`;
+  }
+
   // The same write on one service, which is what the No Fee column and the
   // pricing panel's checkbox both make. Marking clears that row's rate card
   // rather than sitting on top of it, so a row carrying rates asks first —
   // the one part of this that loses something, on one row as on twelve.
   function toggleNoFee(name, on) {
+    // Nothing to toggle where the bucket is the mark. The checkbox is
+    // disabled, so this only catches the panel and the keyboard.
+    if (isNoFeeBucket(serviceRows.find(r => r.name === name)?.bucket)) return;
     if (on && pricedBases(pricingFor(pricing, name, bases)).length > 0
       && !window.confirm(
         `Mark "${name}" as charging no fee? That clears the basis, rates and setup lines, `
@@ -451,13 +492,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             <div
               className={styles.pricingNoFeeCell}
               onClick={(e) => e.stopPropagation()}
-              title={row.noFee
-                ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off - the rates it cleared don\'t come back.'
-                : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.'}
+              title={noFeeTitle(row)}
             >
               <input
                 type="checkbox"
                 checked={!!row.noFee}
+                /* The bucket's own tick: a retired service is not sold, so
+                   there is nothing here to decide. Taking the mark off is
+                   moving the service out of the graveyard, on the Services
+                   subtab, which is where that decision actually lives. */
+                disabled={row._noFeeByBucket}
                 onChange={() => toggleNoFee(row.name, !row.noFee)}
                 aria-label={`${row.name} charges no fee`}
               />
@@ -471,14 +515,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           render: (row) => (
             <NumberCell
               value={row.rate}
-              display={row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate))}
+              display={rateDisplay(row, row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate)))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={row.basis
+              title={rateTitle(row, row.basis
                 ? (row._kind === 'percent'
                   ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
                   : `Dollars - ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
-                : 'Pick a pricing basis first'}
+                : 'Pick a pricing basis first')}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
             />
           ),
@@ -492,16 +536,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           render: (row) => (
             <NumberCell
               value={row.rateHigh}
-              display={row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh))}
+              display={rateDisplay(row, row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh)))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={!row.basis
+              title={rateTitle(row, !row.basis
                   ? 'Pick a pricing basis first'
                   : row.rate === null
                     ? 'Set the Low Rate first - a range needs both ends.'
                     : row.rateHigh === null
                       ? 'Optional. Type the top of the rate range and every fee for this service reads as a range; leave it blank for a single figure.'
-                      : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`}
+                      : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`)}
               onCommit={(v) => savePricingField(row.name, 'rateHigh', v)}
             />
           ),
@@ -566,25 +610,30 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             {!bulkOn && selectedCount > 0 && ` (${selectedCount} selected)`}
           </button>
         )}
-        {/* The share, not just the count: "29 priced" out of a list whose
+        {/* The share, not just the count: "21 priced" out of a list whose
             length is three words to the left is a number you have to do
             arithmetic on before it means anything, and the arithmetic is
-            the whole question — how much of this card is done. The no-fee
-            rows are counted apart from the priced ones, because they are
-            two different answers: a priced service has a rate, a no-fee one
-            has a decision. Both are answers; only an unpriced row is a gap,
-            which is what the tooltip's third figure is. */}
+            the whole question — how much of this card is done.
+
+            The share counts BOTH answers, which is why it is named rather
+            than tucked in brackets after one of the counts. A priced
+            service has a rate and a no-fee one has a decision; either way
+            somebody has settled what it costs. Only an unpriced row is a
+            gap, and 15% with 27 of those rows already settled understates
+            the work by nearly twenty points. The counts stay apart, because
+            the two answers are still different facts. */}
         <span
           className={styles.resultCount}
           title={coverage.total === 0 ? undefined
-            : `${coverage.priced} of ${coverage.total} services carry a rate (${coverage.pricedPct}%). `
-              + `${coverage.noFee} marked no fee - priced at zero on purpose. `
+            : `${coverage.answered} of ${coverage.total} services are settled (${coverage.answeredPct}%): `
+              + `${coverage.priced} carry a rate and ${coverage.noFee} are marked no fee - priced at zero on purpose. `
               + `${coverage.unpriced} still unpriced. `
-              + `Counting the no-fee rows as answered, ${coverage.answeredPct}% of the card is done.`}
+              + `Counting only the ones with a rate on them, ${coverage.pricedPct}%.`}
         >
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
-          {coverage.total > 0 && ` · ${coverage.priced} priced (${coverage.pricedPct}%)`}
+          {coverage.total > 0 && ` · ${coverage.priced} priced`}
           {coverage.noFee > 0 && ` · ${coverage.noFee} no fee`}
+          {coverage.total > 0 && ` · ${coverage.answeredPct}% priced or no fee`}
         </span>
       </div>
 
@@ -707,6 +756,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           // twelve rows would otherwise be twelve modals to dismiss.
           onRowClick={(row) => (bulkOn ? toggleRow(row.name) : setPricingPanelFor(row.name))}
           rowClassName={(row) => [
+            // Nothing to price on this row: it reads as settled rather than
+            // as a gap, which is what the mark means. Behind the scope and
+            // bulk tints, both of which say something the reader is doing
+            // right now and have to win.
+            row.noFee ? styles.pricingRowNoFee : '',
             row._scoped ? styles.pricingRowScoped : '',
             bulkOn && selected.has(row.name) ? styles.pricingRowPicked : '',
           ].filter(Boolean).join(' ') || undefined}

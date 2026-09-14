@@ -2236,6 +2236,28 @@
   line-height: 1.35;
 }
 
+/* A row that charges nothing: greyed the way the Services subtab greys a
+   retired service, so "settled" and "not in play" look the same across the
+   two tabs — and so an eye scanning for rows nobody has priced yet skips
+   the ones somebody decided to give away.
+
+   Ahead of the scope and bulk tints below, which both say something the
+   reader is doing right now and so have to win on a row that is both. */
+.pricingRowNoFee td {
+  color: var(--color-text-muted);
+  background: #FAFAFA;
+}
+
+/* A standing rate on a row that charges nothing. Struck rather than
+   hidden: the rate is real and it is what the service would cost if it
+   were sold again — it is just not what anybody is billed today. Thin,
+   because the row is already muted and a heavy rule through a dollar
+   figure reads as an error rather than as a note. */
+.pricingRateDormant {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 /* A row that's in scope: tinted so the deal reads off the table at a
    glance, and its two estimate figures carry the accent to match. */
 .pricingRowScoped td {

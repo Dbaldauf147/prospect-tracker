@@ -102,29 +102,41 @@ function check(label, actual, expected) {
 }
 
 // ---- the masker, on the cases that would silently hole the rule --------
-check('a line comment is a comment', emDashLines('// a — b\n').length, 0);
-check('a block comment is too', emDashLines('/* a\n * b —\n */\n').length, 0);
-check('a string is not', emDashLines('const s = "a — b";\n').length, 1);
-check('a template literal is not', emDashLines('const s = `a — b`;\n').length, 1);
-check('nor the code inside one', emDashLines('const s = `x ${a === "—" ? 1 : 2}`;\n').length, 1);
-check('JSX text is not', emDashLines('const a = <div>a — b</div>;\n').length, 1);
+//
+// The fixtures build the character from its code point rather than
+// spelling it out. A sweep of this rule across the repo would otherwise
+// rewrite the test that enforces it into one that passes on anything,
+// which is what happened the first time this shipped.
+const EM = String.fromCharCode(0x2014);
+const EN = String.fromCharCode(0x2013);
+const BACKTICK = String.fromCharCode(96);
+
+check('a line comment is a comment', emDashLines(`// a ${EM} b\n`).length, 0);
+check('a block comment is too', emDashLines(`/* a\n * b ${EM}\n */\n`).length, 0);
+check('a string is not', emDashLines(`const s = "a ${EM} b";\n`).length, 1);
+check('a template literal is not',
+  emDashLines(`const s = ${BACKTICK}a ${EM} b${BACKTICK};\n`).length, 1);
+check('nor the code inside one',
+  emDashLines(`const s = ${BACKTICK}x $\{a === "${EM}" ? 1 : 2}${BACKTICK};\n`).length, 1);
+check('JSX text is not', emDashLines(`const a = <div>a ${EM} b</div>;\n`).length, 1);
 // The one that matters: a // inside a string is not the start of a comment.
 check('a URL in a string does not mask the rest of the line',
-  emDashLines('const u = "https://x.test"; const s = "a — b";\n').length, 1);
+  emDashLines(`const u = "https://x.test"; const s = "a ${EM} b";\n`).length, 1);
 check('an apostrophe inside a comment does not open a string',
-  emDashLines("// don't\nconst s = 'a — b';\n").length, 1);
+  emDashLines(`// don't\nconst s = 'a ${EM} b';\n`).length, 1);
 check('an escaped quote does not end a string early',
-  emDashLines('const s = "a \\" — b";\n').length, 1);
+  emDashLines(`const s = "a \\\\" ${EM} b";\n`).length, 1);
 // The forms that are not the character but land on screen as one.
 check('the JS escape counts', emDashLines('const s = "a \\\\u2014 b";\n').length, 1);
 check('the &mdash; entity counts', emDashLines('const a = <p>a &mdash; b</p>;\n').length, 1);
 check('the numeric entity counts', emDashLines('const a = <p>a &#8212; b</p>;\n').length, 1);
 check('the hex entity counts', emDashLines('const a = <p>a &#x2014; b</p>;\n').length, 1);
-check('an en dash is left alone', emDashLines('const s = "$3 \u2013 $4";\n').length, 0);
+check('an en dash is left alone', emDashLines(`const s = "$3 ${EN} $4";\n`).length, 0);
 
-check('the escape hatch spares a line', emDashLines('const s = "—"; // em-dash-ok: parses\n').length, 0);
+check('the escape hatch spares a line',
+  emDashLines(`const s = "${EM}"; // em-dash-ok: parses\n`).length, 0);
 check('and only that line',
-  emDashLines('const a = "—"; // em-dash-ok\nconst b = "—";\n').length, 1);
+  emDashLines(`const a = "${EM}"; // em-dash-ok\nconst b = "${EM}";\n`).length, 1);
 
 // ---- the rule ----------------------------------------------------------
 const files = execSync("git ls-files 'src/**/*.js' 'src/**/*.jsx' 'api/**/*.js'", { encoding: 'utf8' })

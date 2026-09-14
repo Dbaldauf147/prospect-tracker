@@ -833,6 +833,22 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
 // avgFee) aren't either — pricingFor drops them on the way out of storage,
 // so they reach no calculation to be cleared out of, and this file leaves
 // stored numbers alone where it can.
+/**
+ * Does a service bucket mean "not sold any more"?
+ *
+ * The graveyard is where a retired service goes: it stays in the vocabulary
+ * so old deals still read, but nobody quotes it. That is the same fact the
+ * no-fee mark states, so a service filed there is marked for you rather
+ * than one box at a time — see the rule in `estimateScope`.
+ *
+ * Matched on the word rather than on one exact bucket name, because the
+ * bucket is the user's own: "Graveyard", "Old Graveyard" and "Graveyard
+ * (2024)" are all the same box to the person who named it.
+ */
+export function isNoFeeBucket(bucket) {
+  return String(bucket ?? '').toLowerCase().includes('graveyard');
+}
+
 const PRICE_FIELDS = ['basis', 'rate', 'rateHigh', 'lines', 'units', 'setupLines', 'setup'];
 
 /**
@@ -1353,7 +1369,15 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     // at the top of the file. A blank here isn't "use the shared count",
     // it's "no answer for this deal", so the card still gets its say.
     const own = parseMoney(serviceUnits?.[row.name]);
-    const entry = own === null ? card : { ...card, units: own };
+    const withUnits = own === null ? card : { ...card, units: own };
+    // A service in the graveyard is charged nothing wherever it is priced,
+    // not only where the tick is drawn — otherwise the Services Pricing
+    // subtab would show a no-fee row for a service a deal still bills for.
+    // The mark is laid over the card rather than written into it: the rates
+    // stay where they are, and a service moved back out of the graveyard
+    // prices exactly as it did before it went in. estimateRecurring already
+    // puts the mark ahead of any rate that survived it.
+    const entry = isNoFeeBucket(row.bucket) ? { ...withUnits, noFee: true } : withUnits;
     const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
     // A row carrying its own unit count doesn't need the shared one, so it
     // doesn't put a box on the estimator asking for it. Neither does a row

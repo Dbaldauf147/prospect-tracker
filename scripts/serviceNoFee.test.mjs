@@ -15,7 +15,7 @@
 // report itself honestly before it runs — the count it offers is the count it
 // changes, and the rows it would strip are named.
 import {
-  setNoFee, planNoFee, pricingFor, estimateService, estimateScope,
+  setNoFee, planNoFee, pricingFor, estimateService, estimateScope, isNoFeeBucket,
   setPricingField, setPricingLine, setPricingSetupLine, feeBasisLabel,
 } from '../src/utils/servicePricing.js';
 
@@ -124,6 +124,51 @@ const PRICED = { basis: 'per_site', rate: 900, rateHigh: 1200, setupLines: [{ ba
   });
   check('the marked service adds nothing to the deal', scope.year1Total, 900 * 20);
   check('and it is no longer chased as unpriced', scope.unpriced, ['Untouched']);
+}
+
+// ── The graveyard bucket marks its own ────────────────────────────────
+// A retired service is not quoted, which is the same fact the mark states,
+// so filing one in the graveyard marks it without anyone ticking a box. The
+// point of doing it here rather than by writing to the rate cards is that
+// nothing is lost: the rates stay where they are, and a service moved back
+// out prices exactly as it did before it went in.
+{
+  check('the bucket is matched on the word, not on one exact name',
+    ['Graveyard', 'Old Graveyard', 'graveyard (2024)', 'GHG Reporting', '', null]
+      .map(isNoFeeBucket),
+    [true, true, true, false, false, false]);
+
+  const rows = [
+    { name: 'Widgets', meta: RECURRING, bucket: 'DATA' },
+    { name: 'Retired', meta: RECURRING, bucket: 'Old Graveyard' },
+  ];
+  // Both carry a full rate card: the graveyard one is priced, it is just
+  // not sold any more.
+  const pricing = { Widgets: { basis: 'per_site', rate: 900 }, Retired: { basis: 'per_site', rate: 400 } };
+  const services = ['Widgets', 'Retired'];
+  const scope = estimateScope({ rows, services, pricing, counts: { sites: 20 }, dealSize: '' });
+  check('a service in the graveyard bills nothing, rate card or no',
+    scope.year1Total, 900 * 20);
+  const retired = scope.lines.find(l => l.name === 'Retired');
+  check('and it reads as an answer rather than as a gap',
+    [retired.noFee, retired.priced, retired.fee, scope.unpriced], [true, true, 0, []]);
+
+  // The card is untouched by any of this — which is what makes the rule
+  // reversible. Move the service out of the graveyard and its rate is the
+  // rate it always had.
+  check('the rate card is left exactly as it was', pricing.Retired, { basis: 'per_site', rate: 400 });
+  const back = estimateScope({
+    rows: [{ name: 'Retired', meta: RECURRING, bucket: 'DATA' }],
+    services: ['Retired'], pricing, counts: { sites: 20 }, dealSize: '',
+  });
+  check('out of the graveyard it prices off that card again', back.year1Total, 400 * 20);
+
+  // Rows that predate buckets, or come from a caller that has none, are
+  // priced as they always were rather than treated as retired.
+  const noBucket = estimateScope({
+    rows: [{ name: 'Widgets', meta: RECURRING }], services: ['Widgets'], pricing, counts: { sites: 20 }, dealSize: '',
+  });
+  check('a row with no bucket at all is untouched by the rule', noBucket.year1Total, 900 * 20);
 }
 
 // ── The bulk write counts itself honestly ─────────────────────────────
