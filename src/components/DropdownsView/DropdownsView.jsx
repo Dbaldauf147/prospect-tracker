@@ -18,7 +18,7 @@ import { QuestionsTab } from './QuestionsTab';
 import { CoaItemsTab } from './CoaItemsTab';
 import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
 import { ServicesPricingTab } from './ServicesPricingTab';
-import { DealPricingTab } from './DealPricingTab';
+import { AccountPotentialTab } from './AccountPotentialTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
@@ -1056,7 +1056,7 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   );
 }
 
-// `prospects` is read only by the Deal Pricing subtab, to answer how many
+// `prospects` is read only by the Account Potential subtab, to answer how many
 // sites and accounts an imported opp's company has. Optional: the tab falls
 // back to the opp's own columns and the company's saved site list, so the
 // page still works if it's ever rendered without them.
@@ -1081,18 +1081,20 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // renders outside the AuthProvider, and with no uid the estimate below
   // simply isn't remembered.
   const { user } = useAuth() || {};
-  // The Deal Pricing subtab's working estimate: which services are ticked,
+  // The Account Potential subtab's working estimate: which account it is
+  // reading, which services are ticked,
   // how many sites / accounts / meters the account has, and the deal size
   // percentage-based fees take their cut of. Held here rather than in the
   // subtab so stepping over to Services Pricing to fix a rate and coming
   // back doesn't throw a half-built estimate away, and seeded from what the
   // last visit left behind so leaving the page or reloading it doesn't
-  // either. Deal Pricing is what writes it (see pricingEstimateStore) —
+  // either. Account Potential is what writes it (see pricingEstimateStore) —
   // this reads back the scenario half of the same record, and hands it to
   // Services Pricing read-only so a rate can be read against the deal it is
   // being quoted on.
   const [pricingScenario, setPricingScenario] = useState(
-    () => loadPricingEstimate(user?.uid)?.scenario || { services: [], counts: {}, serviceUnits: {}, dealSize: '' },
+    () => loadPricingEstimate(user?.uid)?.scenario
+      || { company: '', services: [], counts: {}, serviceUnits: {}, dealSize: '' },
   );
   const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
@@ -1204,7 +1206,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     [settings?.hiddenServices],
   );
   const hiddenCount = hiddenServices.size;
-  // What the Services Pricing and Deal Pricing subtabs list. Same rows as the
+  // What the Services Pricing and Account Potential subtabs list. Same rows as the
   // Services table
   // — so a service added, renamed or re-filed there is priced under its new
   // identity without a second edit — minus the hidden ones: a service that's
@@ -1701,7 +1703,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           type="button"
           className={activeTab === 'deal' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('deal')}
-        >Deal Pricing <span className={styles.subtabCount}>{pricingScenario?.services?.length || 0}</span></button>
+        >Account Potential <span className={styles.subtabCount}>{pricingScenario?.services?.length || 0}</span></button>
         <button
           type="button"
           className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
@@ -1942,7 +1944,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           scenario={pricingScenario}
         />
       ) : activeTab === 'deal' ? (
-        <DealPricingTab
+        <AccountPotentialTab
           settings={settings}
           updateSettings={updateSettings}
           serviceRows={pricingServiceRows}
