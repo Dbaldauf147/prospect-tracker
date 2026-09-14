@@ -1,29 +1,104 @@
-// Rolling 90-day crude oil price series, and the weekly email built from
-// it. Kept in _lib so the cron entry point stays a thin wrapper and the
+// Rolling 90-day price series for the commodities the weekly email
+// covers — WTI crude and Henry Hub natural gas — and the email built from
+// them. Kept in _lib so the cron entry point stays a thin wrapper and the
 // series/stat/HTML logic can be exercised on its own.
 //
-// Three sources, tried in order, because none of them is guaranteed:
+// (The route is still /api/oil-price-weekly: it is a cron path in
+// vercel.json and the URL anyone tests by hand, so it kept its name when
+// gas arrived. This module did not.)
 //
-//   1. EIA (api.eia.gov) — the official US series, WTI spot at Cushing.
-//      Needs a free API key in EIA_API_KEY; skipped when unset. Spot
-//      prices publish with a few days' lag, so the last point is usually
-//      not yesterday.
-//   2. Stooq — daily OHLC CSV for the WTI front-month future, no key.
-//      This is what runs out of the box.
-//   3. Yahoo Finance's chart JSON for CL=F, no key. Unofficial, and it
-//      rate-limits datacenter IPs, so it sits last as a backstop.
+// Three sources per commodity, tried in order, because none of them is
+// guaranteed:
+//
+//   1. EIA (api.eia.gov) — the official US series: WTI spot at Cushing,
+//      Henry Hub gas spot. Needs a free API key in EIA_API_KEY; skipped
+//      when unset. Spot prices publish with a few days' lag, so the last
+//      point is usually not yesterday.
+//   2. Stooq — daily OHLC CSV for the front-month future, no key. This is
+//      what runs out of the box.
+//   3. Yahoo Finance's chart JSON, no key. Unofficial, and it rate-limits
+//      datacenter IPs, so it sits last as a backstop.
 //
 // Whichever answers first wins, and the email names it: a number worth
 // forwarding has to say where it came from.
+//
+// The two commodities are fetched independently and rendered as two
+// sections of one mail. A commodity whose sources all fail costs the mail
+// its section and says so — it does not cost the other commodity, and it
+// does not cost the send.
 
 import { renderLineChartPng } from './pngChart.js';
 
 const WINDOW_DAYS = 90;
 
-// The daily line chart is attached to the message and referenced by this
-// Content-ID, so the image travels with the mail instead of being fetched
-// from a host that would then know when the reader opened it.
-const CHART_CID = 'oil-90d-chart';
+/**
+ * What the email covers, and where each one comes from.
+ *
+ * `unit` is what the price is per — barrels for crude, million BTU for
+ * gas. Two numbers in dollars that mean different things need it said out
+ * loud, or $62 and $3 read as a collapse rather than as two commodities.
+ *
+ * Each chart is attached to the message and referenced by its own
+ * Content-ID, so the images travel with the mail instead of being fetched
+ * from a host that would then know when the reader opened it.
+ */
+export const COMMODITIES = [
+  {
+    key: 'wti',
+    name: 'WTI crude',
+    unit: 'bbl',
+    chartCid: 'wti-90d-chart',
+    chartFile: 'wti-90-day.png',
+    line: '#009530',
+    // EIA v2: daily WTI spot (series RWTC), in the petroleum spot dataset.
+    eia: {
+      dataset: 'petroleum/pri/spt',
+      series: 'RWTC',
+      source: 'EIA — WTI spot, Cushing OK',
+      label: 'WTI crude (spot)',
+    },
+    stooq: {
+      symbol: 'cl.f',
+      source: 'Stooq — WTI front-month future (CL.F)',
+      label: 'WTI crude (front-month)',
+    },
+    yahoo: {
+      symbol: 'CL=F',
+      source: 'Yahoo Finance — WTI front-month future (CL=F)',
+      label: 'WTI crude (front-month)',
+    },
+  },
+  {
+    key: 'henryHub',
+    name: 'Henry Hub natural gas',
+    unit: 'MMBtu',
+    chartCid: 'gas-90d-chart',
+    chartFile: 'natural-gas-90-day.png',
+    // The pipeline funnel's mid blue, so the two charts don't read as one
+    // series in two colours.
+    line: '#1c5cab',
+    // EIA v2: daily Henry Hub spot (series RNGWHHD), in the natural gas
+    // futures/spot dataset. Dollars per million BTU.
+    eia: {
+      dataset: 'natural-gas/pri/fut',
+      series: 'RNGWHHD',
+      source: 'EIA — Henry Hub spot',
+      label: 'Henry Hub natural gas (spot)',
+    },
+    stooq: {
+      symbol: 'ng.f',
+      source: 'Stooq — Henry Hub front-month future (NG.F)',
+      label: 'Henry Hub natural gas (front-month)',
+    },
+    yahoo: {
+      symbol: 'NG=F',
+      source: 'Yahoo Finance — Henry Hub front-month future (NG=F)',
+      label: 'Henry Hub natural gas (front-month)',
+    },
+  },
+];
+
+export const commodityByKey = (key) => COMMODITIES.find(c => c.key === key) || null;
 
 // ---- sources ----------------------------------------------------------
 
@@ -33,28 +108,28 @@ function isoDay(ms) {
 
 // A fetch that can't hang the whole function. Vercel's cron invocation
 // has a budget; a source that stops responding must fail over to the
-// next one rather than spend it.
-async function fetchWithTimeout(url, { timeoutMs = 12000, headers } = {}) {
+// next one rather than spend it. `fetchImpl` is injectable so the sources
+// can be tested without a network.
+async function fetchWithTimeout(url, { timeoutMs = 12000, headers, fetchImpl = fetch } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal, headers });
+    return await fetchImpl(url, { signal: controller.signal, headers });
   } finally {
     clearTimeout(timer);
   }
 }
 
-// EIA v2: daily WTI spot (series RWTC), newest first. The key is free
-// but has to be asked for, so this is the opt-in source rather than the
-// default one.
-async function fetchEia(sinceIso) {
+// The key is free but has to be asked for, so EIA is the opt-in source
+// rather than the default one.
+async function fetchEia(spec, sinceIso, opts) {
   const key = String(process.env.EIA_API_KEY || '').trim();
   if (!key) return null;
-  const url = 'https://api.eia.gov/v2/petroleum/pri/spt/data/'
+  const url = `https://api.eia.gov/v2/${spec.eia.dataset}/data/`
     + `?api_key=${encodeURIComponent(key)}`
-    + '&frequency=daily&data[0]=value&facets[series][]=RWTC'
+    + `&frequency=daily&data[0]=value&facets[series][]=${encodeURIComponent(spec.eia.series)}`
     + `&start=${sinceIso}&sort[0][column]=period&sort[0][direction]=asc&length=5000`;
-  const res = await fetchWithTimeout(url);
+  const res = await fetchWithTimeout(url, opts);
   if (!res.ok) throw new Error(`EIA responded ${res.status}`);
   const body = await res.json();
   const rows = body?.response?.data || [];
@@ -62,16 +137,15 @@ async function fetchEia(sinceIso) {
     .map(r => ({ date: String(r?.period || '').slice(0, 10), close: Number(r?.value) }))
     .filter(p => p.date && Number.isFinite(p.close));
   if (points.length === 0) throw new Error('EIA returned no usable rows');
-  return { points, source: 'EIA — WTI spot, Cushing OK', label: 'WTI crude (spot)' };
+  return { points, source: spec.eia.source, label: spec.eia.label };
 }
 
-// Stooq daily CSV: Date,Open,High,Low,Close,Volume, oldest first. cl.f is
-// the WTI front-month future.
-async function fetchStooq(sinceIso) {
+// Stooq daily CSV: Date,Open,High,Low,Close,Volume, oldest first.
+async function fetchStooq(spec, sinceIso, opts) {
   const d1 = sinceIso.replace(/-/g, '');
-  const d2 = isoDay(Date.now()).replace(/-/g, '');
-  const url = `https://stooq.com/q/d/l/?s=cl.f&i=d&d1=${d1}&d2=${d2}`;
-  const res = await fetchWithTimeout(url);
+  const d2 = isoDay(opts?.now ?? Date.now()).replace(/-/g, '');
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(spec.stooq.symbol)}&i=d&d1=${d1}&d2=${d2}`;
+  const res = await fetchWithTimeout(url, opts);
   if (!res.ok) throw new Error(`Stooq responded ${res.status}`);
   const text = await res.text();
   const lines = text.trim().split(/\r?\n/);
@@ -90,14 +164,15 @@ async function fetchStooq(sinceIso) {
     .map(cells => ({ date: String(cells[dateAt] || '').slice(0, 10), close: Number(cells[closeAt]) }))
     .filter(p => p.date && Number.isFinite(p.close));
   if (points.length === 0) throw new Error('Stooq returned no usable rows');
-  return { points, source: 'Stooq — WTI front-month future (CL.F)', label: 'WTI crude (front-month)' };
+  return { points, source: spec.stooq.source, label: spec.stooq.label };
 }
 
 // Yahoo's chart JSON: parallel arrays of epoch seconds and closes, with
 // nulls on non-trading days.
-async function fetchYahoo() {
-  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/CL=F?range=3mo&interval=1d';
-  const res = await fetchWithTimeout(url, { headers: { 'User-Agent': 'prospect-tracker/1.0' } });
+async function fetchYahoo(spec, opts) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.yahoo.symbol)}`
+    + '?range=3mo&interval=1d';
+  const res = await fetchWithTimeout(url, { ...opts, headers: { 'User-Agent': 'prospect-tracker/1.0' } });
   if (!res.ok) throw new Error(`Yahoo responded ${res.status}`);
   const body = await res.json();
   const result = body?.chart?.result?.[0];
@@ -107,27 +182,31 @@ async function fetchYahoo() {
     .map((t, i) => ({ date: isoDay(Number(t) * 1000), close: Number(closes[i]) }))
     .filter(p => p.date && Number.isFinite(p.close));
   if (points.length === 0) throw new Error('Yahoo returned no usable rows');
-  return { points, source: 'Yahoo Finance — WTI front-month future (CL=F)', label: 'WTI crude (front-month)' };
+  return { points, source: spec.yahoo.source, label: spec.yahoo.label };
 }
 
 /**
- * The last WINDOW_DAYS of daily closes, oldest first, deduped by date.
+ * The last WINDOW_DAYS of daily closes for one commodity, oldest first,
+ * deduped by date.
  *
- * Returns { points, source, label, attempts } — `attempts` records what
- * each source did, so a run that fell through to the backstop can say why
- * in its own logs rather than looking like a clean success.
+ * Returns { spec, points, source, label, attempts } — `attempts` records
+ * what each source did, so a run that fell through to the backstop can
+ * say why in its own logs rather than looking like a clean success.
  */
-export async function fetchOilSeries({ now = Date.now() } = {}) {
+export async function fetchCommoditySeries(spec, { now = Date.now(), fetchImpl } = {}) {
   const sinceMs = now - WINDOW_DAYS * 86400000;
   const sinceIso = isoDay(sinceMs);
+  const opts = { now, ...(fetchImpl ? { fetchImpl } : {}) };
   const attempts = [];
   const sources = [
-    ['EIA', () => fetchEia(sinceIso)],
-    ['Stooq', () => fetchStooq(sinceIso)],
-    ['Yahoo', () => fetchYahoo()],
+    ['EIA', () => fetchEia(spec, sinceIso, opts)],
+    ['Stooq', () => fetchStooq(spec, sinceIso, opts)],
+    ['Yahoo', () => fetchYahoo(spec, opts)],
   ];
   for (const [name, run] of sources) {
     try {
+      // Sequential on purpose: the later sources exist to cover the
+      // earlier ones failing, and are not worth the call otherwise.
       const hit = await run();
       if (!hit) { attempts.push({ name, status: 'skipped' }); continue; }
       // Every source is asked for roughly the window, but none of them is
@@ -139,13 +218,37 @@ export async function fetchOilSeries({ now = Date.now() } = {}) {
         .filter((p, i, arr) => i === 0 || p.date !== arr[i - 1].date);
       if (points.length < 2) throw new Error('fewer than two closes in the window');
       attempts.push({ name, status: 'ok', points: points.length });
-      return { ...hit, points, attempts, windowDays: WINDOW_DAYS };
+      return { spec, ...hit, points, attempts, windowDays: WINDOW_DAYS };
     } catch (err) {
       attempts.push({ name, status: 'error', error: String(err?.message || err) });
     }
   }
   const why = attempts.map(a => `${a.name}: ${a.status}${a.error ? ` (${a.error})` : ''}`).join('; ');
-  throw new Error(`No oil price source answered — ${why}`);
+  throw new Error(`No price source answered for ${spec.name} — ${why}`);
+}
+
+/**
+ * Every commodity, fetched together. One that fails all three sources is
+ * reported in `failures` rather than thrown: a crude price the reader
+ * came for must not be lost to a gas feed being down.
+ *
+ * Throws only when nothing at all came back, which is the one case where
+ * there is no email worth sending.
+ */
+export async function fetchAllSeries({ now = Date.now(), fetchImpl, commodities = COMMODITIES } = {}) {
+  const settled = await Promise.all(commodities.map(async (spec) => {
+    try {
+      return { ok: true, series: await fetchCommoditySeries(spec, { now, fetchImpl }) };
+    } catch (err) {
+      return { ok: false, spec, error: String(err?.message || err) };
+    }
+  }));
+  const series = settled.filter(r => r.ok).map(r => r.series);
+  const failures = settled.filter(r => !r.ok).map(r => ({ name: r.spec.name, error: r.error }));
+  if (series.length === 0) {
+    throw new Error(failures.map(f => `${f.name} — ${f.error}`).join(' | ') || 'No commodities configured');
+  }
+  return { series, failures };
 }
 
 // ---- stats ------------------------------------------------------------
@@ -166,11 +269,11 @@ function pctChange(from, to) {
 }
 
 /**
- * Everything the email states, computed once: latest close, the changes
+ * Everything a section states, computed once: latest close, the changes
  * over a week / month / the whole window, and the window's high, low and
  * mean.
  */
-export function summarizeOilSeries(points, { now = Date.now() } = {}) {
+export function summarizeSeries(points, { now = Date.now() } = {}) {
   const latest = points[points.length - 1];
   const first = points[0];
   const closes = points.map(p => p.close);
@@ -218,9 +321,14 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+// Gas trades near $3 and crude near $60, so a fixed two decimals reads
+// the same for both. What tells them apart is the unit, which every
+// headline figure carries.
 function money(n) {
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : '-';
 }
+
+const perUnit = (n, unit) => `${money(n)}/${unit}`;
 
 function signed(n, digits = 2) {
   if (!Number.isFinite(n)) return '-';
@@ -258,7 +366,7 @@ function changeCell(label, change) {
 // the plot so the scale survives a client that blocks pictures. `src` is
 // a cid: reference in a sent mail and a data: URI in the ?dry=1 preview,
 // which no mail client ever sees.
-function lineChartHtml({ chart, stats, src, windowDays }) {
+function lineChartHtml({ chart, stats, src, windowDays, name, unit }) {
   if (!chart) return '';
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 4px">
     <tr>
@@ -269,7 +377,7 @@ function lineChartHtml({ chart, stats, src, windowDays }) {
       </td>
       <td style="padding:0">
         <img src="${esc(src)}" width="${chart.width}" height="${chart.height}"
-             alt="Daily closes over the last ${windowDays} days: ${esc(money(stats.low.close))} to ${esc(money(stats.high.close))}, latest ${esc(money(stats.latest.close))}"
+             alt="${esc(name)} daily closes over the last ${windowDays} days: ${esc(perUnit(stats.low.close, unit))} to ${esc(perUnit(stats.high.close, unit))}, latest ${esc(perUnit(stats.latest.close, unit))}"
              style="display:block;width:${chart.width}px;height:${chart.height}px;border:0;outline:none;text-decoration:none">
       </td>
     </tr>
@@ -311,22 +419,31 @@ function weeklyTableHtml(weeks) {
   </table>`;
 }
 
-/** Subject line: the number worth knowing, before the mail is opened. */
-export function oilEmailSubject(stats, label) {
-  const wk = stats.changeWeek;
-  const move = wk ? ` (${signed(wk.pct, 1)}% on the week)` : '';
-  return `${label}: ${money(stats.latest.close)}${move} — 90-day recap`;
+/**
+ * Subject line: the numbers worth knowing, before the mail is opened.
+ *
+ * Both commodities, each with its week move, because the whole point of a
+ * commodity mail on a phone is not having to open it. A commodity that
+ * failed simply isn't named — the section inside says what happened.
+ */
+export function commodityEmailSubject(sections, { windowDays = WINDOW_DAYS } = {}) {
+  const parts = sections.map(({ spec, stats }) => {
+    const wk = stats.changeWeek;
+    return `${spec.name} ${perUnit(stats.latest.close, spec.unit)}${wk ? ` (${signed(wk.pct, 1)}%)` : ''}`;
+  });
+  return `${parts.join(' · ')} — ${windowDays}-day recap`;
 }
 
-export function oilEmailHtml({ stats, weeks, source, label, windowDays, chart, chartSrc }) {
+// One commodity's block: headline, the three changes, the window's
+// high/low/average, the chart, and the week-by-week table.
+export function commoditySectionHtml({ spec, stats, weeks, source, label, windowDays, chart, chartSrc }) {
   const wk = stats.changeWeek;
   const headlineColor = !wk ? FLAT : wk.abs > 0 ? UP : wk.abs < 0 ? DOWN : FLAT;
   return `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;color:#334155">
     <h2 style="color:#009530;margin:0 0 2px;font-size:20px">${esc(label)} — last ${windowDays} days</h2>
     <div style="font-size:12px;color:#94A3B8;margin:0 0 16px">${esc(stats.days)} trading days, ${esc(fmtDay(stats.first.date))} to ${esc(fmtDay(stats.latest.date))}</div>
 
-    <div style="font-size:34px;font-weight:700;color:${headlineColor};line-height:1.1">${esc(money(stats.latest.close))}</div>
+    <div style="font-size:34px;font-weight:700;color:${headlineColor};line-height:1.1">${esc(money(stats.latest.close))}<span style="font-size:15px;font-weight:400;color:#94A3B8"> /${esc(spec.unit)}</span></div>
     <div style="font-size:12px;color:#94A3B8;margin:0 0 14px">close on ${esc(fmtDay(stats.latest.date))}</div>
 
     <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 18px">
@@ -345,49 +462,88 @@ export function oilEmailHtml({ stats, weeks, source, label, windowDays, chart, c
       </tr>
     </table>
 
-    ${lineChartHtml({ chart, stats, src: chartSrc, windowDays })}
+    ${lineChartHtml({ chart, stats, src: chartSrc, windowDays, name: spec.name, unit: spec.unit })}
     ${weeklyTableHtml(weeks)}
 
-    <p style="font-size:11px;color:#94A3B8;margin:16px 0 0">
-      Source: ${esc(source)}. Sent weekly by Prospect Tracker.
-    </p>
+    <p style="font-size:11px;color:#94A3B8;margin:10px 0 0">Source: ${esc(source)}. Prices in dollars per ${esc(spec.unit)}.</p>`;
+}
+
+// A commodity whose sources all failed. Named rather than dropped: a mail
+// that quietly arrives with one section reads as "we only track crude".
+function failureHtml(failures) {
+  if (!failures.length) return '';
+  const rows = failures.map(f => `<li style="margin:2px 0">${esc(f.name)}: ${esc(f.error)}</li>`).join('');
+  return `<div style="margin:22px 0 0;padding:10px 14px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px">
+    <div style="font-size:13px;font-weight:700;color:#B45309">Not in this week's mail</div>
+    <ul style="margin:4px 0 0;padding-left:18px;font-size:12px;color:#B45309">${rows}</ul>
+  </div>`;
+}
+
+export function commodityEmailHtml({ sections, failures = [], windowDays = WINDOW_DAYS }) {
+  const blocks = sections.map(s => commoditySectionHtml({ ...s, windowDays }))
+    .join('<div style="height:1px;background:#E2E8F0;margin:26px 0"></div>');
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;color:#334155">
+    ${blocks}
+    ${failureHtml(failures)}
+    <p style="font-size:11px;color:#94A3B8;margin:16px 0 0">Sent weekly by Prospect Tracker.</p>
   </div>`;
 }
 
 /**
- * The whole email, from a fetched series.
+ * The whole email, from the fetched series.
  *
- * `inlineImage: true` embeds the chart as a data: URI instead of an
+ * `inlineImage: true` embeds each chart as a data: URI instead of an
  * attachment, for the ?dry=1 preview that renders in a browser rather
- * than a mail client. Returns `attachments` ready for the mailer, empty
- * when the chart couldn't be drawn — a chart that fails to render must
- * cost the email its picture, not its numbers.
+ * than a mail client. Returns `attachments` ready for the mailer, with
+ * nothing for a chart that couldn't be drawn — a chart that fails to
+ * render must cost its section the picture, not the numbers.
  */
-export function buildOilEmail(series, { now = Date.now(), inlineImage = false } = {}) {
-  const stats = summarizeOilSeries(series.points, { now });
-  const weeks = weeklyCloses(series.points);
-  const windowDays = series.windowDays || WINDOW_DAYS;
+export function buildCommodityEmail(seriesList, { now = Date.now(), inlineImage = false, failures = [] } = {}) {
+  const list = Array.isArray(seriesList) ? seriesList : [seriesList];
+  const attachments = [];
+  const chartErrors = [];
 
-  let chart = null;
-  let chartError = null;
-  try {
-    chart = renderLineChartPng({ values: series.points.map(p => p.close) });
-  } catch (err) {
-    chartError = String(err?.message || err);
-  }
+  const sections = list.map((series) => {
+    const spec = series.spec;
+    const stats = summarizeSeries(series.points, { now });
+    const weeks = weeklyCloses(series.points);
 
-  const chartSrc = !chart ? ''
-    : inlineImage ? `data:image/png;base64,${chart.buffer.toString('base64')}`
-    : `cid:${CHART_CID}`;
+    let chart = null;
+    try {
+      chart = renderLineChartPng({ values: series.points.map(p => p.close), line: spec.line, fill: spec.line });
+    } catch (err) {
+      chartErrors.push(`${spec.name}: ${String(err?.message || err)}`);
+    }
 
+    if (chart && !inlineImage) {
+      attachments.push({
+        filename: spec.chartFile,
+        content: chart.buffer,
+        cid: spec.chartCid,
+        contentType: 'image/png',
+      });
+    }
+
+    return {
+      spec,
+      stats,
+      weeks,
+      source: series.source,
+      label: series.label,
+      chart,
+      chartSrc: !chart ? ''
+        : inlineImage ? `data:image/png;base64,${chart.buffer.toString('base64')}`
+        : `cid:${spec.chartCid}`,
+    };
+  });
+
+  const windowDays = list[0]?.windowDays || WINDOW_DAYS;
   return {
-    subject: oilEmailSubject(stats, series.label),
-    html: oilEmailHtml({ stats, weeks, source: series.source, label: series.label, windowDays, chart, chartSrc }),
-    attachments: chart && !inlineImage
-      ? [{ filename: 'oil-90-day.png', content: chart.buffer, cid: CHART_CID, contentType: 'image/png' }]
-      : [],
-    chartError,
-    stats,
-    weeks,
+    subject: commodityEmailSubject(sections, { windowDays }),
+    html: commodityEmailHtml({ sections, failures, windowDays }),
+    attachments,
+    chartError: chartErrors.length ? chartErrors.join('; ') : null,
+    sections,
   };
 }
