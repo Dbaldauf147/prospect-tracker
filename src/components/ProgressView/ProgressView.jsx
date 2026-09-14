@@ -12,6 +12,8 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { peStageOf } from '../../utils/peStages';
 import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
+import { useClientFlagMaps } from '../../utils/rosterHooks';
+import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -539,8 +541,24 @@ function persistChartPins(map) {
   try { writeWorkKey(CHART_PINS_KEY, JSON.stringify(map)); } catch {}
 }
 
+// The two fields the charts read that aren't stored on a week: its x-axis
+// label and the account total across the three tiers. Derived after the
+// "Don't Track" exclusion rather than before it, so the total counts the
+// same accounts the tier lines do.
+function decorateWeeks(weeks) {
+  return weeks.map(d => ({
+    ...d,
+    weekLabel: new Date(d.week + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    totalAccounts: (d.t1Total || 0) + (d.t2Total || 0) + (d.t3Total || 0),
+  }));
+}
+
 export function ProgressView({ prospects, settings, cdmName }) {
   const { user, isAdmin } = useAuth();
+  // The clients ticked "Don't Track" on the Clients tab. They are taken
+  // out of the charts below (see utils/progressUntracked.js), and the tick
+  // is live: the hook re-reads on the event that tab fires.
+  const { clientUntrackedMap } = useClientFlagMaps();
   const [history, setHistory] = useState([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
@@ -1062,7 +1080,11 @@ export function ProgressView({ prospects, settings, cdmName }) {
     }
   }
 
-  const chartData = useMemo(() => {
+  // Every week as it was SAVED: the stored history with this week's live
+  // numbers standing in for the row that hasn't been written yet. This is
+  // what the Weekly History table edits, so it stays unfiltered - a cell
+  // there types a value straight into the record.
+  const recordedData = useMemo(() => {
     const data = [...history];
     // Add current week if not already saved
     if (!data.find(h => h.week === currentSnapshot.week)) {
@@ -1072,12 +1094,28 @@ export function ProgressView({ prospects, settings, cdmName }) {
       const idx = data.findIndex(h => h.week === currentSnapshot.week);
       data[idx] = currentSnapshot;
     }
-    return data.map(d => ({
-      ...d,
-      weekLabel: new Date(d.week + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      totalAccounts: (d.t1Total || 0) + (d.t2Total || 0) + (d.t3Total || 0),
-    }));
+    return data;
   }, [history, currentSnapshot]);
+
+  // And the same weeks with the "Don't Track" clients taken out, which is
+  // what everything the user reads works from: the charts, the cards on
+  // top of them, and the Excel downloads behind both. The exclusion runs
+  // over every week rather than only today's, so ticking a client moves
+  // the whole line instead of putting a step in it. Nothing is rewritten
+  // in Firestore, so unticking puts the client back.
+  const untracked = useMemo(
+    () => excludeUntrackedFromWeeks(recordedData, clientUntrackedMap),
+    [recordedData, clientUntrackedMap],
+  );
+  const untrackedNote = untrackedNoteFor(untracked);
+
+  const chartData = useMemo(() => decorateWeeks(untracked.weeks), [untracked]);
+  const historyRows = useMemo(() => decorateWeeks(recordedData), [recordedData]);
+  // The cards read the same adjusted row the charts plot for this week.
+  const cardSnapshot = useMemo(
+    () => chartData.find(d => d.week === currentSnapshot.week) || currentSnapshot,
+    [chartData, currentSnapshot],
+  );
 
   function fmtWeek(w) {
     return new Date(w + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1262,18 +1300,18 @@ export function ProgressView({ prospects, settings, cdmName }) {
       {/* Current stats */}
       {(() => {
         const cards = [
-          { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: currentSnapshot.t1WithContacts, t2: currentSnapshot.t2WithContacts, t1Pct: currentSnapshot.t1ContactPct, t2Pct: currentSnapshot.t2ContactPct,
-            t1Yes: currentSnapshot.details?.t1WithContacts || [], t1No: currentSnapshot.details?.t1NoContacts || [],
-            t2Yes: currentSnapshot.details?.t2WithContacts || [], t2No: currentSnapshot.details?.t2NoContacts || [] },
-          { key: 'dm', label: 'Decision Maker Identified', color: '#7C3AED', t1: currentSnapshot.t1WithDM || 0, t2: currentSnapshot.t2WithDM || 0, t1Pct: currentSnapshot.t1DMPct || 0, t2Pct: currentSnapshot.t2DMPct || 0,
-            t1Yes: currentSnapshot.details?.t1WithDM || [], t1No: currentSnapshot.details?.t1NoDM || [],
-            t2Yes: currentSnapshot.details?.t2WithDM || [], t2No: currentSnapshot.details?.t2NoDM || [] },
-          { key: 'connected', label: 'Connected (Had Opp)', color: '#10B981', t1: currentSnapshot.t1Connected, t2: currentSnapshot.t2Connected, t1Pct: currentSnapshot.t1ConnectedPct, t2Pct: currentSnapshot.t2ConnectedPct,
-            t1Yes: currentSnapshot.details?.t1Connected || [], t1No: currentSnapshot.details?.t1NotConnected || [],
-            t2Yes: currentSnapshot.details?.t2Connected || [], t2No: currentSnapshot.details?.t2NotConnected || [] },
-          { key: 'inactive', label: 'Inactive (Lost/Hold/Old)', color: '#F59E0B', t1: currentSnapshot.t1Inactive, t2: currentSnapshot.t2Inactive, t1Pct: currentSnapshot.t1InactivePct, t2Pct: currentSnapshot.t2InactivePct,
-            t1Yes: (currentSnapshot.details?.t1Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`),
-            t1No: [], t2Yes: (currentSnapshot.details?.t2Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`), t2No: [] },
+          { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: cardSnapshot.t1WithContacts, t2: cardSnapshot.t2WithContacts, t1Pct: cardSnapshot.t1ContactPct, t2Pct: cardSnapshot.t2ContactPct,
+            t1Yes: cardSnapshot.details?.t1WithContacts || [], t1No: cardSnapshot.details?.t1NoContacts || [],
+            t2Yes: cardSnapshot.details?.t2WithContacts || [], t2No: cardSnapshot.details?.t2NoContacts || [] },
+          { key: 'dm', label: 'Decision Maker Identified', color: '#7C3AED', t1: cardSnapshot.t1WithDM || 0, t2: cardSnapshot.t2WithDM || 0, t1Pct: cardSnapshot.t1DMPct || 0, t2Pct: cardSnapshot.t2DMPct || 0,
+            t1Yes: cardSnapshot.details?.t1WithDM || [], t1No: cardSnapshot.details?.t1NoDM || [],
+            t2Yes: cardSnapshot.details?.t2WithDM || [], t2No: cardSnapshot.details?.t2NoDM || [] },
+          { key: 'connected', label: 'Connected (Had Opp)', color: '#10B981', t1: cardSnapshot.t1Connected, t2: cardSnapshot.t2Connected, t1Pct: cardSnapshot.t1ConnectedPct, t2Pct: cardSnapshot.t2ConnectedPct,
+            t1Yes: cardSnapshot.details?.t1Connected || [], t1No: cardSnapshot.details?.t1NotConnected || [],
+            t2Yes: cardSnapshot.details?.t2Connected || [], t2No: cardSnapshot.details?.t2NotConnected || [] },
+          { key: 'inactive', label: 'Inactive (Lost/Hold/Old)', color: '#F59E0B', t1: cardSnapshot.t1Inactive, t2: cardSnapshot.t2Inactive, t1Pct: cardSnapshot.t1InactivePct, t2Pct: cardSnapshot.t2InactivePct,
+            t1Yes: (cardSnapshot.details?.t1Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`),
+            t1No: [], t2Yes: (cardSnapshot.details?.t2Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`), t2No: [] },
         ];
         return (
           <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
@@ -1283,8 +1321,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   style={{ padding: '0.75rem', background: expandedCard === card.key ? '#F0F9FF' : 'var(--color-surface)', border: expandedCard === card.key ? '2px solid ' + card.color : '1px solid var(--color-border)', borderRadius: '8px', borderLeft: `3px solid ${card.color}`, cursor: 'pointer' }}>
                   <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{card.label}</div>
                   <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem' }}>
-                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{card.t1Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({card.t1}/{currentSnapshot.t1Total})</span></div>
-                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{card.t2Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({card.t2}/{currentSnapshot.t2Total})</span></div>
+                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{card.t1Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({card.t1}/{cardSnapshot.t1Total})</span></div>
+                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{card.t2Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({card.t2}/{cardSnapshot.t2Total})</span></div>
                   </div>
                 </div>
               ))}
@@ -1331,6 +1369,23 @@ export function ProgressView({ prospects, settings, cdmName }) {
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem', position: 'relative' }}>
+            {/* What the charts are NOT counting. Silently dropping accounts
+                from a trend line is the kind of help nobody can check, so
+                the count is on screen and the names are a hover away. */}
+            {untrackedNote && (
+              <span
+                style={{ marginRight: 'auto', fontSize: '0.7rem', color: 'var(--color-text-secondary)', cursor: 'help' }}
+                title={[
+                  untracked.names.length
+                    ? `Left out: ${untracked.names.join(', ')}.`
+                    : '',
+                  'Ticked on the Clients tab. Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client puts it back on every point.',
+                  'Two numbers keep what they were saved with, because the week stored no account list behind them: the Tier 3 total and the No-Opps Activity chart.',
+                ].filter(Boolean).join('\n\n')}
+              >
+                {untrackedNote}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => downloadChartsData()}
@@ -1395,9 +1450,23 @@ export function ProgressView({ prospects, settings, cdmName }) {
           </div>
 
           {/* History table */}
-          {chartData.length > 0 && (
+          {historyRows.length > 0 && (
             <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', overflow: 'hidden' }}>
-              <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0, padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)' }}>Weekly History</h3>
+              <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0, padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)' }}>
+                Weekly History
+                {/* These cells write straight into the saved week, so the
+                    table shows what is saved rather than what the charts
+                    plot. Say so, or a user comparing the two reads the
+                    difference as a bug. */}
+                {untracked.names.length > 0 && (
+                  <span
+                    style={{ fontWeight: 500, color: 'var(--color-text-secondary)', fontSize: '0.7rem', marginLeft: '0.4rem' }}
+                    title={`As recorded, including the ${untracked.names.length} Don't Track client${untracked.names.length === 1 ? '' : 's'} the charts leave out. Editing a cell writes the value into that week's saved snapshot.`}
+                  >
+                    (as recorded, Don&rsquo;t Track clients included)
+                  </span>
+                )}
+              </h3>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)' }}>
@@ -1415,7 +1484,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...chartData].reverse().map((h, i) => (
+                  {[...historyRows].reverse().map((h, i) => (
                     <tr key={h.week} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
                       <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>
                         {editingWeek === h.week ? (
