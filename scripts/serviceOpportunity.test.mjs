@@ -148,6 +148,68 @@ check('and count the ones carrying upside', totals.withValue, 2);
 check('and the ones with no rate at all', totals.unpriced, 1);
 check('every row is counted as a service', totals.services, 3);
 
+// ---- Which clients hold the counts the service is priced on ---------------
+// The money column cannot tell "this client is worth nothing on it" from
+// "nobody has entered their site count", and the two call for opposite
+// responses. So the counts a service reaches for, and how much of the book
+// holds them, are tallied separately.
+{
+  // A fifth client with no site count at all: open on everything, priceable
+  // on nothing that charges per site.
+  const withBlank = [...clients, { company: 'Epsilon', servicesExplored: {} }];
+  const r = rollUpServiceOpportunity({ clients: withBlank, serviceRows, pricing, bases, scopeOf });
+
+  const bp = byName(r, 'Bill Pay');
+  check('a per-site service says it reaches for the site count',
+    bp.unitsNeeded.join(','), 'sites');
+  check('named the way the rate card names it', bp.unitLabels.join(','), 'Sites');
+  check('four of the five clients have one', bp.clientsWithUnits, 4);
+  check('and the client without is the one missing it',
+    bp.clients.find(c => c.company === 'Epsilon').missingUnitLabels.join(','), 'Sites');
+  check('a client who has it is missing nothing',
+    bp.clients.find(c => c.company === 'Alpha').missingUnits.length, 0);
+  // Open clients are tracked apart: they are the ones worth chasing the
+  // number for, since a sold client's missing count changes no upside.
+  check('the open clients are counted on their own', bp.openClients, 3);
+  check('two of the three open ones can be priced', bp.openClientsWithUnits, 2);
+
+  // A flat fee asks for nothing, and must not be reported as a book with
+  // perfect data — there is no data standing in its way at all.
+  const flat = byName(r, 'Audit');
+  check('a flat fee reaches for no count', flat.unitsNeeded.length, 0);
+  check('so it has no labels to name', flat.unitLabels.length, 0);
+
+  // A count typed against the client for that one service answers the
+  // question on its own: nothing shared is consulted, so nothing is missing.
+  const typed = rollUpServiceOpportunity({
+    clients: withBlank,
+    serviceRows,
+    pricing,
+    bases,
+    scopeOf: (c) => (c.company === 'Epsilon' ? { serviceUnits: { 'Bill Pay': 3 } } : scopes[c.company]),
+  });
+  const bpTyped = byName(typed, 'Bill Pay');
+  check('a count typed against the service leaves nothing to look up',
+    bpTyped.clients.find(c => c.company === 'Epsilon').missingUnits.length, 0);
+  check('so the whole book holds what the service needs', bpTyped.clientsWithUnits, 5);
+  check('and it prices for them', bpTyped.clients.find(c => c.company === 'Epsilon').contractValue, 900);
+}
+
+// A missing count and a zero-value client are different states, and the row
+// has to keep them apart: Epsilon prices at nothing on Bill Pay because the
+// count is absent, not because the service is worthless to them.
+{
+  const withZero = [
+    { company: 'Zero Sites', numberOfSites: 0, servicesExplored: {} },
+    { company: 'Has Sites', numberOfSites: 4, servicesExplored: {} },
+  ];
+  const r = rollUpServiceOpportunity({ clients: withZero, serviceRows, pricing, bases, scopeOf });
+  const bp = byName(r, 'Bill Pay');
+  check('a zero count is as absent as no count, for pricing',
+    bp.clientsWithUnits, 1);
+  check('and the row still prices the client that has one', bp.contractValue, 1_200);
+}
+
 // ---- The explored summary reads as a sentence -----------------------------
 check('explored summary names each bucket it has',
   exploredSummary({ sold: 31, inProgress: 4, notSold: 0, na: 2 }),

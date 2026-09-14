@@ -114,6 +114,51 @@ function ExploredCell({ statuses }) {
   );
 }
 
+// How much of the book holds the counts this service is priced on.
+//
+// The money columns cannot separate "this client doesn't need it" from
+// "nobody has ever entered their meter count", and the two call for
+// opposite responses: one is a dead end, the other is an afternoon's data
+// entry standing between the book and a real number. So the share is
+// stated, the count it turns on is named, and the bar is coloured by how
+// much of the book is ready to be priced rather than by anything about the
+// opportunity itself.
+//
+// A service consulting no shared count at all — a flat fee, a percentage
+// of the deal — has no data standing in its way, and says so rather than
+// claiming a hollow 100%.
+function DataCoverageCell({ row, total }) {
+  if (!row.unitsNeeded.length) {
+    return (
+      <span
+        style={{ color: '#94A3B8' }}
+        title={row.basisLabel
+          ? `Priced on ${row.basisLabel}, which reaches for no client count. Nothing has to be looked up to price this against anybody.`
+          : 'No pricing basis set on this service, so it asks for no client count.'}
+      >n/a</span>
+    );
+  }
+  const have = row.clientsWithUnits;
+  const pct = total > 0 ? Math.round((have / total) * 100) : 0;
+  const short = total - have;
+  // The app's own three: green once most of the book can be priced, amber
+  // while it is patchy, red when the count is missing more often than not.
+  const color = pct >= 80 ? '#047857' : pct >= 40 ? '#B45309' : '#B91C1C';
+  const needed = row.unitLabels.join(' + ');
+  return (
+    <span
+      title={`${have} of ${total} client${total === 1 ? '' : 's'} have a ${needed} count, so this service can be priced against them.`
+        + (short ? ` ${short} do not, and price at nothing here until it is entered on the Deal Sizing subtab or the company card.` : '')
+        + ` Of the ${row.openClients} open client${row.openClients === 1 ? '' : 's'}, ${row.openClientsWithUnits} have it.`}
+      style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.3rem', whiteSpace: 'nowrap' }}
+    >
+      <span style={{ fontWeight: 700, color }}>{pct}%</span>
+      <span style={{ color: '#94A3B8', fontWeight: 600 }}>{have} / {total}</span>
+      <span style={{ color: '#64748B' }}>{needed}</span>
+    </span>
+  );
+}
+
 export function ServiceOpportunityView({
   prospects = [], cdmName, settings, updateSettings, onSelectProspect,
 }) {
@@ -323,6 +368,25 @@ export function ServiceOpportunityView({
       ),
     },
     {
+      // How much of the book could be priced on this service at all — the
+      // question the money column cannot answer. A service charged per
+      // meter is worth nothing against a client whose meter count nobody
+      // has entered, and in the Est. Deal Value column that is
+      // indistinguishable from a client the service is worth nothing to.
+      // One is a gap in the data and gets filled in an afternoon.
+      key: 'dataCoverage', label: 'Has Pricing Data', defaultWidth: 240,
+      // Sorted by the share, not the count, so a service needing one count
+      // nobody has ranks below one needing a count everybody has however
+      // many clients sit behind each. A service that consults no shared
+      // count sorts to the top: there is no data standing in its way.
+      getSortValue: (row) => (row.unitsNeeded.length ? row.clientsWithUnits / (clients.length || 1) : 1),
+      getFilterValue: (row) => (row.unitsNeeded.length ? row.unitLabels.join(' + ') : 'No counts needed'),
+      exportValue: (row) => (row.unitsNeeded.length
+        ? `${row.clientsWithUnits}/${clients.length} have ${row.unitLabels.join(' + ')}`
+        : 'No counts needed'),
+      render: (row) => <DataCoverageCell row={row} total={clients.length} />,
+    },
+    {
       key: 'explored', label: 'Explored', defaultWidth: 260,
       getSortValue: (row) => (row.statuses.sold + row.statuses.inProgress + row.statuses.notSold + row.statuses.na),
       getFilterValue: (row) => exploredSummary(row.statuses) || 'Nobody',
@@ -399,8 +463,8 @@ export function ServiceOpportunityView({
               <td style={{ ...cellReset, padding: '0.25rem 0.4rem', color: '#B45309' }}>
                 {c.missingUnits.length
                   ? (
-                    <span title={`This client has no ${c.missingUnits.join(' / ')} count, so the service prices at nothing for them. Enter it on the Deal Sizing subtab, or on the company card.`}>
-                      {`No ${c.missingUnits.join(' / ')} count`}
+                    <span title={`This client has no ${c.missingUnitLabels.join(' / ')} count, so the service prices at nothing for them. Enter it on the Deal Sizing subtab, or on the company card.`}>
+                      {`No ${c.missingUnitLabels.join(' / ')} count`}
                     </span>
                   )
                   : <span style={{ color: '#CBD5E1' }}>—</span>}
