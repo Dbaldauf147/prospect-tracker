@@ -510,13 +510,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     const target = Number(funnelOutcome.target) || 0;
 
     const lives = ordered.map(st => (Number(st.lifeActual) > 0 ? Number(st.lifeActual) : 0));
-    const byLife = lives.every(d => d > 0);
-    const totalLife = lives.reduce((a, b) => a + b, 0);
 
     return {
-      caption: `Band height = pipeline value, segment length = ${byLife
-        ? `avg opp life: ${Math.round(totalLife)} days end to end`
-        : 'even (no avg opp life yet)'}.`,
       stages: ordered.map((st, i) => ({
         label: st.label,
         count: Number(st.countActual) || 0,
@@ -541,10 +536,6 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // rasterised and travels with the report as an attached PNG. It is
   // captured from the DOM rather than redrawn from the numbers: a second
   // drawing of the same funnel is free to disagree with the one on screen.
-  //
-  // The caption comes off the chart too. It names whichever measure the
-  // funnel's own toggle is showing, so a picture of deal counts can't
-  // arrive under a line promising pipeline value.
   const funnelCardRef = useRef(null);
   const [funnelImage, setFunnelImage] = useState(null);
 
@@ -562,7 +553,6 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       setFunnelImage(shot ? {
         ...shot,
         alt: svg.getAttribute('aria-label') || 'Pipeline funnel',
-        caption: card.querySelector('[class*="caption"]')?.textContent?.trim() || '',
       } : null);
     }, 700);
     return () => { cancelled = true; clearTimeout(t); };
@@ -642,10 +632,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // carries only the line under each figure that gives it a scale. See
       // emailKpiCards for why the tab's working is left on the tab.
       kpiCards: kpisReady ? emailKpiCards(kpis) : [],
-      kpiNote: 'Year to date — not scoped to the week picker',
-      funnel: funnelSummary && funnelImage?.caption
-        ? { ...funnelSummary, caption: funnelImage.caption }
-        : funnelSummary,
+      funnel: funnelSummary,
       // The chart itself. Absent when it couldn't be captured — the email
       // still carries the same figures as a table underneath it.
       funnelImage: funnelSummary && funnelImage

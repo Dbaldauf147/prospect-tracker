@@ -31,13 +31,11 @@ const snapshot = {
   capturedAt: Date.parse('2026-09-07T05:02:00Z'),
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
-  kpiNote: 'Year to date — not scoped to the week picker',
   kpiCards: [
     { label: 'Progress to target', value: '36.6%', status: 'behind', chip: 'Behind pace', lines: ['$484,616 sold of $1,325,000'] },
     { label: 'Coverage ratio', value: '1.73×', status: 'ahead', chip: 'At goal', lines: [] },
   ],
   funnel: {
-    caption: 'Band height = pipeline value.',
     stages: [{ label: 'Stage 3', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
     outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K' },
   },
@@ -89,7 +87,11 @@ check('no flex or grid layout', /display:\s*(flex|grid)/.test(html), false);
 check('the status chip sits in its own cell',
   /<td[^>]*bgcolor="#FEF3C7"[^>]*>Behind pace<\/td>/.test(html), true);
 check('the heading note sits in its own cell',
-  /class="hnote"[^>]*>Year to date/.test(html), true);
+  /class="hnote"[^>]*>Last 3 months/.test(html), true);
+// The period the report covers reads beside the title, not under it, and so
+// needs the same treatment.
+check('the period label sits beside the title, in its own cell',
+  /Weekly Report<\/td>\s*<td class="hnote"[^>]*>Mon, Aug 31/.test(html), true);
 
 // Layout tables must be inert to a screen reader and must not inherit the
 // cell spacing Word otherwise applies.
