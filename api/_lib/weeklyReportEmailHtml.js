@@ -61,11 +61,20 @@ const statusOf = (s) => STATUS[s] || STATUS.none;
 // would read as a second thing being measured. Both greys and both accents
 // clear 3:1 on white, so every bar is visible and no bar competes.
 const TREND_HISTORY = '#7C8B9D';
+// The chart column of a trend card, in pixels: the 800px content column,
+// halved for the two cards side by side, less the card's border and
+// padding and the label and value columns either side of the bar, with a
+// little slack left so Outlook never has to choose what to drop.
+const TREND_TRACK = 230;
 const TREND_BLUE = { strong: '#2a78d6', soft: TREND_HISTORY };
 const TREND_GREEN = { strong: '#0E9F6E', soft: TREND_HISTORY };
 
 // The stage ramp the Pipeline funnel draws with, earliest stage darkest.
 const STAGE_FILL = ['#104281', '#1c5cab', '#2a78d6', '#6da7ec'];
+// The stage-bar column in the funnel table, drawn only when the chart
+// itself could not be rasterised. Wider than a trend track because this
+// card has the full content column to itself.
+const FUNNEL_TRACK = 260;
 
 const table = (attrs, rows) =>
   `<table role="presentation" cellpadding="0" cellspacing="0" border="0" ${attrs}>${rows}</table>`;
@@ -86,6 +95,35 @@ const CARD_CLOSE = '</td></tr></table>';
 // Horizontal gutter between two cards in a row. A spacer cell, because
 // Word drops the negative margins a CSS gutter would need.
 const gutter = (w = 12) => `<td class="gut" width="${w}" style="width:${w}px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>`;
+
+// One horizontal bar: a fixed-width track of two cells, the fill sized in
+// pixels and the rest holding the track open behind it.
+//
+// Pixels, not a percentage, because of Word. A table nested in a cell with
+// `width="61%"` is the one construct Word will not resolve — it falls back
+// to the table's content width, and a bar whose only content is a spacer is
+// a few pixels wide. Five of those in a column, each still 14px tall, is
+// what turned this row of horizontal bars into a column chart in Outlook.
+// Two cells in one row avoids the nested table altogether, and every width
+// is stated in an attribute as well as in CSS, which is what Word reads.
+// A browser still compresses the whole track when the card is narrower
+// than it, so the fill keeps its share of the bar on a phone.
+function barHtml({ fillPx, trackPx, color, height = 14, radius = '0 3px 3px 0' }) {
+  const fill = Math.max(0, Math.min(trackPx, Math.round(fillPx) || 0));
+  const rest = trackPx - fill;
+  // A cell with no text still needs a character in Outlook, and the
+  // character must not be allowed to set the cell's height.
+  const blank = 'font-size:0;line-height:0;mso-line-height-rule:exactly';
+  const cells = [
+    fill > 0
+      ? `<td width="${fill}" height="${height}" bgcolor="${color}" style="width:${fill}px;height:${height}px;border-radius:${radius};${blank}">&nbsp;</td>`
+      : '',
+    rest > 0
+      ? `<td width="${rest}" height="${height}" style="width:${rest}px;height:${height}px;${blank}">&nbsp;</td>`
+      : '',
+  ].join('');
+  return table(`width="${trackPx}" style="border-collapse:collapse;width:${trackPx}px"`, `<tr>${cells}</tr>`);
+}
 
 // A section heading with the tab's note beside it. Two cells: padding on a
 // <span> is ignored in Outlook, so the note would otherwise collide with
@@ -158,6 +196,9 @@ function cardRow(cells) {
 // where the fills do not render at all — which is also the relief a
 // low-contrast fill on white requires.
 //
+// Horizontal is also something the markup has to hold onto: see barHtml
+// for why the width of a bar is a pixel count and not a percentage.
+//
 // A null value is NOT a zero. For the emails series it means the week has
 // no recording and the feed cannot answer for it; drawing that as an empty
 // bar would assert a quiet week that nobody actually measured.
@@ -166,22 +207,29 @@ function trendRowHtml(point, max, accent, isLast) {
   const value = known ? point.value : 0;
   // Scale to the tallest bar in the series, never to the axis: five weeks
   // of 20-30 emails against a 0-50 axis is five stubs that all look alike.
-  const pct = max > 0 && known ? Math.max(2, Math.round((value / max) * 100)) : 0;
+  const fillPx = max > 0 && known ? Math.max(4, Math.round((value / max) * TREND_TRACK)) : 0;
   // The current period is the one the reader is being told about, so it
   // carries the full accent and the rest recede — emphasis, rather than
   // five bars competing for the same attention.
   const fill = isLast ? accent.strong : accent.soft;
   const labelInk = isLast ? INK : MUTED;
 
-  const bar = pct > 0
-    ? table(`width="${pct}%" bgcolor="${fill}" style="border-collapse:collapse;width:${pct}%;border-radius:0 3px 3px 0"`,
-      `<tr><td height="14" style="height:14px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>`)
-    : '&nbsp;';
+  // The track is drawn even where the bar is empty, so the numbers down
+  // the right stay in a column of their own rather than sliding left on
+  // the weeks nothing can be said about.
+  const bar = barHtml({ fillPx, trackPx: TREND_TRACK, color: fill });
+
+  // The slack cell at the end keeps the three fixed columns together on
+  // the left instead of letting the table spread them across the card. It
+  // carries `hpad` because a percentage cell beside fixed ones is what
+  // forces a table wider than a phone's screen, and the media query drops
+  // it there — Word, which never reads the query, keeps it.
 
   return `<tr>
       <td width="58" valign="middle" style="width:58px;padding:3px 8px 3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${labelInk};white-space:nowrap">${esc(point.label)}</td>
-      <td valign="middle" style="padding:3px 0">${table(`width="100%" style="border-collapse:collapse"`, `<tr><td>${bar}</td></tr>`)}</td>
+      <td width="${TREND_TRACK}" valign="middle" style="width:${TREND_TRACK}px;padding:3px 0">${bar}</td>
       <td width="42" valign="middle" style="width:42px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? esc(point.value) : '&mdash;'}</td>
+      <td class="hpad" width="99%" style="width:99%"></td>
     </tr>`;
 }
 
@@ -292,8 +340,8 @@ export function funnelHtml(funnel, image = null) {
   };
   const peak = Math.max(...stages.map(amountOf), 0);
 
-  const th = (label, align = 'left', width = '') =>
-    `<th ${width ? `width="${width}" ` : ''}style="padding:0 8px 5px 0;text-align:${align};font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER}">${esc(label)}</th>`;
+  const th = (label, align = 'left', width = '', cls = '') =>
+    `<th ${cls ? `class="${cls}" ` : ''}${width ? `width="${width}" ` : ''}style="padding:0 8px 5px 0;text-align:${align};font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER}">${esc(label)}</th>`;
   const td = (v, align = 'left', strong = false) =>
     `<td style="padding:7px 8px 7px 0;text-align:${align};font-family:${FONT};font-size:13px;color:${strong ? INK : INK_SOFT};font-weight:${strong ? 600 : 400};border-bottom:1px solid ${SURFACE_ALT};white-space:nowrap">${esc(v ?? '—')}</td>`;
 
@@ -302,14 +350,14 @@ export function funnelHtml(funnel, image = null) {
   // pipeline value in its own colour from the chart's ramp.
   const rows = stages.map((st, i) => {
     const amt = amountOf(st);
-    const pct = peak > 0 ? Math.max(4, Math.round((amt / peak) * 100)) : 0;
+    const fillPx = peak > 0 ? Math.max(4, Math.round((amt / peak) * FUNNEL_TRACK)) : 0;
     const fill = STAGE_FILL[Math.min(i, STAGE_FILL.length - 1)];
-    const bar = picture || pct <= 0 ? '' : `<td style="padding:7px 8px 7px 0;border-bottom:1px solid ${SURFACE_ALT}">${table(
-      `width="100%" style="border-collapse:collapse"`, `<tr><td>${table(
-        `width="${pct}%" bgcolor="${fill}" style="border-collapse:collapse;width:${pct}%;border-radius:2px"`,
-        `<tr><td height="12" style="height:12px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>`,
-      )}</td></tr>`,
-    )}</td>`;
+    // Same pixel track as the trend bars, and for the same reason: this
+    // column is the picture when there is no picture, and a percentage
+    // width would leave Outlook drawing five vertical ticks instead.
+    const bar = picture || fillPx <= 0 ? '' : `<td class="sbar" width="${FUNNEL_TRACK}" style="width:${FUNNEL_TRACK}px;padding:7px 8px 7px 0;border-bottom:1px solid ${SURFACE_ALT}">${barHtml({
+      fillPx, trackPx: FUNNEL_TRACK, color: fill, height: 12, radius: '2px',
+    })}</td>`;
     return `<tr>
         ${td(st.label, 'left', true)}
         ${bar}
@@ -345,7 +393,7 @@ export function funnelHtml(funnel, image = null) {
     ${cardOpen()}
       ${picture}
       ${table(`width="100%" style="border-collapse:collapse"`, `
-        <tr>${th('Stage')}${picture ? '' : th('Pipeline', 'left', '34%')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
+        <tr>${th('Stage')}${picture ? '' : th('Pipeline', 'left', String(FUNNEL_TRACK + 8), 'sbar')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
         ${rows}
       `)}
       ${outcome}
@@ -702,6 +750,10 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
        being squeezed against the slack cell, which goes away. */
     .hnote { white-space:normal !important; }
     .hpad { display:none !important; width:0 !important; }
+    /* The funnel's stage bars are a fixed column, which is 260px a phone
+       does not have: there the figures beside them are the whole story,
+       as they are for a reader whose client hides the chart image. */
+    .sbar { display:none !important; width:0 !important; }
   }
 </style>
 </head>

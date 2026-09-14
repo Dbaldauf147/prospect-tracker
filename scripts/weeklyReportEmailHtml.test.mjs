@@ -121,18 +121,31 @@ check('every table is a presentation table with no spacing',
 // The tallest bar in a series is the scale: 44 emails is the max, so it is
 // the 100% bar and 18 is scaled against it, not against a 0–50 axis that
 // would render five near-identical stubs.
+// Every width is a pixel count stated in an attribute as well as in CSS:
+// Word will not resolve a percentage width on a table nested in a cell, so
+// a bar sized that way collapses to its content and the series arrives in
+// Outlook as a column of ticks rather than a row of bars.
 check('a trend bar is a bgcolor cell sized both ways',
-  /width="100%" bgcolor="#7C8B9D"[^>]*width:100%/.test(html), true);
+  /<td width="230" height="14" bgcolor="#7C8B9D"[^>]*width:230px/.test(html), true);
 check('bars scale to the series max, not to a fixed axis',
-  /width="41%" bgcolor="#7C8B9D"/.test(html), true);
+  /<td width="94" height="14" bgcolor="#7C8B9D"/.test(html), true);
+check('no bar is sized as a share of the cell it sits in',
+  /width="\d+%"[^>]*bgcolor="(#7C8B9D|#2a78d6|#0E9F6E|#104281|#1c5cab)"/.test(html), false);
 // Emphasis: the period this report covers wears the accent, the history
 // behind it wears the de-emphasis grey.
 check('the current period carries the accent colour',
-  /width="61%" bgcolor="#2a78d6"/.test(html), true);
+  /<td width="141" height="14" bgcolor="#2a78d6"/.test(html), true);
 check('the current month carries the opps accent',
   /bgcolor="#0E9F6E"/.test(html), true);
 check('a funnel bar uses the chart’s own stage colour',
   html.includes('bgcolor="#104281"'), true);
+// The stage bars are a fixed column too, and the one column in the report
+// that is decoration rather than figures — so it is also the one a phone
+// drops, rather than carrying a 260px column no phone has room for.
+check('a funnel bar is sized in pixels like the trend bars',
+  /<td width="\d+" height="12" bgcolor="#104281"/.test(html), true);
+check('the stage-bar column is droppable on a narrow client',
+  /\.sbar \{ display:none/.test(html) && /<td class="sbar"/.test(html), true);
 
 // ---- The close rate trend -------------------------------------------------
 // The grid under the funnel. Its two colour cues are the stage swatch beside
