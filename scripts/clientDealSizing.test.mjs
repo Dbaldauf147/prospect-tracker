@@ -68,7 +68,8 @@ function check(label, actual, expected) {
 // A small catalog and rate card, standing in for the Services and Services
 // Pricing subtabs. Bill pay is recurring over three years and priced per
 // site; the retrofit is a one-off flat job; the audit is priced per meter,
-// which no client record answers; the levy is a cut of the deal size.
+// which THIS client record leaves blank; the tune-up is priced per piece of
+// equipment; the levy is a cut of the deal size.
 const serviceRows = [
   { name: 'Bill pay',  meta: { serviceType: 'Recurring', years: '3 years' } },
   { name: 'Retrofit',  meta: { serviceType: 'Project' } },
@@ -76,6 +77,7 @@ const serviceRows = [
   // A second per-meter service, so a warning can be checked for naming EVERY
   // service one missing count is starving rather than just the first.
   { name: 'Second audit', meta: { serviceType: 'Recurring', years: '1 year' } },
+  { name: 'Tune-up',   meta: { serviceType: 'Project' } },
   { name: 'Levy',      meta: { serviceType: 'Project' } },
   { name: 'Unpriced',  meta: { serviceType: 'Project' } },
 ];
@@ -84,6 +86,7 @@ const pricing = {
   Retrofit: { basis: 'flat', rate: '25000' },
   'Meter audit': { basis: 'per_meter', rate: '12' },
   'Second audit': { basis: 'per_meter', rate: '8' },
+  'Tune-up': { basis: 'per_equipment', rate: '75' },
   Levy: { basis: 'pct_deal', rate: '5' },
   Unpriced: {},
 };
@@ -134,8 +137,8 @@ check('counts: a zero on the record is not a count',
   clientCounts({ numberOfSites: 0 }, emptyClientScope()), { counts: {}, sources: {} });
 // A unit no client record knows — typed against this client or not at all.
 check('counts: a unit off the record can still be typed',
-  clientCounts(PROLOGIS, { counts: { meters: 900 } }).counts,
-  { sites: 6176, accounts: 10000, meters: 900 });
+  clientCounts(PROLOGIS, { counts: { invoices: 900 } }).counts,
+  { sites: 6176, accounts: 10000, invoices: 900 });
 
 // Sites w/ Mandate is the third field the card answers on its own. It is a
 // SEPARATE count from Sites — the mandated subset of a portfolio, not the
@@ -152,6 +155,31 @@ check('counts: a mandated-site figure typed for the deal beats the record',
   {
     counts: { sites: 6176, sites_mandate: 40, accounts: 10000 },
     sources: { sites: 'client', sites_mandate: 'typed', accounts: 'client' },
+  });
+
+// Equipment, Meters and Electric MWh are Scale boxes on the company card
+// exactly as Sites and Accounts are, and the card says so in as many words:
+// each of their tooltips promises that a per-equipment / per-meter / per-MWh
+// service prices off it. A card carrying an equipment count while the row
+// asks for one is the card breaking its own promise, so the record answers
+// all three.
+check('counts: the card answers equipment, meters and MWh',
+  clientCounts(
+    { ...PROLOGIS, equipmentCount: 2400, numberOfMeters: 900, annualMwh: 51000 },
+    emptyClientScope(),
+  ),
+  {
+    counts: { sites: 6176, accounts: 10000, meters: 900, equipment: 2400, mwh: 51000 },
+    sources: {
+      sites: 'client', accounts: 'client', meters: 'client',
+      equipment: 'client', mwh: 'client',
+    },
+  });
+check('counts: an equipment figure typed for the deal beats the record',
+  clientCounts({ ...PROLOGIS, equipmentCount: 2400 }, { counts: { equipment: 120 } }),
+  {
+    counts: { sites: 6176, accounts: 10000, equipment: 120 },
+    sources: { sites: 'client', accounts: 'client', equipment: 'typed' },
   });
 
 // ---- what the Counts used column prints ---------------------------------
@@ -291,6 +319,21 @@ const warn = (scope, client = PROLOGIS) => dealSizingWarnings({
 
 check('warn: a client whose record answers everything has nothing to say',
   warn({ services: ['Bill pay'] }), []);
+// The bug this list exists to stop: a company card carrying an Equipment
+// figure, and the row beside it still asking for an equipment count. The
+// card's Equipment box says a per-equipment service prices off it, so a
+// client who has one is not missing anything - and one who hasn't still is.
+check('warn: an equipment count on the card answers a per-equipment service',
+  warn({ services: ['Tune-up'] }, { ...PROLOGIS, equipmentCount: 2400 }), []);
+check('warn: and without one the row still says so',
+  warn({ services: ['Tune-up'] }).map(w => [w.chip, w.detail]),
+  [['No equipment count', 'No equipment count for this client, so Tune-up prices at nothing.']]);
+check('warn: the card count is what prices it',
+  estimateClient({
+    client: { ...PROLOGIS, equipmentCount: 2400 },
+    scope: { services: ['Tune-up'] },
+    serviceRows, pricing,
+  }).year1Total, 180000);
 check('warn: a missing count says which service it starves',
   warn({ services: ['Meter audit'] }).map(w => [w.chip, w.detail]),
   [['No meters count', 'No meters count for this client, so Meter audit prices at nothing.']]);

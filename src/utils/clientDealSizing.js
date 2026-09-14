@@ -33,20 +33,26 @@ import { serviceStatusBucket } from './serviceStatusColors.js';
 import { parseCommodities } from './commodities.js';
 
 // Units a client record answers on its own, and the field that answers each.
-// These are the counts the company card actually collects; every other unit a
-// scope needs (meters, invoices, MWh) is asked for per client, because nothing
-// in the record knows it.
+// These are the counts the company card's Scale block actually collects; a
+// unit outside this list (invoices, projects) is asked for per client,
+// because nothing in the record knows it.
 //
-// Sites w/ Mandate is the card's own field too — typed on the card, or
-// stamped from the site list's compliance screening — so a service charged
-// per mandated site prices without anyone re-entering a number the company
-// page already knows. Same rule as the other two: a figure typed against the
-// client beats it, because the portfolio's mandated sites and the ones a
-// deal covers are not the same number.
+// The list is the card's Scale boxes, in the card's own order, and that is
+// the rule for adding to it: a box on the card that a rate-card basis prices
+// against belongs here. Sites w/ Mandate is stamped from the site list's
+// compliance screening, Equipment from the same list's per-site estimate,
+// and both say on the card that a per-mandated-site / per-equipment service
+// prices off them — a promise this list is what keeps. Meters and Electric
+// MWh are typed on the card and say the same. Same rule for all of them: a
+// figure typed against the client beats the record, because a portfolio's
+// count and the one a deal covers are not the same number.
 export const CLIENT_COUNT_FIELDS = [
   { unit: 'sites', field: 'numberOfSites', label: 'Sites' },
   { unit: 'sites_mandate', field: 'sitesWithMandate', label: 'Sites w/ Mandate' },
   { unit: 'accounts', field: 'numberOfAccounts', label: 'Accounts' },
+  { unit: 'meters', field: 'numberOfMeters', label: 'Meters' },
+  { unit: 'equipment', field: 'equipmentCount', label: 'Equipment' },
+  { unit: 'mwh', field: 'annualMwh', label: 'Electric MWh' },
 ];
 
 /** An empty scope — the shape every client starts at. */
