@@ -31,7 +31,7 @@ import {
 //
 // Returns { steps, counts, autoClear, peFirmsToWork, campaignsToFinish, work,
 // states, stateByKey, today, caughtUpMap, dueCount }.
-export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null } = {}) {
+export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null, cdmName = '' } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
   // reads them: newest of the local cache and Firestore on mount, then the
   // cache on focus / after any Opps 2 save / on a timer, since Call In is
@@ -70,9 +70,13 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // lists these rows under the step. Null until BOTH the prospects and the
   // opps have landed: an empty list would otherwise read as "no firms to
   // chase" while the opps that disqualify them were still loading.
+  //
+  // Scoped to the user's own book by cdmName, with accounts already written
+  // off left out — the step is a call for this user to make. See
+  // ladderOwnership.js; the visit list on the page runs the same rule.
   const peFirmsToWork = useMemo(
-    () => collectPeFirmsToWork(prospects, oppsRecords),
-    [prospects, oppsRecords],
+    () => collectPeFirmsToWork(prospects, oppsRecords, cdmName),
+    [prospects, oppsRecords, cdmName],
   );
 
   // The saved email campaigns, read here rather than on the Prospecting

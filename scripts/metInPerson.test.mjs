@@ -6,8 +6,9 @@
 // both directions, a contact nobody has answered either way still counts as
 // met when the old tag says so, the booleans the old checkbox wrote still
 // read as Yes / No, "hold off" is not met and not on the visit list,
-// "asked" is not met but STAYS on it, and the list under the visits step
-// groups by the account a trip would be to —
+// "asked" is not met but STAYS on it, the list under the visits step is
+// scoped to the user's own accounts, and it groups by the account a trip
+// would be to —
 // with a coverage that hasn't landed reading as "unknown" rather than "you
 // have met everybody".
 import {
@@ -163,6 +164,42 @@ check('case and padding do not matter here either', normalizeMetState(' Asked ')
   const both = keyContactsNotMet(coverage, { 1: MET_ASKED, 2: MET_HOLD });
   check('asked and held are counted apart',
     [both.total, both.asked, both.onHold], [all.total - 1, 1, 1]);
+}
+
+// --- whose account it is ---------------------------------------------
+//
+// The Key roster is one HubSpot tag and nothing else, so it carries people
+// at accounts another CDM owns and at ones already written off. A ladder
+// asking which trips to book should name neither, and the gate runs before
+// the Met In Person reading so a filtered contact is not counted as held or
+// asked either - it is not the user's to have an answer about.
+{
+  // Acme is the user's, Borex is not, and the contact with no company has
+  // no account behind them at all.
+  const mine = (c) => String(c?.company || '').trim() === 'Acme Corp';
+  const gated = keyContactsNotMet(coverage, {}, mine);
+  check('only the user\'s accounts are listed',
+    gated.groups.map(g => [g.company, g.people.map(p => p.name)]),
+    [['Acme Corp', ['Ann Alpha', 'Bob Beta']]]);
+  check('and the counts beside it follow', [gated.total, gated.accounts], [2, 1]);
+  // Somebody else's contact is not "on hold" and not "already asked" - both
+  // counts are about the user's own book.
+  const answered = keyContactsNotMet(coverage, { 4: MET_HOLD, 5: MET_ASKED }, mine);
+  check('a filtered contact is not counted as held or asked',
+    [answered.onHold, answered.asked], [0, 0]);
+  // The gate reads the company and the email, since a coverage row and the
+  // record behind it don't always carry the same one.
+  const byEmail = keyContactsNotMet(coverage, {},
+    (c) => String(c?.email || '').endsWith('@example.com') && String(c?.company || '') === 'Borex');
+  check('the gate sees the email too', byEmail.groups.map(g => g.company), ['Borex']);
+  // No gate is the roster whole - what a caller with no book to check
+  // against can honestly say.
+  check('no gate leaves the list alone', keyContactsNotMet(coverage, {}, null).total, 4);
+  // Nothing of the user's is an empty list, not an unknown: the roster HAS
+  // landed, there is just nothing on it to go and see.
+  check('none of them yours is empty, not unknown',
+    keyContactsNotMet(coverage, {}, () => false),
+    { total: 0, accounts: 0, groups: [], onHold: 0, asked: 0 });
 }
 
 check('the dropdown offers exactly four answers, in the order a meeting goes',

@@ -41,6 +41,7 @@ import {
 } from '../../utils/prospectingPlaybook';
 import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { keyContactsNotMet } from '../../utils/metInPerson';
+import { makeOwnedContactGate } from '../../utils/ladderOwnership';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
@@ -644,7 +645,7 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
     <div style={{ marginTop: 8, fontSize: '0.72rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
         <span
-          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No or Asked - the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
+          title="Contacts on the Key roster (tagged Dan Key Target), at your own accounts, whose Met In Person answer in the contact popup is No or Asked - the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them. Contacts whose company has another CDM, a Status of &quot;Lost - Not Sold&quot;, or no record on Table View at all are left out - the trip wouldn't be yours to plan."
           style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
         >
           Key contacts not met in person: {summary.total}
@@ -1069,7 +1070,7 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null, dmCoverage = null }) {
+export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null, dmCoverage = null, cdmName = '' }) {
   // The ladder's status — the steps, what each one counts, and which of
   // them is caught up, outstanding or still loading. Computed once in App
   // (useProspectingLadder) and handed down, so this page's Status column
@@ -1095,9 +1096,20 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // is already the Key roster, gated once for the whole app — plus the
   // local Met In Person checkboxes. Null until the coverage lands, which is
   // what keeps an empty list from reading as "you have met everybody".
+  //
+  // And narrowed to the user's own accounts, the way the PE step above it
+  // is. The Key roster is a tag and nothing more, so it carries contacts at
+  // accounts another CDM owns and at ones already written off; a ladder
+  // asking which trips to book should not be naming either. The gate is
+  // rebuilt when the book changes — it indexes the accounts once so the
+  // list doesn't rescan them per contact. See ladderOwnership.js.
+  const ownedContact = useMemo(
+    () => makeOwnedContactGate(prospects, cdmName),
+    [prospects, cdmName],
+  );
   const visitContacts = useMemo(
-    () => keyContactsNotMet(tagCoverage, settings?.contactMetInPerson || null),
-    [tagCoverage, settings?.contactMetInPerson],
+    () => keyContactsNotMet(tagCoverage, settings?.contactMetInPerson || null, ownedContact),
+    [tagCoverage, settings?.contactMetInPerson, ownedContact],
   );
   // Click-through for that list: id → the record itself, since the page is
   // handed prospects rather than a lookup.
