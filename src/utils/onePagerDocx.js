@@ -131,7 +131,7 @@ const NO_BORDER = { top: '', left: '', bottom: '', right: '' };
 const heading = (label, note) => para([
   run(label.toUpperCase(), { bold: true, color: SE_GREEN_DARK, size: 20 }),
   note ? run(`   ${note}`, { color: SE_MUTED, size: 16 }) : '',
-], { rule: SE_GREEN, spaceBefore: 150, spaceAfter: 70 });
+], { rule: SE_GREEN, spaceBefore: 110, spaceAfter: 60 });
 
 const emptyNote = (text) => para([run(text, { color: SE_MUTED, size: 18, italic: true })]);
 
@@ -224,57 +224,102 @@ function contactsTable({ shown, hidden }) {
 // land - and a chip can only carry the name.
 function oppsTable({ shown, hidden }) {
   if (!shown.length) return emptyNote('Nothing open on this account right now.');
-  const widths = [CONTENT_WIDTH * 0.40, CONTENT_WIDTH * 0.24, CONTENT_WIDTH * 0.18, CONTENT_WIDTH * 0.18];
+  // The opportunity column takes the width, because it is the only one
+  // whose contents wrap. Amount and Close hold ten characters between
+  // them and were sized as if they held a sentence.
+  const widths = [CONTENT_WIDTH * 0.46, CONTENT_WIDTH * 0.22, CONTENT_WIDTH * 0.16, CONTENT_WIDTH * 0.16];
   const head = ['Opportunity', 'Stage', 'Amount', 'Close'].map((h, i) => cell(
     para([run(h.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 0 }),
     { width: widths[i], borders: { ...NO_BORDER, bottom: SE_BORDER } },
   ));
-  const rows = shown.map(o => [
-    cell(para([run(o.name, { bold: true, size: 18 })], { spaceAfter: 0 }), { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-    cell(para([run(o.stage || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[1], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-    cell(para([run(o.amount || '-', { bold: true, color: SE_GRAPHITE, size: 17 })], { spaceAfter: 0 }), { width: widths[2], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-    cell(para([run(o.closeDate || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[3], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-  ]);
+  const rows = shown.map((o) => {
+    // The scope of services leads, with the opp's own name under it.
+    //
+    // That way round because a BFO opportunity name is a coded string -
+    // "SB - SUSUP - New - Project - NAM - YEAR1 - Bill payment-Blackrock,
+    // Inc." - built for a CRM's uniqueness rules rather than for reading.
+    // The one part of it anybody wants, what work is being sold, is buried
+    // in the middle. The Scope field says exactly that, so it gets the
+    // bold line, and the coded name stays underneath in small type for
+    // looking the opp up again in BFO.
+    //
+    // It also buys the space the extra line costs: set bold and first, the
+    // name wrapped to three lines of an 86pt row, and four of those is
+    // most of what is left of the page.
+    const scope = o.scope && o.scope !== o.name ? o.scope : '';
+    const first = [
+      para([run(scope || o.name, { bold: true, size: 18 })], { spaceAfter: 0 }),
+      scope ? para([run(o.name, { color: SE_MUTED, size: 13 })], { spaceAfter: 0 }) : '',
+    ].join('');
+    return [
+      cell(first, { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      cell(para([run(o.stage || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[1], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      cell(para([run(o.amount || '-', { bold: true, color: SE_GRAPHITE, size: 17 })], { spaceAfter: 0 }), { width: widths[2], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      cell(para([run(o.closeDate || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[3], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+    ];
+  });
   const more = hidden
     ? para([run(`+ ${hidden} more open.`, { color: SE_MUTED, size: 14 })], { spaceBefore: 40 })
     : '';
   return table(widths, [head, ...rows]) + more;
 }
 
-// What the account already buys, grouped under the bucket it belongs to
-// and bulleted. A flat list of twelve reads as twelve unrelated things;
-// three buckets of four says what this account actually buys from us.
+// What the account already buys, grouped under the bucket it belongs to.
+//
+// Two shapes, chosen by the model rather than here: bullets while they
+// fit, and the same services run together with commas when they do not.
+// The comma set reads slightly worse and holds two or three times as much,
+// which on a book of fifteen services is the difference between the page
+// listing all of them and the page listing eight and counting the rest.
 //
 // The bullet is a glyph and a hanging indent rather than a Word list.
 // A real list means a numbering.xml part, a relationship to it, and an
 // abstract definition per level - three more parts to get subtly wrong,
 // for a document that never needs the numbering to continue across
 // anything. It prints identically.
-function servicesBullets({ groups, hidden }) {
+function servicesBullets({ groups, hidden, mode }) {
   if (!groups.length) return emptyNote('Nothing sold on this account yet.');
+  const bucketLine = (g, first) => para([run(g.bucket, { bold: true, color: SE_SLATE, size: 17 })], {
+    spaceBefore: first ? 0 : 90, spaceAfter: 10,
+  });
   const block = (g, first) => [
-    para([run(g.bucket, { bold: true, color: SE_SLATE, size: 17 })], {
-      spaceBefore: first ? 0 : 90, spaceAfter: 10,
-    }),
-    ...g.items.map(name => para([
-      run('\u2022   ', { color: SE_GREEN_DARK, size: 18, bold: true }),
-      run(name, { color: SE_GRAPHITE, size: 18 }),
-    ], { spaceAfter: 0, indent: { left: 340, hanging: 180 } })),
+    bucketLine(g, first),
+    ...(mode === 'commas'
+      // One paragraph that wraps, rather than one per service: the wrap is
+      // what buys the space, so the services have to share a paragraph for
+      // Word to be able to set three of them on a line.
+      ? [para([run(g.items.join(', '), { color: SE_GRAPHITE, size: 18 })], {
+        spaceAfter: 0, indent: { left: 120, hanging: 0 },
+      })]
+      : g.items.map(name => para([
+        run('\u2022   ', { color: SE_GREEN_DARK, size: 18, bold: true }),
+        run(name, { color: SE_GRAPHITE, size: 18 }),
+      ], { spaceAfter: 0, indent: { left: 340, hanging: 180 } }))),
   ].join('');
 
   // Two columns. A bucket heading costs a line whatever is under it, so a
   // book filed into six buckets spends six lines on headings alone - which
   // is what pushed this page over onto a second one when the bullets were
-  // a single column. Split by the LINES each group takes (heading plus
-  // items) rather than by group count, or five one-item buckets end up
-  // beside one bucket of seven.
-  const lines = groups.map(g => g.items.length + 1);
+  // a single column. Split by the LINES each group takes, which the model
+  // worked out when it budgeted them: doing that sum again here would be a
+  // second opinion about how tall a bucket is, and in comma mode the two
+  // would not even agree, since a group of four can be one line or three.
+  //
+  // The cut is the one that leaves the two columns closest in height,
+  // rather than the first that passes half. Those differ whenever a bucket
+  // straddles the middle - filling until half is reached hands that whole
+  // bucket to the left column, which is how six lines ended up beside
+  // three. Buckets stay in order either way; only where the break falls
+  // changes.
+  const lines = groups.map(g => g.lines || (g.items.length + 1));
   const total = lines.reduce((a, b) => a + b, 0);
-  let run1 = 0;
   let cut = groups.length;
-  for (let i = 0; i < groups.length; i += 1) {
-    if (run1 >= Math.ceil(total / 2)) { cut = i; break; }
-    run1 += lines[i];
+  let best = Infinity;
+  let left = 0;
+  for (let i = 1; i <= groups.length; i += 1) {
+    left += lines[i - 1];
+    const gap = Math.abs(left - (total - left));
+    if (gap < best) { best = gap; cut = i; }
   }
   const half = CONTENT_WIDTH / 2;
   const column = (list) => list.map((g, i) => block(g, i === 0)).join('') || para([run('')], { spaceAfter: 0 });
@@ -299,7 +344,7 @@ const pageBreak = () => '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 
 const footerRule = () => para(
   [run('Schneider Electric - generated from Prospect Tracker. Internal use.', { color: SE_MUTED, size: 13 })],
-  { spaceBefore: 150, rule: SE_BORDER },
+  { spaceBefore: 110, rule: SE_BORDER },
 );
 
 // How far one level of nesting moves right, in twips. 200 is about 0.14",
@@ -391,11 +436,29 @@ function orgChartPage(chart) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+/**
+ * The running head: the green band, as its own document part.
+ *
+ * In the page header rather than at the top of the body, which is where a
+ * letterhead belongs and what the band has always been. Three things fall
+ * out of the move: it sits at the top of the PAGE instead of below the top
+ * margin, so there is no white strip above it; it repeats if the page ever
+ * runs to two; and it cannot be pushed down the page by whatever the body
+ * grows into.
+ */
+export function onePagerHeaderXml(model) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${headerBand(model)}${
+    // A header part must end in a paragraph: a bare table leaves Word
+    // joining the band to the first thing in the body, and an empty one
+    // with no spacing is the thinnest legal way to close it.
+    para([run('', { size: 2 })], { spaceAfter: 0 })
+  }</w:hdr>`;
+}
+
 /** The document body, as WordprocessingML. */
 export function onePagerDocumentXml(model) {
   const body = [
-    headerBand(model),
-    para([run('')], { spaceAfter: 80 }),
     ownersBand(model.owners, model.clientSince),
     heading('Key contacts', 'shaded = day to day    DM = decision maker'),
     contactsTable(model.contacts),
@@ -408,20 +471,29 @@ export function onePagerDocumentXml(model) {
     // Page one closes with its own footer rule whether or not a second
     // page follows, so page one is the same document it was before the
     // chart existed. The chart then starts a page and closes with the same
-    // line: this is a plain paragraph rather than a real Word footer part,
-    // so a page that does not carry one has none, and an internal sheet
-    // that loses its "internal use" marker halfway through is worse than
-    // one line repeated.
+    // line: unlike the green band above, this is a plain paragraph rather
+    // than a real Word part, so a page that does not carry one has none,
+    // and an internal sheet that loses its "internal use" marker halfway
+    // through is worse than one line repeated.
     footerRule(),
     orgChartPage(model.orgChart),
     model.orgChart ? footerRule() : '',
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
-    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-      + '<w:pgMar w:top="1080" w:right="1440" w:bottom="1080" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>',
+    //
+    // `w:header` is how far down the page the band starts, and the top
+    // margin is where the body starts under it: 360 twips (a quarter inch)
+    // clears what a printer cannot reach without leaving the white strip
+    // the band used to sit below, and 1440 leaves the band its half inch
+    // plus a little air before the first row of the page.
+    '<w:sectPr><w:headerReference w:type="default" r:id="rId1"/><w:pgSz w:w="12240" w:h="15840"/>'
+      + '<w:pgMar w:top="1440" w:right="1440" w:bottom="900" w:left="1440" w:header="360" w:footer="720" w:gutter="0"/></w:sectPr>',
   ].join('');
+  // The `r` namespace is not optional here: r:id on the header reference
+  // is in it, and an undeclared prefix is "unreadable content" rather than
+  // a header Word quietly ignores.
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`;
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}</w:body></w:document>`;
 }
 
 // The three files besides document.xml that make a zip a .docx. Minimal on
@@ -432,7 +504,17 @@ export const CONTENT_TYPES_XML = `<?xml version="1.0" encoding="UTF-8" standalon
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
 </Types>`;
+
+// The document's own relationships. There were none until the band moved
+// into the header: a part Word is told to use by r:id has to be findable
+// by that id, and a header referenced from nowhere is a header nobody
+// draws.
+export const DOCUMENT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+</Relationships>`;
 
 export const ROOT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -451,7 +533,10 @@ export async function buildOnePagerDocx(model) {
   const zip = new JSZip();
   zip.file('[Content_Types].xml', CONTENT_TYPES_XML);
   zip.folder('_rels').file('.rels', ROOT_RELS_XML);
-  zip.folder('word').file('document.xml', onePagerDocumentXml(model));
+  const word = zip.folder('word');
+  word.file('document.xml', onePagerDocumentXml(model));
+  word.file('header1.xml', onePagerHeaderXml(model));
+  word.folder('_rels').file('document.xml.rels', DOCUMENT_RELS_XML);
   const inBrowser = typeof Blob !== 'undefined' && typeof window !== 'undefined';
   return zip.generateAsync({
     type: inBrowser ? 'blob' : 'uint8array',

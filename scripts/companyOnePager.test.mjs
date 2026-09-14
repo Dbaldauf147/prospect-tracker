@@ -26,9 +26,12 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   orgChartRows,
-  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS,
+  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, cappedServices,
 } from '../src/utils/companyOnePager.js';
-import { onePagerDocumentXml, buildOnePagerDocx, xmlEsc } from '../src/utils/onePagerDocx.js';
+import {
+  onePagerDocumentXml, onePagerHeaderXml, buildOnePagerDocx, xmlEsc,
+  CONTENT_TYPES_XML, DOCUMENT_RELS_XML,
+} from '../src/utils/onePagerDocx.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -39,7 +42,7 @@ function check(label, actual, expected) {
 
 const AT = new Date('2026-09-14T12:00:00Z');
 const contact = (name, over = {}) => ({ name, title: 'Director', email: `${name.split(' ')[0].toLowerCase()}@acme.com`, ...over });
-const opp = (name, over = {}) => ({ name, stage: 'Quoting', amount: '$120,000', closeDate: '11/30/2026', active: true, ...over });
+const opp = (name, over = {}) => ({ name, scope: 'Scope 3 estimates', stage: 'Quoting', amount: '$120,000', closeDate: '11/30/2026', active: true, ...over });
 
 const BUCKETS = { 'Bill Pay': 'DATA', 'Invoice collection': 'DATA', 'GHG Reporting': 'GHG Reporting' };
 const bucketOf = (n) => BUCKETS[n] || '';
@@ -71,6 +74,19 @@ const full = {
   check('with the figures somebody asks for out loud',
     `${m.opps.shown[0].stage}|${m.opps.shown[0].amount}|${m.opps.shown[0].closeDate}`,
     'Quoting|$120,000|11/30/2026');
+  check('and the scope of services it covers', m.opps.shown[0].scope, 'Scope 3 estimates');
+  // Some exports put the scope in the name field as well. Printing it
+  // twice under itself is noise, not information.
+  const echoed = onePagerDocumentXml(onePagerModel({
+    ...full, opps: [opp('Bill payment', { scope: 'Bill payment' })],
+  }));
+  check('a scope that only repeats the name is not printed twice',
+    (echoed.match(/Bill payment/g) || []).length, 1);
+  // An opp with no Scope recorded keeps its one line rather than gaining a
+  // blank one.
+  check('and a missing scope leaves no empty line',
+    onePagerDocumentXml(onePagerModel({ ...full, opps: [opp('Nameless', { scope: '' })] }))
+      .includes('Scope 3 estimates'), false);
 }
 
 // ---- who to call ---------------------------------------------------------
@@ -146,40 +162,81 @@ const full = {
   check('and the rest are counted, not dropped silently', m.contacts.hidden, 9);
   check('the total is still the truth', m.contacts.total, MAX_CONTACTS + 9);
 
-  // Services are capped by the LINES they print, because a bucket heading
-  // costs a line whatever sits under it. One cap, not two: a count cap on
-  // top of it could never bind, since even a single bucket spends a line
-  // before its first service.
+  // Services are budgeted by the LINES they print, because a bucket heading
+  // costs a line whatever sits under it. Lines rather than a count: even a
+  // single bucket spends one before its first service, so a count cap on
+  // top of this could never bind.
+  //
+  // But the budget is not a cap. A book that overruns it is RESET, not cut:
+  // the bullets become comma lists under the same headings, a line carries
+  // three or four services instead of one, and the whole book fits. That
+  // matters more here than anywhere else on the page - "In scope today"
+  // exists to answer what we already do for these people, and an answer
+  // that quietly omits seven of the fifteen is not an answer.
   const services = Array.from({ length: 20 }, (_, i) => `Service ${i}`);
   const oneBucket = onePagerModel({ ...full, services, bucketOf: () => 'Bucket' });
-  check('one bucket spends a line, and the rest is services',
-    oneBucket.services.shown.length, MAX_SERVICE_LINES - 1);
-  check('the groups carry exactly what is shown',
-    oneBucket.services.groups.reduce((n, g) => n + g.items.length, 0), oneBucket.services.shown.length);
-  check('and every one left out is counted',
-    oneBucket.services.shown.length + oneBucket.services.hidden, services.length);
+  check('a book too long to bullet is set in commas instead', oneBucket.services.mode, 'commas');
+  check('and every service survives the change', oneBucket.services.hidden, 0);
+  check('which is more than the bullets could have held',
+    oneBucket.services.shown.length > MAX_SERVICE_LINES, true);
 
-  // The same services filed one per bucket are twice as tall. This is the
-  // shape that ran the page over onto a second one.
-  const perBucket = onePagerModel({ ...full, services, bucketOf: (n) => `B ${n}` });
-  const linesUsed = perBucket.services.groups.reduce((n, g) => n + g.items.length + 1, 0);
-  check('one bucket each is stopped by the same budget', linesUsed <= MAX_SERVICE_LINES, true);
-  check('which shows fewer services than a single bucket would',
-    perBucket.services.shown.length < oneBucket.services.shown.length, true);
-  check('and still counts every one it left out',
-    perBucket.services.shown.length + perBucket.services.hidden, services.length);
+  // A book that fits keeps the bullets, which are the better read. The
+  // fallback is for when it is that or losing services, not the default.
+  const few = onePagerModel({ ...full, services: ['Bill Pay', 'GHG Reporting'], bucketOf });
+  check('a short book stays bulleted', few.services.mode, 'bullets');
+  check('with nothing hidden', few.services.hidden, 0);
+  const bulletLines = few.services.groups.reduce((n, g) => n + g.lines, 0);
+  check('inside the budget', bulletLines <= MAX_SERVICE_LINES, true);
+  check('and the groups carry the lines they cost, for the column split',
+    few.services.groups.every(g => g.lines === g.items.length + 1), true);
+
+  // The real shape this was built for: fifteen services across four
+  // buckets, which is a mid-sized account and was the case that printed
+  // "+ 7 more sold."
+  const real = onePagerModel({
+    ...full,
+    services: ['Client sends invoices', 'Invoice recalculation', 'Invoice variance testing',
+      'Manual data upload', 'UPRs', 'Comp GHG', 'GHG', 'Scope 3 estimates', 'Bill payment',
+      'Utility bill audit', 'Rate analysis', 'Tariff review', 'Budget forecasting',
+      'Accrual reporting', 'Invoice recalculation - light'],
+    bucketOf: (n) => (/invoice|upload|sends/i.test(n) ? 'DATA'
+      : /GHG|Scope 3/i.test(n) ? 'GHG Reporting'
+        : /UPR/i.test(n) ? 'Efficiency' : 'Bill Management'),
+  });
+  check('a mid-sized book lists every service it sold', real.services.hidden, 0);
+  check('inside the same budget',
+    real.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
+  const realXml = onePagerDocumentXml(real);
+  check('and prints them run together rather than one per line',
+    realXml.includes('Comp GHG, GHG, Scope 3 estimates'), true);
+  check('with no count of what was left out, because none was',
+    realXml.includes('more sold.'), false);
+
+  // Past even the comma budget - a book no arrangement fits - the section
+  // still owns up to what it left out rather than trailing off.
+  const huge = onePagerModel({
+    ...full,
+    services: Array.from({ length: 120 }, (_, i) => `Long service name number ${i}`),
+    bucketOf: (n) => `Bucket ${n.slice(-2)}`,
+  });
+  check('a book nothing could fit is still counted, not trailed off',
+    huge.services.shown.length + huge.services.hidden, 120);
+  check('something is left on the page', huge.services.shown.length > 0, true);
+  check('and it stays inside the budget',
+    huge.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
 
   // A bucket that only half fits keeps what fits: dropping it whole would
   // read as "we sell nothing in Compliance here", which is a different and
   // wrong claim.
-  const straddle = onePagerModel({
-    ...full,
-    services: Array.from({ length: 10 }, (_, i) => `a${i}`).concat('b1'),
-    bucketOf: (n) => (n.startsWith('a') ? 'A' : 'B'),
-  });
-  check('a bucket that half fits keeps the half', straddle.services.groups[0].items.length > 0, true);
+  const wide = 'x'.repeat(CHARS_PER_LINE);
+  const straddle = cappedServices(
+    Array.from({ length: 14 }, (_, i) => `${wide}${i}`).concat('b1'),
+    (n) => (n === 'b1' ? 'B' : 'A'),
+  );
+  check('a bucket that half fits keeps the half', straddle.groups[0].items.length > 0, true);
   check('and no bucket is printed with nothing under it',
-    straddle.services.groups.every(g => g.items.length > 0), true);
+    straddle.groups.every(g => g.items.length > 0), true);
+  check('the rest are counted', straddle.shown.length + straddle.hidden, 15);
 
   const opps = Array.from({ length: MAX_OPPS + 4 }, (_, i) => opp(`Opp ${i}`));
   const om = onePagerModel({ ...full, opps });
@@ -207,7 +264,9 @@ const full = {
   const xml = onePagerDocumentXml(onePagerModel(full));
   check('it is WordprocessingML, not HTML', xml.startsWith('<?xml'), true);
   check('with a body', xml.includes('<w:document'), true);
-  check('the brand band is a shaded cell', xml.includes('w:fill="009530"'), true);
+  // The band itself is asserted against the header part (see above); what
+  // the body has to keep is the brand green on the boxes it still draws.
+  check('the body still shades its own cells', xml.includes('<w:shd'), true);
   check('the contacts are a table', xml.includes('<w:tbl>'), true);
   check('the day-to-day contact is marked', xml.includes('DAY TO DAY'), true);
   check('and the decision maker too', xml.includes('DM'), true);
@@ -218,6 +277,16 @@ const full = {
   check('with a hanging indent so a long name lines up', xml.includes('<w:ind '), true);
   check('the open opp is on the page', xml.includes('Chiller replacement'), true);
   check('the closed one is not', xml.includes('Closed one'), false);
+  // The scope under the opp name, in the same column. A BFO opp name is a
+  // coded string and the part a reader wants - what work is being sold -
+  // is buried in the middle of it; the Scope field says it plainly.
+  check('the scope of services is printed with the opp',
+    xml.includes('Scope 3 estimates'), true);
+  // The scope LEADS and the coded BFO name sits under it. A BFO name is
+  // built for a CRM's uniqueness rules, not for reading, and set bold and
+  // first it wrapped to three lines of a row there are four of.
+  check('and it leads, with the coded name under it',
+    xml.indexOf('Scope 3 estimates') < xml.indexOf('Chiller replacement'), true);
   check('the page is Letter with one-inch margins',
     xml.includes('<w:pgSz w:w="12240" w:h="15840"/>'), true);
   // Every table cell needs a paragraph or Word calls the file corrupt.
@@ -492,8 +561,12 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
     xmlEsc(`a${String.fromCharCode(7)}b`), 'ab');
   check('tabs and newlines survive',
     xmlEsc('a\tb\nc'), 'a\tb\nc');
-  const xml = onePagerDocumentXml(onePagerModel({ company: 'A & B <script>', generatedAt: AT }));
-  check('a company name cannot break the document', xml.includes('A &amp; B &lt;script&gt;'), true);
+  const model = onePagerModel({ company: 'A & B <script>', generatedAt: AT });
+  // The company name is on the band, which is the header part now - and an
+  // unescaped & there makes the file just as unopenable as one in the body.
+  check('a company name cannot break the header',
+    onePagerHeaderXml(model).includes('A &amp; B &lt;script&gt;'), true);
+  check('nor the document', onePagerDocumentXml(model).includes('<w:body>'), true);
 }
 
 // ---- the file that lands in Downloads ------------------------------------
@@ -503,6 +576,52 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
     onePagerFileName('A/B: C*D?'), 'A_B_ C_D_ - Account summary.docx');
   check('a company with no name still gets a file',
     onePagerFileName(''), 'Company - Account summary.docx');
+}
+
+// ---- the green band is the page header -----------------------------------
+//
+// It used to be the first thing in the body, which put the page's top
+// margin above it as a white strip and let it be pushed down the page.
+// As a header part it is drawn in the margin itself, at the top of every
+// page. The wiring is four things that all have to agree, and Word's
+// answer to any one of them being wrong is to refuse the file.
+{
+  const model = onePagerModel({ ...full, company: 'BlackRock' });
+  const doc = onePagerDocumentXml(model);
+  const hdr = onePagerHeaderXml(model);
+
+  check('the band is in the header part', hdr.includes('ACCOUNT SUMMARY'), true);
+  check('with the company on it', hdr.includes('BlackRock'), true);
+  check('and the lockup', hdr.includes('LIFE IS ON'), true);
+  check('the header part is a header', hdr.includes('<w:hdr'), true);
+  // A header ending in a table leaves Word joining the band to the body.
+  check('it ends in a paragraph', /<\/w:p>\s*<\/w:hdr>/.test(hdr), true);
+
+  check('the body no longer draws it', doc.includes('ACCOUNT SUMMARY'), false);
+  check('the body starts with the owners', doc.indexOf('CDM') < doc.indexOf('KEY CONTACTS'), true);
+
+  // 1. the section points at a header, 2. by an id the document's own
+  // relationships define, 3. as a part the package declares, 4. in a
+  // document that declares the namespace r:id is in.
+  check('the section references a header', doc.includes('<w:headerReference w:type="default" r:id="rId1"/>'), true);
+  check('the relationship is there to find', DOCUMENT_RELS_XML.includes('Id="rId1"') && DOCUMENT_RELS_XML.includes('Target="header1.xml"'), true);
+  check('and it is a header relationship', DOCUMENT_RELS_XML.includes('/relationships/header'), true);
+  check('the part is declared', CONTENT_TYPES_XML.includes('/word/header1.xml'), true);
+  check('with the header content type', CONTENT_TYPES_XML.includes('wordprocessingml.header+xml'), true);
+  check('the r namespace is declared', doc.includes('xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'), true);
+
+  // The children of w:sectPr are a schema SEQUENCE and the header
+  // references open it. Out of order is "unreadable content".
+  check('the header reference comes before the page size',
+    doc.indexOf('<w:headerReference') < doc.indexOf('<w:pgSz'), true);
+
+  // The band is drawn `w:header` from the top of the page and the body
+  // starts at `w:top`: the first has to be the smaller, or the band lands
+  // on top of the first row of the page.
+  const header = Number(/w:header="(\d+)"/.exec(doc)?.[1]);
+  const top = Number(/w:top="(\d+)"/.exec(doc)?.[1]);
+  check('the band starts above the body', header < top, true);
+  check('and not so high a printer cannot reach it', header >= 180, true);
 }
 
 // ---- what the zip actually contains --------------------------------------
@@ -517,13 +636,19 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
   check('the content types are declared', names.includes('[Content_Types].xml'), true);
   check('the package points at the document', names.includes('_rels/.rels'), true);
   check('and the document is a real part', names.includes('word/document.xml'), true);
+  check('the header is a part of its own', names.includes('word/header1.xml'), true);
+  check('and the document knows how to find it',
+    names.includes('word/_rels/document.xml.rels'), true);
   check('there is no altChunk left anywhere',
     names.some(n => n.includes('afchunk')), false);
   const doc = await zip.file('word/document.xml').async('string');
   check('the text is IN the document, not in an attachment',
-    doc.includes('BRE Hotels &amp; Resorts'), true);
+    doc.includes('CLIENT MANAGER'), true);
   check('including the opp', doc.includes('Chiller replacement'), true);
   check('and the day-to-day marker', doc.includes('DAY TO DAY'), true);
+  const hdrPart = await zip.file('word/header1.xml').async('string');
+  check('the band travels in the header part', hdrPart.includes('ACCOUNT SUMMARY'), true);
+  check('named for the company', hdrPart.includes('BRE Hotels &amp; Resorts'), true);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
