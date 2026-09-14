@@ -596,5 +596,91 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
   eq(fallback.error, null, 'site: and is not reported as a failure');
 }
 
+// ---- Newsletters merged into the per-company research --------------------
+// The newsletters are read once for the whole run and every company is
+// offered the same body of headlines. Two things have to hold: a company
+// keeps the ones about it, and a feed that failed is no longer fatal when
+// the newsletters answered.
+{
+  const newsletterItems = [{
+    title: 'Blackstone acquired Acme Facilities, a Texas-based provider of industrial services',
+    link: 'https://link.axios.com/x1',
+    publishedAt: Date.parse('2026-09-09T12:00:00Z'),
+    source: 'Axios Pro Rata',
+    fromNewsletter: true,
+  }];
+
+  const realFetch = globalThis.fetch;
+  // Feeds down everywhere; only the newsletters have anything.
+  globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
+
+  const hit = await researchCompanyAcquisitions(
+    { company: 'Blackstone', isPe: true },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'),
+    { newsletterItems },
+  );
+  eq(hit.deals.length, 1, 'newsletters: a deal lands even with every feed down');
+  eq(hit.deals[0].target, 'Acme Facilities', 'newsletters: with the target read out of the sentence');
+  eq(hit.deals[0].sourceTitle, 'Axios Pro Rata', 'newsletters: and credited to the newsletter');
+  eq(hit.error, null, 'newsletters: a run that found something is not an error');
+
+  // The same headline offered to a firm it is not about.
+  const miss = await researchCompanyAcquisitions(
+    { company: 'Warburg Pincus', isPe: true },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'),
+    { newsletterItems },
+  );
+  eq(miss.deals.length, 0, 'newsletters: another firm does not inherit the deal');
+  eq(miss.unsure.length, 0, 'newsletters: nor does it clutter their headlines-to-check');
+  // Feeds being down is one fact about the run, not a sentence repeated
+  // under all twenty-one firms.
+  eq(miss.error, null, 'newsletters: a down feed is not each company\u2019s own error');
+  eq(miss.feedDown, true, 'newsletters: it is flagged for the run instead');
+
+  const html = buildNewsEmailHtml(
+    [{ company: 'Blackstone', isPe: true, deals: [], unsure: [], error: null, skipped: false, feedDown: true }],
+    { since: 0, until: 86_400_000 },
+  );
+  ok(html.includes('couldn\u2019t be reached this run'), 'newsletters: the email says it once, about the run');
+  eq((html.match(/couldn\u2019t be reached this run/g) || []).length, 1, 'newsletters: exactly once');
+
+  globalThis.fetch = realFetch;
+}
+
+{
+  // researchAll hands the same items to every worker rather than each one
+  // opening its own connection.
+  const seen = [];
+  await researchAll(firms(4), 0, 0, {
+    budgetMs: 60_000,
+    newsletterItems: [{ title: 'x', link: 'https://x.test', publishedAt: 0, source: 'Axios Pro Rata' }],
+    research: async (entry, since, until, opts) => {
+      seen.push((opts?.newsletterItems || []).length);
+      return { deals: [], unsure: [], error: null };
+    },
+  });
+  eq(seen, [1, 1, 1, 1], 'newsletters: read once, handed to every company');
+}
+
+{
+  // The email says where the extra headlines came from, and says plainly
+  // when the mailbox could not be read.
+  const base = [{ company: 'Quiet Co', isPe: true, deals: [], unsure: [], error: null, skipped: false }];
+  const withNews = buildNewsEmailHtml(base, {
+    since: 0, until: 86_400_000, newsletters: { count: 12, error: null, configured: true },
+  });
+  ok(withNews.includes('12 headlines from the trade newsletters'),
+    'email: a run that read the newsletters says so');
+
+  const broken = buildNewsEmailHtml(base, {
+    since: 0, until: 86_400_000, newsletters: { count: 0, error: 'label "deal-news" not found', configured: true },
+  });
+  ok(broken.includes('Newsletters weren\u2019t read this run'), 'email: a mailbox it could not read is admitted');
+  ok(broken.includes('deal-news'), 'email: and the reason is printed');
+
+  const off = buildNewsEmailHtml(base, { since: 0, until: 86_400_000, newsletters: { count: 0, error: null, configured: false } });
+  ok(!off.includes('newsletter'), 'email: an unconfigured mailbox is not mentioned at all');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

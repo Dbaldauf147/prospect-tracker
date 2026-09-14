@@ -55,6 +55,10 @@ const DISQUALIFIERS = [
 // The firm sits to the LEFT of these and is the buyer.
 const BUY_FORWARD = [
   /\b(?:to\s+)?acquires?\b/i,
+  // Active past tense — "Blackstone acquired Acme". BUY_REVERSE is tested
+  // first, so "acquired by" is already resolved the other way round before
+  // this can see it.
+  /\bacquired\b/i,
   /\b(?:announces?|completes?|closes?)\s+(?:the\s+)?acquisitions?\s+of\b/i,
   /\bacquisitions?\s+of\b/i,
   /\bcompletes?\s+(?:the\s+)?acquisition\s+of\b/i,
@@ -95,6 +99,7 @@ const SELL_FORWARD = [
 // that still smells like a deal falls through to "unsure".
 const CONFIDENT_FORWARD = [
   /\b(?:to\s+)?acquires?\b/i,
+  /\bacquired\b/i,
   /\bto\s+take\b/i,
   // How a press release says it. A firm's own newsroom is the earliest and
   // most reliable account of its deals, and it almost never uses the verb
@@ -305,7 +310,12 @@ export function classifyHeadline(item, entry, variants) {
     if (namesFirm(right, variants)) return { skip: 'the firm is the target' };
   }
 
-  // Deal words, the firm named somewhere, but no shape this reads.
+  // Deal words, but no shape this reads. Only worth showing the reader if
+  // the headline is about this firm at all — the per-company feeds only
+  // ever returned its own stories, but a newsletter is one body of text
+  // offered to every tracked firm in the list, and without this every
+  // firm's "also in the news" fills up with every other firm's deals.
+  if (!namesFirm(title, variants)) return { skip: 'not about this firm' };
   return { unsure: true };
 }
 
