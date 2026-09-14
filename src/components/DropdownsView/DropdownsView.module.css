@@ -3333,3 +3333,28 @@
   font-weight: 700;
   color: var(--color-text-muted);
 }
+
+/* The biggest single deal on the account. Left-aligned among tiles that
+   are otherwise right-aligned, because it carries a service NAME as well
+   as a figure and a ragged left edge on a name reads as a mistake. */
+.potentialTop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  max-width: 260px;
+}
+
+.potentialTopName {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.potentialTopNone {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
