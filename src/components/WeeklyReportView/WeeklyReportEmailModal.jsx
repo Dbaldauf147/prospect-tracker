@@ -25,6 +25,14 @@ function emptyForm(defaultRecipient = '') {
   };
 }
 
+// How a schedule's last run is coloured in the list. Anything not named
+// here is an ordinary send, in the muted ink the rest of the row uses.
+const STATUS_COLORS = {
+  error: '#B91C1C',
+  'sent-stale': '#B45309',
+  'skipped-no-snapshot': '#B45309',
+};
+
 const tzLabel = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'; }
   catch { return 'local time'; }
@@ -208,9 +216,13 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
                       <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         To: {(s.recipients || []).join(', ') || '-'}
                       </div>
+                      {/* 'sent-stale' means the mail went out off a snapshot older
+                          than the period it reported — red is for a send that
+                          failed, so this gets the amber the report itself uses,
+                          and carries the reason the way an error does. */}
                       {s.lastStatus && (
-                        <div style={{ fontSize: '0.68rem', marginTop: 3, color: s.lastStatus === 'error' ? '#B91C1C' : '#64748B' }}>
-                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{s.lastStatus === 'error' && s.lastError ? `: ${s.lastError}` : ''}
+                        <div style={{ fontSize: '0.68rem', marginTop: 3, color: STATUS_COLORS[s.lastStatus] || '#64748B' }}>
+                          Last: {s.lastStatus}{s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}{(s.lastStatus === 'error' || s.lastStatus === 'sent-stale') && s.lastError ? `: ${s.lastError}` : ''}
                         </div>
                       )}
                     </div>

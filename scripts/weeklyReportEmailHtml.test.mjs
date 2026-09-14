@@ -165,6 +165,43 @@ check('the projected total is readable text under the picture',
     funnelAttachment({ ...snapshot, funnelImage: null }), null);
 }
 
+// The stale banner. Its whole job is to be read before the figures are, so
+// what is pinned is that it renders above the heading and that a current
+// report carries no such thing. Word paints a broken-image placeholder for
+// the `background:` shorthand and drops padding on a <span>, so the banner
+// is a bgcolor table with padding on its cell like every other block here.
+{
+  const stale = renderWeeklyReportHtml({
+    capturedAt: Date.parse('2026-09-03T16:00:00Z'),
+    periodEnd: Date.parse('2026-09-06T23:59:59Z'),
+    scope: 'week',
+    periodLabel: 'Mon, Aug 31 — Sun, Sep 6, 2026',
+    tiles: [{ label: 'Emails sent', value: 0, goal: 50, accent: 'blue', sub: 'recorded Sep 3' }],
+  }, {});
+  const banner = stale.indexOf('These numbers are');
+  check('a stale report carries a banner', banner > -1, true);
+  check('the banner is above the report heading',
+    banner > -1 && banner < stale.indexOf('>Weekly Report</td>'), true);
+  check('it states the age and the missing days',
+    stale.includes('days old and were captured before the week ended'), true);
+  check('it says which tab republishes the numbers',
+    stale.includes('Charts → Weekly Report'), true);
+  check('it is painted with bgcolor, not the background shorthand',
+    stale.includes('bgcolor="#FEF3C7"'), true);
+  check('the heading keeps only the bare capture stamp',
+    stale.includes('Captured Thu, 03 Sep 2026 16:00:00 UTC.'), true);
+  check('the long grey one-liner no longer runs under the heading',
+    stale.includes('before this period ended'), false);
+
+  const current = renderWeeklyReportHtml({
+    capturedAt: Date.parse('2026-09-07T05:00:00Z'),
+    periodEnd: Date.parse('2026-09-06T23:59:59Z'),
+    periodLabel: 'Mon, Aug 31 — Sun, Sep 6, 2026',
+  }, {});
+  check('a current report carries no banner',
+    current.includes('These numbers are'), false);
+}
+
 // Percentage column widths are set as attributes as well as CSS: Word reads
 // the attribute and ignores the declaration.
 check('card columns carry a width attribute', /<td class="col" width="50%"/.test(html), true);
