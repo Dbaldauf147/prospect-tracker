@@ -52,8 +52,9 @@ export function zonedToUtc(y, mo, d, hour, timeZone) {
   return guess;
 }
 
-// The calendar date `timeZone` is on at this instant.
-function localParts(utcMs, timeZone) {
+// The calendar date `timeZone` is on at this instant. Exported because the
+// server-side report build needs the user's local week, not the runner's.
+export function localParts(utcMs, timeZone) {
   const dtf = new Intl.DateTimeFormat('en-US', {
     timeZone, hour12: false,
     year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
