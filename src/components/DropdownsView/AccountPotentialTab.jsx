@@ -954,20 +954,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         </div>
       </div>
 
-      {/* What the rate card cannot answer yet. Said out loud rather than
-          left as a row of dashes: an unpriced service is not worth nothing,
-          it is unknown, and the total above is short by however much it
-          turns out to be. */}
-      {client && potential.estimate.unpriced.length > 0 && (
-        <div className={styles.potentialGap}>
-          {`${potential.estimate.unpriced.length} of these ${openRows.length} have no rate on the card, so the totals above leave them out: `}
-          <span className={styles.potentialGapNames}>
-            {potential.estimate.unpriced.slice(0, 6).join(', ')}
-            {potential.estimate.unpriced.length > 6 ? `, and ${potential.estimate.unpriced.length - 6} more` : ''}
-          </span>
-        </div>
-      )}
-
       {/* The estimator. Everything in it is a scenario rather than saved
           data, so it reads left to right as one sentence: this many sites,
           on a deal this big, with these services ticked, comes to this. */}
