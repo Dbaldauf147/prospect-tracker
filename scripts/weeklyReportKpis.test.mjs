@@ -352,10 +352,23 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
   check('email: the percentage follows, with the target',
     cards[0].lines[0], '40.0% sold of the $3,000,000 target');
   check('email: one line under the figure, not four', cards[0].lines.length, 1);
-  check('email: the pace verdict is kept', cards[0].chip, 'Behind pace');
+  // The tab grades both figures with a chip; the email prints them bare.
+  // A verdict on a number the reader can already see was the loudest thing
+  // in the mail, and the scale line says the same thing without it.
+  check('email: no pace verdict on the progress card', cards[0].chip, null);
+  check('email: no status rule on the progress card either', cards[0].status, null);
   check('email: the coverage ratio keeps its number', cards[1].value, '2.74×');
-  check('email: a coverage ratio that has an answer needs no working',
-    cards[1].lines.length, 0);
+  check('email: no goal verdict on the coverage card', cards[1].chip, null);
+  check('email: no status rule on the coverage card either', cards[1].status, null);
+  check('email: the coverage ratio says what it is a share of',
+    cards[1].lines[0], '85.4% of the 3.21× goal');
+  check('email: one line under the ratio, not three', cards[1].lines.length, 1);
+}
+// No goal set: the ratio still prints, with nothing claimed about it.
+{
+  const cards = emailKpiCards(headlineKpis(snap({ coverage: { goal: null } })));
+  check('email: no coverage goal → the ratio stands alone', cards[1].value, '2.74×');
+  check('email: no coverage goal → no share line', cards[1].lines.length, 0);
 }
 
 // A missing figure still has to say what to open: an em dash on its own is a

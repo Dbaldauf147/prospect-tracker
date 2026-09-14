@@ -406,21 +406,33 @@ export function emailKpiCards(kpis) {
     coverageLines.push(c.target == null
       ? 'Set an annual target on Charts → Pipeline.'
       : 'Paste BFO Activity so open pipeline can be measured.');
+  } else if (Number.isFinite(c.goal) && c.goal > 0) {
+    // The same shape as the progress card's line: the figure above, then
+    // what it is a share of. Coverage carried no scale line at all before,
+    // which left the ratio to be read against a goal the reader had to
+    // remember.
+    coverageLines.push(`${((c.actual / c.goal) * 100).toFixed(1)}% of the ${c.goal.toFixed(2)}× goal`);
   }
 
+  // No verdict chip and no status rule on either card, unlike the tab.
+  // "Behind pace" and "Below goal" are a judgement on a figure the reader
+  // is looking straight at, and in an inbox they landed as the loudest
+  // thing in the mail. The scale line under each number says the same
+  // thing without grading it: the percentage against the target, and the
+  // ratio against its goal.
   return [
     {
       label: 'Progress to target',
       value: p.soldYTD == null ? '—' : emailDollars(p.soldYTD),
-      status: p.status ?? null,
-      chip: p.status ? (p.status === 'ahead' ? 'Ahead of pace' : 'Behind pace') : null,
+      status: null,
+      chip: null,
       lines: progressLines,
     },
     {
       label: 'Coverage ratio',
       value: c.actual == null ? '—' : `${c.actual.toFixed(2)}×`,
-      status: c.status ?? null,
-      chip: c.status ? (c.status === 'ahead' ? 'At goal' : 'Below goal') : null,
+      status: null,
+      chip: null,
       lines: coverageLines,
     },
   ];
