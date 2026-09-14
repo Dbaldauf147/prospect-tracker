@@ -52,17 +52,36 @@ const CONTENT_WIDTH = 9360;
 const FONT = 'Segoe UI';
 
 /** One run of text: the inline bits Word styles as a unit. */
-export function run(text, { bold = false, color = SE_GRAPHITE, size = 20, italic = false } = {}) {
+export function run(text, { bold = false, color = SE_GRAPHITE, size = 20, italic = false, underline = false } = {}) {
+  // ORDER MATTERS here as well: w:u comes after w:sz / w:szCs in the run
+  // properties sequence, and out of order is the same refusal to open the
+  // file that an out-of-order paragraph property is.
   const props = [
     `<w:rFonts w:ascii="${FONT}" w:hAnsi="${FONT}"/>`,
     bold ? '<w:b/>' : '',
     italic ? '<w:i/>' : '',
     `<w:color w:val="${hex(color)}"/>`,
     `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>`,
+    underline ? '<w:u w:val="single"/>' : '',
   ].join('');
   // xml:space preserve or Word eats the spaces between runs, which is how
   // "Priya Raman · DM" becomes "Priya Raman·DM".
   return `<w:r><w:rPr>${props}</w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r>`;
+}
+
+/**
+ * Runs wrapped in a link to somewhere outside the document.
+ *
+ * Word does not put the URL in the paragraph: it puts a relationship id
+ * there and the URL in the document's relationships part. So a link can
+ * only be written by something that is also collecting those - see
+ * onePagerParts - and `id` empty means there was no collector, in which
+ * case the runs are returned plain rather than pointing at nothing.
+ */
+export function hyperlink(id, runs) {
+  const body = Array.isArray(runs) ? runs.join('') : runs;
+  if (!id) return body;
+  return `<w:hyperlink r:id="${xmlEsc(id)}">${body}</w:hyperlink>`;
 }
 
 /**
@@ -185,10 +204,14 @@ function ownersBand({ cdm, clientManager }, clientSince) {
 // and small enough that four levels deep still leaves room for a name.
 const REPORT_INDENT = 200;
 
-function contactsTable({ shown, hidden }) {
+function contactsTable({ shown, hidden }, linkId) {
   if (!shown.length) return emptyNote('No contacts on file for this company yet.');
-  const widths = [CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.26, CONTENT_WIDTH * 0.18];
-  const head = ['Name', 'Title', 'Email', 'Team'].map((h, i) => cell(
+  // Three columns, not four. The email came off: every one of them is
+  // firstname.lastname@company on the same domain, which is a column of
+  // the page spent on something the reader can already guess - and the
+  // name is a link to the person now, which is the thing they follow.
+  const widths = [CONTENT_WIDTH * 0.36, CONTENT_WIDTH * 0.38, CONTENT_WIDTH * 0.26];
+  const head = ['Name', 'Title', 'Team'].map((h, i) => cell(
     para([run(h.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 0 }),
     { width: widths[i], borders: { ...NO_BORDER, bottom: SE_BORDER } },
   ));
@@ -199,6 +222,20 @@ function contactsTable({ shown, hidden }) {
     const fill = c.dayToDay ? SE_SURFACE : '';
     const edges = { ...NO_BORDER, bottom: 'EEF2F6' };
     const depth = Math.max(0, Number(c.depth) || 0);
+    // The name, linked to their LinkedIn profile when we hold one. The
+    // link is on the name itself rather than on a column of URLs: the
+    // sheet is read on a screen as often as on paper, and looking someone
+    // up before walking in is the thing it is used for.
+    const linked = c.linkedin && typeof linkId === 'function' ? linkId(c.linkedin) : '';
+    const nameRun = run(c.name, {
+      bold: true,
+      size: 18,
+      // Underlined and in the brand green rather than Word's blue: it has
+      // to read as a link without becoming the loudest thing in a column
+      // of names, and there is no styles part here to carry the built-in
+      // Hyperlink style.
+      ...(linked ? { color: SE_GREEN_DARK, underline: true } : {}),
+    });
     const nameLines = [
       para([
         // The arrow turns down out of the manager's row and points at the
@@ -207,7 +244,11 @@ function contactsTable({ shown, hidden }) {
         // somebody - an indent with no arrow would be a name that looks
         // misaligned.
         depth > 0 ? run('\u21B3 ', { color: SE_GREEN_DARK, bold: true, size: 18 }) : '',
-        run(c.name, { bold: true, size: 18 }),
+        hyperlink(linked, nameRun),
+        // What they are actually called, when it is not their name. Beside
+        // the name rather than instead of it: the sheet has to match the
+        // name on the email and the name in the room.
+        c.nickname ? run(` (${c.nickname})`, { color: SE_MUTED, size: 15 }) : '',
         c.dayToDay ? run('  DAY TO DAY', { bold: true, color: SE_GREEN_DARK, size: 13 }) : '',
       ], { spaceAfter: 0, indent: depth > 0 ? { left: depth * REPORT_INDENT, hanging: 120 } : null }),
       // The manager, in words, ONLY when the table could not draw them:
@@ -222,11 +263,10 @@ function contactsTable({ shown, hidden }) {
     return [
       cell(nameLines, { width: widths[0], fill, borders: edges }),
       cell(para([run(c.title || '-', { color: SE_SLATE, size: 18 })], { spaceAfter: 0 }), { width: widths[1], fill, borders: edges }),
-      cell(para([run(c.email || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[2], fill, borders: edges }),
       // No team set reads as a dash, like every other blank on the page:
       // the reader can tell "nobody has filed them" from a column the
       // export dropped.
-      cell(para([run(c.team || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[3], fill, borders: edges }),
+      cell(para([run(c.team || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[2], fill, borders: edges }),
     ];
   });
   const more = hidden
@@ -467,12 +507,19 @@ export function onePagerHeaderXml(model) {
   }</w:hdr>`;
 }
 
-/** The document body, as WordprocessingML. */
-export function onePagerDocumentXml(model) {
+/**
+ * The document body, as WordprocessingML.
+ *
+ * `linkId` is how a link gets written: it takes a URL, records it, and
+ * hands back the relationship id to point the document at. Without one -
+ * a caller that only wants the body - links render as plain text, because
+ * a relationship id nothing defines is a file Word refuses to open.
+ */
+export function onePagerDocumentXml(model, linkId = null) {
   const body = [
     ownersBand(model.owners, model.clientSince),
-    heading('Key contacts', 'shaded = day to day    indented = reports to the name above'),
-    contactsTable(model.contacts),
+    heading('Key contacts'),
+    contactsTable(model.contacts, linkId),
     heading('Open opportunities'),
     oppsTable(model.opps),
     heading('Current services'),
@@ -518,14 +565,52 @@ export const CONTENT_TYPES_XML = `<?xml version="1.0" encoding="UTF-8" standalon
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
 </Types>`;
 
-// The document's own relationships. There were none until the band moved
-// into the header: a part Word is told to use by r:id has to be findable
-// by that id, and a header referenced from nowhere is a header nobody
-// draws.
-export const DOCUMENT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+// The relationship id the header takes. Links are numbered after it.
+const HEADER_REL_ID = 'rId1';
+
+/**
+ * The document's own relationships: the header part, and one entry per
+ * link the page draws.
+ *
+ * A part Word is told to use by r:id has to be findable by that id - a
+ * header or a hyperlink referenced from nowhere is not a link that does
+ * nothing, it is a file Word refuses to open. `TargetMode="External"` is
+ * what says the target is a URL rather than another part of the zip.
+ */
+export function documentRelsXml(links = []) {
+  const rels = links.map((url, i) => `
+  <Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEsc(url)}" TargetMode="External"/>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+  <Relationship Id="${HEADER_REL_ID}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>${rels}
 </Relationships>`;
+}
+
+/** The header-only relationships, for a page that draws no links. */
+export const DOCUMENT_RELS_XML = documentRelsXml();
+
+/**
+ * The three parts that vary with the model, built together.
+ *
+ * Together because they cannot be built apart: every link in the document
+ * is an id the relationships part has to define, so whatever writes one
+ * has to write the other from the same walk.
+ */
+export function onePagerParts(model) {
+  const links = [];
+  const linkId = (url) => {
+    const clean = String(url || '').trim();
+    if (!clean) return '';
+    // The same profile linked twice is one relationship, not two.
+    const at = links.indexOf(clean);
+    if (at !== -1) return `rId${at + 2}`;
+    links.push(clean);
+    return `rId${links.length + 1}`;
+  };
+  // The document first: it is the walk that discovers the links.
+  const documentXml = onePagerDocumentXml(model, linkId);
+  return { documentXml, headerXml: onePagerHeaderXml(model), relsXml: documentRelsXml(links) };
+}
 
 export const ROOT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -544,10 +629,11 @@ export async function buildOnePagerDocx(model) {
   const zip = new JSZip();
   zip.file('[Content_Types].xml', CONTENT_TYPES_XML);
   zip.folder('_rels').file('.rels', ROOT_RELS_XML);
+  const { documentXml, headerXml, relsXml } = onePagerParts(model);
   const word = zip.folder('word');
-  word.file('document.xml', onePagerDocumentXml(model));
-  word.file('header1.xml', onePagerHeaderXml(model));
-  word.folder('_rels').file('document.xml.rels', DOCUMENT_RELS_XML);
+  word.file('document.xml', documentXml);
+  word.file('header1.xml', headerXml);
+  word.folder('_rels').file('document.xml.rels', relsXml);
   const inBrowser = typeof Blob !== 'undefined' && typeof window !== 'undefined';
   return zip.generateAsync({
     type: inBrowser ? 'blob' : 'uint8array',
