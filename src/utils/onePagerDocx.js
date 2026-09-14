@@ -181,9 +181,14 @@ function ownersBand({ cdm, clientManager }, clientSince) {
   // "what is our standing with this account", and one date does not earn
   // a heading and a rule.
   const third = CONTENT_WIDTH / 3;
+  // 10pt for the name, not 12. These three are context - who owns the
+  // account and since when - and at 12pt they were set larger than the
+  // contact names and the opportunities, which are what the page is for.
+  // A heading-sized name on a box that says "Dan Baldauf" reads as the
+  // subject of the page rather than a label on it.
   const box = (label, value, missing) => cell([
-    para([run(label.toUpperCase(), { bold: true, color: SE_MUTED, size: 15 })], { spaceAfter: 20 }),
-    para([run(value || missing, { bold: true, color: value ? SE_GRAPHITE : SE_MUTED, size: 24 })], { spaceAfter: 0 }),
+    para([run(label.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 20 }),
+    para([run(value || missing, { bold: true, color: value ? SE_GRAPHITE : SE_MUTED, size: 20 })], { spaceAfter: 0 }),
   ].join(''), {
     width: third,
     fill: SE_SURFACE,
