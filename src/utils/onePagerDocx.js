@@ -189,9 +189,13 @@ function ownersBand({ cdm, clientManager }, clientSince) {
   // contact names and the opportunities, which are what the page is for.
   // A heading-sized name on a box that says "Dan Baldauf" reads as the
   // subject of the page rather than a label on it.
+  // The label is bold and the value is not. Bold is what the page uses to
+  // say "start reading here", and on a row of three boxes it was being
+  // spent on the answers rather than on the questions - three names in
+  // bold read as three headings.
   const box = (label, value, missing) => cell([
     para([run(label.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 20 }),
-    para([run(value || missing, { bold: true, color: value ? SE_GRAPHITE : SE_MUTED, size: 20 })], { spaceAfter: 0 }),
+    para([run(value || missing, { color: value ? SE_GRAPHITE : SE_MUTED, size: 20 })], { spaceAfter: 0 }),
   ].join(''), {
     width: third,
     fill: SE_SURFACE,
@@ -338,9 +342,13 @@ function oppsTable({ shown, hidden }) {
     // a row naming nothing would be worse than a coded row.
     const scope = o.scope && o.scope !== o.name ? o.scope : '';
     return [
-      cell(para([run(scope || o.name, { bold: true, size: 18 })], { spaceAfter: 0 }), { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      // Nothing in this table is bold. Every row here is one opportunity
+      // and every cell in it is being read, so bolding two of the three
+      // marked nothing - it only made the section shout against the
+      // contacts above it.
+      cell(para([run(scope || o.name, { size: 18 })], { spaceAfter: 0 }), { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
       cell(para([run(o.stage || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[1], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-      cell(para([run(o.amount || '-', { bold: true, color: SE_GRAPHITE, size: 17 })], { spaceAfter: 0 }), { width: widths[2], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      cell(para([run(o.amount || '-', { color: SE_GRAPHITE, size: 17 })], { spaceAfter: 0 }), { width: widths[2], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
     ];
   });
   const more = hidden
@@ -451,7 +459,7 @@ export function onePagerDocumentXml(model, linkId = null) {
     ownersBand(model.owners, model.clientSince),
     model.notes?.blocks?.length ? heading('Notes') : '',
     notesBlock(model.notes),
-    heading('Key contacts'),
+    heading('Key client contacts'),
     contactsTable(model.contacts, linkId),
     heading('Open opportunities'),
     oppsTable(model.opps),
