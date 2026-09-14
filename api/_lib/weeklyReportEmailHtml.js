@@ -79,7 +79,7 @@ const gutter = (w = 12) => `<td class="gut" width="${w}" style="width:${w}px;fon
 
 // A section heading with the tab's note beside it. Two cells: padding on a
 // <span> is ignored in Outlook, so the note would otherwise collide with
-// the heading ("Where the year standsYear to date …").
+// the heading ("Close rate trendLast 6 months …").
 export function headingHtml(title, note) {
   const noteCell = note
     ? `<td class="hnote" valign="bottom" style="padding:0 0 1px 10px;font-family:${FONT};font-size:12px;color:${MUTED};line-height:1.3;white-space:nowrap">${esc(note)}</td>`
@@ -299,7 +299,6 @@ export function funnelHtml(funnel, image = null) {
 
   return `
     ${cardOpen()}
-      ${funnel.caption ? `<div style="margin-bottom:8px;font-family:${FONT};font-size:12px;line-height:1.4;color:${MUTED}">${esc(funnel.caption)}</div>` : ''}
       ${picture}
       ${table(`width="100%" style="border-collapse:collapse"`, `
         <tr>${th('Stage')}${picture ? '' : th('Pipeline', 'left', '34%')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
@@ -570,19 +569,22 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
   <div style="max-width:${WIDTH}px;margin:0 auto;text-align:left">
 
     ${table(`width="100%" style="border-collapse:collapse"`, `<tr><td style="font-family:${FONT}">
-      <div style="font-size:22px;font-weight:700;color:${INK};line-height:1.25">Weekly Report</div>
-      <div style="margin-top:3px;font-size:13px;color:${MUTED}">${esc(s.periodLabel || '')}</div>
+      ${table(`width="100%" style="border-collapse:collapse"`, `<tr>
+        <td valign="bottom" style="font-family:${FONT};font-size:22px;font-weight:700;color:${INK};line-height:1.25;white-space:nowrap">Weekly Report</td>
+        ${s.periodLabel ? `<td class="hnote" valign="bottom" style="padding:0 0 3px 10px;font-family:${FONT};font-size:13px;color:${MUTED};line-height:1.3;white-space:nowrap">${esc(s.periodLabel)}</td>` : ''}
+        <td class="hpad" width="99%" style="width:99%"></td>
+      </tr>`)}
       <div style="margin-top:5px;font-size:12px;line-height:1.4;color:${fresh.stale ? '#B45309' : MUTED}">${esc(fresh.text)}</div>
     </td></tr>`)}
 
     ${spacer(16)}
     ${intro}
 
-    ${headingHtml('Where the year stands', s.kpiNote)}
+    ${headingHtml('Where the year stands')}
     ${spacer(8)}
     ${kpiRow}
 
-    ${funnel ? `${spacer(20)}${headingHtml('Pipeline funnel', 'The Charts → Pipeline funnel, off the same cached numbers')}${spacer(8)}${funnel}` : ''}
+    ${funnel ? `${spacer(20)}${headingHtml('Pipeline funnel')}${spacer(8)}${funnel}` : ''}
 
     ${trend ? `${spacer(20)}${headingHtml('Close rate trend', `Last ${trendMonths} months, by the stage each closed deal reached`)}${spacer(8)}${trend}` : ''}
 

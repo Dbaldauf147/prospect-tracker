@@ -46,7 +46,6 @@ function funnelDoc(f) {
   if (!stages.length) return null;
   const o = f.outcome && typeof f.outcome === 'object' ? f.outcome : null;
   return {
-    caption: str(f.caption, 300),
     stages,
     outcome: o ? {
       soldLabel: str(o.soldLabel, 40) || 'Closed YTD',
@@ -152,9 +151,6 @@ export function buildSnapshotDoc(input, auth) {
       chip: strOrNull(c?.chip, 40),
       lines: trimList(c?.lines, 6),
     })),
-    // The note beside "Where the year stands" on the tab: these three cards
-    // are the year to date, not the week the rest of the email covers.
-    kpiNote: str(s.kpiNote, 120),
     funnel: funnelDoc(s.funnel),
     // Only alongside the figures it illustrates: an image with no stage
     // rows behind it is a picture the reader cannot check.

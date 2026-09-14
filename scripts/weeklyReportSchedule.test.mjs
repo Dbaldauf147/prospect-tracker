@@ -207,7 +207,6 @@ const injected = renderWeeklyReportHtml({
   kpiCards: [{ label: '<b>k</b>', value: '<i>v</i>', lines: ['<u>line</u>'] }],
   tiles: [{ label: '<b>t</b>', value: 1, goal: 2, sub: '<u>sub</u>' }],
   funnel: {
-    caption: '<b>cap</b>',
     stages: [{ label: '<img src=x>', count: 1, amount: '<i>$1</i>', life: '<u>1</u>', closeRate: '<b>1%</b>' }],
     outcome: { soldLabel: '<b>sold</b>', sold: '<i>$1</i>', weighted: '<u>$2</u>', total: '<b>$3</b>', note: '<script>n</script>' },
   },
@@ -243,10 +242,8 @@ check('no attacker tag survives anywhere', /<(script|img|u)\b/i.test(injected), 
 const built = buildSnapshotDoc({
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
-  kpiNote: 'Year to date — not scoped to the week picker',
   tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' }],
   funnel: {
-    caption: 'Band height = pipeline value.',
     stages: [{ label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
     outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K', note: '63% of $1.3M target' },
   },
@@ -292,7 +289,7 @@ check('a snapshot with no funnel stores none', buildSnapshotDoc({ funnel: { stag
     buildSnapshotDoc({ funnelImage: { src: png, width: 10, height: 10 } }, {}).funnelImage, null);
 }
 check('funnel text is bounded',
-  buildSnapshotDoc({ funnel: { caption: 'x'.repeat(500), stages: [{ label: 'y'.repeat(200) }] } }, {})
+  buildSnapshotDoc({ funnel: { stages: [{ label: 'y'.repeat(200) }] } }, {})
     .funnel.stages[0].label.length, 80);
 
 // ---- the close-rate trend in a snapshot -----------------------------------
@@ -361,12 +358,10 @@ const html = renderWeeklyReportHtml({
   periodEnd,
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
-  kpiNote: 'Year to date — not scoped to the week picker',
   kpiCards: [
     { label: 'Progress to target', value: '36.6%', status: 'behind', chip: 'Behind pace', lines: ['$484,616 sold of $1,325,000'] },
   ],
   funnel: {
-    caption: 'Band height = pipeline value, segment length = avg opp life: 495 days end to end.',
     stages: [
       { label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' },
       { label: 'Stage 4: Influence and Develop', count: 4, amount: '$918,000', life: null, closeRate: null },
@@ -405,8 +400,6 @@ check('a missed goal draws a blue bar under 100%',
   html.includes('width:54%') && html.includes('#3B82F6'), true);
 check('the tile carries the number the tab shows', html.includes('>27<'), true);
 check('the tile says where an off-feed number came from', html.includes('recorded Sep 3'), true);
-check('the KPI section carries the tab’s year-to-date note',
-  html.includes('not scoped to the week picker'), true);
 check('a met goal draws a green bar capped at 100%',
   html.includes('width:100%') && html.includes('#10B981'), true);
 check('lists the opp changes', html.includes('Acme: HQ retrofit'), true);
@@ -416,7 +409,6 @@ check('includes the narrative', html.includes('Two new opps landed.'), true);
 // The funnel is a drawn chart on the tab and a table here; the figures have
 // to be the same ones, including the exit block hanging off the arrow.
 check('draws the funnel stages', html.includes('Stage 4: Influence and Develop'), true);
-check('carries the funnel caption', html.includes('495 days end to end'), true);
 check('carries the projected total', html.includes('$833K'), true);
 check('carries the share of target', html.includes('63% of $1.3M target'), true);
 check('a stage with no life or close rate reads as a dash', html.includes('>—<'), true);
