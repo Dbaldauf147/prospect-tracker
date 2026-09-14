@@ -140,7 +140,7 @@ export function bingNewsUrl(query) {
 // ---- RSS parsing ---------------------------------------------------------
 // Both feeds are plain RSS 2.0 and the project has no XML dependency, so
 // this reads the handful of tags we need rather than pulling in a parser.
-function decodeEntities(s) {
+export function decodeEntities(s) {
   return String(s)
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')

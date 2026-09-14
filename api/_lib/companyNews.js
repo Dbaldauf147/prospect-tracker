@@ -16,6 +16,7 @@ import { sendEmail } from './mailer.js';
 import { companyNewsBudgetMs } from './researchBudget.js';
 import { fetchHeadlines, nameVariants } from './newsFeeds.js';
 import { classifyHeadline, stripPublisher } from './dealHeadline.js';
+import { fetchNewsletterItems } from './newsletterInbox.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -271,26 +272,39 @@ export function classifierMode() {
 // failure on one company must never sink the whole digest, so errors come
 // back as data rather than thrown. The exception is ResearchHaltedError,
 // which is meant to stop the run and is deliberately rethrown.
-export async function researchCompanyAcquisitions(entry, since, until, { signal } = {}) {
+export async function researchCompanyAcquisitions(entry, since, until, {
+  signal, newsletterItems = [],
+} = {}) {
   const { items, error: feedError } = await fetchHeadlines(entry, since, until, { signal });
 
-  if (feedError) {
-    // No feed, and no paid fallback unless one was asked for: spending
-    // money to answer for one unreachable company is how the whole
-    // feature's budget went last time.
+  // The newsletters were read once for the whole run; every company is
+  // offered the same body of headlines and keeps the ones about it. That
+  // filtering is the classifier's "not about this firm" — doing it here as
+  // well would be a second, subtly different rule.
+  const all = [...newsletterItems, ...items];
+
+  if (feedError && newsletterItems.length === 0) {
+    // No feed, no newsletters, and no paid fallback unless one was asked
+    // for: spending money to answer for one unreachable company is how the
+    // whole feature's budget went last time.
     if (classifierMode() !== 'claude') {
       return { deals: [], unsure: [], error: feedError };
     }
     return researchViaWebSearch(entry, since, until, { signal, feedError });
   }
 
-  // A quiet feed is an answer, and answering it costs nothing.
-  if (items.length === 0) return { deals: [], unsure: [], error: null };
+  // Quiet everywhere is an answer, and answering it costs nothing.
+  if (all.length === 0) return { deals: [], unsure: [], error: null };
 
-  if (classifierMode() !== 'claude') return classifyByRules(entry, items);
+  // A feed that failed while the newsletters answered is worth saying —
+  // once, about the run, not as a sentence repeated under all twenty-one
+  // firms. `feedDown` travels up and the email says it in one line.
+  if (classifierMode() !== 'claude') {
+    return { ...classifyByRules(entry, all), feedDown: !!feedError };
+  }
 
   try {
-    return await classifyHeadlines(entry, items, { signal });
+    return await classifyHeadlines(entry, all, { signal });
   } catch (err) {
     if (err instanceof ResearchHaltedError) throw err;
     if (err?.name === 'AbortError') return { deals: [], unsure: [], error: 'Research timed out' };
@@ -568,6 +582,10 @@ const MIN_SLICE_MS = 8_000;
 export async function researchAll(companies, since, until, {
   budgetMs = companyNewsBudgetMs(),
   concurrency = RESEARCH_CONCURRENCY,
+  // Read once for the whole run, not once per company: this is one IMAP
+  // connection, and opening twenty-one of them to read the same four
+  // newsletters would be slower than the research it feeds.
+  newsletterItems = [],
   // Seam for the tests: they need to drive timing without real API calls.
   research = researchCompanyAcquisitions,
 } = {}) {
@@ -606,9 +624,17 @@ export async function researchAll(companies, since, until, {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), Math.min(remaining, PER_COMPANY_MS));
       try {
-        const { deals, unsure, error, viaWebSearch } = await research(entry, since, until, { signal: controller.signal });
+        const { deals, unsure, error, viaWebSearch, feedDown } = await research(entry, since, until, {
+          signal: controller.signal, newsletterItems,
+        });
         results[i] = {
-          ...entry, deals, unsure: unsure || [], error, skipped: false, viaWebSearch: !!viaWebSearch,
+          ...entry,
+          deals,
+          unsure: unsure || [],
+          error,
+          skipped: false,
+          viaWebSearch: !!viaWebSearch,
+          feedDown: !!feedDown,
         };
       } catch (err) {
         if (err instanceof ResearchHaltedError) {
@@ -742,7 +768,7 @@ function unsureBlock(unsure) {
     </div>`;
 }
 
-export function buildNewsEmailHtml(results, { since, until, message } = {}) {
+export function buildNewsEmailHtml(results, { since, until, message, newsletters } = {}) {
   const hasContent = (r) => r.deals.length > 0 || (r.unsure || []).length > 0;
   const withDeals = results.filter(hasContent);
   const withoutDeals = results.filter((r) => !hasContent(r));
@@ -821,6 +847,14 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
            </div>`
         : ''}
       <div style="margin-top:26px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
+        ${results.some((r) => r.feedDown)
+          ? `<div style="color:#B45309;margin-bottom:6px">The news feeds couldn’t be reached this run, so these results come from the newsletters alone and are thinner than usual.</div>`
+          : ''}
+        ${newsletters?.error
+          ? `<div style="color:#B45309;margin-bottom:6px">Newsletters weren’t read this run: ${escapeHtml(newsletters.error)}</div>`
+          : newsletters?.count
+            ? `<div style="margin-bottom:6px">Includes ${newsletters.count} headline${newsletters.count === 1 ? '' : 's'} from the trade newsletters in the mailbox, alongside the news feeds.</div>`
+            : ''}
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
         Deals are read from public news feed headlines and can be incomplete — always confirm against the linked source before acting.
       </div>
@@ -854,7 +888,16 @@ export async function buildDigest(db, uid, email, {
   // order, so the companies this run reached come before the ones it didn't.
   const ordered = rotateForRun(companies, startIndex);
   const { since, until } = digestWindow(lastSentAt, Date.now(), { minLookbackDays });
-  const results = await researchAll(ordered, since, until, budgetMs ? { budgetMs } : {});
+
+  // The trade newsletters, read once for the whole run. They add to the
+  // feeds rather than replacing them, so a mailbox that cannot be reached
+  // costs a source and nothing else — the digest carries on and says so.
+  const newsRun = await fetchNewsletterItems(since, until);
+  const news = { count: newsRun.items.length, error: newsRun.error, configured: newsRun.configured };
+  const results = await researchAll(ordered, since, until, {
+    ...(budgetMs ? { budgetMs } : {}),
+    newsletterItems: newsRun.items,
+  });
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);
 
@@ -870,6 +913,7 @@ export async function buildDigest(db, uid, email, {
     reason: null,
     companies: companies.length,
     searched: results.filter((r) => !r.skipped).length,
+    newsletters: news,
     // An account-wide stop belongs on the schedule row too — the email
     // says it, but the user looking at "why is this empty" in the UI
     // should not have to open the email to find out.
@@ -879,7 +923,7 @@ export async function buildDigest(db, uid, email, {
     until,
     results,
     nextStartIndex,
-    html: buildNewsEmailHtml(results, { since, until, message }),
+    html: buildNewsEmailHtml(results, { since, until, message, newsletters: news }),
     defaultSubject: newsSubject(results, since, until),
   };
 }
