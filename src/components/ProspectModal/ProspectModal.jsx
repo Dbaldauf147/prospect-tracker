@@ -27,7 +27,7 @@ import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
-import { getServiceCategories, buildServiceBoard, moveServiceToBucket, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { coverageRowStyle } from '../../utils/coverageMark';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
@@ -107,7 +107,10 @@ import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList
 import {
   subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis, deleteIndicativeAnalysis,
 } from '../../utils/firestoreSync';
-import { buildCompanyOnePagerHtml, onePagerFileName } from '../../utils/companyOnePager';
+import { onePagerModel, onePagerFileName } from '../../utils/companyOnePager';
+import { buildOnePagerDocx } from '../../utils/onePagerDocx';
+import { tagListHas } from '../../utils/contactTagReview';
+import { loadDealsList } from '../../utils/dealsStore';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
@@ -5561,27 +5564,65 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         return isSoldStatus(scopeMatchedServices.get(item));
       });
       const metMap = settings.contactMetInPerson || {};
-      const contacts = (companyContacts || []).map((c) => ({
-        name: contactDisplayName(c),
-        title: c.jobtitle || '',
-        email: c.email || '',
-        phone: c.phone || c.mobilephone || '',
-        decisionMaker: isDecisionMakerContact(c),
-        metInPerson: metInPersonState(c, metMap) === MET_YES,
-      }));
-      const html = buildCompanyOnePagerHtml({
+      const reportsToMap = settings.contactReportsTo || {};
+      // Managers are stored as contact ids. The sheet is read away from the
+      // app, so they are resolved to names here - and only against this
+      // company's own contacts, which is the only set the Reports To picker
+      // offers in the first place.
+      const nameById = new Map((companyContacts || []).map(c => [
+        String(c.id || c.vid || ''), contactDisplayName(c),
+      ]));
+      const contacts = (companyContacts || []).map((c) => {
+        const id = String(c.id || c.vid || '');
+        const raw = reportsToMap[id];
+        const managers = (Array.isArray(raw) ? raw : [raw]).map(String).filter(Boolean);
+        return {
+          name: contactDisplayName(c),
+          title: c.jobtitle || '',
+          email: c.email || '',
+          phone: c.phone || c.mobilephone || '',
+          decisionMaker: isDecisionMakerContact(c),
+          // "Primary Point of Contact" is the app's existing tag for the
+          // person worked with week to week, so the sheet reads the same
+          // flag the contacts pages do rather than inventing a second one.
+          dayToDay: tagListHas(
+            String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').flatMap(t => t.split(',')),
+            'Primary Point of Contact',
+          ),
+          metInPerson: metInPersonState(c, metMap) === MET_YES,
+          reportsTo: managers.map(m => nameById.get(m)).filter(Boolean),
+        };
+      });
+      // Every Original Contract Start on this client's deals; the model
+      // takes the earliest. Matched on Client Name the way the Deals tab
+      // matches, with a fuzzy pass only when the exact one finds nothing -
+      // the same order resolveClientManagerFromMap uses, and the right way
+      // round: a loose match that pulls in another client's first contract
+      // would put a confidently wrong date on the page.
+      const company = String(fields.company || '').trim();
+      const lower = company.toLowerCase();
+      const allDeals = loadDealsList().data || [];
+      const nameOf = (r) => String(r?.['Client Name'] || '').trim();
+      let deals = allDeals.filter(r => nameOf(r).toLowerCase() === lower);
+      if (!deals.length && company) deals = allDeals.filter(r => companiesMatch(nameOf(r), company));
+      const contractDates = deals.map(r => r['Original Contract Start']).filter(Boolean);
+
+      const categories = getServiceCategories(settings);
+      const model = onePagerModel({
         company: fields.company,
         cdm: fields.cdm,
-        clientManager: clientManager,
+        clientManager,
         services: sold,
+        bucketOf: (name) => serviceBucketOf(categories, name),
         contacts,
+        opps: companyOpps,
+        contractDates,
       });
-      const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
-      const result = await htmlToDocxBlob(html);
-      const blob = result instanceof Blob
-        ? result
-        : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-      const url = URL.createObjectURL(blob);
+      const built = await buildOnePagerDocx(model);
+      const file = built instanceof Blob
+        ? built
+        : new Blob([built], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(file);
       const a = document.createElement('a');
       a.href = url;
       a.download = onePagerFileName(fields.company);
@@ -5596,7 +5637,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       setOnePagerBusy(false);
     }
   }, [onePagerBusy, fields.servicesExplored, fields.company, fields.cdm, allServiceItems,
-    scopeMatchedServices, companyContacts, settings.contactMetInPerson, clientManager]);
+    scopeMatchedServices, companyContacts, companyOpps, settings, clientManager]);
 
 
   // Services this company has an opp QUEUED for - a New Opp scheduled for
