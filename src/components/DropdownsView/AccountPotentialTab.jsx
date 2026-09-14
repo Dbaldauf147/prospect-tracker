@@ -138,7 +138,15 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
 
   // ---- the account this potential is being read for -------------------
-  const company = String(scenario?.company || '').trim();
+  // What is in the box, and what everything else matches on. Two values,
+  // because they are two different things: the box has to hold exactly
+  // what was typed - a space in the middle of "Blue Owl" included - and
+  // every lookup below wants the name without its edges. Trimming what the
+  // box shows is what used to eat the space bar: "Blue " trimmed back to
+  // "Blue", which equalled the value already there, so the keystroke was
+  // dropped and the word could never be finished.
+  const companyTyped = String(scenario?.company ?? '');
+  const company = companyTyped.trim();
   const companyOptions = useMemo(
     () => [...new Set((prospects || []).map(p => String(p?.company || '').trim()).filter(Boolean))].sort(),
     [prospects],
@@ -215,14 +223,22 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   const openRows = potential.open;
 
   function setCompany(name) {
-    const next = String(name || '').trim();
-    if (next === company) return;
-    // Picking an account changes which services are even on the page, so a
+    const typed = String(name ?? '');
+    const next = typed.trim();
+    if (typed === companyTyped) return;
+    // Still the same account, just spaced differently - somebody typing
+    // the space in "Blue Owl", or trailing one off. Keep what is ticked:
+    // wiping a scope mid-word would be a page that punishes typing.
+    if (next === company) {
+      setScenario(s2 => ({ ...s2, company: typed }));
+      return;
+    }
+    // A different account changes which services are even on the page, so a
     // scope ticked against the last one is not a scope against this one.
     // The typed counts go too: sites belong to a company, and carrying one
     // account's estate onto another's page is the quiet way to price a deal
     // against the wrong estate.
-    setScenario(s2 => ({ ...s2, company: next, services: [], counts: {}, serviceUnits: {} }));
+    setScenario(s2 => ({ ...s2, company: typed, services: [], counts: {}, serviceUnits: {} }));
     setOppImport(null);
     setPinnedNames(null);
     if (next) ensureOpps();
@@ -577,7 +593,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
       // Everything the row prints, as the one string the search box reads:
       // the table is asked about rates, counts and fees as much as it is
       // asked about names, and until this it could only answer the names.
-      return { ...row, _search: rowSearchText(row, bases) };
+      return { ...row, _search: rowSearchText(row, bases, row._adds) };
     }),
   [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
 
@@ -708,9 +724,14 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
       case 'name':
         return {
           ...base,
+          // The add-ons are NAMED in the tooltip, not just counted. A
+          // service that comes with something else has no row of its own,
+          // so a reader looking for it by name has nowhere to find it -
+          // which reads as the page having dropped it. The search box
+          // reads them for the same reason.
           render: (row) => (
             <span className={styles.pricingNameText} title={row._adds.length
-              ? `${row.name} - sold with ${row._adds.length} other ${row._adds.length === 1 ? 'service' : 'services'}. Click the arrow for the split.`
+              ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
               : `${row.name} - click the row to tick it in or out of the scope`}
             >
               {row._adds.length > 0 && (
@@ -890,7 +911,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           <span className={styles.pricingBarTitle}>Account potential</span>
           <div className={styles.potentialCombo}>
             <ColumnFilterCombo
-              value={company}
+              value={companyTyped}
               onChange={setCompany}
               suggestions={companyOptions}
               label="Company"
