@@ -566,25 +566,30 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             {!bulkOn && selectedCount > 0 && ` (${selectedCount} selected)`}
           </button>
         )}
-        {/* The share, not just the count: "29 priced" out of a list whose
+        {/* The share, not just the count: "21 priced" out of a list whose
             length is three words to the left is a number you have to do
             arithmetic on before it means anything, and the arithmetic is
-            the whole question — how much of this card is done. The no-fee
-            rows are counted apart from the priced ones, because they are
-            two different answers: a priced service has a rate, a no-fee one
-            has a decision. Both are answers; only an unpriced row is a gap,
-            which is what the tooltip's third figure is. */}
+            the whole question — how much of this card is done.
+
+            The share counts BOTH answers, which is why it is named rather
+            than tucked in brackets after one of the counts. A priced
+            service has a rate and a no-fee one has a decision; either way
+            somebody has settled what it costs. Only an unpriced row is a
+            gap, and 15% with 27 of those rows already settled understates
+            the work by nearly twenty points. The counts stay apart, because
+            the two answers are still different facts. */}
         <span
           className={styles.resultCount}
           title={coverage.total === 0 ? undefined
-            : `${coverage.priced} of ${coverage.total} services carry a rate (${coverage.pricedPct}%). `
-              + `${coverage.noFee} marked no fee — priced at zero on purpose. `
+            : `${coverage.answered} of ${coverage.total} services are settled (${coverage.answeredPct}%): `
+              + `${coverage.priced} carry a rate and ${coverage.noFee} are marked no fee — priced at zero on purpose. `
               + `${coverage.unpriced} still unpriced. `
-              + `Counting the no-fee rows as answered, ${coverage.answeredPct}% of the card is done.`}
+              + `Counting only the ones with a rate on them, ${coverage.pricedPct}%.`}
         >
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
-          {coverage.total > 0 && ` · ${coverage.priced} priced (${coverage.pricedPct}%)`}
+          {coverage.total > 0 && ` · ${coverage.priced} priced`}
           {coverage.noFee > 0 && ` · ${coverage.noFee} no fee`}
+          {coverage.total > 0 && ` · ${coverage.answeredPct}% priced or no fee`}
         </span>
       </div>
 
