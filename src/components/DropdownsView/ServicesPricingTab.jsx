@@ -152,7 +152,6 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   );
   const counts = useMemo(() => scenario?.counts || {}, [scenario?.counts]);
   const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
-  const dealSize = scenario?.dealSize ?? '';
 
   function savePricingField(name, field, value) {
     updateSettings?.({ servicePricing: setPricingField(pricing, name, field, value, bases) });
@@ -204,10 +203,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     const { lines } = estimateScope({
       rows: serviceRows,
       services: serviceRows.map(r => r.name),
-      pricing, counts, dealSize, bases, serviceUnits,
+      pricing, counts, bases, serviceUnits,
     });
     return new Map(lines.map(l => [l.name, l]));
-  }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
+  }, [serviceRows, pricing, counts, bases, serviceUnits]);
 
   // How far through the card the list is: how many services carry a rate,
   // how many answer "nothing" on purpose, and what share of the hundred and

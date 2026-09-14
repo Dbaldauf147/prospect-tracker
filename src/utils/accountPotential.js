@@ -22,10 +22,10 @@
 //
 // Then the whitespace is ranked by what it is worth, because a list of a
 // hundred untouched services in alphabetical order answers nothing. The
-// ranking is by Est. Deal Value over the contract term - the whole prize -
-// and at the LOW end of a quoted range, so a service priced "nothing up to
-// half a million" cannot outrank one that is reliably worth four hundred
-// thousand.
+// ranking is by the Year 1 fee - what the account bills in the first twelve
+// months, which is the figure this page is read for - and at the LOW end of
+// a quoted range, so a service priced "nothing up to half a million" cannot
+// outrank one that is reliably worth four hundred thousand.
 //
 // Pure, so the decisions worth arguing about (what counts as decided, what
 // outranks what) can be read and tested without a browser.
@@ -33,7 +33,7 @@
 import { autoAddListFor, collectAutoAdds } from './serviceAutoAdd.js';
 import { exploredStatus } from './clientDealSizing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
-import { estimateScope } from './servicePricing.js';
+import { basisFor, estimateScope, pricingFor, pricingLines } from './servicePricing.js';
 
 /**
  * What the company record already says about one service.
@@ -86,15 +86,16 @@ export function decidedCounts(decided = []) {
 /**
  * The estimate lines in prize order, biggest first.
  *
- * By Est. Deal Value rather than Year 1, because the question is what the
- * account is worth rather than what it bills in the first twelve months,
- * and a five-year recurring service and a one-off project of the same
- * annual size are not the same prize.
+ * By Year 1 fee: the first twelve months is what this page is asked for,
+ * and a term total answers a different question with a bigger number. A
+ * five-year recurring service and a one-off project of the same annual size
+ * are not the same prize over a contract, but they are the same first year,
+ * and the first year is the one being compared here.
  *
  * At the LOW end first: a range is an admission of uncertainty, and ranking
  * on its top would put the service we know least about at the head of the
- * list. The high end breaks ties, then Year 1, then the name so two runs of
- * the same account rank identically.
+ * list. The high end breaks ties, then the term value, then the name so two
+ * runs of the same account rank identically.
  *
  * A service the rate card cannot price sorts to the bottom rather than to
  * zero-and-therefore-nowhere: it is not worth nothing, it is unknown, and
@@ -104,9 +105,9 @@ export function rankByPotential(lines = []) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   return [...lines].sort((a, b) => {
     if (!!a.priced !== !!b.priced) return a.priced ? -1 : 1;
-    return num(b.value) - num(a.value)
-      || num(b.valueHigh) - num(a.valueHigh)
-      || num(b.fee) - num(a.fee)
+    return num(b.fee) - num(a.fee)
+      || num(b.feeHigh) - num(a.feeHigh)
+      || num(b.value) - num(a.value)
       || String(a.name).localeCompare(String(b.name));
   });
 }
@@ -228,6 +229,53 @@ export function bundleTotals({ lead, adds = [] }) {
   };
 }
 
+/** Whether any line on a service's card is priced as a cut of a deal. */
+export function pricesOnDeal(name, pricing, bases) {
+  return pricingLines(pricingFor(pricing, name, bases))
+    .some(line => basisFor(line.basis, bases)?.kind === 'percent');
+}
+
+/**
+ * What each percentage-priced service is a percentage OF.
+ *
+ * Client management is not sold on its own. It comes with a bill payment
+ * deal, and the card prices it the way it is actually quoted: a cut of that
+ * deal. So the deal is the bundle it was auto-added into, and the figure it
+ * takes its cut of is the Year 1 fee of everything else in that bundle -
+ * the lead and the other add-ons, whatever they are priced on.
+ *
+ * Both ends of it, because that base is a range: a cut of a deal worth
+ * "$44k to $87k" is itself worth a range, and pinning it to either end
+ * alone would quote it at a deal nobody is offering.
+ *
+ * Percentage services are kept out of their own base. Two of them on one
+ * bundle would otherwise each be a cut of a figure that includes the other,
+ * which has no answer - and a service cannot be a percentage of itself.
+ *
+ * A percentage service that leads its own bundle gets no entry at all:
+ * there is no deal under it to be a cut of, and it prices at nothing and
+ * says why, which is the truth rather than a figure invented from a box
+ * somebody typed in once.
+ */
+export function dealSizesByBundle(bundles = [], isPercent = () => false) {
+  const out = new Map();
+  for (const { lead, adds = [] } of bundles) {
+    const members = [lead, ...adds.filter(a => a.open).map(a => a.line)].filter(Boolean);
+    const cuts = members.filter(m => isPercent(m.name));
+    if (cuts.length === 0) continue;
+    let low = 0;
+    let high = 0;
+    for (const m of members) {
+      if (isPercent(m.name) || !m.priced) continue;
+      low += Number(m.fee) || 0;
+      high += Number(m.feeHigh) || 0;
+    }
+    if (low <= 0 && high <= 0) continue;
+    for (const m of cuts) out.set(m.name, { low, high });
+  }
+  return out;
+}
+
 /**
  * Everything the page states for one company.
  *
@@ -255,18 +303,41 @@ export function accountPotential({
   overrides = null,
 } = {}) {
   const { open, decided } = splitByDecision(client, serviceRows, oppStages);
-  const estimate = estimateScope({
+  const price = (dealSizeByService) => estimateScope({
     rows: open,
     services: open.map(r => r.name),
-    pricing, counts, dealSize, bases, serviceUnits,
+    pricing, counts, dealSize, bases, serviceUnits, dealSizeByService,
   });
 
   // What actually gets sold: a lead service and whatever its Auto-add cell
   // drags in behind it. The rows, the ranking and the totals are all in
   // bundles from here down, because a lead quoted without its add-ons is
   // quoted short by however much comes with it.
-  const bundles = bundleAutoAdds(estimate.lines, overrides, serviceRows.map(r => r.name))
-    .map(b => ({ ...b, totals: bundleTotals(b) }));
+  //
+  // Which takes two passes, because a percentage service is a cut of the
+  // bundle it comes with and the bundle is not known until everything else
+  // in it has been priced. The first pass prices what the card can price on
+  // its own - a percentage service comes out at nothing there, having no
+  // deal yet - and the second re-prices those against the bundle the first
+  // pass put them in.
+  const first = price(null);
+  const shape = bundleAutoAdds(first.lines, overrides, serviceRows.map(r => r.name));
+  const dealSizes = dealSizesByBundle(shape, name => pricesOnDeal(name, pricing, bases));
+  const estimate = dealSizes.size ? price(dealSizes) : first;
+
+  // The same bundles, re-priced. The shape is settled on the first pass and
+  // kept: re-bundling on the second would let a fee that was worked out
+  // FROM a bundle go on to decide what that bundle is, and a service whose
+  // cut of a deal made it the biggest thing in it would lead the bundle it
+  // is a percentage of.
+  const repriced = new Map(estimate.lines.map(l => [l.name, l]));
+  const bundles = shape.map(({ lead, adds }) => {
+    const b = {
+      lead: repriced.get(lead.name) || lead,
+      adds: adds.map(a => (a.open ? { ...a, line: repriced.get(a.name) || a.line } : a)),
+    };
+    return { ...b, totals: bundleTotals(b) };
+  });
   // The ranking runs on the bundle's money, not the lead's own: a service
   // worth little that pulls in two big ones outranks one worth slightly
   // more alone, and it should, because that is the bigger sale.
@@ -291,6 +362,11 @@ export function accountPotential({
     top,
     bundles,
     bundleOf,
+    // What each percentage service turned out to be a cut of, so a caller
+    // pricing a subset of these services - the ticked scope, say - prices
+    // them against the same deal this page ranked them on rather than
+    // against nothing.
+    dealSizes,
     // The services that are only ever shown inside somebody else's bundle.
     // The table drops them as rows of their own: they are counted in the
     // lead's figure, and a second row for them would count them twice.

@@ -1123,6 +1123,47 @@ export function estimateService({ entry, meta, counts, dealSize, bases = PRICING
 }
 
 /**
+ * One service priced against a deal that is itself a range.
+ *
+ * A percentage fee carries two uncertainties, and they are not the same
+ * one: the rate the card quotes, and the size of the deal it is a cut of.
+ * estimateService only knows about the first - hand it a single deal size
+ * and its range covers the rate alone - so the bottom of the fee is the low
+ * rate on the low deal and the top is the high rate on the high deal, which
+ * is two runs of the ordinary estimate with their ends taken one from each.
+ *
+ * Everything not priced as a percentage is unmoved by the deal, so the two
+ * runs agree on it and composing them changes nothing. A single-figure deal
+ * takes the one run it needs.
+ */
+export function estimateServiceRange({
+  entry, meta, counts, dealSize, dealSizeHigh = null, bases = PRICING_BASES,
+}) {
+  const low = estimateService({ entry, meta, counts, dealSize, bases });
+  if (dealSizeHigh === null || parseMoney(dealSizeHigh) === parseMoney(dealSize)) return low;
+  const high = estimateService({ entry, meta, counts, dealSize: dealSizeHigh, bases });
+  return {
+    ...low,
+    feeHigh: high.feeHigh,
+    valueHigh: high.valueHigh,
+    recurringFeeHigh: high.recurringFeeHigh,
+    oneOffFeeHigh: high.oneOffFeeHigh,
+    setupHigh: high.setupHigh,
+    breakdown: withHighEnds(low.breakdown, high.breakdown),
+    setupBreakdown: withHighEnds(low.setupBreakdown, high.setupBreakdown),
+  };
+}
+
+// The same lines with each one's top end taken from the second run. Both
+// runs price the same card in the same order, so the lists line up; if they
+// somehow don't, the low run is returned untouched rather than zipped into
+// something that reads as a breakdown and isn't one.
+function withHighEnds(low, high) {
+  if (!Array.isArray(low) || !Array.isArray(high) || low.length !== high.length) return low;
+  return low.map((line, i) => ({ ...line, feeHigh: high[i].feeHigh }));
+}
+
+/**
  * What a service's setup lines come to under one scenario.
  *
  * The same arithmetic the recurring lines get, on the same counts — which
@@ -1187,7 +1228,11 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
     }
   } else if (lineBasis.kind === 'percent') {
     deal = parseMoney(dealSize) ?? 0;
-    if (deal <= 0) note = 'No deal size entered';
+    // Named for the thing that is missing rather than for a box: the deal
+    // a percentage bites on is typed in on Deal Sizing and worked out from
+    // the bundle on Account Potential, and "no deal size entered" sends a
+    // reader on that page looking for a field that isn't there.
+    if (deal <= 0) note = 'No deal to price on';
   }
   const feeAt = (r) => {
     if (note) return 0;
@@ -1443,7 +1488,15 @@ function legacyParts(line, bases) {
 // apart on the way through: a $60k/yr service over three years and a $180k
 // project are the same contract value but not the same deal — and they are
 // very different first years, which is why both totals come back.
-export function estimateScope({ rows, services, pricing, counts, dealSize, bases = PRICING_BASES, serviceUnits = null }) {
+export function estimateScope({
+  rows, services, pricing, counts, dealSize, bases = PRICING_BASES, serviceUnits = null,
+  // A deal size worked out per service, as a Map of name -> { low, high }.
+  // A percentage fee is a cut of the deal the service rides on, and a
+  // caller that knows what that deal is - the bundle a service was
+  // auto-added into, say - says so here rather than through the one shared
+  // figure, which cannot be two different deals at once.
+  dealSizeByService = null,
+}) {
   const inScope = new Set(services || []);
   const lines = [];
   let recurringAnnual = 0;
@@ -1482,7 +1535,12 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     // prices exactly as it did before it went in. estimateRecurring already
     // puts the mark ahead of any rate that survived it.
     const entry = isNoFeeBucket(row.bucket) ? { ...withUnits, noFee: true } : withUnits;
-    const est = estimateService({ entry, meta: row.meta, counts, dealSize, bases });
+    const ownDeal = dealSizeByService?.get(row.name) || null;
+    const est = ownDeal
+      ? estimateServiceRange({
+        entry, meta: row.meta, counts, bases, dealSize: ownDeal.low, dealSizeHigh: ownDeal.high,
+      })
+      : estimateService({ entry, meta: row.meta, counts, dealSize, bases });
     // A row carrying its own unit count doesn't need the shared one, so it
     // doesn't put a box on the estimator asking for it. Neither does a row
     // whose fee was typed straight in: that fee is multiplied by a count

@@ -1094,7 +1094,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // being quoted on.
   const [pricingScenario, setPricingScenario] = useState(
     () => loadPricingEstimate(user?.uid)?.scenario
-      || { company: '', services: [], counts: {}, serviceUnits: {}, dealSize: '' },
+      || { company: '', services: [], counts: {}, serviceUnits: {} },
   );
   const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
