@@ -38,16 +38,17 @@ const MERGE = { from: 'Rebasline project', to: 'Rebaseline project' };
 // a fresh account — checked for every merge that ships, since a new entry
 // added without its seed fix would rewrite the account and then re-seed the
 // name it just retired.
-// Merges that can't keep old Scope text resolving, and why. A misspelling
-// is the one retired name no matching rule can tie back: "Rebasline" shares
-// no word with "Rebaseline project", and "managment" shares none with
-// "management", so a Scope cell still carrying either typo names nothing and
-// needs a hand edit. Every other merge retires a wording variant, which
-// word-run matching does carry across — that is what the assertion below
-// holds them to.
+// Merges that can't keep old Scope text resolving, and why. A misspelling is
+// the one retired name no matching rule can tie back: matching is on whole
+// words, and "Rebasline", "managment" and "progressional" are each a word
+// their corrected spelling does not contain. So a Scope cell still carrying
+// one of those typos names nothing and needs a hand edit. Every other merge
+// retires a wording variant, which word-run matching does carry across —
+// that is what the assertion below holds them to.
 const SCOPE_MATCH_EXEMPT = new Set([
   'service-merge-rebaseline-2026-08',
   'service-merge-risk-management-2026-09',
+  'service-merge-risk-professional-2026-09',
 ]);
 
 const boardNames = SERVICE_CATEGORIES.flatMap(c => c.items);
@@ -63,11 +64,22 @@ for (const merge of SERVICE_MERGES) {
     boardNames.some(n => n === merge.to));
   check(`${label}: the surviving name is filed in one box only`,
     boardNames.filter(n => norm(n) === norm(merge.to)).length === 1);
-  check(`${label}: the surviving name is in the Solutions list`, solutionsHas(merge.to));
+  // A service is one of two kinds, and a merge must not quietly change which.
+  // Most are catalogue citizens: on the Solutions list AND carrying seed
+  // metadata (BFO tag, product line, service type). A few are board-only —
+  // filed in a box, absent from the catalogue, and served into the Solutions
+  // list by the board union (mergeBoardServices) instead. Both are fine; half
+  // of one is not, since that either invents metadata nobody chose or strands
+  // a service the list can't offer.
+  const onList = solutionsHas(merge.to);
+  const hasMetadata = SERVICE_CATALOG.some(s => s.name === merge.to);
+  check(`${label}: the surviving name is a whole service, not half of one`,
+    onList === hasMetadata,
+    onList
+      ? 'on the Solutions list with no seed metadata'
+      : 'carries seed metadata but is not on the Solutions list');
   check(`${label}: the Solutions list has dropped the retired spelling`,
     !solutionsHas(merge.from));
-  check(`${label}: the surviving name carries seed metadata`,
-    SERVICE_CATALOG.some(s => s.name === merge.to));
   // Scope cells are free text and keep whatever wording was typed at the
   // time. Nothing rewrites them, so the surviving service has to still be
   // the one an old Scope names — otherwise the merge quietly drops a deal's
