@@ -30,6 +30,7 @@
 // Pure, so the decisions worth arguing about (what counts as decided, what
 // outranks what) can be read and tested without a browser.
 
+import { autoAddListFor, collectAutoAdds } from './serviceAutoAdd.js';
 import { exploredStatus } from './clientDealSizing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import { estimateScope } from './servicePricing.js';
@@ -111,6 +112,123 @@ export function rankByPotential(lines = []) {
 }
 
 /**
+ * The open services gathered into bundles: a lead service and whatever its
+ * Auto-add Services cell drags in behind it.
+ *
+ * Some services are never sold alone - putting CSRD readiness in a scope
+ * puts the GHG inventory behind it in scope too - and the Services tab
+ * already records that. A page ranking what an account is worth has to
+ * price the bundle, because the bundle is what gets sold: quoting the lead
+ * service on its own understates it by however much comes with it.
+ *
+ * The hard part is counting each service ONCE. Two leads can name the same
+ * add-on, a chain can run three deep, and two services can name each other.
+ * So this is a partition, not a lookup, and it is built in that order:
+ *
+ *   1. A service another open service names is not a lead. The cell has a
+ *      direction - it says "sell this and that comes with it" - and the
+ *      thing you sell is the thing the row should be about. Size does not
+ *      override that: a small service that drags in a large one is a
+ *      bigger sale than the large one alone, and reads as one.
+ *   2. Leads are taken biggest Year 1 fee first, so when two of them name
+ *      the same add-on it hangs off the one it is most likely being sold
+ *      with. Whoever gets there first keeps it; nobody gets it twice.
+ *   3. Anything still unclaimed leads its own bundle, biggest first. That
+ *      is the cycle case - two services naming each other are both "named
+ *      by another", and without this pass neither would be a lead and the
+ *      page would lose them both.
+ *
+ * Add-ons that are not open are left out of the money. If they already buy
+ * Client management, selling them Bill payment does not bring that revenue
+ * with it - the bundle still includes it, but the account is not worth it
+ * again, and this page only ever counts what is not there yet.
+ *
+ * @param lines     the estimate lines for the open services, by name
+ * @param overrides settings.serviceOverrides, which is where the cells live
+ */
+export function bundleAutoAdds(lines = [], overrides = null, names = null) {
+  const byName = new Map(lines.map(l => [l.name, l]));
+  const known = names || lines.map(l => l.name);
+  const spell = (() => {
+    const byLower = new Map(known.map(n => [String(n).toLowerCase(), n]));
+    return (n) => byLower.get(String(n || '').trim().toLowerCase()) || n;
+  })();
+  const year1 = (l) => (l && l.priced ? Number(l.fee) || 0 : 0);
+
+  // Biggest own fee first. The name breaks ties so a book where nothing is
+  // priced still bundles the same way on every run rather than shuffling
+  // with whatever order the catalogue came in.
+  const order = [...lines].sort((a, b) => year1(b) - year1(a)
+    || String(a.name).localeCompare(String(b.name)));
+
+  // Services some OTHER open service names. Directly named, not
+  // transitively: the question is whether anything sells this, and a
+  // service reached only through a chain is sold by the head of that chain,
+  // which is already covered by its own entry here.
+  const namedByOther = new Set();
+  for (const line of lines) {
+    for (const raw of autoAddListFor(line.name, overrides, known)) {
+      const name = spell(raw);
+      if (name !== line.name && byName.has(name)) namedByOther.add(name);
+    }
+  }
+
+  const claimed = new Set();
+  const bundles = [];
+  // Leads first, then whatever a cycle left over. Two passes rather than
+  // one over everything: a service nothing names has to get its chance to
+  // claim before a service that is only unclaimed because its cycle
+  // partner has not been reached yet.
+  const passes = [order.filter(l => !namedByOther.has(l.name)), order];
+  for (const pass of passes) for (const line of pass) {
+    if (claimed.has(line.name)) continue;
+    claimed.add(line.name);
+    // `present` is everything already spoken for, and collectAutoAdds
+    // neither takes those nor expands through them - so a chain stops at
+    // the first service another bundle already holds instead of dragging
+    // that bundle's tail in behind it.
+    const pulled = collectAutoAdds([line.name], overrides, {
+      canonical: spell,
+      present: [...claimed],
+      names: known,
+    });
+    const adds = [];
+    for (const name of pulled) {
+      const child = byName.get(name);
+      // Not on the page: already sold, turned down, N/A, or in flight. It
+      // comes with the sale but it is not new money, so it is named and
+      // not counted.
+      if (!child) { adds.push({ name, line: null, open: false }); continue; }
+      claimed.add(name);
+      adds.push({ name, line: child, open: true });
+    }
+    bundles.push({ lead: line, adds });
+  }
+  return bundles;
+}
+
+/** A bundle's figures: the lead plus every open add-on, at both ends. */
+export function bundleTotals({ lead, adds = [] }) {
+  const open = adds.filter(a => a.open && a.line?.priced);
+  const sum = (key) => (lead?.priced ? Number(lead[key]) || 0 : 0)
+    + open.reduce((n, a) => n + (Number(a.line[key]) || 0), 0);
+  return {
+    // Priced when ANY part of it is: a lead with no rate that drags in two
+    // services that have one is worth what those two are worth, and
+    // reporting it as unpriced would lose them.
+    priced: !!lead?.priced || open.length > 0,
+    fee: sum('fee'),
+    feeHigh: sum('feeHigh'),
+    value: sum('value'),
+    valueHigh: sum('valueHigh'),
+    // How many of the add-ons brought money, so a row can say "+3" and
+    // mean it.
+    addCount: adds.length,
+    openAddCount: open.length,
+  };
+}
+
+/**
  * Everything the page states for one company.
  *
  * The estimate covers the OPEN services only, so the totals are the prize
@@ -131,6 +249,10 @@ export function accountPotential({
   dealSize,
   serviceUnits = null,
   oppStages = null,
+  // settings.serviceOverrides, where each service's Auto-add Services cell
+  // lives. Left out, nothing bundles and every service leads its own row -
+  // which is what this page did before bundling existed.
+  overrides = null,
 } = {}) {
   const { open, decided } = splitByDecision(client, serviceRows, oppStages);
   const estimate = estimateScope({
@@ -138,8 +260,23 @@ export function accountPotential({
     services: open.map(r => r.name),
     pricing, counts, dealSize, bases, serviceUnits,
   });
-  const ranked = rankByPotential(estimate.lines);
+
+  // What actually gets sold: a lead service and whatever its Auto-add cell
+  // drags in behind it. The rows, the ranking and the totals are all in
+  // bundles from here down, because a lead quoted without its add-ons is
+  // quoted short by however much comes with it.
+  const bundles = bundleAutoAdds(estimate.lines, overrides, serviceRows.map(r => r.name))
+    .map(b => ({ ...b, totals: bundleTotals(b) }));
+  // The ranking runs on the bundle's money, not the lead's own: a service
+  // worth little that pulls in two big ones outranks one worth slightly
+  // more alone, and it should, because that is the bigger sale.
+  const ranked = rankByPotential(bundles.map(b => ({
+    ...b.totals, name: b.lead.name, bundle: b,
+  })));
   const rank = new Map(ranked.map((l, i) => [l.name, l.priced ? i + 1 : null]));
+  // Every bundle by its lead, so a row can find its own add-ons without
+  // searching the list.
+  const bundleOf = new Map(ranked.map(l => [l.name, l.bundle]));
   // The single biggest thing left to sell them, named. The ranking already
   // puts it first, but first-in-a-list is something a reader has to look
   // for, and this is the one line of the page worth reading out in a
@@ -152,6 +289,12 @@ export function accountPotential({
   const top = ranked.length && ranked[0].priced ? ranked[0] : null;
   return {
     top,
+    bundles,
+    bundleOf,
+    // The services that are only ever shown inside somebody else's bundle.
+    // The table drops them as rows of their own: they are counted in the
+    // lead's figure, and a second row for them would count them twice.
+    bundledNames: new Set(bundles.flatMap(b => b.adds.filter(a => a.open).map(a => a.name))),
     open,
     decided,
     decidedCounts: decidedCounts(decided),

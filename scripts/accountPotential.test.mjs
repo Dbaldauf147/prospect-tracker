@@ -26,6 +26,7 @@
 //      with whatever is least understood.
 import {
   accountPotential, serviceDecision, splitByDecision, decidedCounts, rankByPotential,
+  bundleAutoAdds, bundleTotals,
 } from '../src/utils/accountPotential.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
@@ -194,6 +195,144 @@ const run = (client, oppStages = null) => accountPotential({
   });
   check('an account with nothing open has no biggest deal', p.top, null);
   check('and nothing to list', p.open.length, 0);
+}
+
+// ---- services that come with other services ------------------------------
+// Some services are never sold alone, and the Services tab records that in
+// an Auto-add cell. A page ranking what an account is worth has to price
+// the BUNDLE, because the bundle is what gets sold - a lead quoted on its
+// own is quoted short by whatever comes with it.
+//
+// The whole difficulty is counting each service exactly once. Two leads can
+// name the same add-on, chains run several deep, and two services can name
+// each other. Every one of those is a way for a total to quietly exceed the
+// sum of its parts.
+{
+  const CLIENT = { company: 'Acme', servicesExplored: {} };
+  const bundled = (overrides, rows = ROWS, client = CLIENT) => accountPotential({
+    client, serviceRows: rows, pricing: PRICING, bases, counts: COUNTS, overrides,
+  });
+  // Bill payment ($30k over the term) pulls in Invoice recalculation ($3k).
+  const overrides = { 'Bill payment': { autoAdd: 'Invoice recalculation' } };
+  const p = bundled(overrides);
+  const bill = p.bundleOf.get('Bill payment');
+  check('the lead carries its add-on', bill.adds.map(a => a.name).join(','), 'Invoice recalculation');
+  check('and the add-on is not a row of its own', p.bundledNames.has('Invoice recalculation'), true);
+  check('the lead is still one', p.bundleOf.has('Invoice recalculation'), false);
+  // 100 sites x $100 x 3 plus 100 sites x $10 x 3.
+  check('the bundle is worth both of them', bill.totals.value, 33000);
+  check('and its Year 1 fee is both of them', bill.totals.fee, 11000);
+
+  // The sum over the page still has to be the sum over the services. A
+  // bundle is a way of ARRANGING the money, never of adding to it.
+  const pageTotal = p.bundles.reduce((n, b) => n + b.totals.value, 0);
+  check('rearranging the money does not create any',
+    pageTotal, p.estimate.contractValue);
+
+  // Two leads naming the same add-on. Whoever gets it, it is counted once.
+  const shared = bundled({
+    'Bill payment': { autoAdd: 'Invoice recalculation' },
+    'GHG reporting': { autoAdd: 'Invoice recalculation' },
+  });
+  const holders = shared.bundles.filter(b => b.adds.some(a => a.open && a.name === 'Invoice recalculation'));
+  check('an add-on two leads both want goes to exactly one', holders.length, 1);
+  // GHG reporting is the bigger service ($50k a year against $10k), and the
+  // bigger service is the one it is most likely being sold with.
+  check('and it is the bigger of the two', holders[0].lead.name, 'GHG reporting');
+  check('the page still foots',
+    shared.bundles.reduce((n, b) => n + b.totals.value, 0), shared.estimate.contractValue);
+
+  // A chain. A pulls B, B pulls C: the lead ends up with both.
+  const chain = bundled({
+    'GHG reporting': { autoAdd: 'Bill payment' },
+    'Bill payment': { autoAdd: 'Invoice recalculation' },
+  });
+  const ghg = chain.bundleOf.get('GHG reporting');
+  check('a chain collapses into the one lead',
+    ghg.adds.map(a => a.name).sort().join(','), 'Bill payment,Invoice recalculation');
+  check('and still foots',
+    chain.bundles.reduce((n, b) => n + b.totals.value, 0), chain.estimate.contractValue);
+
+  // Two services naming each other. Taking "whoever names it" literally
+  // leaves both as somebody's add-on and neither as a lead, and the page
+  // loses them both.
+  const cycle = bundled({
+    'Bill payment': { autoAdd: 'GHG reporting' },
+    'GHG reporting': { autoAdd: 'Bill payment' },
+  });
+  check('a cycle still produces a lead',
+    cycle.bundles.some(b => b.lead.name === 'GHG reporting'), true);
+  check('with the other inside it', cycle.bundledNames.has('Bill payment'), true);
+  check('and nothing is lost',
+    cycle.bundles.reduce((n, b) => n + b.totals.value, 0), cycle.estimate.contractValue);
+
+  // An add-on the account has already ruled on comes with the sale but is
+  // not new money: selling them Bill payment does not win Invoice
+  // recalculation again if they already buy it.
+  const owned = bundled(
+    { 'Bill payment': { autoAdd: 'Invoice recalculation' } },
+    ROWS,
+    { company: 'Acme', servicesExplored: { 'Invoice recalculation': 'Sold' } },
+  );
+  const b2 = owned.bundleOf.get('Bill payment');
+  check('an add-on they already buy is still named', b2.adds[0].name, 'Invoice recalculation');
+  check('but marked as not open', b2.adds[0].open, false);
+  check('and its money is not counted again', b2.totals.value, 30000);
+
+  // The ranking runs on the bundle, not the lead: a modest service that
+  // drags in a big one is the bigger sale, and should read as one.
+  const lifted = bundled({ 'Invoice recalculation': { autoAdd: 'GHG reporting' } });
+  check('a lead is ranked on what it brings with it',
+    lifted.rank.get('Invoice recalculation'), 1);
+  check('and the biggest deal is the bundle', lifted.top.name, 'Invoice recalculation');
+  check('worth the two together', lifted.top.value, 153000);
+}
+
+// ---- bundling with nothing to bundle -------------------------------------
+{
+  const plain = accountPotential({
+    client: { company: 'Acme', servicesExplored: {} },
+    serviceRows: ROWS, pricing: PRICING, bases, counts: COUNTS,
+  });
+  check('with no overrides every service leads its own row', plain.bundles.length, ROWS.length);
+  check('and nothing is bundled away', plain.bundledNames.size, 0);
+  check('a lead with no add-ons totals to itself',
+    plain.bundleOf.get('GHG reporting').totals.value, 150000);
+}
+
+// ---- a lead with no rate that brings services that have one --------------
+// Reporting the bundle as unpriced because its lead is would lose the two
+// services hanging off it.
+{
+  const p = accountPotential({
+    client: { company: 'Acme', servicesExplored: {} },
+    serviceRows: [row('Tariff review'), row('GHG reporting', 'GHG Reporting')],
+    pricing: PRICING, bases, counts: COUNTS,
+    overrides: { 'Tariff review': { autoAdd: 'GHG reporting' } },
+  });
+  const lead = p.bundles.find(b => b.lead.name === 'Tariff review');
+  // GHG reporting is the bigger service so it leads; the unpriced one is
+  // what hangs off it. Either way the money survives.
+  check('the money survives an unpriced service either way',
+    p.bundles.reduce((n, b) => n + b.totals.value, 0), 150000);
+  if (lead) check('and a bundle led by an unpriced service is still priced', lead.totals.priced, true);
+  else check('the priced service leads instead', p.bundleOf.has('GHG reporting'), true);
+}
+
+// ---- the pieces on their own ---------------------------------------------
+{
+  const totals = bundleTotals({
+    lead: { name: 'A', priced: true, fee: 10, feeHigh: 20, value: 30, valueHigh: 40 },
+    adds: [
+      { name: 'B', open: true, line: { priced: true, fee: 1, feeHigh: 2, value: 3, valueHigh: 4 } },
+      { name: 'C', open: false, line: null },
+    ],
+  });
+  check('a bundle adds up its open parts', `${totals.fee}/${totals.value}`, '11/33');
+  check('at the top of the range too', `${totals.feeHigh}/${totals.valueHigh}`, '22/44');
+  check('it counts what it names', totals.addCount, 2);
+  check('and what it charges for', totals.openAddCount, 1);
+  check('no lines, no bundles', bundleAutoAdds([], null).length, 0);
 }
 
 // ---- no company picked ---------------------------------------------------

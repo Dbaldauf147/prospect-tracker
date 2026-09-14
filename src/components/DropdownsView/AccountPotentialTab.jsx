@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadOpps2Newest, setOppFields } from '../../utils/opps2Store';
@@ -181,7 +181,12 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     dealSize,
     serviceUnits,
     oppStages,
-  }), [client, serviceRows, pricing, bases, effectiveCounts, dealSize, serviceUnits, oppStages]);
+    // Which services drag others in behind them. The Services tab's own
+    // Auto-add cells, read through the same overrides the Scope picker
+    // reads, so a bundle here is the bundle that would actually be ticked.
+    overrides: settings?.serviceOverrides,
+  }), [client, serviceRows, pricing, bases, effectiveCounts, dealSize, serviceUnits, oppStages,
+    settings?.serviceOverrides]);
 
   // What the account has already ruled on, said in words. A count alone
   // ("29 left out") reads as a filter that might be wrong; naming the
@@ -367,9 +372,31 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     setSaved(null);
   }
 
+  // Ticking a lead ticks what comes with it, and unticking it takes them
+  // back out.
+  //
+  // Otherwise the row would advertise a Year 1 fee of $91,380 and then add
+  // $75,000 to the bar when you ticked it, which is the page disagreeing
+  // with itself about the same sale. The Scope picker already works this
+  // way when somebody picks a service, so a scope built here and a scope
+  // built there come out the same.
+  //
+  // Symmetric on the way out, unlike the Scope picker's rule, which only
+  // ever adds. There, unticking an auto-added service is a person saying
+  // "not that one" and has to stick. Here nobody ticked them individually
+  // - they arrived with the lead - so leaving them behind would leave the
+  // estimate holding money for services nobody chose.
   function toggleScope(name) {
     const next = new Set(inScope);
-    if (next.has(name)) next.delete(name); else next.add(name);
+    const withIt = (potential.bundleOf.get(name)?.adds || [])
+      .filter(a => a.open).map(a => a.name);
+    if (next.has(name)) {
+      next.delete(name);
+      for (const add of withIt) next.delete(add);
+    } else {
+      next.add(name);
+      for (const add of withIt) next.add(add);
+    }
     setScenario(s => ({ ...s, services: [...next] }));
   }
   // Blank clears the row's own figure rather than storing a zero, which
@@ -480,11 +507,19 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
 
   const term = search.trim().toLowerCase();
   // Every service as a table row, before the search box has its say.
-  const allRows = useMemo(() => openRows
+  // Lead services only. An auto-added service is counted inside its lead's
+  // figure, and a row of its own would count it a second time.
+  const leadRows = useMemo(
+    () => openRows.filter(r => !potential.bundledNames.has(r.name)),
+    [openRows, potential],
+  );
+
+  const allRows = useMemo(() => leadRows
     .map(({ name, meta, bucket }) => {
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
       const est = allEstimates.get(name);
+      const bundle = potential.bundleOf.get(name);
       const ownUnits = parseMoney(serviceUnits[name]);
       return {
         id: name,
@@ -517,10 +552,20 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         _unitsOwn: ownUnits !== null,
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',
-        fee: est?.priced ? est.fee : null,
-        feeHigh: est?.priced ? est.feeHigh : null,
-        value: est?.priced ? est.value : null,
-        valueHigh: est?.priced ? est.valueHigh : null,
+        // The two money columns carry the BUNDLE, because the bundle is
+        // what gets sold: a lead quoted without the services its Auto-add
+        // cell drags in behind it is quoted short by whatever they come
+        // to. The breakdown under the row says how the figure splits, so
+        // a number nobody can account for never reaches the page.
+        fee: bundle?.totals.priced ? bundle.totals.fee : null,
+        feeHigh: bundle?.totals.priced ? bundle.totals.feeHigh : null,
+        value: bundle?.totals.priced ? bundle.totals.value : null,
+        valueHigh: bundle?.totals.priced ? bundle.totals.valueHigh : null,
+        // The lead's own share of that, for the first line of the
+        // breakdown.
+        _ownFee: est?.priced ? est.fee : null,
+        _ownFeeHigh: est?.priced ? est.feeHigh : null,
+        _adds: bundle?.adds || [],
         _kind: basis?.kind || '',
         _note: est?.note || '',
         _scoped: inScope.has(name),
@@ -528,7 +573,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         _rank: potential.rank.get(name) ?? null,
       };
     }),
-  [openRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
+  [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
 
   const rows = useMemo(
     () => (term
@@ -549,6 +594,77 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     () => (pinnedNames ? (row) => (pinnedNames.has(row.name) ? 0 : 1) : undefined),
     [pinnedNames],
   );
+
+  // Which bundles are opened up. A set of lead names rather than of row
+  // ids because they are the same thing here, and a name survives the
+  // table being re-sorted or searched.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleBundle = (name) => setExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+  // A bundle that is no longer on the page should not spring open when a
+  // service by that name comes back.
+  useEffect(() => { setExpanded(new Set()); }, [company]);
+
+  // What the lead's Year 1 fee is made of, as a table. Bulleted lines with
+  // the money beside them rather than a sentence: the question this answers
+  // is "where does that figure come from", and a column of figures that
+  // adds up to the one above it answers it at a glance where prose does
+  // not.
+  const renderBundle = useCallback((row) => {
+    const share = (fee) => (row.fee > 0 && fee > 0 ? `${Math.round((fee / row.fee) * 100)}%` : '');
+    const line = (name, fee, feeHigh, open, isLead) => (
+      <tr key={name} className={isLead ? styles.bundleLeadRow : undefined}>
+        <td className={styles.bundleCellName}>
+          <span className={styles.bundleBullet}>{'\u2022'}</span>
+          {name}
+          {isLead && <span className={styles.bundleLeadMark}>lead</span>}
+        </td>
+        <td className={styles.bundleCellMoney}>
+          {open
+            ? (fee === null ? <span className={styles.serviceMutedCell}>no rate on the card</span>
+              : formatMoneyRange(fee, feeHigh))
+            : <span className={styles.serviceMutedCell}>already on the card here</span>}
+        </td>
+        <td className={styles.bundleCellShare}>{open && fee !== null ? share(fee) : ''}</td>
+      </tr>
+    );
+    return (
+      <div className={styles.bundlePanel}>
+        <div className={styles.bundleTitle}>
+          {`Sold with ${row.name}. Year 1 fee, and each service's share of it.`}
+        </div>
+        <table className={styles.bundleTable}>
+          <tbody>
+            {line(row.name, row._ownFee, row._ownFeeHigh, true, true)}
+            {row._adds.map(a => line(
+              a.name,
+              a.open ? (a.line?.priced ? a.line.fee : null) : null,
+              a.open ? (a.line?.priced ? a.line.feeHigh : null) : null,
+              a.open,
+              false,
+            ))}
+            <tr className={styles.bundleTotalRow}>
+              <td className={styles.bundleCellName}>Estimated Year 1 fee</td>
+              <td className={styles.bundleCellMoney}>
+                {row.fee === null ? '-' : formatMoneyRange(row.fee, row.feeHigh)}
+              </td>
+              <td className={styles.bundleCellShare} />
+            </tr>
+          </tbody>
+        </table>
+        {/* An add-on the account has already ruled on comes with the sale
+            but is not new money, so it is named and not charged for. */}
+        {row._adds.some(a => !a.open) && (
+          <div className={styles.bundleFoot}>
+            Services already sold, quoted or ruled out here come with the deal but add nothing to it, so they are left out of the figure.
+          </div>
+        )}
+      </div>
+    );
+  }, [company]);
 
   const columns = DEAL_TABLE_COLUMNS.map(col => {
     const base = { key: col.key, label: col.label, defaultWidth: col.width };
@@ -590,8 +706,24 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         return {
           ...base,
           render: (row) => (
-            <span className={styles.pricingNameText} title={`${row.name} - click the row to tick it in or out of the scope`}>
+            <span className={styles.pricingNameText} title={row._adds.length
+              ? `${row.name} - sold with ${row._adds.length} other ${row._adds.length === 1 ? 'service' : 'services'}. Click the arrow for the split.`
+              : `${row.name} - click the row to tick it in or out of the scope`}
+            >
+              {row._adds.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.bundleToggle}
+                  onClick={(e) => { swallow(e); toggleBundle(row.name); }}
+                  title={expanded.has(row.name) ? 'Hide what comes with it' : 'Show what comes with it'}
+                  aria-label={`What comes with ${row.name}`}
+                  aria-expanded={expanded.has(row.name)}
+                >{expanded.has(row.name) ? '\u25be' : '\u25b8'}</button>
+              )}
               {row.name}
+              {row._adds.length > 0 && (
+                <span className={styles.bundleChip}>{`+${row._adds.length}`}</span>
+              )}
             </span>
           ),
         };
@@ -750,8 +882,12 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           onClick={openOppPicker}
           title="Pull an opportunity's scope and its account's site / accounts figures into the estimator"
         >Import opp</button>
+        {/* Rows and services are not the same number once services bundle,
+            and the table's own badge counts rows - so this says both
+            rather than leaving "8 rows" to argue with "12 services". */}
         <span className={styles.resultCount}>
-          {term ? `${rows.length} of ${openRows.length} services` : `${openRows.length} services`}
+          {term ? `${rows.length} of ${leadRows.length} rows` : `${leadRows.length} rows`}
+          {leadRows.length === openRows.length ? '' : ` · ${openRows.length} services`}
           {` · ${inScope.size} in scope`}
         </span>
       </div>
@@ -1111,6 +1247,8 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           // for, so that is what the row click does.
           onRowClick={(row) => toggleScope(row.name)}
           rowGroup={pinnedRowGroup}
+          expandedRowIds={expanded}
+          renderExpansion={renderBundle}
           rowClassName={(row) => [
             row._scoped ? styles.pricingRowScoped : '',
             row._pinned ? styles.pricingRowPinned : '',
