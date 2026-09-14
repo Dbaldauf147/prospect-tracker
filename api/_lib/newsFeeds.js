@@ -19,11 +19,13 @@
 // coverage and its `when:` filter are better, Bing as a fallback so one
 // blocked host doesn't take the feature down.
 
-// Titles have to clear this before they cost a classification token. It is
-// deliberately loose on direction — "acquired by" is in here even though it
-// is the wrong way round — because deciding who bought whom is the model's
-// job and a headline is too little context to do it with a regex.
-const DEAL_WORDS = /\b(acquir\w*|acquisition|buys?|bought|purchas\w*|takeover|take-private|merger|merges?|bolt-?on|add-?on|majority stake|controlling stake|recapitaliz\w*|snaps? up|to buy)\b/i;
+// Titles have to clear this before they reach the classifier. It is
+// deliberately loose on direction — "acquired by" and "sells" are in here
+// even though both are the wrong way round — because deciding who bought
+// whom is the classifier's job, and it can now say "the firm is selling"
+// or "the firm is the target" for a reason the reader could check. A gate
+// that guessed direction here would throw those away unexamined.
+const DEAL_WORDS = /\b(acquir\w*|acquisition|buys?|bought|buyout|purchas\w*|takeover|take-private|merger|merges?|bolt-?on|add-?on|majority stake|controlling stake|recapitaliz\w*|snaps? up|to buy|sells?|sold)\b/i;
 
 // How many feed items are worth classifying for one company. Past this the
 // tail is duplicate coverage of the same two or three deals.
@@ -100,6 +102,29 @@ export function feedQuery(company) {
   const names = variants.map((v) => `"${v.replace(/"/g, '')}"`).join(' OR ');
   const terms = '(acquires OR acquisition OR "to acquire" OR acquired OR "bolt-on" OR "add-on" OR takeover OR merger)';
   return `(${names}) ${terms}`;
+}
+
+// The firm's own newsroom, via the site: operator. A PE firm announces
+// every platform and add-on on its own site, usually before the trade
+// press picks it up and always without the hedging a reporter adds — so
+// this is the highest-signal source available, and the website is already
+// on the prospect record. Additive: whatever it finds is merged with the
+// open search, never a replacement for it.
+export function siteQuery(company, website) {
+  const host = hostOf(website);
+  if (!host) return '';
+  const names = nameVariants(company);
+  if (!names.length) return '';
+  return `site:${host} (acquisition OR acquires OR "to acquire" OR acquired)`;
+}
+
+export function hostOf(website) {
+  const raw = String(website || '').trim();
+  if (!raw) return '';
+  const m = raw.replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0].toLowerCase().replace(/^www\./, '');
+  // A bare, plausible hostname only — anything else would put junk into a
+  // search operator.
+  return /^[a-z0-9.-]+\.[a-z]{2,}$/.test(m) ? m : '';
 }
 
 export function googleNewsUrl(query, days) {
@@ -186,6 +211,18 @@ export async function fetchHeadlines(entry, since, until, { signal, fetchImpl = 
   const variants = nameVariants(entry.company);
   const urls = [googleNewsUrl(query, days), bingNewsUrl(query)];
 
+  // The firm's own announcements, alongside the open search. Best-effort:
+  // a newsroom that isn't indexed, or a website field that isn't a real
+  // host, must not cost the company its ordinary result.
+  const own = siteQuery(entry?.company, entry?.website);
+  let ownItems = [];
+  if (own) {
+    try {
+      ownItems = keepRelevant(parseRssItems(await getFeed(googleNewsUrl(own, days), { signal, fetchImpl })),
+        since, until, variants);
+    } catch { ownItems = []; }
+  }
+
   const failures = [];
   for (const url of urls) {
     let xml;
@@ -197,33 +234,56 @@ export async function fetchHeadlines(entry, since, until, { signal, fetchImpl = 
       continue;
     }
 
-    const items = parseRssItems(xml);
-    const kept = [];
-    const seen = new Set();
-    for (const it of items) {
-      // An item with no date can't be placed in the window, and the window
-      // is the one thing the digest promises. Google's `when:` already
-      // bounds its results; an undated item is a parse failure, not a hit.
-      if (it.publishedAt === null) continue;
-      if (it.publishedAt < since || it.publishedAt > until) continue;
-      const haystack = `${it.title} ${it.description}`;
-      if (!DEAL_WORDS.test(haystack)) continue;
-      if (!mentionsCompany(haystack, variants)) continue;
-      // Outlets syndicate the same headline; key on it so the classifier
-      // sees each story once.
-      const key = it.title.toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      kept.push(it);
-      if (kept.length >= MAX_ITEMS_PER_COMPANY) break;
-    }
-
     // A feed that answered is authoritative even when it kept nothing —
     // don't fall through to Bing just because Google found no deals.
-    return { items: kept, error: null };
+    return { items: merge(ownItems, keepRelevant(parseRssItems(xml), since, until, variants)), error: null };
   }
 
+  // The open search failed everywhere. The firm's own newsroom may still
+  // have answered, and its announcements are the better source anyway.
+  if (ownItems.length) return { items: ownItems, error: null };
   return { items: [], error: `No news feed reachable (${failures.join('; ').slice(0, 120)})` };
+}
+
+// The window and relevance rules, applied identically to every feed.
+function keepRelevant(items, since, until, variants) {
+  const kept = [];
+  const seen = new Set();
+  for (const it of items) {
+    // An item with no date can't be placed in the window, and the window
+    // is the one thing the digest promises. Google's `when:` already
+    // bounds its results; an undated item is a parse failure, not a hit.
+    if (it.publishedAt === null) continue;
+    if (it.publishedAt < since || it.publishedAt > until) continue;
+    const haystack = `${it.title} ${it.description}`;
+    if (!DEAL_WORDS.test(haystack)) continue;
+    if (!mentionsCompany(haystack, variants)) continue;
+    // Outlets syndicate the same headline; key on it so the classifier
+    // sees each story once.
+    const key = titleKey(it.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(it);
+    if (kept.length >= MAX_ITEMS_PER_COMPANY) break;
+  }
+  return kept;
+}
+
+const titleKey = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
+
+// The firm's own announcements first — same deal, better source — then the
+// press coverage that isn't already saying the same thing.
+function merge(own, press) {
+  const seen = new Set(own.map(it => titleKey(it.title)));
+  const out = [...own];
+  for (const it of press) {
+    const key = titleKey(it.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+    if (out.length >= MAX_ITEMS_PER_COMPANY) break;
+  }
+  return out;
 }
 
 export const __testing = { DEAL_WORDS, MAX_ITEMS_PER_COMPANY };
