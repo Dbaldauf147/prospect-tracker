@@ -58,7 +58,13 @@ const full = {
     contact('Ben Carter', { decisionMaker: true }),
     contact('Mia Lopez', { dayToDay: true, reportsTo: ['Ben Carter'] }),
   ],
-  opps: [opp('Chiller replacement'), opp('Closed one', { active: false })],
+  opps: [
+    opp('Chiller replacement'),
+    // Its own scope: the page prints scopes rather than names now, so a
+    // closed opp sharing the open one's scope would make the assertion
+    // that it stays off the page pass for the wrong reason.
+    opp('Closed one', { active: false, scope: 'Closed scope' }),
+  ],
   generatedAt: AT,
 };
 
@@ -72,8 +78,10 @@ const full = {
   check('only OPEN opps are listed', m.opps.shown.length, 1);
   check('and it is the open one', m.opps.shown[0].name, 'Chiller replacement');
   check('with the figures somebody asks for out loud',
-    `${m.opps.shown[0].stage}|${m.opps.shown[0].amount}|${m.opps.shown[0].closeDate}`,
-    'Quoting|$120,000|11/30/2026');
+    `${m.opps.shown[0].stage}|${m.opps.shown[0].amount}`, 'Quoting|$120,000');
+  // No close date. It was the one column of the four usually empty, and an
+  // expected close is a forecast rather than a fact about the account.
+  check('and no close date', 'closeDate' in m.opps.shown[0], false);
   check('and the scope of services it covers', m.opps.shown[0].scope, 'Scope 3 estimates');
   // Some exports put the scope in the name field as well. Printing it
   // twice under itself is noise, not information.
@@ -275,18 +283,35 @@ const full = {
   check('the bucket heads the bullets', xml.includes('DATA'), true);
   check('services are bulleted', xml.includes('•'), true);
   check('with a hanging indent so a long name lines up', xml.includes('<w:ind '), true);
-  check('the open opp is on the page', xml.includes('Chiller replacement'), true);
-  check('the closed one is not', xml.includes('Closed one'), false);
-  // The scope under the opp name, in the same column. A BFO opp name is a
-  // coded string and the part a reader wants - what work is being sold -
-  // is buried in the middle of it; the Scope field says it plainly.
-  check('the scope of services is printed with the opp',
+  check('the open opp is on the page', xml.includes('Scope 3 estimates'), true);
+  check('the closed one is not', xml.includes('Closed scope'), false);
+  // The scope IS the opportunity column. A BFO opp name is a coded string
+  // built for a CRM's uniqueness rules - the part a reader wants, what work
+  // is being sold, is buried in the middle of it - and the Scope field says
+  // that on its own, so the coded name is not printed at all.
+  check('the scope of services names the opp',
     xml.includes('Scope 3 estimates'), true);
-  // The scope LEADS and the coded BFO name sits under it. A BFO name is
-  // built for a CRM's uniqueness rules, not for reading, and set bold and
-  // first it wrapped to three lines of a row there are four of.
-  check('and it leads, with the coded name under it',
-    xml.indexOf('Scope 3 estimates') < xml.indexOf('Chiller replacement'), true);
+  check('and the coded BFO name is not on the page',
+    xml.includes('Chiller replacement'), false);
+  // ---- what the section headings say, and what they do not ----------
+  // A heading that counts what is under it duplicates a list the reader is
+  // already looking at. Both headings stand on their own now.
+  const headingNote = (label) => {
+    const i = xml.indexOf(label);
+    return i < 0 ? '(missing)' : xml.slice(i, i + 400).replace(/<[^>]*>/g, '').slice(0, 40);
+  };
+  check('the opportunities heading carries no count',
+    /opens?\b/.test(headingNote('OPEN OPPORTUNITIES')), false);
+  check('the services heading is Current services',
+    xml.includes('CURRENT SERVICES'), true);
+  check('and the old wording is gone', xml.includes('IN SCOPE TODAY'), false);
+  check('and it carries no count',
+    /services? sold/.test(headingNote('CURRENT SERVICES')), false);
+
+  // ---- the opportunity columns --------------------------------------
+  const oppHead = ['OPPORTUNITY', 'STAGE', 'AMOUNT', 'CLOSE'].filter(h => xml.includes(h));
+  check('the opps table has three columns, close gone', oppHead.join(), 'OPPORTUNITY,STAGE,AMOUNT');
+
   check('the page is Letter with one-inch margins',
     xml.includes('<w:pgSz w:w="12240" w:h="15840"/>'), true);
   // Every table cell needs a paragraph or Word calls the file corrupt.
@@ -644,7 +669,7 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
   const doc = await zip.file('word/document.xml').async('string');
   check('the text is IN the document, not in an attachment',
     doc.includes('CLIENT MANAGER'), true);
-  check('including the opp', doc.includes('Chiller replacement'), true);
+  check('including the opp', doc.includes('Scope 3 estimates'), true);
   check('and the day-to-day marker', doc.includes('DAY TO DAY'), true);
   const hdrPart = await zip.file('word/header1.xml').async('string');
   check('the band travels in the header part', hdrPart.includes('ACCOUNT SUMMARY'), true);
