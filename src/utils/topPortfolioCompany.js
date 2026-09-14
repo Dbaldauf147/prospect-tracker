@@ -149,6 +149,39 @@ export function lookupCompanyStatus(index, companyName) {
   return null;
 }
 
+/**
+ * Company name -> the tracker record behind it, for the pages that let a
+ * Top PC be clicked open. Keyed the same way the status index is, under
+ * every alternate spelling a name is findable by, so a company that shows
+ * a status is also clickable: the two would otherwise disagree about
+ * whether a name is known, which reads as a broken link.
+ *
+ * One tier rather than the status index's two, because a record is a
+ * record: there is no "an excluded status wins" tie to break, and first
+ * writer wins so a later duplicate can't steal the name.
+ */
+export function buildProspectPcIndex(prospects) {
+  const index = new Map();
+  for (const p of (prospects || [])) {
+    for (const key of topPcCompanyKeys(p?.company)) {
+      if (!index.has(key)) index.set(key, p);
+    }
+  }
+  return index;
+}
+
+// The record a Top PC name belongs to, or null when the company isn't
+// tracked as a prospect of its own. Full name first, alternates after,
+// the same order lookupCompanyStatus reads in.
+export function lookupProspectByPc(index, companyName) {
+  if (!index) return null;
+  for (const key of topPcCompanyKeys(companyName)) {
+    const hit = index.get(key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 // Where a mapped PC row says it's headquartered, as one string for
 // classifyHqRegion. City alone is enough for a US city it recognises;
 // country alone is enough for "United States".

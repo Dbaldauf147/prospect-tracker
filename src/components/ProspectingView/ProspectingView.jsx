@@ -43,6 +43,8 @@ import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { keyContactsNotMet } from '../../utils/metInPerson';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
+import { collectPeFirmTopPcs, peFirmTopPcKey } from '../../utils/peFirmTopPcs';
+import { TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 
 // The contact popup, loaded when one is actually opened. It lives in
@@ -510,10 +512,96 @@ const PE_STAGE_TINT = {
   'Existing Partnership': { bg: '#ECFDF5', border: '#A7F3D0', ink: '#059669' },
 };
 
+// The firm's Top PC, the same pick - and the same click-through - the PE
+// Portfolio table's Top PC column shows: the highest-scoring portfolio
+// company that is North America-based and hasn't already been settled.
+// A firm name and a count say who to ring; this says who to ask for an
+// intro INTO, which is the sentence the call actually opens with.
+//
+// The PE Portfolio column also marks a company with live work LIVE. No row
+// here can carry one: an open opp anywhere across a firm's portfolio is
+// what takes the firm off this list, so the marker has nothing to mark.
+function PeFirmTopPc({ entry, onSelectProspect }) {
+  const top = entry?.top || null;
+  const match = entry?.prospect || null;
+  // A firm with no portfolio mapped has nothing to say here, and the row's
+  // own "No PCs mapped" pill has already said it - so the line is dropped
+  // rather than printed as a dash. A firm that HAS a portfolio and still
+  // has no pick keeps the dash: there the emptiness is a fact about the
+  // companies (all abroad, all settled) rather than about the mapping, and
+  // the tooltip is the only place that says so.
+  if (!top && !entry?.mapped) return null;
+  // Its own line under the firm rather than a cell beside it. The list is
+  // a narrow column inside the step, and a company name sharing one line
+  // with the stage pill, the firm and two counts left every name but the
+  // shortest clipped to an initial.
+  const cell = {
+    marginTop: 2, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: '0.3rem',
+  };
+  const label = (
+    <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
+      TOP PC
+    </span>
+  );
+  if (!top) {
+    return (
+      <div style={cell}>
+        {label}
+        <span
+          title={entry?.mapped
+            ? `No portfolio company on this firm is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
+            : 'No portfolio companies mapped on this firm yet - open the firm and fill in its Portfolio Companies tab.'}
+          style={{ color: '#CBD5E1', fontSize: '0.7rem' }}
+        >-</span>
+      </div>
+    );
+  }
+  const skipped = [
+    top.skippedRegion ? `${top.skippedRegion} outside North America` : '',
+    top.skippedStatus ? `${top.skippedStatus} ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` : '',
+    top.skippedNoScore ? `${top.skippedNoScore} with no score` : '',
+  ].filter(Boolean);
+  // Same lines the PE Portfolio column's tooltip carries, so the name has
+  // the same explanation behind it on both pages.
+  const tip = [
+    top.score == null ? top.companyName : `${top.companyName} - Opportunity Score ${top.score}`,
+    top.hqLocation ? `HQ: ${top.hqLocation}` : '',
+    top.status
+      ? `Status: ${top.status}${top.statusFromRow ? ' (set on this firm\'s Portfolio Companies list)' : (top.statusCompany ? ` (from "${top.statusCompany}")` : '')}`
+      : 'Not tracked as its own prospect',
+    `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
+    skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
+    match ? 'Click to open it in the Table View.' : '',
+  ].filter(Boolean).join('\n');
+  const nameStyle = {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: '0.7rem', fontWeight: 600, color: match ? '#7C3AED' : '#1E293B',
+  };
+  return (
+    <div style={cell} title={tip}>
+      {label}
+      {match && onSelectProspect ? (
+        <button
+          type="button"
+          onClick={() => onSelectProspect(match)}
+          style={{
+            ...nameStyle, padding: 0, border: 0, background: 'none', font: 'inherit',
+            fontSize: '0.7rem', fontWeight: 600, textAlign: 'left', cursor: 'pointer',
+            textDecoration: 'underline', textDecorationColor: '#DDD6FE', textUnderlineOffset: 2,
+            display: 'block', maxWidth: '100%',
+          }}
+        >{top.companyName}</button>
+      ) : (
+        <span style={{ ...nameStyle, display: 'block', maxWidth: '100%' }}>{top.companyName}</span>
+      )}
+    </div>
+  );
+}
+
 // One PE firm with a live relationship and nothing on it: the firm, the
 // stage it has reached, and how many portfolio companies it brings to the
 // conversation. The name clicks through to the firm's record.
-function PeFirmRow({ row, onSelectProspect, byId, last }) {
+function PeFirmRow({ row, onSelectProspect, byId, topPc, last }) {
   const tint = PE_STAGE_TINT[row.stage] || { bg: '#F8FAFC', border: '#E2E8F0', ink: '#64748B' };
   const nameStyle = {
     padding: 0, border: 0, background: 'none', font: 'inherit', textAlign: 'left',
@@ -569,11 +657,13 @@ function PeFirmRow({ row, onSelectProspect, byId, last }) {
           >{row.closedCount} closed</span>
         )}
       </div>
+      {/* And who to ask for, once the partner picks up. */}
+      <PeFirmTopPc entry={topPc} onSelectProspect={onSelectProspect} />
     </div>
   );
 }
 
-function PeFirmList({ rows, expanded, onExpand, onSelectProspect, byId }) {
+function PeFirmList({ rows, expanded, onExpand, onSelectProspect, byId, topPcs }) {
   if (!rows || rows.length === 0) return null;
   const shown = expanded ? rows : rows.slice(0, PE_FIRM_PREVIEW);
   const hidden = rows.length - shown.length;
@@ -588,10 +678,11 @@ function PeFirmList({ rows, expanded, onExpand, onSelectProspect, byId }) {
       >
         {shown.map((row, i) => (
           <PeFirmRow
-            key={row.firmId || row.firm}
+            key={peFirmTopPcKey(row)}
             row={row}
             onSelectProspect={onSelectProspect}
             byId={byId}
+            topPc={topPcs?.get(peFirmTopPcKey(row)) || null}
             last={i === shown.length - 1}
           />
         ))}
@@ -1084,6 +1175,14 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // count beside them are one list.
   const peFirmsToWork = ladder?.peFirmsToWork || null;
   const [showAllPeFirms, setShowAllPeFirms] = useState(false);
+  // Each of those firms' Top PC - the same pick the PE Portfolio table
+  // shows in its own Top PC column, so the company named here is the
+  // company named there. Computed on this page rather than in the ladder,
+  // which only needs to count the firms (see utils/peFirmTopPcs.js).
+  const peFirmTopPcs = useMemo(
+    () => collectPeFirmTopPcs(peFirmsToWork, prospects),
+    [peFirmsToWork, prospects],
+  );
   // The email campaigns that haven't finished sending, printed under the
   // market-updates step. Comes from the ladder for the same reason the
   // counts do: those rows and that step's Status pill are the same read of
@@ -1473,6 +1572,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     onExpand={() => setShowAllPeFirms(v => !v)}
                     onSelectProspect={onSelectProspect}
                     byId={prospectById}
+                    topPcs={peFirmTopPcs}
                   />
                 )}
               </div>
