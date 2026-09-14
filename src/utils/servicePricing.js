@@ -351,6 +351,110 @@ export function formatRate(entry, bases = PRICING_BASES) {
   return `${one(Math.min(rate, high))}–${one(Math.max(rate, high))}`;
 }
 
+/**
+ * What a service costs in its first year, off the rate card alone.
+ *
+ * Year 1 is the ongoing fee plus what it costs to stand the service up —
+ * the two numbers the card keeps apart because they are billed apart, added
+ * because the first invoice doesn't keep them apart. No deal in it: no
+ * counts, no deal size, nothing from the estimator. This is the standing
+ * price of the service, which is the question the Services Pricing subtab
+ * exists to answer; what one account will actually pay is the Deal Pricing
+ * subtab, and it has the counts to answer it with.
+ *
+ * Money that can be added is added. A $42,000 annual and an $8,000 setup
+ * are both plain figures, so year one is $50,000 — which is the whole
+ * point of the column. So is a $625-a-site fee with a $75-a-site setup:
+ * $700 a site, because they are charged against the same count.
+ *
+ * Money that can't be added isn't. "$625 a site" plus a flat "$5,000 to
+ * stand up" is not one number, and making it one would need a site count
+ * nobody has typed — so the two travel side by side, each on its own
+ * footing, and the reader adds them for the account in front of them.
+ *
+ * What can be added to what is a question about the SHAPE of the money,
+ * not about which basis it was typed against: every flat figure is one
+ * part however many bases it came off, each shared count is a part of its
+ * own (per site and per site w/ mandate are two counts, so two parts), and
+ * a percentage of the deal is its own again.
+ *
+ * Returns { parts, spread } where each part is
+ *   { basis, lo, hi, ongoing, setup }
+ * — `basis` being the first basis that landed in it, which is the one
+ * whose wording the part is shown in — in the card's own reading order
+ * (see pricedBases). `spread` says whether any line is quoted as a range,
+ * which is what tells the caller there is a high end worth drawing at all.
+ */
+export function year1FromCard(entry, bases = PRICING_BASES) {
+  const parts = new Map();
+  // Flat money is one part whatever basis it sits on — "Flat fee" and
+  // "Recurring annual" are both a figure, and the first year pays both.
+  // A count is a part per count, and a percentage is its own.
+  const shapeOf = (basis) => {
+    if (basis.kind === 'unit') return `unit:${basis.unit || basis.key}`;
+    if (basis.kind === 'percent') return `pct:${basis.key}`;
+    return 'flat';
+  };
+  const add = (basisKey, rate, rateHigh, isSetup) => {
+    const basis = basisFor(basisKey, bases);
+    const lo = parseMoney(rate);
+    if (!basis || lo === null) return;
+    // A high end typed below the low one is a typo, not an inverted range —
+    // the same reading estimateRecurring gives it.
+    const hi = parseMoney(rateHigh);
+    const shape = shapeOf(basis);
+    const part = parts.get(shape)
+      || { shape, basis: basis.key, lo: 0, hi: 0, ongoing: false, setup: false };
+    part.lo += hi === null ? lo : Math.min(lo, hi);
+    part.hi += hi === null ? lo : Math.max(lo, hi);
+    part[isSetup ? 'setup' : 'ongoing'] = true;
+    parts.set(shape, part);
+  };
+  for (const line of pricingLines(entry)) add(line.basis, line.rate, line.rateHigh, false);
+  for (const line of entry?.setupLines || []) add(line?.basis, line?.rate, line?.rateHigh, true);
+
+  const ordered = [...parts.values()];
+  return { parts: ordered, spread: ordered.some(p => p.hi > p.lo) };
+}
+
+/**
+ * The same figure as a string, for the column that shows it: "$50,000",
+ * "$625/site + $5,000 setup", "3% of deal size + $12,000 setup".
+ *
+ * `end` picks which side of a range to draw. The high end is '' unless the
+ * card actually quotes one, which keeps the High column's blank meaning
+ * exactly what it has always meant: one figure, not a range.
+ *
+ * The "setup" word is only on a part that is nothing but setup. Where the
+ * setup shares a basis with the fee the two have already been added, and
+ * calling the sum setup would be wrong.
+ */
+export function formatYear1(entry, bases = PRICING_BASES, end = 'lo') {
+  const { parts, spread } = year1FromCard(entry, bases);
+  if (parts.length === 0) return '';
+  if (end === 'hi' && !spread) return '';
+  return parts.map((part) => {
+    const basis = basisFor(part.basis, bases);
+    const n = end === 'hi' ? part.hi : part.lo;
+    const amount = basis?.kind === 'percent' ? `${n}%` : formatMoney(n);
+    return `${amount}${basisSuffix(basis)}${part.setup && !part.ongoing ? ' setup' : ''}`;
+  }).join(' + ');
+}
+
+// What a rate is charged against, said in as few characters as a table
+// column can spare: "/site", "/MWh", " of deal size". Read off the basis
+// LABEL rather than its unit key, because the label is the user's own
+// wording for a basis they may have added themselves — and because "Per
+// site w/ mandate" says something "sites_mandate" doesn't.
+function basisSuffix(basis) {
+  if (!basis || basis.kind === 'flat') return '';
+  const label = String(basis.label || '');
+  const per = label.match(/^per\s+(.*)$/i);
+  if (per) return `/${per[1]}`;
+  if (basis.kind === 'percent') return label.replace(/^%\s*/, ' ');
+  return ` ${label.toLowerCase()}`;
+}
+
 // A money figure, or a range of them: "$45,000" when both ends agree,
 // "$45,000 – $60,000" when they don't. One place, because a range that
 // formats differently in the table, the bar and the saved analysis reads

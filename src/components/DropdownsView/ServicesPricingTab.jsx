@@ -11,6 +11,8 @@ import {
   estimateScope,
   formatMoney,
   formatRate,
+  formatYear1,
+  year1FromCard,
   getServicePricing,
   isNoFeeBucket,
   parseMoney,
@@ -43,16 +45,31 @@ const PRICING_TABLE_COLUMNS = [
   // sits between the basis and the rates because it replaces both — ticking
   // it clears them.
   { key: 'noFee',        label: 'No Fee',             width: 80 },
-  // Holds dollars or a percentage depending on the basis, and what it earns
-  // is the service's ongoing fee — annual on a recurring service, the job on
-  // a project. Two of them: a service quoted as a spread ("$450 to $600 a
-  // site") prices to a range, and one left blank prices to a single figure
-  // exactly as it did before there was a second column. The low one keeps
-  // the `rate` key, so every rate already on the card is already in it.
-  { key: 'rate',         label: 'Low Annual Recurring Fee',  width: 175 },
-  { key: 'rateHigh',     label: 'High Annual Recurring Fee', width: 175 },
+  // What the service costs in its first year: the ongoing fee plus what it
+  // costs to stand up, which is the question somebody reading a rate card
+  // is actually asking. Off the card alone — no counts, no deal — so a
+  // per-unit service reads per unit ("$625/site + $5,000 setup") rather
+  // than inventing a site count to multiply by. What one account will pay
+  // is the Deal Pricing subtab, which has the counts to answer with.
+  //
+  // Two of them: a service quoted as a spread prices to a range, and one
+  // quoted on a single rate leaves the high column blank exactly as it did
+  // when these columns held the rates themselves.
+  { key: 'year1',        label: 'Low Year 1 Fee',     width: 200 },
+  { key: 'year1High',    label: 'High Year 1 Fee',    width: 200 },
+  // The rate behind those figures, which is also where they are typed.
+  // Switched off by default (see DEFAULT_HIDDEN_COLUMNS): the Year 1
+  // columns say what the rate says and then some, and a table carrying
+  // both is the same money twice. A click in the Columns menu brings them
+  // back for anyone who would rather type rates in the grid than in the
+  // service's own panel.
+  { key: 'rate',         label: 'Low Rate',           width: 140 },
+  { key: 'rateHigh',     label: 'High Rate',          width: 140 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
 ];
+
+// Shipped switched off, not taken away: see the note on the rate columns.
+const DEFAULT_HIDDEN_COLUMNS = ['rate', 'rateHigh'];
 
 // What the bulk bar can set across a selection: the card columns whose
 // value is the same sentence on every row it applies to. A rate is here
@@ -61,8 +78,8 @@ const PRICING_TABLE_COLUMNS = [
 // the per-service panel is where a grid gets edited.
 const BULK_FIELDS = [
   { key: 'basis',    label: 'Pricing Basis', kind: 'basis' },
-  { key: 'rate',     label: 'Low Annual Recurring Fee',  kind: 'money' },
-  { key: 'rateHigh', label: 'High Annual Recurring Fee', kind: 'money' },
+  { key: 'rate',     label: 'Low Rate',      kind: 'money' },
+  { key: 'rateHigh', label: 'High Rate',     kind: 'money' },
   { key: 'notes',    label: 'Pricing Notes', kind: 'text' },
 ];
 
@@ -248,6 +265,13 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         basisLabel: basis?.label || '',
         rate: entry.rate,
         rateHigh: entry.rateHigh,
+        // Year 1 off this card alone: the ongoing fee plus the cost of
+        // standing up, added where they are the same kind of money and set
+        // side by side where they aren't. Strings rather than numbers
+        // because a per-unit service's year one is "$625/site + $5,000
+        // setup" — see year1FromCard.
+        year1: formatYear1(entry, bases),
+        year1High: formatYear1(entry, bases, 'hi'),
         // The setup lines as stored, and what they come to under the
         // estimate on the Deal Pricing subtab — the panel's rate columns
         // show the first, its Year 1 columns the second.
@@ -381,6 +405,35 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     return <s className={styles.pricingRateDormant}>{text}</s>;
   }
 
+  // What a Year 1 figure adds up to, for sorting alone: the parts of the
+  // card summed, whatever counts they are charged against. Two counts can't
+  // honestly be added into one price — which is why the column shows them
+  // apart — but a sort needs one number per row, and the alternative is
+  // sorting a column of money by the text of it.
+  function year1Total(row, end) {
+    const { parts } = year1FromCard(pricingFor(pricing, row.name, bases), bases);
+    return parts.reduce((sum, p) => sum + (end === 'hi' ? p.hi : p.lo), 0);
+  }
+
+  // The arithmetic behind the figure, said in the tooltip — a fee somebody
+  // can't take apart is one they can't check.
+  function year1Title(row, end) {
+    const entry = pricingFor(pricing, row.name, bases);
+    const { parts } = year1FromCard(entry, bases);
+    const setup = parts.some(p => p.setup);
+    const head = row.noFee
+      ? 'Not charged: this service is no fee, so it prices to $0 whatever the card says. '
+      : '';
+    const body = setup
+      ? 'The first year: the ongoing fee plus what the service costs to stand up.'
+      : 'The first year. This service has no setup fee, so it is the ongoing fee alone.';
+    const split = parts.length > 1
+      ? ' Charged against more than one count, so the parts are shown side by side rather than added — what one account pays is the Deal Pricing subtab, which has the counts.'
+      : '';
+    const range = end === 'hi' ? ' The top of the range.' : '';
+    return `${head}${body}${split}${range}`;
+  }
+
   // …and the tooltip says it in words, ahead of whatever the column would
   // normally explain about the rate.
   function rateTitle(row, title) {
@@ -507,6 +560,38 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
               />
             </div>
           ),
+        };
+      // What the first year comes to, off the card. Read-only: the rate is
+      // the number anybody edits, and it is a column away (or in the
+      // service's own panel) — a box that edited a sum would have to guess
+      // which half of it was being retyped.
+      case 'year1':
+      case 'year1High':
+        return {
+          ...base,
+          // Sorted on the money rather than on the string, so "$9/meter"
+          // doesn't outrank "$42,000". A service priced on several bases
+          // sorts on what they add up to, which is as close to one figure
+          // as a card with two counts on it has.
+          getSortValue: (row) => year1Total(row, col.key === 'year1High' ? 'hi' : 'lo'),
+          render: (row) => {
+            const text = row[col.key];
+            if (!text) {
+              return (
+                <span
+                  className={styles.serviceMutedCell}
+                  title={col.key === 'year1High'
+                    ? 'One figure, not a range: this service is quoted on a single rate. Add a High Rate and both ends show here.'
+                    : 'Not priced yet — set a pricing basis and a rate, or mark the service no fee.'}
+                >-</span>
+              );
+            }
+            return (
+              <span title={year1Title(row, col.key === 'year1High' ? 'hi' : 'lo')}>
+                {rateDisplay(row, text)}
+              </span>
+            );
+          },
         };
       case 'rate':
         return {
@@ -749,6 +834,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           // otherwise offer to remove the only way to pick a row, from a
           // mode whose entire job is picking rows.
           alwaysVisible={bulkOn ? ['__select__', 'name'] : ['name']}
+          // The rates are in the Columns menu rather than on screen: the
+          // Year 1 columns carry the same money and say more about it.
+          defaultHidden={DEFAULT_HIDDEN_COLUMNS}
           // Every cell that does something with a click swallows it first,
           // so this fires for the row itself — the name, the read-only
           // cells, and the padding around the editors. While the mode is

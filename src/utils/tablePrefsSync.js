@@ -37,6 +37,7 @@ export function tablePrefsKeys(tableId) {
     removed: `prospect-col-removed-${tableId}`,
     hidden: `prospect-col-hidden-${tableId}`,
     starred: `prospect-col-starred-${tableId}`,
+    chosen: `prospect-col-chosen-${tableId}`,
   };
 }
 
@@ -78,6 +79,25 @@ export function loadColRemoved(keys) {
 export function loadColStarred(keys) {
   const v = readJson(keys.starred);
   return new Set(Array.isArray(v) ? v : []);
+}
+
+// Columns a table ships switched off (DataTable's `defaultHidden`) that the
+// user has since decided about for themselves, either way. Until a key is
+// in here the table's own default wins; from the moment it is, the user's
+// hidden list governs it like any other column.
+//
+// Local only, and deliberately: it records what someone did on the screen
+// in front of them, and a table's defaults are worth offering once per
+// machine rather than being quietly overridden everywhere by a choice made
+// on one. The visibility itself still syncs — this is only the flag that
+// says a choice was made.
+export function loadColChosen(keys) {
+  const v = readJson(keys.chosen);
+  return new Set(Array.isArray(v) ? v : []);
+}
+
+export function saveColChosen(keys, chosen) {
+  writeJson(keys.chosen, [...chosen]);
 }
 
 // Null, not [], when there's no entry: "nothing hidden yet" and "this user

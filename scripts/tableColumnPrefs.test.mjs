@@ -38,6 +38,29 @@ same('an empty old list is not "hide everything"',
 same('a stored hidden list wins over the old one',
   sorted(resolveHiddenKeys({ hidden: [], legacyVisible: ['a'], columnKeys: COLS })), []);
 
+// --- columns a table ships switched off ------------------------------------
+// A default, not a rule. It applies over whatever the user has stored — so
+// an existing layout gets the new column switched off without anyone's
+// hidden list being rewritten — and it stops applying to a column the
+// moment that user decides about it either way.
+
+same('a switched-off column is hidden on top of the stored list',
+  sorted(resolveHiddenKeys({ hidden: ['b'], columnKeys: COLS, defaultHidden: ['d'] })), ['b', 'd']);
+same('and with no prefs stored at all',
+  sorted(resolveHiddenKeys({ columnKeys: COLS, defaultHidden: ['d'] })), ['d']);
+same('and over a pre-conversion visible list',
+  sorted(resolveHiddenKeys({ legacyVisible: ['a', 'c', 'd'], columnKeys: COLS, defaultHidden: ['d'] })),
+  ['b', 'd']);
+same('a column the user has switched on stays on',
+  sorted(resolveHiddenKeys({ hidden: ['b'], columnKeys: COLS, defaultHidden: ['d'], chosen: ['d'] })), ['b']);
+same('…and one they switched on and off again is hidden by their own list, not the default',
+  sorted(resolveHiddenKeys({ hidden: ['b', 'd'], columnKeys: COLS, defaultHidden: ['d'], chosen: new Set(['d']) })),
+  ['b', 'd']);
+// The default is applied, never stored, so a table that stops shipping a
+// column switched off stops hiding it with nothing to un-write.
+same('dropping the default shows the column again',
+  sorted(resolveHiddenKeys({ hidden: ['b'], columnKeys: COLS })), ['b']);
+
 // --- visibility ------------------------------------------------------------
 
 const hidden = new Set(['b']);
