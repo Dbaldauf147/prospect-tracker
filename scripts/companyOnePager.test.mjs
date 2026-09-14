@@ -25,7 +25,7 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
-  cappedServices, linkedinUrl,
+  cappedServices, linkedinUrl, NOTE_MAX_CHARS, contactRowLines,
 } from '../src/utils/companyOnePager.js';
 import {
   onePagerDocumentXml, onePagerHeaderXml, onePagerParts, buildOnePagerDocx, xmlEsc,
@@ -149,11 +149,24 @@ const full = {
   ]);
   check('mutual managers do not hang the page', cycle.length, 2);
 
-  // The team replaced the phone column.
-  check('the team rides on the contact',
-    orderContacts([contact('T', { team: '  Workplace  ' })])[0].team, 'Workplace');
-  check('and a contact with no team carries an empty one',
-    orderContacts([contact('T')])[0].team, '');
+  // The note replaced the team column, which replaced the phone one.
+  check('the note rides on the contact',
+    orderContacts([contact('T', { note: '  Runs the invoice book.  ' })])[0].note,
+    'Runs the invoice book.');
+  check('and a contact with no note carries an empty one',
+    orderContacts([contact('T')])[0].note, '');
+  // It is the one free-text field on the page, so it is the one that has
+  // to be stopped: uncapped, a note sets the height of the contacts table,
+  // and the services are budgeted against what the rest of the page spends.
+  const long = orderContacts([contact('T', { note: 'word '.repeat(60) })])[0].note;
+  check('a long note is cut to what the column holds',
+    long.length <= NOTE_MAX_CHARS + 3, true);
+  check('and says that it goes on', long.endsWith('...'), true);
+  check('a note that fits is left alone',
+    orderContacts([contact('T', { note: 'Short enough.' })])[0].note, 'Short enough.');
+  // Cut on a word, not mid-syllable, where there is a word to cut on.
+  check('and the cut lands on a word',
+    /\w\.\.\.$/.test(long) && !/ \.\.\.$/.test(long), true);
 
   // A row with neither a name nor an email is a HubSpot husk, not a person.
   check('an empty contact is left out',
@@ -308,6 +321,30 @@ const full = {
   });
   check('a emptier page gives the services more room',
     roomy.services.budget > crowded.services.budget, true);
+  // A table row is as tall as its TALLEST cell. Charging for the note
+  // alone is what let a page of long job titles run over: the note was
+  // capped and the title never was, so the column actually setting the
+  // height was the one nothing was counting.
+  check('a row is measured by its tallest column, not its note',
+    contactRowLines({ title: 'Global Director of Critical Site Operations', note: 'Short.' }) > 1, true);
+  check('and a wrapping note counts when it is the taller one',
+    contactRowLines({ title: 'VP', note: 'word '.repeat(40) }) > 1, true);
+  check('a short row is one line', contactRowLines({ title: 'VP', note: 'Short.' }), 1);
+  const wordy = onePagerModel({
+    ...full,
+    contacts: ['A', 'B', 'C', 'D', 'E'].map(n => contact(n, {
+      title: 'Global Director of Critical Site Operations',
+      note: 'Signs everything over fifty thousand and wants the recalculation work scoped before the budget cycle closes.',
+    })),
+    services: ['A'], bucketOf: () => 'B',
+  });
+  const terse = onePagerModel({
+    ...full,
+    contacts: ['A', 'B', 'C', 'D', 'E'].map(n => contact(n, { title: 'VP', note: '' })),
+    services: ['A'], bucketOf: () => 'B',
+  });
+  check('five wordy contacts leave less room than five terse ones',
+    wordy.services.budget < terse.services.budget, true);
   check('and a crowded one never starves them below the old fixed budget',
     crowded.services.budget >= MAX_SERVICE_LINES, true);
   // The fifteen-service book in the report: every one of them, bulleted.
@@ -384,10 +421,13 @@ const full = {
       ...full,
       contacts: [contact('Solo', { reportsTo: ['Someone Elsewhere'] })],
     })).includes('reports to Someone Elsewhere'), true);
-  // The phone column is gone; the team is what stands in its place. The
-  // email went the same way: every one of them is the same pattern on the
-  // same domain, and the name is a link to the person now.
-  check('the team is a column', xml.includes('TEAM'), true);
+  // The phone column is gone, and so is the team that stood in its place:
+  // a team name places somebody in an org, but the note is the only field
+  // on the row saying anything the name and the title do not. The email
+  // went the same way - every one is the same pattern on the same domain,
+  // and the name is a link to the person now.
+  check('the notes are a column', xml.includes('NOTES'), true);
+  check('the team is not', xml.includes('TEAM'), false);
   check('and the phone is not', xml.includes('PHONE'), false);
   check('nor the email', xml.includes('>EMAIL<') || xml.includes('EMAIL<'), false);
   // The legend under the heading is gone: what the shading and the indents

@@ -44,6 +44,57 @@ export const MAX_OPPS = 4;
 // getting cut. See cappedServices.
 export const MAX_SERVICE_LINES = 12;
 
+// A contact's note, on the page. About three lines of the Notes column at
+// the size it is set in - enough for a real sentence about somebody, and a
+// hard stop on the one field that could otherwise run to a paragraph.
+export const NOTE_MAX_CHARS = 100;
+// Measured off the rendered column rather than computed from its width:
+// at this size a hundred characters sets as three lines, not the two the
+// width alone suggests.
+export const NOTE_CHARS_PER_LINE = 34;
+
+/**
+ * A note trimmed to what the column holds.
+ *
+ * Cut on a word rather than mid-syllable where there is one to cut on, and
+ * marked with an ellipsis so the reader knows the note goes on - a note
+ * that simply stops reads as the whole of what somebody wrote.
+ */
+export function noteExcerpt(note) {
+  const text = String(note ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length <= NOTE_MAX_CHARS) return text;
+  const cut = text.slice(0, NOTE_MAX_CHARS);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > NOTE_MAX_CHARS * 0.6 ? cut.slice(0, space) : cut).replace(/[,;:.]$/, '')}...`;
+}
+
+// The Title column, in the same terms. It gave width to Notes and so wraps
+// sooner than it used to: "Global Director of Critical Site Operations" is
+// three lines of it.
+export const TITLE_CHARS_PER_LINE = 30;
+
+/** How many lines of the contacts table a note takes. */
+export const noteLines = (note) => Math.ceil(
+  (noteExcerpt(note).length || 1) / NOTE_CHARS_PER_LINE,
+);
+
+/**
+ * How tall one contact's row is, in lines.
+ *
+ * A table row is as tall as its tallest cell, so this is the MAX of what
+ * the columns want rather than any one of them. Charging for the note
+ * alone is what let a page of long job titles run over: the note was
+ * capped and the title never was, so the column that actually set the
+ * height was the one nothing was counting.
+ */
+export function contactRowLines(c) {
+  return Math.max(
+    noteLines(c?.note),
+    Math.ceil((String(c?.title ?? '').length || 1) / TITLE_CHARS_PER_LINE),
+    1,
+  );
+}
+
 // ---- how much room the services actually get ------------------------------
 //
 // The budget above is a floor now, not the answer. It was measured as a
@@ -68,12 +119,20 @@ export const MAX_SERVICE_LINES = 12;
 // contacts, six opps and a note) and rendering it to find where the page
 // actually fills.
 //
-// That point is around 132. This sits well under it on purpose: the
-// rendering used to calibrate is a faithful read of the WordprocessingML
-// but not Word itself, and Word's table cell margins are the larger of the
-// two. 96 leaves about an inch and a half of slack on a page that extreme,
-// and a normal account never approaches it.
-export const BODY_LINE_BUDGET = 96;
+// That point moves when the furniture above the services changes weight,
+// which is exactly what the Notes column did: a note and a job title both
+// wrap, so a contact row that was one line became three, and the ceiling
+// fell from about 132 to about 66. The number below is re-calibrated for
+// that page and sits under it on purpose - the rendering used to calibrate
+// is a faithful read of the WordprocessingML but is not Word, and Word's
+// table cell margins are the larger of the two.
+//
+// 58 leaves about an inch and a third of slack on a page that extreme (160
+// services, five contacts all carrying a full note and a wrapping title,
+// four opps and a note of its own). A normal account is nowhere near it:
+// the fifteen-service book that prompted all this still prints every one,
+// in bullets, with five inches to spare.
+export const BODY_LINE_BUDGET = 58;
 
 // Notes run the full width of the page rather than one of two columns, so
 // a line of them holds about twice what a service line does.
@@ -90,11 +149,12 @@ export const NOTES_CHARS_PER_LINE = 92;
  * Doubled at the end because the services print in TWO columns: a line of
  * page buys two lines of budget.
  */
-export function serviceLineBudget({ contacts = 0, reportingLines = 0, opps = 0, notes = '' } = {}) {
+export function serviceLineBudget({ contacts = 0, reportingLines = 0, contactNoteLines = 0, opps = 0, notes = '' } = {}) {
   const text = clean(notes);
   const spent = 3                        // the CDM / Client Manager / Client since band
     + 2 + 2 + contacts + reportingLines  // Key contacts: heading, column heads, a row each,
                                          // and the spelled-out manager where one is needed
+    + contactNoteLines                   // a note that wraps makes its row taller
     + 2 + 2 + opps                       // Open opportunities: heading, column heads, rows
     + 2                                  // the Current services heading itself
     + (text ? 2 + Math.ceil(text.length / NOTES_CHARS_PER_LINE) : 0)
@@ -184,11 +244,17 @@ export function orderContacts(contacts) {
     nickname: clean(c?.nickname),
     // Their LinkedIn profile, for the link behind the name.
     linkedin: linkedinUrl(c?.linkedin),
-    // The team the person is on, as set on their contact card. It replaced
-    // the phone column: a phone number on a page like this is nearly
-    // always blank or the switchboard, and which team somebody sits on is
-    // what the reader is trying to place them by.
-    team: clean(c?.team),
+    // What is actually known about this person, from the note on their
+    // contact card. It replaced the team column, which replaced the phone
+    // one: a team name places somebody in an org, but the note is the only
+    // field on the row that says anything the reader could not work out
+    // from the name and the title.
+    //
+    // Capped, because it is the one free-text field on the page and an
+    // uncapped one would set the height of the contacts table - and, now
+    // that the services are budgeted against what the rest of the page
+    // spends, would quietly take the room they print in.
+    note: noteExcerpt(c?.note ?? c?.notes),
     decisionMaker: !!c?.decisionMaker,
     // The person actually worked with week to week, tagged Primary Point
     // of Contact. Not the same question as who signs, and on most accounts
@@ -508,6 +574,10 @@ export function onePagerModel({
       // A row that spells its manager out in words costs a second line; one
       // drawn under them by the indent does not.
       reportingLines: shownContacts.shown.filter(c => c.reportsTo.length && !c.managerShown).length,
+      // Every line a contact row spends beyond its first - a wrapped note
+      // or a wrapped title - comes out of the services' room rather than
+      // out of the bottom of the page.
+      contactNoteLines: shownContacts.shown.reduce((n, c) => n + (contactRowLines(c) - 1), 0),
       opps: shownOpps.shown.length,
       notes,
     })),
