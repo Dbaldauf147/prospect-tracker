@@ -3212,20 +3212,20 @@
   background: rgba(37, 99, 235, 0.14);
 }
 
-/* "No fee" where the price would be, in the Pricing Basis cell. Green
-   rather than the accent blue the +N chip uses: it is an answer about the
-   money, not a note about how many lines the money is spread over. */
-.pricingNoFeeBadge {
-  flex: none;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: #DCFCE7;
-  color: #15803D;
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  cursor: help;
-  white-space: nowrap;
+/* The no-fee mark's own column: a checkbox centred in the cell, with the
+   whole cell as its click target so ticking a row doesn't need the four
+   millimetres of the box itself. Green rather than the table's accent blue
+   — it is an answer about the money, the same green the panel says it in. */
+.pricingNoFeeCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+}
+
+.pricingNoFeeCell input {
+  cursor: pointer;
+  accent-color: #15803D;
 }
 
 /* The same thing said at the top of the pricing panel, where the grid the

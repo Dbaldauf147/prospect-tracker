@@ -1394,3 +1394,57 @@ export function estimateScope({ rows, services, pricing, counts, dealSize, bases
     unpriced, unitsUsed,
   };
 }
+
+/**
+ * A percentage that never lies at the ends.
+ *
+ * Rounding alone turns 1 priced service out of 400 into "0%" and 399 out of
+ * 400 into "100%" — both of which say the opposite of what is true, and the
+ * second is the one that stops someone finishing the card. So a nonzero
+ * share floors at 1% and an incomplete one caps at 99%; everything between
+ * rounds normally.
+ */
+export function sharePct(part, total) {
+  if (!total || part <= 0) return 0;
+  if (part >= total) return 100;
+  const raw = (part / total) * 100;
+  if (raw < 1) return 1;
+  if (raw > 99) return 99;
+  return Math.round(raw);
+}
+
+/**
+ * How much of the rate card is answered, over a set of estimate lines.
+ *
+ * "Priced" is read off the estimate rather than off the stored card, for the
+ * same reason the table reads it there: a basis picked with no rate under it
+ * is not a price, and a per-site rate with no site count still is one. Lines
+ * come from `estimateScope` run over every service — a missing line (a
+ * service the scope never reached) counts as unpriced, which is what it is.
+ *
+ * The three states are kept apart because two of them are answers and one is
+ * a gap: `priced` carries a rate, `noFee` is deliberately given away, and
+ * `unpriced` is the work left. `pricedPct` is the first over the total —
+ * the share of the card that has a price on it — and `answeredPct` counts
+ * the no-fee rows in too, so a card finished by giving things away doesn't
+ * read as half done.
+ */
+export function pricingCoverage(lines = []) {
+  let priced = 0;
+  let noFee = 0;
+  for (const line of lines) {
+    if (line?.noFee) noFee += 1;
+    else if (line?.priced) priced += 1;
+  }
+  const total = lines.length;
+  const answered = priced + noFee;
+  return {
+    total,
+    priced,
+    noFee,
+    answered,
+    unpriced: total - answered,
+    pricedPct: sharePct(priced, total),
+    answeredPct: sharePct(answered, total),
+  };
+}
