@@ -89,6 +89,16 @@ const CAUGHT_UP_COLORS = { badge: '#16A34A', ring: '#BBF7D0', tint: '#F2FDF5' };
 const STATUS_COL = 132;
 const ACTION_COL = 144;
 
+// How wide the page's column of step cards runs. The two right-hand cells
+// are fixed, so every pixel here goes to the step's own text and to the
+// lists some steps print under it (PE firms, campaigns, visits) - at 860
+// the PE step's white panel came out 450px wide, which wrapped the detail
+// lines and left the firm rows ellipsing their own names once the stage
+// pill and the two counts had taken their share. At 1180 that panel is
+// 770px and the rows fit. Still a cap rather than the full window, so the
+// page doesn't stretch to whatever the monitor happens to be.
+const PAGE_MAX = 1180;
+
 const STATUS_STYLES = {
   'caught-up': { background: '#DCFCE7', border: '#BBF7D0', color: '#166534' },
   // 'due' wears the same red as a counted step with work on it: the
@@ -1370,7 +1380,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-      <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0, maxWidth: 860 }}>
+      <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0, maxWidth: PAGE_MAX }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Prospecting</h2>
           {canEdit && (
@@ -1392,7 +1402,10 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
             </div>
           )}
         </div>
-        <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+        {/* The page is wide so the step lists have room. This paragraph is
+            prose rather than a list, and prose runs badly at that measure,
+            so it keeps the narrower one. */}
+        <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 860 }}>
           {editing
             ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
             : `The order prospecting work gets done, ranked. Start at the top and work down -
@@ -1403,7 +1416,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         </div>
       </div>
 
-      <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: 860 }}>
+      <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: PAGE_MAX }}>
         <div
           style={{
             display: 'flex', alignItems: 'center', gap: '0.75rem',
