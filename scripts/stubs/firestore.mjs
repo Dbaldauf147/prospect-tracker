@@ -161,7 +161,33 @@ export function updateDoc(ref, data) {
   store.set(ref.path, { ...(store.get(ref.path) || {}), ...data });
   return answer(calls[calls.length - 1]);
 }
-export const writeBatch = () => ({ set() {}, update() {}, delete() {}, commit: () => Promise.resolve() });
+// A batch that actually applies on commit, and records the commit as one
+// call. The no-op version was enough while nothing under test committed
+// one; the analysis remove does, and a stub that swallowed its deletes
+// would let a remove that deleted nothing pass.
+export function writeBatch() {
+  const ops = [];
+  const batch = {
+    set(ref, data) { ops.push({ op: 'set', path: ref.path, data }); return batch; },
+    update(ref, data) { ops.push({ op: 'update', path: ref.path, data }); return batch; },
+    delete(ref) { ops.push({ op: 'delete', path: ref.path }); return batch; },
+    commit() {
+      calls.push({ op: 'commit', size: ops.length, paths: ops.map(o => o.path) });
+      const call = calls[calls.length - 1];
+      if (hangs(call)) return NEVER();
+      const failure = failureFor(call);
+      if (failure) return Promise.reject(failure);
+      for (const o of ops) {
+        if (o.op === 'delete') store.delete(o.path);
+        else if (o.op === 'set') store.set(o.path, o.data);
+        else store.set(o.path, { ...(store.get(o.path) || {}), ...o.data });
+      }
+      ops.length = 0;
+      return Promise.resolve();
+    },
+  };
+  return batch;
+}
 export const onSnapshot = () => () => {};
 // The sentinel updateDoc() takes to mean "remove this field".
 export const deleteField = () => ({ __deleteField: true });

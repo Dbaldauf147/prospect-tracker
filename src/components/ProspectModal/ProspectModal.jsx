@@ -103,7 +103,9 @@ import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList';
-import { subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis } from '../../utils/firestoreSync';
+import {
+  subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis, deleteIndicativeAnalysis,
+} from '../../utils/firestoreSync';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
@@ -4347,6 +4349,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // "Refresh figures": in flight, and what the last run actually changed.
   const [analysisRefreshing, setAnalysisRefreshing] = useState(false);
   const [analysisRefreshNote, setAnalysisRefreshNote] = useState('');
+  const [analysisRemoving, setAnalysisRemoving] = useState(false);
   useEffect(() => {
     if (!prospect?.id || isNew) { setIndicativeAnalysis(null); return; }
     const unsub = subscribeIndicativeAnalysisMeta(prospect.id, (data) => setIndicativeAnalysis(data));
@@ -4377,6 +4380,44 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       setAnalysisError(err?.message || 'Download failed.');
     } finally {
       setAnalysisDownloading(false);
+    }
+  }
+
+  // Take the saved workbook off this company.
+  //
+  // Deletes the metadata doc and every chunk behind it, which is the whole
+  // analysis: there is no second copy, and the file it was built from lives
+  // on whoever saved it's machine. Hence the confirm, worded so the cost is
+  // on screen rather than inferred - the same way removing a site list asks.
+  //
+  // What it deliberately does NOT touch: the company's saved site list, and
+  // the Scale figures (Sites, Accounts, Equipment, Sites w/ Mandate) the
+  // analysis filled in. Those are the company's own record now, typed over
+  // by hand as often as not, and throwing them away with the workbook would
+  // be a second deletion nobody asked for.
+  async function removeIndicativeAnalysis() {
+    if (!prospect?.id || analysisRemoving) return;
+    const name = indicativeAnalysis?.fileName || 'this analysis';
+    if (!window.confirm(
+      `Remove ${name} from ${fields.company || 'this company'}?\n\n`
+      + 'The saved workbook is deleted. Re-saving it means loading the portfolio '
+      + 'back onto Utility Lookup and running the analysis again. This cannot be undone.\n\n'
+      + 'The site list and the Scale figures below are kept.',
+    )) return;
+    setAnalysisRemoving(true);
+    setAnalysisError('');
+    setAnalysisRefreshNote('');
+    try {
+      await deleteIndicativeAnalysis(prospect.id);
+      // The card clears itself: the metadata subscription reports the
+      // deletion. Setting it here as well so a subscription that is slow to
+      // answer doesn't leave a removed analysis on screen.
+      setIndicativeAnalysis(null);
+    } catch (err) {
+      console.error('Indicative analysis remove failed:', err);
+      setAnalysisError(err?.message || 'Remove failed.');
+    } finally {
+      setAnalysisRemoving(false);
     }
   }
 
@@ -7213,6 +7254,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   whiteSpace: 'nowrap',
                 }}
               >{analysisDownloading ? 'Preparing…' : '⬇ Download'}</button>
+              {/* Last, and the only one on the card that isn't green: this is
+                  the destructive one, and it should not sit where a thumb
+                  reaching for Download lands. */}
+              <button
+                type="button"
+                onClick={removeIndicativeAnalysis}
+                disabled={analysisRemoving}
+                title={analysisRemoving
+                  ? 'Removing…'
+                  : 'Delete the saved workbook from this company. The site list and the Scale figures below are kept.'}
+                style={{
+                  padding: '0.4rem 0.9rem',
+                  background: '#fff',
+                  color: analysisRemoving ? '#94A3B8' : '#B91C1C',
+                  border: `1px solid ${analysisRemoving ? '#CBD5E1' : '#FECACA'}`,
+                  borderRadius: 6,
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: analysisRemoving ? 'wait' : 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >{analysisRemoving ? 'Removing…' : 'Remove'}</button>
             </div>
           )}
           <div className={styles.grid}>
