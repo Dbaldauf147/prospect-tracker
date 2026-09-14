@@ -95,15 +95,59 @@ const full = {
 // decision maker.
 {
   const ordered = orderContacts(full.contacts);
-  check('the day-to-day contact leads', ordered[0].name, 'Mia Lopez');
-  check('then whoever signs', ordered[1].name, 'Ben Carter');
-  check('then the rest by name', ordered[2].name, 'Zoe Adams');
+  // The table is the reporting line flattened, so the branch holding the
+  // day-to-day contact leads and she is drawn UNDER her manager rather
+  // than above him. Both halves matter: the branch leads because she is on
+  // it, and the shape inside it is the org chart's, not the ranking's.
+  check('the manager of the day-to-day contact opens the table', ordered[0].name, 'Ben Carter');
+  check('with her directly under him', ordered[1].name, 'Mia Lopez');
+  check('indented by a level', ordered[1].depth, 1);
+  check('and the manager at the top level', ordered[0].depth, 0);
+  check('the branch leads the people it outranks', ordered[2].name, 'Zoe Adams');
+  check('who is nobody\'s report', ordered[2].depth, 0);
+
   check('the reporting line is carried by name, not by id',
-    ordered[0].reportsTo.join(','), 'Ben Carter');
+    ordered[1].reportsTo.join(','), 'Ben Carter');
+  // Drawn under him, so the row says so with the indent and the renderer
+  // drops the words.
+  check('and the row knows the manager is on the page', ordered[1].managerShown, true);
   check('someone reporting to nobody carries an empty list',
-    ordered[1].reportsTo.length, 0);
-  check('a lone manager is accepted unwrapped',
-    orderContacts([contact('X', { reportsTo: 'Y' })])[0].reportsTo.join(','), 'Y');
+    ordered[0].reportsTo.length, 0);
+
+  // A manager this company's contact list does not carry cannot be drawn
+  // above anybody, so the report stays at the top level and keeps the line
+  // for the renderer to print as text. Losing it would drop a mapped
+  // reporting line off the page with nothing to say it existed.
+  const offList = orderContacts([contact('X', { reportsTo: 'Y' })]);
+  check('a lone manager is accepted unwrapped', offList[0].reportsTo.join(','), 'Y');
+  check('a manager who is not a contact leaves the report at the top', offList[0].depth, 0);
+  check('and the row says the manager is not on the page', offList[0].managerShown, false);
+
+  // Three deep, to prove the walk is a walk rather than one level of
+  // nesting: the page in the screenshot is exactly this shape.
+  const chain = orderContacts([
+    contact('Morgan Dempsey', { dayToDay: true, reportsTo: ['John Dennehy'] }),
+    contact('Herb Tracy'),
+    contact('John Dennehy', { reportsTo: ['Herb Tracy'] }),
+  ]);
+  check('a chain nests all the way down',
+    chain.map(c => `${c.depth}:${c.name}`).join(' | '),
+    '0:Herb Tracy | 1:John Dennehy | 2:Morgan Dempsey');
+
+  // Two people who each report to the other is a mis-entry, not a loop to
+  // follow: the walk has to end.
+  const cycle = orderContacts([
+    contact('A', { reportsTo: ['B'] }),
+    contact('B', { reportsTo: ['A'] }),
+  ]);
+  check('mutual managers do not hang the page', cycle.length, 2);
+
+  // The team replaced the phone column.
+  check('the team rides on the contact',
+    orderContacts([contact('T', { team: '  Workplace  ' })])[0].team, 'Workplace');
+  check('and a contact with no team carries an empty one',
+    orderContacts([contact('T')])[0].team, '');
+
   // A row with neither a name nor an email is a HubSpot husk, not a person.
   check('an empty contact is left out',
     orderContacts([{ title: 'Director' }, contact('Real Person')]).length, 1);
@@ -269,9 +313,26 @@ const full = {
   check('the body still shades its own cells', xml.includes('<w:shd'), true);
   check('the contacts are a table', xml.includes('<w:tbl>'), true);
   check('the day-to-day contact is marked', xml.includes('DAY TO DAY'), true);
-  check('and the decision maker too', xml.includes('DM'), true);
-  check('the reporting line is printed under the name',
-    xml.includes('reports to Ben Carter'), true);
+  // The decision-maker marker is gone from this table: who signs is not
+  // what the page is asked, and the chip was competing with the one thing
+  // it is - who to call.
+  check('the decision maker is not marked', xml.includes('&gt;DM&lt;') || xml.includes('  DM'), false);
+  check('nor promised in the legend', xml.includes('DM = decision maker'), false);
+  // Drawn under his row, so the arrow and the indent say it instead.
+  check('a manager on the page is not also named in words',
+    xml.includes('reports to Ben Carter'), false);
+  check('the report is indented under him', xml.includes('<w:ind w:left="200"'), true);
+  check('with an arrow turning down to them', xml.includes('\u21B3'), true);
+  // A manager the table could not draw is still named, or the line would
+  // be lost entirely.
+  check('a manager off the list is named in words',
+    onePagerDocumentXml(onePagerModel({
+      ...full,
+      contacts: [contact('Solo', { reportsTo: ['Someone Elsewhere'] })],
+    })).includes('reports to Someone Elsewhere'), true);
+  // The phone column is gone; the team is what stands in its place.
+  check('the team is a column', xml.includes('TEAM'), true);
+  check('and the phone is not', xml.includes('PHONE'), false);
   check('the bucket heads the bullets', xml.includes('DATA'), true);
   check('services are bulleted', xml.includes('•'), true);
   check('with a hanging indent so a long name lines up', xml.includes('<w:ind '), true);

@@ -5625,6 +5625,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // readings below are fiddly enough that a second copy of them would
       // be a second answer to "is this the decision maker".
       const orgDetail = new Map();
+      // Team Names, as set on each contact card. Page one's contact table
+      // shows them where the phone column used to be, and page two's chart
+      // groups by them - one reading of the field for both.
+      const contactTeams = settings.contactTeamNames || {};
       const contacts = (companyContacts || []).map((c) => {
         const id = String(c.id || c.vid || '');
         const raw = reportsToMap[id];
@@ -5652,7 +5656,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           name: contactDisplayName(c),
           title: c.jobtitle || '',
           email: c.email || '',
-          phone: c.phone || c.mobilephone || '',
+          team: String(contactTeams[id] || '').trim(),
           decisionMaker,
           dayToDay,
           metInPerson: metInPersonState(c, metMap) === MET_YES,
@@ -5708,7 +5712,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         const hit = liveByName.get(nameKey(c?.name));
         return hit ? String(hit.id || hit.vid || '') : '';
       };
-      const teamNames = settings.contactTeamNames || {};
+      const teamNames = contactTeams;
       const orgChart = {
         parents: divisionParentsFor(settings, prospect?.id, orgNames).map(x => x.company),
         tree: buildDivisionTree(settings, prospect?.id, fields.company, orgNames),
