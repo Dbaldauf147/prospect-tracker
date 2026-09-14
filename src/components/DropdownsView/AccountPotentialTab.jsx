@@ -26,6 +26,7 @@ import {
   projectServiceLines,
   PROJECT_UNIT,
   resolvePricingBases,
+  scopeYear1Lines,
 } from '../../utils/servicePricing';
 import styles from './DropdownsView.module.css';
 
@@ -442,6 +443,11 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // Whether there is a setup fee in the scope at all. Either end of it: a
   // fee quoted from nothing up to a figure is still a setup fee.
   const hasSetup = totals.setup > 0 || totals.setupHigh > 0;
+
+  // The ticked scope as a breakdown: what each service bills in year one
+  // and its share of the deal. Read off the same estimate the bar's totals
+  // come from, so the panel and the headline can never disagree.
+  const scopeLines = useMemo(() => scopeYear1Lines(totals), [totals]);
 
   // The project work in this scope, one row per service. Sites and accounts
   // are facts about the account, so one box each answers for every service
@@ -1061,6 +1067,61 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           </div>
         </div>
       </div>
+
+      {/* The scope, itemised. The bar above states one figure and the table
+          below states a hundred and forty, and between them nothing said
+          what the deal on the bar is made of: the only breakdown on the
+          page was the panel under one bundle's own row, which answers for
+          that bundle and not for the deal.
+          So: every ticked service, biggest first, with its share of the
+          first year. Setup is carried inside each line rather than beside
+          it, because the question here is what the account pays in year
+          one and that is one figure per service - which is also what lets
+          this foot exactly to the headline it sits under. A total nobody
+          can take apart is a total nobody can check. */}
+      {scopeLines.length > 0 && (
+        <div className={styles.scopePanel}>
+          <div className={styles.bundleTitle}>
+            {`This deal, service by service. What each one bills in year one${hasSetup ? ', setup included' : ''}, and its share of the deal.`}
+          </div>
+          <table className={styles.bundleTable}>
+            <tbody>
+              {scopeLines.map(line => (
+                <tr key={line.name}>
+                  <td className={styles.bundleCellName}>
+                    <span className={styles.bundleBullet}>{'\u2022'}</span>
+                    {line.name}
+                    {line.setupNote && (
+                      <span className={styles.scopeSetupMark} title={line.setupNote}>incl. setup</span>
+                    )}
+                  </td>
+                  <td className={styles.bundleCellMoney}>
+                    {line.priced
+                      ? <span title={line.note || undefined}>{formatMoneyRange(line.year1, line.year1High) || '$0'}</span>
+                      : (
+                        <span className={styles.serviceMutedCell} title={line.note || undefined}>
+                          no rate on the card
+                        </span>
+                      )}
+                  </td>
+                  <td className={styles.bundleCellShare}>{line.share}</td>
+                </tr>
+              ))}
+              <tr className={styles.bundleTotalRow}>
+                <td className={styles.bundleCellName}>Estimated Year 1 deal size</td>
+                <td className={styles.bundleCellMoney}>
+                  {formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}
+                </td>
+                <td className={styles.bundleCellShare} />
+              </tr>
+            </tbody>
+          </table>
+          {/* No footnote about the unpriced ones. The row says "no rate on
+              the card" where the figure would be, and the warning under
+              the numbers already names them once - saying it a third time
+              here is how a panel starts arguing with the page it is on. */}
+        </div>
+      )}
 
       {/* Project work, itemised. Only shown when the scope actually has
           per-project services in it — on a reporting or bill-pay deal there

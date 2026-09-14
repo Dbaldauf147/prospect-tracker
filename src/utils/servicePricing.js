@@ -300,6 +300,60 @@ export function projectServiceLines(lines, bases = PRICING_BASES) {
   });
 }
 
+/**
+ * One estimate, as the lines a breakdown panel prints: every service in the
+ * scope, biggest first, with what it bills in year one and its share of the
+ * deal.
+ *
+ * Setup rides INSIDE each line rather than in a column of its own. The
+ * question a breakdown answers is what the account pays in the first twelve
+ * months, and that is one figure per service - and it is the figure that
+ * adds up to the headline above it, which a fee column on its own does not:
+ * year one is the fees plus the setup, and a panel that showed the fees and
+ * footed to both would be a total that cannot be checked from its parts.
+ *
+ * The share is of the LOW end of the deal, the same end everything else on
+ * this page ranks and reads at, and it is left blank rather than printed as
+ * "0%" on a line too small to round to a point.
+ *
+ * A service the card cannot price keeps its place and gets no figure: it is
+ * in the deal, it is not in the total, and the caller says so.
+ */
+export function scopeYear1Lines(estimate) {
+  const total = Number(estimate?.year1Total) || 0;
+  const lines = (estimate?.lines || []).map((line) => {
+    const setup = Number(line.setup) || 0;
+    const setupHigh = Number(line.setupHigh) || 0;
+    const year1 = line.priced ? (Number(line.fee) || 0) + setup : null;
+    const year1High = line.priced ? (Number(line.feeHigh) || 0) + setupHigh : null;
+    const pct = total > 0 && year1 > 0 ? Math.round((year1 / total) * 100) : 0;
+    return {
+      name: line.name,
+      priced: !!line.priced,
+      note: line.note || '',
+      year1,
+      year1High,
+      setup,
+      setupHigh,
+      // Named on the row, because a line carrying a one-time charge inside
+      // an annual figure is a line somebody will otherwise try to reconcile
+      // against the fee column in the table and fail to.
+      setupNote: setup || setupHigh
+        ? `Includes ${formatMoneyRange(setup, setupHigh)} of setup, billed once`
+        : '',
+      share: pct > 0 ? `${pct}%` : '',
+    };
+  });
+  // Biggest first, with the unpriced at the bottom - not worth nothing,
+  // unknown, and the same order the rest of the page puts them in.
+  return lines.sort((a, b) => {
+    if (a.priced !== b.priced) return a.priced ? -1 : 1;
+    return (b.year1 || 0) - (a.year1 || 0)
+      || (b.year1High || 0) - (a.year1High || 0)
+      || String(a.name).localeCompare(String(b.name));
+  });
+}
+
 // How many services are priced on each basis, keyed by basis key. What the
 // editor needs before it lets someone delete one: a basis with rows behind
 // it takes their pricing with it.

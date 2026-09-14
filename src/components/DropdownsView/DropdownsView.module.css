@@ -3459,6 +3459,32 @@
   color: var(--color-text-muted);
 }
 
+/* The scope broken down, under the estimator bar. A panel of its own rather
+   than the in-table bundle panel: that one is indented into a table cell
+   and inherits the table's clipping, and this one is a block on the page.
+   The table inside it is the bundle panel's, so a reader who has opened one
+   breakdown recognises the other on sight. */
+.scopePanel {
+  margin: 0 1.25rem 0.5rem;
+  padding: 0.55rem 0.85rem 0.65rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow-x: auto;
+}
+
+/* A one-time charge sitting inside an annual figure, said on the row. Muted
+   and small: it qualifies the number beside it rather than competing with
+   it. */
+.scopeSetupMark {
+  margin-left: 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
 /* DataTable clips every cell to one ellipsised line (.table td sets
    max-width: 0 and .table td > * makes the content an inline-block capped
    at 100%). Both cascade into this panel, which lives inside one of those
