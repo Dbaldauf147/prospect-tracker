@@ -644,7 +644,7 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
     <div style={{ marginTop: 8, fontSize: '0.72rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
         <span
-          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No - the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
+          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No or Asked - the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
           style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
         >
           Key contacts not met in person: {summary.total}
@@ -659,6 +659,16 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
             style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
           >
             · {summary.onHold} on hold
+          </span>
+        )}
+        {/* These are ON the list, not missing from it: the count says how
+            much of it is already waiting on somebody else to answer. */}
+        {summary.asked > 0 && (
+          <span
+            title="Key contacts below whose Met In Person answer is “Asked” - the invitation is out and unanswered, so the next move on them is a chase rather than the same ask again."
+            style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B45309', letterSpacing: '0.02em' }}
+          >
+            · {summary.asked} already asked
           </span>
         )}
         {onNavigate && (
@@ -728,6 +738,16 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
                   {onOpenContact && p.contact
                     ? <button type="button" style={nameStyle} onClick={() => onOpenContact(p.contact)} title={`Open ${p.name}`}>{p.name}</button>
                     : <span>{p.name}</span>}
+                  {/* The ask is already out on this one. Beside the name
+                      rather than in a count on its own, because the name is
+                      where the decision is made: chase it, don't re-send
+                      the same invitation. */}
+                  {p.asked && (
+                    <span
+                      title={`${p.name} has been asked - the invitation is out and unanswered.`}
+                      style={{ marginLeft: 3, fontSize: '0.62rem', fontWeight: 700, color: '#B45309' }}
+                    >asked</span>
+                  )}
                   {j < g.people.length - 1 && <span style={{ color: '#94A3B8' }}>,</span>}
                 </span>
               ))}

@@ -5,13 +5,14 @@
 // The rules worth pinning: the local answer beats the legacy HubSpot tag in
 // both directions, a contact nobody has answered either way still counts as
 // met when the old tag says so, the booleans the old checkbox wrote still
-// read as Yes / No, "hold off" is not met and not on the visit list, and
-// the list under the visits step groups by the account a trip would be to —
+// read as Yes / No, "hold off" is not met and not on the visit list,
+// "asked" is not met but STAYS on it, and the list under the visits step
+// groups by the account a trip would be to —
 // with a coverage that hasn't landed reading as "unknown" rather than "you
 // have met everybody".
 import {
   hasMetInPersonTag, resolveMetInPerson, keyContactsNotMet,
-  metInPersonState, normalizeMetState, MET_YES, MET_NO, MET_HOLD, MET_STATE_OPTIONS,
+  metInPersonState, normalizeMetState, MET_YES, MET_ASKED, MET_NO, MET_HOLD, MET_STATE_OPTIONS,
 } from '../src/utils/metInPerson.js';
 
 let passed = 0, failed = 0;
@@ -90,7 +91,7 @@ check('an explicit no puts the tagged one back',
 // Everybody met is an empty list, which the page renders as nothing at all.
 check('nobody left to meet',
   keyContactsNotMet(coverage, { 1: true, 2: true, 4: true, 5: true }),
-  { total: 0, accounts: 0, groups: [], onHold: 0 });
+  { total: 0, accounts: 0, groups: [], onHold: 0, asked: 0 });
 
 // And a coverage that hasn't landed is unknown, not empty — otherwise the
 // step would claim a finished book while the contacts were still loading.
@@ -107,7 +108,9 @@ check('no key roster on it', keyContactsNotMet({ all: { people: [] } }, {}), nul
 // reading as the answers they were, with nothing rewritten on load.
 check('a stored true is Yes', normalizeMetState(true), MET_YES);
 check('a stored false is No', normalizeMetState(false), MET_NO);
-check('the new values pass through', [normalizeMetState('yes'), normalizeMetState('hold')], [MET_YES, MET_HOLD]);
+check('the new values pass through',
+  [normalizeMetState('yes'), normalizeMetState('asked'), normalizeMetState('hold')],
+  [MET_YES, MET_ASKED, MET_HOLD]);
 check('case and padding do not matter', normalizeMetState('  Hold '), MET_HOLD);
 check('nothing stored is nothing', normalizeMetState(undefined), null);
 check('junk is nothing, so the fallback still gets a say', normalizeMetState('maybe'), null);
@@ -136,8 +139,36 @@ check('a legacy true is still met', resolveMetInPerson({ id: 9 }, { 9: true }), 
     held.groups.flatMap(g => g.people.map(p => String(p.id))).includes('1'), false);
 }
 
-check('the dropdown offers exactly three answers',
-  MET_STATE_OPTIONS.map(o => o.value), [MET_YES, MET_NO, MET_HOLD]);
+// --- the fourth answer ------------------------------------------------
+//
+// "Asked" is the invitation that is out and unanswered. It is NOT met, and
+// unlike hold off it does not come off the visit ladder: the meeting still
+// hasn't happened. What it changes is the next move on the name - a chase
+// rather than the same ask a second time - so the name carries it.
+check('asked is not met', resolveMetInPerson({ id: 9 }, { 9: MET_ASKED }), false);
+check('asked beats the legacy tag like any other stored answer',
+  metInPersonState({ id: 9, dans_tags: 'Met In Person' }, { 9: MET_ASKED }), MET_ASKED);
+check('case and padding do not matter here either', normalizeMetState(' Asked '), MET_ASKED);
+{
+  const all = keyContactsNotMet(coverage, {});
+  const asked = keyContactsNotMet(coverage, { 1: MET_ASKED });
+  check('an asked contact stays on the list', asked.total, all.total);
+  check('and is counted', asked.asked, 1);
+  check('nobody asked, nothing counted', all.asked, 0);
+  check('the name carries it',
+    asked.groups[0].people.map(p => [p.name, !!p.asked]),
+    [['Ann Alpha', true], ['Bob Beta', false]]);
+  // The two are different answers to different questions, so a page showing
+  // both counts must not have them overlap.
+  const both = keyContactsNotMet(coverage, { 1: MET_ASKED, 2: MET_HOLD });
+  check('asked and held are counted apart',
+    [both.total, both.asked, both.onHold], [all.total - 1, 1, 1]);
+}
+
+check('the dropdown offers exactly four answers, in the order a meeting goes',
+  MET_STATE_OPTIONS.map(o => o.value), [MET_YES, MET_ASKED, MET_NO, MET_HOLD]);
+check('and labels them as the popup prints them',
+  MET_STATE_OPTIONS.map(o => o.label), ['Yes', 'Asked', 'No', 'Hold off']);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

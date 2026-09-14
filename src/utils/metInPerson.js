@@ -1,11 +1,15 @@
 // "Met In Person" — one answer to whether a contact has been met, and the
 // Key contacts a visit still hasn't reached.
 //
-// Three answers, not two. It was a checkbox, so the only thing you could
-// say about somebody you deliberately weren't going to chase was the same
-// thing you said about somebody nobody had got to yet — and the visit
-// ladder asked about them again every week. "Hold off" is that third
-// answer: not met, and not to be planned for either.
+// Four answers, not two. It was a checkbox, so everybody who hadn't been
+// met read the same: the person you deliberately weren't going to chase,
+// the person you asked last week and are waiting on, and the person nobody
+// has got to yet were one answer between them, and the visit ladder asked
+// about all three again every week. "Hold off" and "Asked" are the other
+// two. Hold off parks somebody: not met, and not to be planned for either.
+// Asked is the opposite — the ask is out and unanswered, so they stay on
+// the list, but knowing it is out is the difference between chasing a
+// reply and opening with the same invitation a second time.
 //
 // The flag itself is local: a dropdown in the contact popup, stored in
 // settings.contactMetInPerson and never written back to HubSpot. Before it
@@ -24,20 +28,24 @@ import { contactDisplayName } from './contactRosters.js';
 
 export const MET_IN_PERSON_TAG = 'met in person';
 
-// The three answers. Stored as these strings; `no` is the default and the
+// The four answers. Stored as these strings; `no` is the default and the
 // one a contact lands on when nothing else says otherwise.
 export const MET_YES = 'yes';
+export const MET_ASKED = 'asked';
 export const MET_NO = 'no';
 export const MET_HOLD = 'hold';
 
+// In the order a meeting actually goes: met, asked and waiting, not asked,
+// parked. The dropdown prints them as they come.
 export const MET_STATE_OPTIONS = [
   { value: MET_YES, label: 'Yes' },
+  { value: MET_ASKED, label: 'Asked' },
   { value: MET_NO, label: 'No' },
   { value: MET_HOLD, label: 'Hold off' },
 ];
 
 /**
- * A stored value as one of the three answers, or null for "nothing stored".
+ * A stored value as one of the four answers, or null for "nothing stored".
  *
  * Reads the booleans the checkbox wrote, which are still what most of the
  * map holds: `true` is the box ticked, which is Yes, and `false` is the box
@@ -50,13 +58,14 @@ export function normalizeMetState(stored) {
   if (stored === false) return MET_NO;
   const s = String(stored ?? '').trim().toLowerCase();
   if (s === MET_YES) return MET_YES;
+  if (s === MET_ASKED) return MET_ASKED;
   if (s === MET_NO) return MET_NO;
   if (s === MET_HOLD) return MET_HOLD;
   return null;
 }
 
 /**
- * Which of the three answers a contact carries.
+ * Which of the four answers a contact carries.
  *
  * The stored value wins wherever there is one — including a stored No,
  * which is the user having explicitly said so and must not be overruled by
@@ -80,9 +89,10 @@ export function hasMetInPersonTag(contact) {
     .includes(MET_IN_PERSON_TAG);
 }
 
-// Has this contact been met? Only Yes counts: "hold off" is a decision not
-// to chase somebody, not a claim to have sat down with them, so every
-// column and count that asks this question reads it as not met.
+// Has this contact been met? Only Yes counts. "Hold off" is a decision not
+// to chase somebody and "Asked" is an invitation nobody has answered yet —
+// neither is a claim to have sat down with them, so every column and count
+// that asks this question reads both as not met.
 //
 // `fallback` is there for the Key Contacts page, which lets a caller supply
 // its own legacy selector; everyone else wants the tag.
@@ -118,9 +128,15 @@ function locationOf(contact) {
  * counted in `onHold` rather than dropped silently, so the page can say
  * how many it is not showing.
  *
- * Returns { total, accounts, groups, onHold } — or null while the coverage
- * hasn't landed, so a caller shows nothing rather than an empty list that
- * would read as "you have met everybody".
+ * Contacts marked "asked" stay on it, because an unanswered invitation is
+ * still a visit that hasn't happened. Each one carries `asked` and they are
+ * counted in `asked` too, so the list can say which names the ask is
+ * already out on - the thing that turns a second identical invitation into
+ * a follow-up.
+ *
+ * Returns { total, accounts, groups, onHold, asked } — or null while the
+ * coverage hasn't landed, so a caller shows nothing rather than an empty
+ * list that would read as "you have met everybody".
  */
 export function keyContactsNotMet(coverage, metMap = null) {
   const people = coverage?.key?.people;
@@ -128,12 +144,14 @@ export function keyContactsNotMet(coverage, metMap = null) {
   const groups = new Map();
   let total = 0;
   let onHold = 0;
+  let asked = 0;
   for (const person of people) {
     const contact = person?.contact || { id: person?.id };
     const state = metInPersonState(contact, metMap);
     if (state === MET_YES) continue;
     if (state === MET_HOLD) { onHold += 1; continue; }
     total += 1;
+    if (state === MET_ASKED) asked += 1;
     const company = String(person?.company || contact?.company || '').trim();
     // Everyone with no company on the record shares one group at the
     // bottom: there is no account to visit, but they are still Key contacts
@@ -153,6 +171,10 @@ export function keyContactsNotMet(coverage, metMap = null) {
       id: person?.id ?? (contact?.id == null ? null : String(contact.id)),
       name: person?.name || contactDisplayName(contact),
       email: String(person?.email || contact?.email || '').trim(),
+      // The invitation is already out on this one. On the row it is the
+      // difference between asking and chasing; it does not take them off
+      // the list, because they still haven't been met.
+      asked: state === MET_ASKED,
       // The record itself, so a name here opens the contact popup — which
       // is where the Met In Person answer is set, so the list can be
       // worked off from the row that raised it.
@@ -168,5 +190,5 @@ export function keyContactsNotMet(coverage, metMap = null) {
     || Number(!a.company) - Number(!b.company)
     || a.company.localeCompare(b.company)
   ));
-  return { total, accounts: out.filter(g => g.company).length, groups: out, onHold };
+  return { total, accounts: out.filter(g => g.company).length, groups: out, onHold, asked };
 }
