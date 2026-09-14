@@ -24,7 +24,7 @@ import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../utils/we
 import { loadProgressWeeks } from '../../utils/weeklyReviewStore';
 import { loadYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import {
-  loadWeeklyActivityLog, weeklyActivityEntry, liveCacheCovers, WEEKLY_ACTIVITY_EVENT,
+  loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -341,17 +341,17 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const pipelineSummary = useMemo(() => pipelineSnapshotLines(pipeline), [pipeline]);
 
   // Emails sent, from whichever source can actually answer for this
-  // period. The live feed wins when it covers the window; otherwise the
-  // week's recording from the Activity tab stands in, which is the only
-  // thing that survives once the feed has rolled off or been dropped by
-  // the storage quota. A day never falls back — the log is weekly.
-  const emailsSent = useMemo(() => {
-    const live = activity.emails.length;
-    if (liveCacheCovers(cache, bounds.start)) return { count: live, recorded: false };
-    const entry = mode === 'week' ? weeklyActivityEntry(activityLog, bounds.start) : null;
-    if (!entry) return { count: live, recorded: false };
-    return { count: entry.emails, recorded: true, at: entry.at };
-  }, [activity, cache, activityLog, bounds, mode]);
+  // period: the live feed when it covers the window, else the week's
+  // recording from the Activity tab, which is the only thing that survives
+  // once the feed has rolled off or been dropped by the storage quota.
+  // emailsSentFor holds the rule and says why.
+  const emailsSent = useMemo(() => emailsSentFor({
+    cache,
+    log: activityLog,
+    start: bounds.start,
+    live: activity.emails.length,
+    weekly: mode === 'week',
+  }), [activity, cache, activityLog, bounds, mode]);
 
   const statsText = useMemo(() => serializeReport({
     label, activity, oppChanges, goals: goalsProg, pipelineSummary,

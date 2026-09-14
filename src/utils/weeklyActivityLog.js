@@ -84,8 +84,14 @@ export function bucketWeeklyActivity(cache, senderEmail, now = Date.now()) {
     bump(meetingTs(m), 'meetings');
   }
 
+  // Seed the current week so a genuinely quiet week records as 0 rather
+  // than as "never recorded" — but only off a feed that actually fetched.
+  // An empty cache is not a quiet week, it is an absent answer, and the
+  // zero it used to write outranked the live count from then on: the
+  // Weekly Report prefers the recording, so one failed or half-loaded
+  // fetch pinned "Emails sent 0" onto a week that had plenty.
   const thisWeek = weekKeyFor(now);
-  if (thisWeek && !weeks[thisWeek]) weeks[thisWeek] = emptyWeek();
+  if (thisWeek && !weeks[thisWeek] && isFetchedFeed(cache)) weeks[thisWeek] = emptyWeek();
   return weeks;
 }
 
@@ -166,8 +172,41 @@ export function weeklyActivityEntry(log, ms) {
 // that exists and was fetched after the fact is complete for the window
 // by construction — including when it is legitimately empty.
 export function liveCacheCovers(cache, start) {
+  if (!isFetchedFeed(cache)) return false;
+  return new Date(cache.fetchedAt).getTime() >= start;
+}
+
+// Whether a cache is the product of a real fetch rather than an absent or
+// half-written one. Both writers (the Activity tab and the Agents refresh)
+// stamp `fetchedAt` at the moment they finish paging HubSpot, so an emails
+// array plus a readable stamp is what a completed fetch looks like —
+// including one that legitimately found nothing.
+export function isFetchedFeed(cache) {
   if (!cache || typeof cache !== 'object') return false;
   if (!Array.isArray(cache.emails)) return false;
-  const fetched = new Date(cache.fetchedAt).getTime();
-  return Number.isFinite(fetched) && fetched >= start;
+  return Number.isFinite(new Date(cache.fetchedAt).getTime());
+}
+
+// Which of the two sources answers the Weekly Report's "Emails sent" tile
+// for a window, and with what number. Lives here rather than in the tab so
+// the rule and the log it reads are one thing, and so it can be tested
+// without a browser.
+//
+// The live feed answers whenever it covers the window. Otherwise the
+// week's recording stands in — but only where it knows more than the feed
+// in hand. A feed that does not cover the window is still evidence of
+// every send it does hold: it can undercount, never overcount. So a
+// recording at or below the live count was taken against a worse feed than
+// this one, and most sharply a recorded 0, which used to win outright and
+// pin "Emails sent 0" onto a week the feed could plainly account for.
+//
+// `weekly` is false for a day-scoped report, which never falls back: the
+// log is kept per week, and a week's total is not an answer about a day.
+export function emailsSentFor({ cache, log, start, live, weekly = true }) {
+  const liveCount = Number(live) || 0;
+  if (liveCacheCovers(cache, start)) return { count: liveCount, recorded: false };
+  const entry = weekly ? weeklyActivityEntry(log, start) : null;
+  const recorded = Number(entry?.emails) || 0;
+  if (!entry || recorded <= liveCount) return { count: liveCount, recorded: false };
+  return { count: recorded, recorded: true, at: entry.at };
 }
