@@ -13,6 +13,7 @@ import {
   formatRate,
   getServicePricing,
   parseMoney,
+  pricingCoverage,
   pricingFor,
   resolvePricingBases,
   pricingBasesTopUp,
@@ -35,6 +36,12 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'serviceType',  label: 'Type',               width: 100 },
   { key: 'years',        label: 'Years',              width: 80 },
   { key: 'basisLabel',   label: 'Pricing Basis',      width: 150 },
+  // Charged at nothing, on purpose. A tick rather than a rate, because it
+  // is a decision and not a number: an empty rate card means nobody has
+  // priced the service yet, and this is how a row says the opposite. It
+  // sits between the basis and the rates because it replaces both — ticking
+  // it clears them.
+  { key: 'noFee',        label: 'No Fee',             width: 80 },
   // Holds dollars or a percentage depending on the basis, and what it earns
   // is the service's ongoing fee — annual on a recurring service, the job on
   // a project. Two of them: a service quoted as a spread ("$450 to $600 a
@@ -184,22 +191,21 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     return new Map(lines.map(l => [l.name, l]));
   }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
 
-  // Priced = there is a rate on the card to work a figure out from, on a
-  // recurring line or a setup one. Which is the question the estimate above
-  // already answers, and answers off the card rather than off the scenario:
-  // a per-site service with no site count is priced, it just has nothing to
-  // multiply yet. Reading it here rather than testing the basis keeps a
-  // basis picked before any rate is typed from counting as a price.
-  const pricedCount = useMemo(
-    () => serviceRows.filter(r => allEstimates.get(r.name)?.priced && !allEstimates.get(r.name)?.noFee).length,
-    [serviceRows, allEstimates],
-  );
-
-  // The rows that answer "nothing" rather than saying nothing. Counted
-  // beside the priced ones so the header can tell the two apart — see the
-  // note on the count.
-  const noFeeCount = useMemo(
-    () => serviceRows.filter(r => allEstimates.get(r.name)?.noFee).length,
+  // How far through the card the list is: how many services carry a rate,
+  // how many answer "nothing" on purpose, and what share of the hundred and
+  // fifty each of those is. Priced = there is a rate to work a figure out
+  // from, on a recurring line or a setup one — which is the question the
+  // estimate above already answers, and answers off the card rather than
+  // off the scenario: a per-site service with no site count is priced, it
+  // just has nothing to multiply yet. Reading it there rather than testing
+  // the basis keeps a basis picked before any rate is typed from counting
+  // as a price.
+  //
+  // Always over every service, never over what the search left on screen:
+  // it is a progress figure for the card, and one that moved when you typed
+  // in the search box would be a different number every keystroke.
+  const coverage = useMemo(
+    () => pricingCoverage(serviceRows.map(r => allEstimates.get(r.name))),
     [serviceRows, allEstimates],
   );
 
@@ -344,6 +350,19 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       : `Took the mark off ${plan.change.length} — ${plan.change.length === 1 ? 'it is' : 'they are'} unpriced now.` });
   }
 
+  // The same write on one service, which is what the No Fee column and the
+  // pricing panel's checkbox both make. Marking clears that row's rate card
+  // rather than sitting on top of it, so a row carrying rates asks first —
+  // the one part of this that loses something, on one row as on twelve.
+  function toggleNoFee(name, on) {
+    if (on && pricedBases(pricingFor(pricing, name, bases)).length > 0
+      && !window.confirm(
+        `Mark "${name}" as charging no fee? That clears the basis, rates and setup lines, `
+        + `and unmarking later won't bring them back. The pricing notes are kept.`,
+      )) return;
+    updateSettings?.({ servicePricing: setNoFee(pricing, [name], on) });
+  }
+
   const bulkColumn = BULK_FIELDS.find(f => f.key === bulkField) || null;
 
   // Set one card field across the selection. Same write path as the cell
@@ -408,22 +427,40 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                   follow. The count is the cue; the panel behind the ⤢ has
                   the rows. Setup lines count: they are money on a basis the
                   rate columns never show. */}
-              {/* The mark, where the price would be. In this column rather
-                  than a column of its own: it IS the answer to "what is
-                  this charged on", and the row's rate cells are empty
-                  under it — the mark cleared them. */}
-              {row.noFee && (
-                <span
-                  className={styles.pricingNoFeeBadge}
-                  title="Marked no fee: this service is delivered at no charge, so it prices to $0 and no longer reads as one nobody has priced. Pick a basis or type a rate to take the mark off."
-                >No fee</span>
-              )}
               {row._extraLines > 0 && (
                 <span
                   className={styles.pricingBasisMore}
                   title={`Priced on ${row._extraLines + 1} lines: ${[row.basisLabel, ...row._extraBasisLabels].join(', ')}. The rate columns show the first. Open the service to see the breakdown.`}
                 >{`+${row._extraLines}`}</span>
               )}
+            </div>
+          ),
+        };
+      // Tick it and the service charges nothing — on purpose, which is the
+      // fact an empty rate card can't state. Sorts and exports as a flag so
+      // "show me everything we give away" is one click on the header.
+      case 'noFee':
+        return {
+          ...base,
+          getSortValue: (row) => (row.noFee ? 1 : 0),
+          exportValue: (row) => (row.noFee ? 'Yes' : ''),
+          render: (row) => (
+            /* The click stops here, the same as every other editor cell:
+               ticking a row would otherwise open its pricing panel behind
+               the tick — or, in bulk mode, select the row as well. */
+            <div
+              className={styles.pricingNoFeeCell}
+              onClick={(e) => e.stopPropagation()}
+              title={row.noFee
+                ? 'Delivered at no charge: this service prices to $0 and reads as priced rather than as one nobody has got to. Untick to take the mark off — the rates it cleared don\'t come back.'
+                : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.'}
+            >
+              <input
+                type="checkbox"
+                checked={!!row.noFee}
+                onChange={() => toggleNoFee(row.name, !row.noFee)}
+                aria-label={`${row.name} charges no fee`}
+              />
             </div>
           ),
         };
@@ -529,13 +566,25 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             {!bulkOn && selectedCount > 0 && ` (${selectedCount} selected)`}
           </button>
         )}
-        <span className={styles.resultCount}>
+        {/* The share, not just the count: "29 priced" out of a list whose
+            length is three words to the left is a number you have to do
+            arithmetic on before it means anything, and the arithmetic is
+            the whole question — how much of this card is done. The no-fee
+            rows are counted apart from the priced ones, because they are
+            two different answers: a priced service has a rate, a no-fee one
+            has a decision. Both are answers; only an unpriced row is a gap,
+            which is what the tooltip's third figure is. */}
+        <span
+          className={styles.resultCount}
+          title={coverage.total === 0 ? undefined
+            : `${coverage.priced} of ${coverage.total} services carry a rate (${coverage.pricedPct}%). `
+              + `${coverage.noFee} marked no fee — priced at zero on purpose. `
+              + `${coverage.unpriced} still unpriced. `
+              + `Counting the no-fee rows as answered, ${coverage.answeredPct}% of the card is done.`}
+        >
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
-          {` · ${pricedCount} priced`}
-          {/* Counted apart from "priced", because they are two different
-              answers: a priced service has a rate, a no-fee one has a
-              decision. Both are answers; only an unpriced row is a gap. */}
-          {noFeeCount > 0 && ` · ${noFeeCount} no fee`}
+          {coverage.total > 0 && ` · ${coverage.priced} priced (${coverage.pricedPct}%)`}
+          {coverage.noFee > 0 && ` · ${coverage.noFee} no fee`}
         </span>
       </div>
 
@@ -696,15 +745,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             onSaveSetupLine={(basisKey, patch) => savePricingSetupLine(row.name, basisKey, patch)}
             // The same write the bulk bar makes, on one service: marking
             // clears the rates, so it asks first when there are any.
-            onToggleNoFee={() => {
-              const on = !row.noFee;
-              if (on && pricedBases(pricingFor(pricing, row.name, bases)).length > 0
-                && !window.confirm(
-                  `Mark "${row.name}" as charging no fee? That clears the basis, rates and setup lines below, `
-                  + `and unmarking later won't bring them back. The pricing notes are kept.`,
-                )) return;
-              updateSettings?.({ servicePricing: setNoFee(pricing, [row.name], on) });
-            }}
+            onToggleNoFee={() => toggleNoFee(row.name, !row.noFee)}
             onClose={() => setPricingPanelFor(null)}
           />
         );
