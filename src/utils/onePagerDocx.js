@@ -180,10 +180,15 @@ function ownersBand({ cdm, clientManager }, clientSince) {
   ]]);
 }
 
+// How far one reporting level moves a name to the right, in twips. Enough
+// that a column of names reads as a shape rather than as a ragged edge,
+// and small enough that four levels deep still leaves room for a name.
+const REPORT_INDENT = 200;
+
 function contactsTable({ shown, hidden }) {
   if (!shown.length) return emptyNote('No contacts on file for this company yet.');
-  const widths = [CONTENT_WIDTH * 0.26, CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.18];
-  const head = ['Name', 'Title', 'Email', 'Phone'].map((h, i) => cell(
+  const widths = [CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.28, CONTENT_WIDTH * 0.26, CONTENT_WIDTH * 0.18];
+  const head = ['Name', 'Title', 'Email', 'Team'].map((h, i) => cell(
     para([run(h.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 0 }),
     { width: widths[i], borders: { ...NO_BORDER, bottom: SE_BORDER } },
   ));
@@ -193,24 +198,35 @@ function contactsTable({ shown, hidden }) {
   const rows = shown.map((c) => {
     const fill = c.dayToDay ? SE_SURFACE : '';
     const edges = { ...NO_BORDER, bottom: 'EEF2F6' };
+    const depth = Math.max(0, Number(c.depth) || 0);
     const nameLines = [
       para([
+        // The arrow turns down out of the manager's row and points at the
+        // person: on a page of names it is the one mark that says "these
+        // are theirs" without a word. Only on a row that IS drawn under
+        // somebody - an indent with no arrow would be a name that looks
+        // misaligned.
+        depth > 0 ? run('\u21B3 ', { color: SE_GREEN_DARK, bold: true, size: 18 }) : '',
         run(c.name, { bold: true, size: 18 }),
         c.dayToDay ? run('  DAY TO DAY', { bold: true, color: SE_GREEN_DARK, size: 13 }) : '',
-        c.decisionMaker ? run('  DM', { bold: true, color: SE_GREEN_DARK, size: 13 }) : '',
-      ], { spaceAfter: 0 }),
-      // Who they sit under, under their name rather than in a column of
-      // its own: it is the answer to a question asked about one person,
-      // not a field worth four columns of the page.
-      c.reportsTo.length
-        ? para([run(`reports to ${c.reportsTo.join(', ')}`, { color: SE_MUTED, size: 14, italic: true })], { spaceAfter: 0 })
+      ], { spaceAfter: 0, indent: depth > 0 ? { left: depth * REPORT_INDENT, hanging: 120 } : null }),
+      // The manager, in words, ONLY when the table could not draw them:
+      // somebody off this list, or above the cap. Where the arrow above
+      // already says it, saying it again is a line of the page spent on
+      // what the shape of the column has just shown.
+      c.reportsTo.length && !c.managerShown
+        ? para([run(`reports to ${c.reportsTo.join(', ')}`, { color: SE_MUTED, size: 14, italic: true })],
+          { spaceAfter: 0, indent: depth > 0 ? { left: depth * REPORT_INDENT } : null })
         : '',
     ].join('');
     return [
       cell(nameLines, { width: widths[0], fill, borders: edges }),
       cell(para([run(c.title || '-', { color: SE_SLATE, size: 18 })], { spaceAfter: 0 }), { width: widths[1], fill, borders: edges }),
       cell(para([run(c.email || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[2], fill, borders: edges }),
-      cell(para([run(c.phone || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[3], fill, borders: edges }),
+      // No team set reads as a dash, like every other blank on the page:
+      // the reader can tell "nobody has filed them" from a column the
+      // export dropped.
+      cell(para([run(c.team || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[3], fill, borders: edges }),
     ];
   });
   const more = hidden
@@ -455,7 +471,7 @@ export function onePagerHeaderXml(model) {
 export function onePagerDocumentXml(model) {
   const body = [
     ownersBand(model.owners, model.clientSince),
-    heading('Key contacts', 'shaded = day to day    DM = decision maker'),
+    heading('Key contacts', 'shaded = day to day    indented = reports to the name above'),
     contactsTable(model.contacts),
     heading('Open opportunities'),
     oppsTable(model.opps),

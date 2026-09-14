@@ -50,21 +50,65 @@ export const MAX_OPPS = 4;
 // getting cut. See cappedServices.
 export const MAX_SERVICE_LINES = 12;
 
+// How a contact ranks when nothing structural separates them: the
+// day-to-day contact leads, then whoever signs, then anyone already met,
+// then by name. Stable beyond that, so two runs of the same account
+// produce the same sheet.
+//
+// Day-to-day ahead of decision maker on purpose: the sheet is opened to
+// answer "who do I call", and the answer to that is almost never the
+// person who signs.
+function contactRank(c) {
+  return [Number(!c.dayToDay), Number(!c.decisionMaker), Number(!c.metInPerson)];
+}
+function byRank(a, b) {
+  const ra = contactRank(a);
+  const rb = contactRank(b);
+  for (let i = 0; i < ra.length; i += 1) {
+    if (ra[i] !== rb[i]) return ra[i] - rb[i];
+  }
+  return a.name.localeCompare(b.name);
+}
+
+const nameKey = (v) => clean(v).toLowerCase();
+
 /**
- * A contact as the sheet lists them. `decisionMaker` floats them to the
- * top and earns the marker: on a page about who we know, the answer to
- * "who signs" is the first thing looked for.
+ * The contacts as the sheet lists them: the reporting line, flattened.
+ *
+ * Who answers to whom is the thing a reader of this page is trying to
+ * work out, and a flat list with "reports to Herb Tracy" under a name
+ * makes them reconstruct it one row at a time. So a report is printed
+ * directly under their manager and carries a `depth` for the renderer to
+ * indent by - the structure is read off the shape of the column instead.
+ *
+ * Ordering is by BRANCH, not by row: a manager is ranked by the best rank
+ * anyone under them holds, so the branch holding the day-to-day contact
+ * leads the table even when the manager themselves is nobody special.
+ * Within a branch the manager comes first and their reports follow in
+ * their own order. That way the cap - which takes the first N rows - never
+ * cuts between a manager and the team the indent says is theirs.
+ *
+ * Managers are matched by NAME, because that is what a contact's Reports
+ * To resolves to by the time it reaches this page. A manager who is not
+ * one of this company's contacts cannot be drawn above anybody, so their
+ * report stays at the top level and keeps `reportsTo` for the renderer to
+ * print - losing the line entirely would be worse than printing it as
+ * text.
  */
 export function orderContacts(contacts) {
   const rows = (contacts || []).map(c => ({
     name: clean(c?.name),
     title: clean(c?.title),
     email: clean(c?.email),
-    phone: clean(c?.phone),
+    // The team the person is on, as set on their contact card. It replaced
+    // the phone column: a phone number on a page like this is nearly
+    // always blank or the switchboard, and which team somebody sits on is
+    // what the reader is trying to place them by.
+    team: clean(c?.team),
     decisionMaker: !!c?.decisionMaker,
     // The person actually worked with week to week, tagged Primary Point
     // of Contact. Not the same question as who signs, and on most accounts
-    // not the same person - which is exactly why both are marked.
+    // not the same person.
     dayToDay: !!c?.dayToDay,
     metInPerson: !!c?.metInPerson,
     // Who they sit under, by name, from the Reports To set on the contact.
@@ -73,17 +117,75 @@ export function orderContacts(contacts) {
     reportsTo: (Array.isArray(c?.reportsTo) ? c.reportsTo : [c?.reportsTo])
       .map(clean).filter(Boolean),
   })).filter(c => c.name || c.email);
-  // The day-to-day contact leads, then whoever signs, then anyone already
-  // met, then by name. Stable beyond that, so two runs of the same account
-  // produce the same sheet.
-  //
-  // Day-to-day ahead of decision maker on purpose: the sheet is opened to
-  // answer "who do I call", and the answer to that is almost never the
-  // person who signs.
-  return rows.sort((a, b) => (Number(b.dayToDay) - Number(a.dayToDay))
-    || (Number(b.decisionMaker) - Number(a.decisionMaker))
-    || (Number(b.metInPerson) - Number(a.metInPerson))
-    || a.name.localeCompare(b.name));
+
+  const byName = new Map();
+  for (const row of rows) {
+    const key = nameKey(row.name);
+    if (key && !byName.has(key)) byName.set(key, row);
+  }
+
+  // The manager this person can actually be drawn under: one of their
+  // Reports To names that is also on this list, is not themselves, and
+  // does not sit under them already. The last guard is what stops a
+  // mis-entered pair of mutual managers turning into an endless walk.
+  const managerOf = (row) => {
+    for (const name of row.reportsTo) {
+      const boss = byName.get(nameKey(name));
+      if (!boss || boss === row) continue;
+      let up = boss;
+      let guard = 0;
+      while (up && guard < rows.length + 1) {
+        if (up === row) break;
+        up = up.__manager || null;
+        guard += 1;
+      }
+      if (up === row) continue;
+      return boss;
+    }
+    return null;
+  };
+  for (const row of rows) row.__manager = null;
+  for (const row of rows) row.__manager = managerOf(row);
+
+  const childrenOf = new Map();
+  const roots = [];
+  for (const row of rows) {
+    if (row.__manager) {
+      if (!childrenOf.has(row.__manager)) childrenOf.set(row.__manager, []);
+      childrenOf.get(row.__manager).push(row);
+    } else {
+      roots.push(row);
+    }
+  }
+
+  // A branch ranks as well as its best member: the manager of the person
+  // we actually deal with belongs at the top of the page with them, not
+  // below three people nobody has met.
+  const bestRank = (row) => {
+    let best = row;
+    for (const child of (childrenOf.get(row) || [])) {
+      const inner = bestRank(child);
+      if (byRank(inner, best) < 0) best = inner;
+    }
+    return best;
+  };
+  const branchSort = (a, b) => byRank(bestRank(a), bestRank(b)) || byRank(a, b);
+
+  const out = [];
+  const walk = (row, depth) => {
+    out.push({
+      ...row,
+      depth,
+      // Whether the manager named on this row is the one printed directly
+      // above it. When they are, the indent says it and the renderer drops
+      // the text; when they are not - a manager off this list, or one the
+      // cap cut - the line is all the reader gets.
+      managerShown: !!row.__manager,
+    });
+    for (const child of (childrenOf.get(row) || []).sort(branchSort)) walk(child, depth + 1);
+  };
+  for (const root of roots.sort(branchSort)) walk(root, 0);
+  return out.map(({ __manager, ...row }) => row); // eslint-disable-line no-unused-vars
 }
 
 /**
