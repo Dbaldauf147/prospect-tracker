@@ -9099,19 +9099,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: siteListOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
                 {currentSiteList && (currentSiteList.rows || []).length > 0 && (
                   <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
-                    {currentSiteList.rows.length} {currentSiteList.rows.length === 1 ? 'site' : 'sites'}
+                    {/* The sites the company has, not the rows the list
+                        holds: a closed or sold site stays on the list (it
+                        is where the status was recorded) and is out of
+                        every figure beside it, which the tooltip says. */}
+                    <span title={siteListFacts.inactiveNote
+                      ? `${siteListFacts.listedSites} rows on the saved list. ${siteListFacts.inactiveNote}`
+                      : undefined}
+                    >
+                      {siteListFacts.sites} {siteListFacts.sites === 1 ? 'site' : 'sites'}
+                    </span>
                     {/* What the list adds up to, from the columns it
                         actually carries. Each part appears only when the
                         list has that data - a portfolio nobody has sized
                         says nothing rather than "0 ft²". */}
                     {siteListFacts.sqft != null && (
                       <span
-                        title={siteListFacts.sqftSites === currentSiteList.rows.length
+                        title={siteListFacts.sqftSites === siteListFacts.sites
                           ? `${siteListFacts.sqft.toLocaleString()} ft² across all ${siteListFacts.sqftSites} sites`
-                          : `${siteListFacts.sqft.toLocaleString()} ft² across the ${siteListFacts.sqftSites} of ${currentSiteList.rows.length} sites that carry a size`}
+                          : `${siteListFacts.sqft.toLocaleString()} ft² across the ${siteListFacts.sqftSites} of ${siteListFacts.sites} sites that carry a size`}
                       >
                         {' · '}{formatSqft(siteListFacts.sqft)}
-                        {siteListFacts.sqftSites < currentSiteList.rows.length && ' (partial)'}
+                        {siteListFacts.sqftSites < siteListFacts.sites && ' (partial)'}
                       </span>
                     )}
                     {siteListFacts.divisions.length > 0 && (
@@ -9132,12 +9141,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         are the same line without it. */}
                     {siteListFacts.equipment != null && (
                       <span
-                        title={siteListFacts.equipmentSites === currentSiteList.rows.length
+                        title={siteListFacts.equipmentSites === siteListFacts.sites
                           ? `${siteListFacts.equipment.toLocaleString()} pieces of equipment estimated across all ${siteListFacts.equipmentSites} sites, from each site’s property type.`
-                          : `${siteListFacts.equipment.toLocaleString()} pieces of equipment estimated across the ${siteListFacts.equipmentSites} of ${currentSiteList.rows.length} sites whose property type resolves to one of the reference types.`}
+                          : `${siteListFacts.equipment.toLocaleString()} pieces of equipment estimated across the ${siteListFacts.equipmentSites} of ${siteListFacts.sites} sites whose property type resolves to one of the reference types.`}
                       >
                         {' · '}{siteListFacts.equipment.toLocaleString()} est. equipment
-                        {siteListFacts.equipmentSites < currentSiteList.rows.length && ' (partial)'}
+                        {siteListFacts.equipmentSites < siteListFacts.sites && ' (partial)'}
                       </span>
                     )}
                   </span>

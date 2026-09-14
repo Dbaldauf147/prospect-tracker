@@ -112,3 +112,83 @@ export function siteStatusCounts(values, options = SITE_STATUS_OPTIONS) {
   if (blank > 0) counts.set('', blank);
   return counts;
 }
+
+// A status that says the site is trading. Matched on the opening word, so a
+// rewritten vocabulary keeps working: "Open", "Operating", "Operational",
+// "Active", "Trading", "Live", "In operation" all read as running, and
+// "Not operating" does not, because the test is anchored.
+const OPERATING = /^(open|operat|active|trading|live|running|in\s*(use|operation|service))/i;
+
+/**
+ * Is this site one of the ones the estate actually has?
+ *
+ * Every count of sites on the company popup and in the Master Analysis asks
+ * this. A closed store, a sold building, an empty shell and a site still
+ * being built are all rows on the file, and all four are rows a reader of
+ * "412 sites" would not expect to be in the number.
+ *
+ * Two rules:
+ *
+ *   No status at all counts as active. Most portfolio files have never had
+ *   a status column, and a count that dropped to zero the moment this
+ *   shipped would be worse than the count it replaced. A blank is "nobody
+ *   has said", not "not trading".
+ *
+ *   A status the vocabulary doesn't know counts as NOT active, unless it
+ *   opens like a trading one. Someone typed a word about this site, and
+ *   every word people reach for here ("Mothballed", "Exited", "Handed
+ *   back") means it is gone. The exception is the vocabulary the user
+ *   rewrote to their own trading word, which OPERATING covers.
+ */
+export function isActiveSiteStatus(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return true;
+  return OPERATING.test(text);
+}
+
+// Where a row keeps its status. The page's derived rows carry it on
+// `__siteStatus__`; a saved company site list is raw cells under the
+// 'Site Status' header, so those callers pass their own reader.
+const ownStatus = (row) => row?.__siteStatus__;
+
+/** The active ones, out of rows carrying `__siteStatus__`. */
+export function activeSites(rows, getStatus = ownStatus) {
+  return (rows || []).filter(r => isActiveSiteStatus(getStatus(r)));
+}
+
+/** How many of these sites are active. The number every site count now shows. */
+export function activeSiteCount(rows, getStatus = ownStatus) {
+  let n = 0;
+  for (const row of rows || []) if (isActiveSiteStatus(getStatus(row))) n += 1;
+  return n;
+}
+
+/**
+ * The sites left out of a count, grouped by the status that excluded them:
+ * a Map of status text to how many, commonest first.
+ *
+ * Every count that shrinks has to be able to say why, or it reads as a bug.
+ * This is what the tooltips behind those counts are built from.
+ */
+export function inactiveSiteBreakdown(rows, getStatus = ownStatus) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    if (isActiveSiteStatus(getStatus(row))) continue;
+    const key = String(getStatus(row) ?? '').trim() || 'No status';
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return new Map([...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
+}
+
+/**
+ * "2 sites are not counted: 1 Closed, 1 Sold." — the sentence a shrunken
+ * count carries, or '' when nothing was left out.
+ */
+export function inactiveSiteNote(rows, getStatus = ownStatus) {
+  const breakdown = inactiveSiteBreakdown(rows, getStatus);
+  if (breakdown.size === 0) return '';
+  let total = 0;
+  for (const n of breakdown.values()) total += n;
+  const parts = [...breakdown].map(([status, n]) => `${n} ${status}`);
+  return `${total} site${total === 1 ? '' : 's'} not counted: ${parts.join(', ')}.`;
+}
