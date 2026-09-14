@@ -30,6 +30,7 @@ import {
   pricingLines,
 } from './servicePricing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
+import { parseCommodities } from './commodities.js';
 
 // Units a client record answers on its own, and the field that answers each.
 // These are the counts the company card actually collects; every other unit a
@@ -50,7 +51,7 @@ export const CLIENT_COUNT_FIELDS = [
 
 /** An empty scope — the shape every client starts at. */
 export function emptyClientScope() {
-  return { services: [], counts: {}, serviceUnits: {}, dealSize: '' };
+  return { services: [], counts: {}, serviceUnits: {}, dealSize: '', commodities: [] };
 }
 
 /**
@@ -82,6 +83,10 @@ export function normalizeClientScope(raw) {
     if (n !== null) out.serviceUnits[k] = n;
   }
   if (raw.dealSize !== undefined && raw.dealSize !== null) out.dealSize = String(raw.dealSize);
+  // What the scope is about, ticked at the top of the Scope picker. Held
+  // apart from `services` on purpose: everything that reads a scope for
+  // service names would otherwise carry a commodity as one.
+  out.commodities = parseCommodities(raw.commodities);
   return out;
 }
 
@@ -89,6 +94,7 @@ export function normalizeClientScope(raw) {
 export function scopeIsEmpty(scope) {
   const s = normalizeClientScope(scope);
   return s.services.length === 0
+    && s.commodities.length === 0
     && Object.keys(s.counts).length === 0
     && Object.keys(s.serviceUnits).length === 0
     && !String(s.dealSize).trim();

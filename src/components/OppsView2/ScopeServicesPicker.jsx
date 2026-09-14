@@ -31,10 +31,125 @@ import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
 import { coverageRowStyle } from '../../utils/coverageMark';
+import {
+  COMMODITY_LIST_KEY, commodityOptions, parseCommodities, toggleCommodity, splitCommodities,
+} from '../../utils/commodities';
 
 // Same palette the company card's services board uses, so a service reads
 // the same colour in both places.
 const STATUS_COLORS = SERVICE_STATUS_COLORS;
+
+// The commodity row at the top of the board.
+//
+// A commodity is what the work is about (Electric, Natural Gas, Water,
+// Waste); a service is what gets done to it. They sit above the services
+// rather than among them because the answer usually comes first: you know
+// the meeting is about gas before you know which of the gas services it
+// will end up being.
+//
+// The vocabulary is the ordinary Dropdowns list, so "add others / edit the
+// standard list" is that page's editor. Adding one here is the shortcut for
+// the moment you need it, and writes to the same list.
+function CommodityRow({ value, onChange, settings, updateSettings }) {
+  const [adding, setAdding] = useState('');
+  const [open, setOpen] = useState(false);
+  const options = useMemo(() => commodityOptions(settings), [settings]);
+  const picks = useMemo(() => parseCommodities(value), [value]);
+  // A commodity taken off the list stays ticked on the opps that carry it,
+  // and is shown so it can be taken off deliberately rather than kept by a
+  // record nobody can see.
+  const { strays } = useMemo(() => splitCommodities(picks, options), [picks, options]);
+  const shown = useMemo(() => [...options, ...strays], [options, strays]);
+
+  function addOne() {
+    const name = adding.trim();
+    if (!name) { setOpen(false); return; }
+    const current = settings?.dropdownLists || {};
+    const existing = commodityOptions(settings);
+    const already = existing.find(o => o.toLowerCase() === name.toLowerCase());
+    if (!already) {
+      updateSettings?.({
+        dropdownLists: { ...current, [COMMODITY_LIST_KEY]: [...existing, name] },
+      });
+    }
+    // Tick it either way: typing a name into this box is a pick, whether or
+    // not the list already had it.
+    const target = already || name;
+    if (!picks.some(p => p.toLowerCase() === target.toLowerCase())) {
+      onChange(toggleCommodity(picks, target, [...existing, name]));
+    }
+    setAdding('');
+    setOpen(false);
+  }
+
+  if (!shown.length && !updateSettings) return null;
+
+  return (
+    <div style={{
+      flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: '0.4rem',
+      flexWrap: 'wrap', padding: '0.4rem 0.8rem',
+      borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-alt, #F8FAFC)',
+    }}>
+      <span
+        title="What this scope is about. Stored beside the services, not among them, so nothing that reads Scope for service names picks a commodity up as one."
+        style={{
+          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '.04em',
+          textTransform: 'uppercase', color: 'var(--color-text-muted)',
+        }}
+      >Commodities</span>
+      {shown.map((name) => {
+        const on = picks.some(p => p.toLowerCase() === name.toLowerCase());
+        const stray = strays.some(p => p.toLowerCase() === name.toLowerCase());
+        return (
+          <button
+            key={name}
+            type="button"
+            onClick={() => onChange(toggleCommodity(picks, name, options))}
+            title={stray ? `${name} is not on the Commodities list any more. Untick to take it off this scope.` : undefined}
+            style={{
+              padding: '0.15rem 0.6rem', borderRadius: 999, cursor: 'pointer',
+              fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit',
+              border: `1px solid ${on ? '#15803D' : 'var(--color-border)'}`,
+              background: on ? '#DCFCE7' : 'var(--color-surface)',
+              color: on ? '#15803D' : 'var(--color-text-muted)',
+              fontStyle: stray ? 'italic' : 'normal',
+            }}
+          >{name}</button>
+        );
+      })}
+      {updateSettings && (open ? (
+        <input
+          autoFocus
+          value={adding}
+          onChange={(e) => setAdding(e.target.value)}
+          onBlur={addOne}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addOne(); }
+            if (e.key === 'Escape') { setAdding(''); setOpen(false); }
+          }}
+          placeholder="Commodity name"
+          style={{
+            width: 150, padding: '0.15rem 0.4rem', fontSize: '0.72rem',
+            fontFamily: 'inherit', border: '1px solid var(--color-border)',
+            borderRadius: 999, background: 'var(--color-surface)', color: 'var(--color-text)',
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Add a commodity to the standard list. The full editor is on Dropdowns > Commodities."
+          style={{
+            padding: '0.15rem 0.5rem', borderRadius: 999, cursor: 'pointer',
+            fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit',
+            border: '1px dashed var(--color-border)', background: 'transparent',
+            color: 'var(--color-text-muted)',
+          }}
+        >+ Add</button>
+      ))}
+    </div>
+  );
+}
 
 // Which stage wins when several of an account's opps name the same service.
 // Mirrors the company card's ordering: closed-won beats in-flight beats lost.
@@ -151,6 +266,10 @@ function StatusSelect({ item, manual, auto, autoNa, onSet, disabled, disabledRea
 export function ScopeServicesModal({
   value, onChange, onClose, options = [], account, prospects, updateProspect,
   settings, oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
+  // The commodity row at the top: what this scope is about, kept apart from
+  // the services it lists. Omit both and the row doesn't render, so a caller
+  // with nowhere to store the answer doesn't offer the question.
+  commodities, onCommoditiesChange, updateSettings,
   // Optional line in the header saying why the board opened — set when it's
   // raised by something other than a click on the Scope cell (e.g. an opp
   // leaving the Not Started stage).
@@ -454,6 +573,15 @@ export function ScopeServicesModal({
             }}
           >Done</button>
         </div>
+
+        {onCommoditiesChange && (
+          <CommodityRow
+            value={commodities}
+            onChange={onCommoditiesChange}
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        )}
 
         {/* Selection summary. Sits outside the scrolling board so it stays
             put while you hunt through categories, and capped at a few rows of

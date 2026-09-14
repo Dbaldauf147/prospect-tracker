@@ -17,6 +17,16 @@ export const DROPDOWN_LISTS = [
     ],
   },
   {
+    // The commodities a scope covers. Ticked at the top of the Scope
+    // picker, and stored beside the services rather than among them: a
+    // commodity is what the work is about, not a service in the catalog,
+    // and mixing the two would put "Electric" into every place that reads
+    // Scope for service names.
+    key: 'commodities',
+    label: 'Commodities',
+    options: ['Electric', 'Natural Gas', 'Water', 'Waste'],
+  },
+  {
     key: 'chance',
     label: 'Chance?',
     options: ['Expected', 'OK', 'Weak'],
