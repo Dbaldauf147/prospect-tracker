@@ -69,6 +69,10 @@ import { sustainabilityProfile } from '../../utils/sustainabilityProfile';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplianceMethodologySheet } from '../../utils/complianceReportXlsx';
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import {
+  SITE_STATUS_HEADER, SITE_STATUS_OPTIONS, normalizeSiteStatus, pickSiteStatusColumn, siteStatusCounts,
+} from '../../utils/siteStatus';
 import { fillHeaderFor, describeColumnFill, FILL_HEADERS } from '../../utils/siteColumnFill';
 import { bulkMapDraft, bulkMapSummary } from '../../utils/propertyTypeBulkMap';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
@@ -360,6 +364,11 @@ function detectSitesMapping(headers) {
     // header that merely mentions the word only wins when nothing better
     // is on the sheet.
     ownership: detectColumn(headers, [/^ownership$/i, /^owned\s*\/?\s*leased?$/i, /^leased?\s*\/?\s*owned?$/i, /^own\s*\/?\s*lease$/i, /ownership\s*(status|type)/i, /\bownership\b/i, /^tenure$/i, /^tenure\s*(category|categorization|type|status|class(ification)?)$/i, /tenure\s*(category|type|status)/i, /occupancy\s*(status|type)/i, /(own|lease)\w*\s*status/i, /\btenure\b/i]) || '',
+    // What is happening with the building. Its own picker rather than a
+    // detectColumn line here, because "Status" on a sites file is as
+    // likely to be about a contract, a survey or a compliance filing as
+    // about the site — see pickSiteStatusColumn.
+    siteStatus: pickSiteStatusColumn(headers),
     siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
@@ -1607,6 +1616,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const [segmentOverride, setSegmentOverride] = useState(null);
   // Optional column carrying each building's Owned / Leased status.
   const [ownershipOverride, setOwnershipOverride] = useState(null);
+  const [siteStatusOverride, setSiteStatusOverride] = useState(null);
   const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
   // Optional column naming the division / business unit the site sits
   // under — the level below Company Name. Passthrough, like the company.
@@ -1762,6 +1772,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         setPropertyTypeOverride(m.propertyType || null);
         setSegmentOverride(m.segment || null);
         setOwnershipOverride(m.ownership || null);
+        setSiteStatusOverride(m.siteStatus || null);
         setSiteDescriptionOverride(m.siteDescription || null);
         setDivisionOverride(m.division || null);
         setPropertySizeOverride(m.propertySize || null);
@@ -1925,6 +1936,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       propertyType:          safe(noneToEmpty(propertyTypeOverride)),
       segment:               safe(noneToEmpty(segmentOverride)),
       ownership:             safe(noneToEmpty(ownershipOverride)),
+      siteStatus:            safe(noneToEmpty(siteStatusOverride)),
       siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
       division:              safe(noneToEmpty(divisionOverride)),
       propertySize:          safe(noneToEmpty(propertySizeOverride)),
@@ -2008,7 +2020,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
         'siteName', 'companyName', 'division', 'address', 'city', 'state', 'zip', 'country',
-        'propertyType', 'segment', 'ownership', 'siteDescription', 'propertySize',
+        'propertyType', 'segment', 'ownership', 'siteStatus', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -2071,6 +2083,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setPropertyTypeOverride(mapping.propertyType || null);
       setSegmentOverride(mapping.segment || null);
       setOwnershipOverride(mapping.ownership || null);
+      setSiteStatusOverride(mapping.siteStatus || null);
       setSiteDescriptionOverride(mapping.siteDescription || null);
       setDivisionOverride(mapping.division || null);
       setPropertySizeOverride(mapping.propertySize || null);
@@ -2431,6 +2444,29 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return pickSiteNameColumn(headers) || '';
   }, [sitesData, siteNameOverride]);
 
+  // The Site Status vocabulary in force: the list as edited on Dropdowns ›
+  // Lists when there is one, the shipped seed otherwise. Nothing on this
+  // page branches on a particular value, so a list rewritten to a
+  // customer's own words works exactly as well as the one that ships.
+  const siteStatusOptions = useMemo(() => {
+    const list = getEffectiveDropdownLists(settings).find(l => l.key === 'siteStatus');
+    const options = (list?.options || []).map(o => String(o ?? '').trim()).filter(Boolean);
+    return options.length ? options : SITE_STATUS_OPTIONS;
+  }, [settings]);
+
+  // The column a site's status is read from and written to: the file's own
+  // when it brought one, and the page's otherwise.
+  //
+  // Never blank, which is the point. Every other field on this table is
+  // something the spreadsheet said; the status is usually something the
+  // user knows and the spreadsheet doesn't, so a portfolio file with no
+  // status column — which is most of them — still has a status cell to
+  // type into, and what is typed lands in a real column of the uploaded
+  // rows like every other edit here. From then on it imports, exports,
+  // mass-edits and re-uploads exactly as a status column that arrived in
+  // the file would.
+  const siteStatusColumn = siteStatusOverride || SITE_STATUS_HEADER;
+
   // Rows that don't carry a site name are junk for this analysis —
   // filter them out before anything else sees them.
   const cleanSitesData = useMemo(() => {
@@ -2699,6 +2735,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         : null;
       const inputCompanyName = companyNameOverride ? String(r[companyNameOverride] || '').trim() : '';
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
+      // The status is read from the mapped column when the file brought
+      // one and from the page's own column when it didn't — which is the
+      // same cell either way, since siteStatusColumn resolves to one or
+      // the other. Folded onto the vocabulary in force so "OPEN" off a
+      // spreadsheet sorts and counts with the "Open" typed on the page.
+      const inputSiteStatus = normalizeSiteStatus(r[siteStatusColumn], siteStatusOptions);
       const inputDivision = divisionOverride ? String(r[divisionOverride] || '').trim() : '';
       const inputOwnership = ownershipOverride ? String(r[ownershipOverride] || '').trim() : '';
       const canonicalOwnership = normalizeOwnership(inputOwnership);
@@ -2939,6 +2981,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __segmentSource__: segmentSource,
         __ownershipRaw__: inputOwnership || null,
         __ownership__: canonicalOwnership,
+        __siteStatus__: inputSiteStatus || null,
         __siteDescription__: inputSiteDescription || null,
         __propertySizeFt2__: inputPropertySize,
         __kwhFromEstimate__: elecValueFromEstimate,
@@ -2976,7 +3019,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // The analysis set. The Division scope narrows it, so every consumer of
   // `rows` — the table, the stats, all four other tabs and every export —
@@ -3325,17 +3368,48 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     && tenureStats.missing > 0
     && tenureWarningDismissed !== tenureWarningKey;
 
+  // Which statuses the portfolio actually holds, and how many of each.
+  // Counted over every row, never over what the search left on screen: it
+  // is a fact about the estate, and one that moved as you typed would be
+  // a different number every keystroke.
+  const statusCounts = useMemo(
+    () => siteStatusCounts(rows.map(r => r.__siteStatus__), siteStatusOptions),
+    [rows, siteStatusOptions],
+  );
+
+  // "Show me the closed ones" — the question the column exists to answer,
+  // which a search box can't: typing "Closed" also matches a site called
+  // Closed Gate Road and a note that says "closed in 2019".
+  const [statusFilter, setStatusFilter] = useState('');
+  // A filter pinned to a status the estate no longer has (the last one was
+  // just re-typed, or a new file was uploaded) would hide every row with
+  // nothing on screen saying why.
+  const activeStatusFilter = statusFilter && (statusFilter === '__none__' || statusCounts.has(statusFilter))
+    ? statusFilter
+    : '';
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
-    const term = search.toLowerCase();
-    return rows.filter(r =>
-      Object.entries(r).some(([k, v]) =>
+    const term = search.trim().toLowerCase();
+    if (!term && !activeStatusFilter) return rows;
+    return rows.filter(r => {
+      if (activeStatusFilter === '__none__' && r.__siteStatus__) return false;
+      if (activeStatusFilter && activeStatusFilter !== '__none__' && r.__siteStatus__ !== activeStatusFilter) return false;
+      if (!term) return true;
+      return Object.entries(r).some(([k, v]) =>
         !k.startsWith('__') && String(v).toLowerCase().includes(term)
-      )
-    );
-  }, [search, rows]);
+      );
+    });
+  }, [search, rows, activeStatusFilter]);
 
   // ---- Mass edit: which columns, and writing them ----------------------
+  // The uploaded row's headers, with the status column added when the file
+  // didn't bring one — see siteStatusColumn.
+  const siteStatusHeaders = useMemo(() => {
+    const headers = sitesData.length ? Object.keys(sitesData[0]) : [];
+    if (!headers.length || headers.includes(siteStatusColumn)) return headers;
+    return [...headers, siteStatusColumn];
+  }, [sitesData, siteStatusColumn]);
+
   // The page's live column mapping, as one object. Every one of these is
   // the header a field is currently read from, so an edit aimed at
   // "Property Type" lands in the column the property-type derivation
@@ -3352,6 +3426,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     propertyType: propertyTypeOverride,
     segment: segmentOverride,
     ownership: ownershipOverride,
+    siteStatus: siteStatusColumn,
     siteDescription: siteDescriptionOverride,
     propertySize: propertySizeOverride,
     electric: electricColOverride,
@@ -3375,7 +3450,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }), [
     siteNameColumn, companyNameOverride, divisionOverride, addressOverride, cityOverride,
     stateColumnOverride, zipColumn, countryOverride, propertyTypeOverride, segmentOverride,
-    ownershipOverride, siteDescriptionOverride, propertySizeOverride, electricColOverride,
+    ownershipOverride, siteStatusColumn, siteDescriptionOverride, propertySizeOverride, electricColOverride,
     electricUomOverride, gasColOverride, gasUomOverride, electricCostOverride, gasCostOverride,
     electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride,
     electricContractPriceOverride, electricContractNameOverride, electricProductTypeOverride,
@@ -3385,11 +3460,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   const editableSiteColumns = useMemo(
     () => siteEditableColumns(
-      sitesData.length ? Object.keys(sitesData[0]) : [],
+      // The status column is listed whether or not the rows carry it yet:
+      // on a file that never had one, the first thing written into it is
+      // the edit itself, and a column the editor won't offer is a column
+      // that can never get its first value.
+      siteStatusHeaders,
       siteFieldMapping,
       [siteNameColumn],
+      // The one vocabulary here the user owns.
+      { siteStatus: siteStatusOptions },
     ),
-    [sitesData, siteFieldMapping, siteNameColumn],
+    [siteStatusHeaders, siteFieldMapping, siteNameColumn, siteStatusOptions],
   );
   // Which table columns can be typed into, and what each writes. Keyed by the
   // column key the table renders, because most mapped fields are shown under
@@ -3590,7 +3671,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   const columns = useMemo(() => {
     if (!sitesData.length) return [];
-    const headers = Object.keys(sitesData[0]);
+    // Every uploaded header gets a pass-through column below, except the
+    // one the status is read from: the Site Status column further down
+    // renders that same cell, and a second copy of it would be a column
+    // that says the same thing twice — and, on a file the page added the
+    // column to itself, a column that appeared out of nowhere the first
+    // time somebody set a status, shifting the table under them.
+    //
+    // Unlike Ownership or Property Type, nothing is lost by hiding the
+    // raw cell: a status is shown as it came, folded only for case.
+    const headers = Object.keys(sitesData[0]).filter(h => h !== siteStatusColumn);
     // Short-date formatter for any column the user mapped as a
     // contract start / end. Used by both the auto-pass-through base
     // columns (so the source header for that field stops showing the
@@ -3918,6 +4008,60 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Free-text site annotation that lives next to Property Type. No
     // canonicalization or estimates — purely a passthrough column for
     // the user's notes / descriptions of each site.
+    // What is happening with the building. The one column here that is
+    // usually the user's own knowledge rather than the spreadsheet's — a
+    // portfolio file says where a site is and what it spends, and says
+    // nothing about the store that shut in March. Every estimate on this
+    // row prices it as though the lights were on, so the status is the
+    // note that stops a closed site being quoted like an open one.
+    const siteStatusCol = {
+      key: 'siteStatus',
+      label: 'Site Status',
+      defaultWidth: 150,
+      render: (row) => {
+        const value = row.__siteStatus__;
+        if (!value) {
+          return (
+            <span
+              title="No status on this site. Double-click to set one."
+              style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}
+            >-</span>
+          );
+        }
+        // Open is the quiet case — most of an estate, and the state every
+        // estimate on the row already assumes — so it is the pale one.
+        // Everything else is a reason to look twice at the row's numbers,
+        // and a value off the list is a third thing again: the user's own
+        // word, or a spelling from the file, and it is shown as it came.
+        const known = siteStatusOptions.some(o => o.toLowerCase() === value.toLowerCase());
+        const palette = !known
+          ? { bg: 'var(--color-surface-alt)', border: 'var(--color-border)', text: 'var(--color-text-secondary)' }
+          : /^open|^operat|^active|^trading/i.test(value)
+            ? { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }
+            : /^clos|^sold|^exit|^disposed|^divest/i.test(value)
+              ? { bg: '#FEE2E2', border: '#FECACA', text: '#B91C1C' }
+              : { bg: '#FEF3C7', border: '#FDE68A', text: '#92400E' };
+        return (
+          <span
+            title={known
+              ? `Site status: ${value}. Every estimate on this row is priced as though the site is running, so check them against this.`
+              : `Site status: "${value}" is not on the Site Status list (Dropdowns, Lists), so it is shown as it came. Double-click to pick one from the list.`}
+            style={{ display: 'inline-block', fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: 4, background: palette.bg, border: `1px solid ${palette.border}`, color: palette.text }}
+          >{value}</span>
+        );
+      },
+      exportValue: (row) => row.__siteStatus__ || '',
+      // Sorted by the vocabulary's own order rather than alphabetically:
+      // the list is written in the order the user thinks about it, and
+      // "Closed, Open, Sold, Under construction, Vacant" is nobody's idea
+      // of an order. Anything off the list sorts after it, blanks last.
+      getSortValue: (row) => {
+        const value = row.__siteStatus__;
+        if (!value) return siteStatusOptions.length + 2;
+        const i = siteStatusOptions.findIndex(o => o.toLowerCase() === value.toLowerCase());
+        return i === -1 ? siteStatusOptions.length + 1 : i;
+      },
+    };
     const siteDescriptionCol = {
       key: 'siteDescription',
       label: 'Site Description',
@@ -4273,6 +4417,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       propertyTypeCol,
       segmentCol,
       ownershipCol,
+      siteStatusCol,
       siteDescriptionCol,
       propertySizeCol,
       // Property-type-based estimates — always show the reference
@@ -4384,7 +4529,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ];
       })(),
     ];
-  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride]);
+  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, siteStatusOptions, siteStatusColumn]);
 
   // The same columns, with the editable ones openable for typing.
   //
@@ -5714,6 +5859,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     ['Country', r => r.__country__ || ''],
     ['Zip', r => r.__zipNorm__ || ''],
     ['Property Type', r => r.__propertyType__ || r.__propertyTypeRaw__ || ''],
+    // Whether the site is still open. Saved with the list so the Site List
+    // Overview and anything reading a company's saved sites can tell a
+    // live estate from a historical one.
+    ['Site Status', r => r.__siteStatus__ || ''],
     ['Size (ft²)', r => round(r.__propertySizeFt2__)],
     ['Electric Utility', r => r.__electric__ || ''],
     ['ISO / RTO', r => r.__iso__?.iso || ''],
@@ -11488,6 +11637,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // company or its landlord — the same question the compliance
       // subtabs' Owned / All-sites toggle asks.
       { label: 'Owned / Leased', get: (s) => s.ownership, width: 15 },
+      { label: 'Site Status', get: (s) => s.siteStatus, width: 16 },
       { label: 'Size (ft²)', get: (s) => s.sqft, numFmt: '#,##0', width: 12 },
       // Equipment expected in the building, from its property type. Sits
       // with the building attributes rather than the energy columns: it
@@ -11750,6 +11900,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // a real answer about that site, and dropping it would read as
           // "not provided" when it was.
           ownership: r.__ownership__ || r.__ownershipRaw__ || '',
+          // What is happening with the building. Carried onto the sheet
+          // because every figure beside it is priced as though the site
+          // were running, and the reader of a workbook has no other way
+          // to know that four of these sites are shut.
+          siteStatus: r.__siteStatus__ || '',
           // Mapped property size (sq ft) when the user provided one.
           sqft: (typeof r.__propertySizeFt2__ === 'number' && Number.isFinite(r.__propertySizeFt2__)) ? Math.round(r.__propertySizeFt2__) : null,
           electricUtility,
@@ -11968,6 +12123,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // Why a row can sit at $0 for all 60 months with real spend on
         // it: no savings are projected onto a leased location.
         { label: 'Owned / Leased', get: (s) => s.ownership, width: 14 },
+        { label: 'Site Status', get: (s) => s.siteStatus, width: 16 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
         { label: 'Contract Start', get: (s) => s.contractStart, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
@@ -16278,7 +16434,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        {search && <span className={styles.resultCount}>{filtered.length} results</span>}
+        {/* Statuses the estate actually holds, with their counts — a list
+            of every option including the ones nothing is at would be a
+            picker mostly made of dead ends. */}
+        {sitesData.length > 0 && statusCounts.size > 0 && (
+          <select
+            className={styles.searchInput}
+            style={{ maxWidth: '13rem' }}
+            value={activeStatusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            title="Show only the sites at one status"
+          >
+            <option value="">All site statuses</option>
+            {[...statusCounts].filter(([value]) => value !== '').map(([value, count]) => (
+              <option key={value} value={value}>{value} ({count})</option>
+            ))}
+            {statusCounts.has('') && <option value="__none__">No status ({statusCounts.get('')})</option>}
+          </select>
+        )}
+        {(search || activeStatusFilter) && <span className={styles.resultCount}>{filtered.length} results</span>}
         {sitesData.length > 0 && (
           <button
             type="button"
@@ -16448,6 +16622,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.): drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
             { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
             { key: 'ownership', label: 'Ownership (Owned / Leased)', required: false, hint: 'Whether the building is owned or leased. Values like "Owned"/"Leased" (plus common variants ("Own", "Owner-Occupied", "Tenant", "Leasehold", "O"/"L")) are folded onto the canonical labels; anything else is shown as-is so nothing is lost. A value that also names the lease shape - "suite", "floor", "multi-tenant", or "whole building", "single-tenant", "NNN" - is read as that, and the site is estimated on what the tenant holds instead of on the whole building.' },
+            { key: 'siteStatus', label: 'Site Status', required: false, hint: 'What is happening with the building - open, closed, sold, under construction, vacant. Leave it unmapped and the page keeps a Site Status column of its own that you fill in on the table; map it here to bring a status the file already carries. Values are folded onto the Site Status list (Dropdowns > Lists, which you can edit); anything else is kept as it came.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional: when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },

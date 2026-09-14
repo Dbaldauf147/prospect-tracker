@@ -2,6 +2,7 @@
 // shared spreadsheet so the same option vocabulary surfaces inside
 // the app — used by the Dropdowns reference tab.
 import { PE_STRATEGIES, ASSET_TYPES } from './enums.js';
+import { SITE_STATUS_OPTIONS } from '../utils/siteStatus.js';
 
 export const DROPDOWN_LISTS = [
   {
@@ -246,6 +247,15 @@ export const DROPDOWN_LISTS = [
     key: 'bfoTag',
     label: 'BFO Tag',
     options: ['#SUSUP', '#DATA', '#SUECO', '#SUESP', '#SUREN', '#SUDIG', '-'],
+  },
+  {
+    // What is happening with a building, on the Utility Lookup page's Site
+    // Status column. Editable here because no two estates word it the same
+    // way — nothing in the app branches on a particular value, so a list
+    // rewritten to a customer's own vocabulary works exactly as well.
+    key: 'siteStatus',
+    label: 'Site Status',
+    options: SITE_STATUS_OPTIONS,
   },
   {
     key: 'region',
