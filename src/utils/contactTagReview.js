@@ -177,13 +177,27 @@ export function planTagEdit(mode, chosenTags, current) {
  *
  * So a save is not "write what I have", it is "apply what I changed":
  *
- *   base      the tags the editor believed HubSpot held
- *   intended  the tags the editor now shows — base plus/minus the user's clicks
+ *   base      the tags the editor last SHOWED, in the editor's own terms
+ *   intended  the tags the editor shows now — base plus/minus the user's clicks
  *   current   what HubSpot actually holds, read immediately before the write
  *
  * The difference between `base` and `intended` is the user's intent; it is
  * applied to `current`, so a tag nobody touched survives whatever the editor
  * did or didn't know about it.
+ *
+ * `base` and `intended` must describe the SAME universe, and it is the
+ * editor's, not HubSpot's. A tag in `base` that `intended` does not carry is
+ * read as the user having un-ticked it, so anything an editor cannot
+ * represent must be missing from BOTH or the merge deletes it:
+ *
+ *   - Feed back the exact `intended` of the last accepted write, never the
+ *     merge's own result. The result can carry tags rescued off `current`
+ *     that the editor never showed and cannot have un-ticked; handing those
+ *     back as `base` makes the next click delete them, which is the bug this
+ *     whole function exists to stop wearing a different hat.
+ *   - A value the editor deliberately keeps out of its list (the contact
+ *     popup does this with the legacy "Met In Person" tag) must be kept out
+ *     of `base` too, or every click strips it.
  *
  * `current` undefined means the read failed or HubSpot has no such contact.
  * That is a skip, never a write: treating an unreadable contact as "has no

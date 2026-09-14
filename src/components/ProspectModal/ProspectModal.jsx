@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
+import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
@@ -954,6 +954,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     })) return;
     savedTagsRef.current = rawTags;
     setCheckedTags(checkedTagsFrom(rawTags));
+    editorBaseRef.current = editorViewOf(rawTags);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawTags, tagOptions]);
   const savedTagReview = metCid != null ? contactTagReview[metCid] : undefined;
@@ -1193,6 +1194,21 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return [...set, ...extraTags].join(';');
   }
 
+  // What this popup WOULD show for a given tag string: the vocabulary tags
+  // it ticks, plus the extras it carries through verbatim, in the shape
+  // buildTagsStringFrom produces.
+  //
+  // This is what mergeTagEdit's `base` has to be. HubSpot's own string is
+  // not: it carries the legacy "Met In Person" value, which this popup
+  // deliberately never puts in a list it saves - so handing the raw string
+  // back as `base` made every tag click read as "the user un-ticked Met In
+  // Person" and strip it. Same trap for anything else the popup can't show.
+  function editorViewOf(str) {
+    const parsed = String(str || '').split(';').map(t => t.trim()).filter(Boolean);
+    const extras = parsed.filter(t => !knownTagKeys.has(tagKey(t)) && t.toLowerCase() !== metLower);
+    return [...checkedTagsFrom(str), ...extras].join(';');
+  }
+
   // Tag writes: one per burst of clicks, one at a time, only the latest.
   //
   // dans_tags is a single string, so every click sends the WHOLE list — and
@@ -1209,6 +1225,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // The last tag string HubSpot accepted, so a refused write can put the
   // table back to what is actually saved rather than to a guess.
   const savedTagsRef = useRef(rawTags);
+  // What this popup last SHOWED, which is a different question and the one
+  // mergeTagEdit's `base` asks. It trails savedTagsRef on purpose: a merge
+  // can rescue tags off the live record that this popup never displayed,
+  // and feeding those back as `base` would have the next click in the burst
+  // delete them as though they had been un-ticked.
+  const editorBaseRef = useRef(editorViewOf(rawTags));
   // Signatures of the lists this popup has written, newest last, with when.
   // What makes a late prop echo recognisable as one of our own superseded
   // writes rather than as news — see the re-seed effect above.
@@ -1290,7 +1312,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     setTagsSaveStatus('Saving tag…');
     try {
       const current = await fetchLiveTags(cid);
-      const plan = mergeTagEdit({ base: savedTagsRef.current, intended: tagsStr, current });
+      // Save the legacy answer before this write destroys it.
+      //
+      // HubSpot dropped "Met In Person" from the dans_tags enumeration, so
+      // the API strips that value from EVERY contact write (see
+      // normalizeDansTagsForHubSpot) - it cannot be written back, and the
+      // tag-history restore refuses it for the same reason. For a contact
+      // whose local answer has never been set, that tag is the only record
+      // that they were ever met: the moment any tag click saves, they go
+      // from Yes to No and nothing says why.
+      //
+      // So read it off the live record and store it locally first. The Save
+      // button already does this (it persists the dropdown, which seeds off
+      // the same tag); the tag autosave is the path that didn't, and it is
+      // the one that fires on a click nobody thinks of as a save.
+      if (metCid != null && onSaveMetInPerson
+        && hasMetInPersonTag({ dans_tags: current })
+        && !normalizeMetState(contactMetInPerson?.[String(metCid)])) {
+        onSaveMetInPerson(metCid, MET_YES);
+      }
+      const plan = mergeTagEdit({ base: editorBaseRef.current, intended: tagsStr, current });
       if (plan.action === 'skip') {
         throw new Error("couldn't read this contact's current tags from HubSpot, so the change wasn't saved");
       }
@@ -1317,6 +1358,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         });
       } catch {}
       savedTagsRef.current = next;
+      // The list this popup SENT, not the merged result: `next` may carry
+      // tags rescued off the live record that this popup has never shown,
+      // and it must not be able to un-tick those on the next click.
+      editorBaseRef.current = tagsStr;
       // Remembered so the echo of this list, arriving through the contact
       // prop after a later click has moved on, is recognised as ours and
       // ignored rather than re-seeded from. Only the recent ones matter.
@@ -1403,6 +1448,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       queueDansTags(buildTagsStringFrom(set)).then(ok => {
         if (ok) return;
         applyCheckedTags(checkedTagsFrom(savedTagsRef.current));
+        editorBaseRef.current = editorViewOf(savedTagsRef.current);
       });
     }
     const map = { ...tagVerdictsRef.current };
