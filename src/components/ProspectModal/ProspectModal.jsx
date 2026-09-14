@@ -5628,6 +5628,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // Team Names, as set on each contact card. Page one's contact table
       // shows them where the phone column used to be, and page two's chart
       // groups by them - one reading of the field for both.
+      const contactNoteMap = settings.contactNotes || {};
+      // Still needed below: the Notes column replaced the team on page one,
+      // but page two's chart still buckets people by the team they are on.
       const contactTeams = settings.contactTeamNames || {};
       // What each person is actually called, from the Goes By field on
       // their card. Stored per contact like the team name is.
@@ -5659,7 +5662,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           name: contactDisplayName(c),
           title: c.jobtitle || '',
           email: c.email || '',
-          team: String(contactTeams[id] || '').trim(),
+          // The note on their contact card, read the same way the contact
+          // popup reads it: the one saved against the id, then whatever
+          // came across on the record itself.
+          note: String(
+            contactNoteMap[id] || c.notes || c.hs_content_membership_notes || c.message || '',
+          ).trim(),
           nickname: String(contactGoesBy[id] || '').trim(),
           // Their LinkedIn profile, for the link behind the name. Both
           // spellings of the field, the same two the popup's own "View on

@@ -215,8 +215,11 @@ function contactsTable({ shown, hidden }, linkId) {
   // firstname.lastname@company on the same domain, which is a column of
   // the page spent on something the reader can already guess - and the
   // name is a link to the person now, which is the thing they follow.
-  const widths = [CONTENT_WIDTH * 0.36, CONTENT_WIDTH * 0.38, CONTENT_WIDTH * 0.26];
-  const head = ['Name', 'Title', 'Team'].map((h, i) => cell(
+  // Notes take the widest of the three. A team name was two or three words
+  // and a note is a sentence, so the column that carries it has to be the
+  // one with room to set a sentence without wrapping to four lines.
+  const widths = [CONTENT_WIDTH * 0.30, CONTENT_WIDTH * 0.32, CONTENT_WIDTH * 0.38];
+  const head = ['Name', 'Title', 'Notes'].map((h, i) => cell(
     para([run(h.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 0 }),
     { width: widths[i], borders: { ...NO_BORDER, bottom: SE_BORDER } },
   ));
@@ -268,10 +271,10 @@ function contactsTable({ shown, hidden }, linkId) {
     return [
       cell(nameLines, { width: widths[0], fill, borders: edges }),
       cell(para([run(c.title || '-', { color: SE_SLATE, size: 18 })], { spaceAfter: 0 }), { width: widths[1], fill, borders: edges }),
-      // No team set reads as a dash, like every other blank on the page:
-      // the reader can tell "nobody has filed them" from a column the
-      // export dropped.
-      cell(para([run(c.team || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[2], fill, borders: edges }),
+      // No note reads as a dash, like every other blank on the page: the
+      // reader can tell "nobody has written anything down" from a column
+      // the export dropped.
+      cell(para([run(c.note || '-', { color: SE_SLATE, size: 16 })], { spaceAfter: 0 }), { width: widths[2], fill, borders: edges }),
     ];
   });
   const more = hidden
