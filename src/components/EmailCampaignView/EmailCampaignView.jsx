@@ -36,6 +36,10 @@ import { followUpInfo, followUpLabel } from '../../utils/campaignFollowUp';
 import {
   contactOutreach, canEmailContact, outreachCounts, outreachPatch, CONTACT_HOLD_DAYS,
 } from '../../utils/campaignContactHold';
+import {
+  findContactRows, lookupSummary, lookupSuggestions, LOOKUP_MIN_CHARS,
+} from '../../utils/campaignContactLookup';
+import { contactName } from '../../utils/contactSuggest';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -94,6 +98,18 @@ const CONTACT_COLUMNS = [
   },
 ];
 const CONTACT_COLS_LOCKED = ['email'];
+// How each Status badge looks. Module-level because two tables print it now
+// (a campaign's roster, and the contact lookup at the top of the page) and a
+// "Replied" that is green in one and grey in the other is a bug nobody
+// reports and everybody misreads. The words themselves come from
+// campaignExport.contactStatusLabel, for the same reason.
+const STATUS_TONE = {
+  Replied: { background: '#DCFCE7', color: '#166534' },
+  Bounced: { background: '#FEE2E2', color: '#991B1B' },
+  'Out of Office': { background: '#FEF3C7', color: '#92400E' },
+  'No Reply': { background: '#F3F4F6', color: '#6B7280' },
+  'Not Sent': { background: '#FEF3C7', color: '#92400E' },
+};
 // What the Outreach column filters on: the words its own dropdown shows, so
 // the box under the heading offers back what the cells above it read.
 const OUTREACH_FILTER_LABEL = { open: 'Contact', hold: 'On hold', avoid: 'Avoid' };
@@ -219,6 +235,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   const [newSubject, setNewSubject] = useState('');
   const [newEventUrl, setNewEventUrl] = useState('');
   const [creating, setCreating] = useState(false); // manual create in flight
+  // What has been typed into the contact lookup at the top of the page: an
+  // address, or any part of one. It searches ACROSS saved campaigns and
+  // changes nothing — the campaign below it stays open while you look
+  // somebody up, so a lookup is never a navigation you have to come back
+  // from.
+  const [lookupQuery, setLookupQuery] = useState('');
   // Draft for the "add an email to this campaign" input. Manually-added
   // addresses are the only way contacts enter a campaign's fixed list.
   const [addEmail, setAddEmail] = useState('');
@@ -1255,6 +1277,36 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     [displayResults?.contacts],
   );
 
+  // ---- Contact lookup ----------------------------------------------------
+  // Every campaign one address is on, worked out over the saved campaigns
+  // this page already holds. No fetch: the rosters are in memory, so the
+  // answer appears as it is typed.
+  const lookupRows = useMemo(
+    () => findContactRows(savedCampaigns, lookupQuery),
+    [savedCampaigns, lookupQuery],
+  );
+  const lookupStats = useMemo(() => lookupSummary(lookupRows), [lookupRows]);
+  // The HubSpot contact behind an address, for the names and employers a
+  // roster row doesn't carry.
+  const hubspotByEmail = useMemo(() => {
+    const map = new Map();
+    for (const c of hubspotContacts) {
+      const email = normEmail(c?.email);
+      if (!email || map.has(email)) continue;
+      map.set(email, c);
+    }
+    return map;
+  }, [hubspotContacts]);
+  // Who the lookup box offers: only people actually on a campaign, since a
+  // search for anybody else has one answer and it is "no rows".
+  const lookupContacts = useMemo(
+    () => lookupSuggestions(savedCampaigns, (email) => {
+      const hit = hubspotByEmail.get(email);
+      return hit ? { name: contactName(hit), company: hit.company } : null;
+    }),
+    [savedCampaigns, hubspotByEmail],
+  );
+
   const companyByEmail = useMemo(() => {
     const map = new Map();
     for (const c of hubspotContacts) {
@@ -1666,13 +1718,6 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         // the same words and the two must not drift; the badge here only
         // decides how each of them looks.
         const label = contactStatusLabel(c);
-        const STATUS_TONE = {
-          Replied: { background: '#DCFCE7', color: '#166534' },
-          Bounced: { background: '#FEE2E2', color: '#991B1B' },
-          'Out of Office': { background: '#FEF3C7', color: '#92400E' },
-          'No Reply': { background: '#F3F4F6', color: '#6B7280' },
-          'Not Sent': { background: '#FEF3C7', color: '#92400E' },
-        };
         const STATUS_TITLE = {
           Bounced: 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
           'Out of Office': c.oooSubject
@@ -1963,6 +2008,129 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
             The campaign starts empty - add the contacts it tracks with “Add an email to this campaign…”. The subject lines are only used to look up whether those addresses were sent or replied - one per row, and mail matching any of them counts.
           </div>
+        </div>
+      )}
+
+      {/* Find a contact.
+          The search above answers "who got this campaign". This answers the
+          other question, the one that turns up on a call: what has this
+          person already been sent? It reads the saved campaigns already in
+          memory, so the rows appear as the address is typed, and it changes
+          nothing - the campaign open below stays open. */}
+      {savedCampaigns.length > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {/* Type any part of a name, an address or a company: the box
+                offers the people who are on a campaign, with the HubSpot
+                name and employer where this browser has them cached. It is
+                still a text box, so a half-remembered local part or a bare
+                "@acme.com" searches as typed. */}
+            <ContactSuggestInput
+              value={lookupQuery}
+              onChange={setLookupQuery}
+              contacts={lookupContacts}
+              onPick={(c) => setLookupQuery(c.email)}
+              placeholder="Find a contact across campaigns by email, name or company…"
+              emptyHint="Nobody on a campaign matches. Type an address to search it anyway."
+              style={{ padding: '0.5rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit' }}
+            />
+            {lookupQuery.trim() && (
+              <button
+                onClick={() => setLookupQuery('')}
+                title="Clear the contact lookup"
+                style={{
+                  padding: '0.5rem 0.9rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                  fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >Clear</button>
+            )}
+            {lookupQuery.trim().length >= LOOKUP_MIN_CHARS && lookupRows.length > 0 && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                <strong style={{ color: 'var(--color-text)' }}>{lookupStats.campaigns}</strong> campaign{lookupStats.campaigns === 1 ? '' : 's'}
+                <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                <strong style={{ color: 'var(--color-text)' }}>{lookupStats.sent}</strong> sent
+                <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                <strong style={{ color: '#10B981' }}>{lookupStats.replies}</strong> {lookupStats.replies === 1 ? 'reply' : 'replies'}
+              </span>
+            )}
+          </div>
+
+          {lookupQuery.trim().length >= LOOKUP_MIN_CHARS && (
+            lookupRows.length === 0 ? (
+              <div style={{ marginTop: '0.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: '8px', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                No saved campaign has “{lookupQuery.trim()}” on its roster. Only the campaigns saved here are searched, and only the addresses added to them.
+              </div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', border: '1px solid var(--color-border)', borderRadius: '8px', maxHeight: '340px', overflowY: 'auto', overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 1 }}>
+                      {['Campaign', 'Sent To', 'Sent Date', 'Follow-up', 'Status', 'Outreach', 'Replied By', 'Reply Date', 'Event Status', 'Notes'].map(h => (
+                        <th key={h} style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lookupRows.map((row) => {
+                      const c = row.contact;
+                      const status = contactStatusLabel(c);
+                      const live = contactOutreach(c);
+                      const followUp = followUpLabel(c);
+                      return (
+                        <tr key={`${row.campaignIndex}-${row.contactIndex}`} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                          <td style={{ padding: '0.4rem 0.6rem', maxWidth: 260 }}>
+                            {/* The campaign, and the way into it: opening it
+                                from here is the next thing anybody wants
+                                after finding the row. */}
+                            <button
+                              onClick={() => viewCampaign(row.campaignIndex)}
+                              title={`Open “${row.campaign.title || primarySubject(row.campaign) || '(untitled)'}”`}
+                              style={{
+                                background: 'none', border: 'none', padding: 0, textAlign: 'left',
+                                color: 'var(--color-accent)', fontSize: '0.78rem', fontWeight: 600,
+                                fontFamily: 'inherit', cursor: 'pointer', textDecoration: 'underline',
+                              }}
+                            >{row.campaign.title || primarySubject(row.campaign) || '(untitled)'}</button>
+                            {isCampaignPaused(row.campaign) && (
+                              <span style={{ marginLeft: '0.35rem', padding: '1px 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E' }} title={`Paused until ${fmtDate(campaignPauseUntil(row.campaign))}`}>Paused</span>
+                            )}
+                            {!isCampaignActive(row.campaign) && (
+                              <span style={{ marginLeft: '0.35rem', padding: '1px 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#F3F4F6', color: '#6B7280' }} title="No activity on this campaign for a while">Inactive</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '0.4rem 0.6rem', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{fmtDate(c.sentDate)}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                            {followUp || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
+                          </td>
+                          <td style={{ padding: '0.4rem 0.6rem' }}>
+                            <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap', ...(STATUS_TONE[status] || {}) }}>{status}</span>
+                          </td>
+                          <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
+                            {live === 'open'
+                              ? <span style={{ color: 'var(--color-text-muted)' }}>Contact</span>
+                              : (
+                                <span
+                                  title={live === 'avoid'
+                                    ? 'Marked Avoid on this campaign: left out of every draft it queues.'
+                                    : `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ''} on this campaign.`}
+                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, ...(live === 'avoid' ? { background: '#FEE2E2', color: '#991B1B' } : { background: '#FEF3C7', color: '#92400E' }) }}
+                                >{live === 'avoid' ? 'Avoid' : 'On hold'}</span>
+                              )}
+                          </td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.repliedBy || ''}>{c.repliedBy || '-'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{c.replied ? fmtDate(c.replyDate) : '-'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{eventStatusLabel(c.eventStatus) || '-'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.notes || ''}>{c.notes || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
         </div>
       )}
 
