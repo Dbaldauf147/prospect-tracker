@@ -387,11 +387,6 @@ function servicesBullets({ groups, hidden, mode }) {
   return grid + more;
 }
 
-const footerRule = () => para(
-  [run('Schneider Electric - generated from Prospect Tracker. Internal use.', { color: SE_MUTED, size: 13 })],
-  { spaceBefore: 110, rule: SE_BORDER },
-);
-
 /**
  * The running head: the green band, as its own document part.
  *
@@ -431,9 +426,6 @@ export function onePagerDocumentXml(model, linkId = null) {
     servicesBullets(model.services),
     model.notes ? heading('Notes') : '',
     model.notes ? para([run(model.notes, { color: SE_SLATE, size: 18 })]) : '',
-    // The footer rule is a plain paragraph rather than a real Word footer
-    // part, so it sits at the end of the body and closes the page there.
-    footerRule(),
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
     //
