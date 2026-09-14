@@ -9,6 +9,7 @@ import { OppImportModal } from './OppImportModal';
 import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
+import { rowSearchText, searchable } from '../../utils/accountPotentialSearch';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
@@ -508,7 +509,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     || (effectiveCounts?.[u.unit] !== '' && effectiveCounts?.[u.unit] != null)
   ), [units, totals.unitsUsed, potential, effectiveCounts]);
 
-  const term = search.trim().toLowerCase();
+  const term = searchable(search.trim());
   // Every service as a table row, before the search box has its say.
   // Lead services only. An auto-added service is counted inside its lead's
   // figure, and a row of its own would count it a second time.
@@ -524,7 +525,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
       const est = allEstimates.get(name);
       const bundle = potential.bundleOf.get(name);
       const ownUnits = parseMoney(serviceUnits[name]);
-      return {
+      const row = {
         id: name,
         name,
         serviceBucket: bucket,
@@ -573,14 +574,15 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         _pinned: !!pinnedNames?.has(name),
         _rank: potential.rank.get(name) ?? null,
       };
+      // Everything the row prints, as the one string the search box reads:
+      // the table is asked about rates, counts and fees as much as it is
+      // asked about names, and until this it could only answer the names.
+      return { ...row, _search: rowSearchText(row, bases) };
     }),
   [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
 
   const rows = useMemo(
-    () => (term
-      ? allRows.filter(r => [r.name, r.serviceBucket, r.basisLabel, r.notes]
-        .some(v => String(v).toLowerCase().includes(term)))
-      : allRows),
+    () => (term ? allRows.filter(r => r._search.includes(term)) : allRows),
     [allRows, term],
   );
 
@@ -860,7 +862,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         <input
           type="text"
           className={styles.searchInput}
-          placeholder="Search services, buckets, pricing notes…"
+          placeholder="Search services, buckets, rates, units, fees…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
