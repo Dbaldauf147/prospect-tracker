@@ -370,6 +370,24 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       : 'Tick if this service is delivered at no charge. It prices to $0 instead of reading as unpriced, and ticking clears whatever is on its rate card.';
   }
 
+  // A rate on a row that charges nothing is struck through: it is still
+  // the standing rate, and it is still what the service would cost if it
+  // came back, but nothing bills it today. Only a row marked by its bucket
+  // reaches this in practice — ticking the box by hand clears the card —
+  // but an older entry whose rate survived the mark reads the same way,
+  // which is exactly what the estimate does with it.
+  function rateDisplay(row, text) {
+    if (!text || !row.noFee) return text;
+    return <s className={styles.pricingRateDormant}>{text}</s>;
+  }
+
+  // …and the tooltip says it in words, ahead of whatever the column would
+  // normally explain about the rate.
+  function rateTitle(row, title) {
+    if (!row.noFee) return title;
+    return `Not charged: this service is no fee, so it prices to $0 whatever the rate card says. ${title}`;
+  }
+
   // The same write on one service, which is what the No Fee column and the
   // pricing panel's checkbox both make. Marking clears that row's rate card
   // rather than sitting on top of it, so a row carrying rates asks first —
@@ -497,14 +515,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           render: (row) => (
             <NumberCell
               value={row.rate}
-              display={row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate))}
+              display={rateDisplay(row, row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate)))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={row.basis
+              title={rateTitle(row, row.basis
                 ? (row._kind === 'percent'
                   ? 'Percentage of the deal size. On its own it prices one figure; add a High Rate to price a range.'
                   : `Dollars — ${row.basisLabel.toLowerCase()}. On its own it prices one figure; add a High Rate to price a range.`)
-                : 'Pick a pricing basis first'}
+                : 'Pick a pricing basis first')}
               onCommit={(v) => savePricingField(row.name, 'rate', v)}
             />
           ),
@@ -518,16 +536,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           render: (row) => (
             <NumberCell
               value={row.rateHigh}
-              display={row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh))}
+              display={rateDisplay(row, row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh)))}
               placeholder={row._kind === 'percent' ? '%' : '$'}
               step="0.01"
-              title={!row.basis
+              title={rateTitle(row, !row.basis
                   ? 'Pick a pricing basis first'
                   : row.rate === null
                     ? 'Set the Low Rate first — a range needs both ends.'
                     : row.rateHigh === null
                       ? 'Optional. Type the top of the rate range and every fee for this service reads as a range; leave it blank for a single figure.'
-                      : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`}
+                      : `Top of the range: this service prices between ${formatRate({ basis: row.basis, rate: row.rate }, bases)} and ${formatRate({ basis: row.basis, rate: row.rateHigh }, bases)}. Clear it to go back to one figure.`)}
               onCommit={(v) => savePricingField(row.name, 'rateHigh', v)}
             />
           ),
