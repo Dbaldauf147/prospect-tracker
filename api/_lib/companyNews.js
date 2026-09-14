@@ -1,7 +1,8 @@
 // Acquisition-news digest for companies the user has flagged on the
-// company popup ("Track acquisition news"). Each flagged company gets one
-// Claude web-search pass looking for acquisitions *that company made* in
-// the digest window; the results are grouped into an HTML email.
+// company popup ("Track acquisition news"). Each flagged company is looked
+// up in public news feeds for the digest window, and Claude reads the
+// headlines that come back to pick out acquisitions *that company made*;
+// the results are grouped into an HTML email.
 //
 // The focus is deliberately narrow — who bought whom — because that's the
 // signal that creates an opp: a PE firm adding a platform or a bolt-on
@@ -13,6 +14,7 @@
 
 import { sendEmail } from './mailer.js';
 import { companyNewsBudgetMs } from './researchBudget.js';
+import { fetchHeadlines } from './newsFeeds.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -109,13 +111,18 @@ export function formatWindow(since, until) {
 }
 
 // ---- Claude research ----------------------------------------------------
-const NEWS_SYSTEM_PROMPT = `You are an M&A research assistant. You find acquisitions that a specific company ANNOUNCED or COMPLETED inside a date window, using web search.
+// Two-stage, and the split is the point. A news feed says what was
+// published and when (see newsFeeds.js); Claude reads those headlines and
+// says which of them are this company buying something. Dates, URLs and
+// publishers come from the feed, so the model can no longer invent one —
+// and a company whose feed is quiet costs nothing at all.
+const NEWS_SYSTEM_PROMPT = `You are an M&A research assistant. You are given a company name and a numbered list of news headlines about it, already restricted to one date window. Decide which headlines report an acquisition THAT COMPANY MADE.
 
-Scope — include ONLY these:
+Count as a qualifying acquisition:
 - The company acquiring another company, business unit, or asset portfolio.
 - For a private equity / investment firm: new platform investments, add-on / bolt-on acquisitions made by its portfolio companies, take-privates, and majority recapitalizations. An add-on counts even when the buyer of record is the portfolio company, as long as the firm is named as the sponsor.
 
-Exclude ALL of the following, even when reported in the same article:
+Do NOT count, even when the headline is about the company:
 - The company itself being acquired, or a stake in it being sold.
 - Minority investments with no control, venture rounds, and funding rounds the company merely participated in.
 - Fund closes, capital raises, dry powder announcements.
@@ -123,7 +130,159 @@ Exclude ALL of the following, even when reported in the same article:
 - Earnings, leadership changes, expansions, partnerships, product launches, litigation.
 - Rumoured, "exploring", "in talks", or unconfirmed deals.
 
-Date rule: the announcement date must fall inside the window given by the user. A deal announced before the window does not belong, even if it closed inside it. If you cannot establish an announcement date inside the window from a source, leave the deal out.
+Work only from the headlines given. Do not add deals you remember from elsewhere — a deal that is not in the list does not go in the answer. When several headlines cover the same deal, return the clearest one only.
+
+Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
+{
+  "deals": [
+    {
+      "index": the number of the headline this deal comes from,
+      "target": "name of the company/asset acquired",
+      "buyer": "the acquiring entity — the portfolio company for an add-on, otherwise the company itself",
+      "dealType": one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition",
+      "sector": "short sector label for the target, e.g. Industrial Services, or empty string",
+      "sites": "site/facility count or footprint if the headline reports one, else empty string",
+      "value": "reported deal value if disclosed, e.g. \\"$450M\\", else empty string",
+      "summary": "one sentence, max 220 characters, on what was bought and why"
+    }
+  ]
+}
+
+If none of the headlines report an acquisition the company made, return {"deals": []}.`;
+
+// The digest's own errors, so callers can tell "this company had a bad day"
+// from "the whole run is dead". A wrong or unfunded API key is the second
+// kind: it fails identically for every remaining company, and the run that
+// prompted this rewrite spent fourteen slots discovering that fourteen times.
+export class ResearchHaltedError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = 'ResearchHaltedError';
+    this.reason = reason;
+  }
+}
+
+// 401/403 are a bad key; a 400 mentioning credit is an unfunded account.
+// Both are account-wide and neither improves by asking again.
+export function haltReasonFor(status, body) {
+  const text = String(body || '');
+  if (status === 401 || status === 403) return 'Anthropic API key rejected — check ANTHROPIC_API_KEY';
+  if (status === 400 && /credit balance is too low/i.test(text)) {
+    return 'Anthropic account is out of credit — top up at console.anthropic.com/settings/billing';
+  }
+  return null;
+}
+
+// One classification pass over headlines we already hold. No web_search
+// tool: the searching is done, this is a read. Effort is low because
+// picking acquisitions out of labelled headlines is not a reasoning task,
+// and the digest fans this out across every tracked company.
+async function classifyHeadlines(entry, items, { signal }) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { deals: [], error: 'ANTHROPIC_API_KEY not configured' };
+
+  const list = items
+    .map((it, i) => `${i}. [${isoDate(it.publishedAt)}] ${it.title}${it.source ? ` (${it.source})` : ''}`)
+    .join('\n');
+
+  const peHint = entry.isPe
+    ? `\n"${entry.company}" is a private equity firm, so add-ons announced by its portfolio companies count when it is named as the sponsor.`
+    : '';
+
+  const userPrompt = `Company: "${entry.company}"${peHint}
+
+Headlines:
+${list}
+
+Return the JSON object as specified.`;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-5',
+      // The answer is a few hundred tokens, but thinking counts toward
+      // max_tokens too — leave room, or a truncated reply comes back
+      // looking like malformed JSON rather than like a cut-off one.
+      max_tokens: 8000,
+      output_config: { effort: 'low' },
+      system: NEWS_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
+    signal,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    const halt = haltReasonFor(resp.status, errText);
+    if (halt) throw new ResearchHaltedError(halt);
+    return { deals: [], error: `Claude API error ${resp.status}: ${errText.slice(0, 300)}` };
+  }
+
+  const data = await resp.json();
+  // A safety decline arrives as HTTP 200 with stop_reason "refusal" and no
+  // usable content, so check it before parsing.
+  if (data.stop_reason === 'refusal') {
+    return { deals: [], error: 'Claude declined this research request' };
+  }
+  if (data.stop_reason === 'max_tokens') {
+    return { deals: [], error: 'Answer was cut off before it finished' };
+  }
+
+  const text = (data.content || [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return { deals: [], error: 'No JSON in response' };
+
+  let parsed;
+  try { parsed = JSON.parse(match[0]); }
+  catch { return { deals: [], error: 'Malformed JSON in response' }; }
+
+  return { deals: dealsFromHeadlines(parsed.deals, items), error: null };
+}
+
+// One research pass for one company. Returns { deals, error } — a failure
+// on one company must never sink the whole digest, so errors come back as
+// data rather than thrown. The exception is ResearchHaltedError, which is
+// meant to stop the run and is deliberately rethrown.
+export async function researchCompanyAcquisitions(entry, since, until, { signal } = {}) {
+  const { items, error: feedError } = await fetchHeadlines(entry, since, until, { signal });
+
+  if (feedError) {
+    // The feeds are the cheap path, not the only one. If neither host can
+    // be reached the company still deserves an answer, so fall back to the
+    // old web-search pass for it — expensive, but better than a blank.
+    return researchViaWebSearch(entry, since, until, { signal, feedError });
+  }
+
+  // A quiet feed is an answer, and answering it costs nothing. This is
+  // where nearly all of the old bill went.
+  if (items.length === 0) return { deals: [], error: null };
+
+  try {
+    return await classifyHeadlines(entry, items, { signal });
+  } catch (err) {
+    if (err instanceof ResearchHaltedError) throw err;
+    if (err?.name === 'AbortError') return { deals: [], error: 'Research timed out' };
+    return { deals: [], error: String(err?.message || err).slice(0, 200) };
+  }
+}
+
+// The pre-feed implementation, kept for the case the feeds can't answer:
+// Claude with the web-search tool, finding and dating the deals itself.
+// Everything that made it a poor default still applies — it is slow, it
+// costs many times a classification call, and its dates and URLs are the
+// model's rather than a source's — so it runs only as a fallback.
+const WEB_SEARCH_SYSTEM_PROMPT = `${NEWS_SYSTEM_PROMPT.split('Work only from the headlines given.')[0]}
+Search the web to find these deals. The announcement date must fall inside the window given by the user; a deal announced before the window does not belong, even if it closed inside it. If you cannot establish an announcement date inside the window from a source, leave the deal out.
 
 Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
 {
@@ -131,12 +290,12 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
     {
       "target": "name of the company/asset acquired",
       "announcedOn": "YYYY-MM-DD",
-      "buyer": "the acquiring entity — the portfolio company for an add-on, otherwise the company itself",
+      "buyer": "the acquiring entity",
       "dealType": one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition",
-      "sector": "short sector label for the target, e.g. Industrial Services",
+      "sector": "short sector label for the target",
       "sites": "site/facility count or footprint if reported, else empty string",
-      "value": "reported deal value if disclosed, e.g. \\"$450M\\", else empty string",
-      "summary": "one sentence, max 220 characters, on what the target does and why it was bought",
+      "value": "reported deal value if disclosed, else empty string",
+      "summary": "one sentence, max 220 characters",
       "sourceTitle": "publication or headline",
       "sourceUrl": "direct link to the article"
     }
@@ -145,10 +304,7 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
 
 Every deal MUST have a sourceUrl you actually found via search. If there are no qualifying acquisitions in the window, return {"deals": []}. Never invent a deal, a date, or a URL.`;
 
-// One research pass for one company. Returns { deals, error } — a failure
-// on one company must never sink the whole digest, so errors come back as
-// data rather than thrown.
-export async function researchCompanyAcquisitions(entry, since, until, { signal } = {}) {
+export async function researchViaWebSearch(entry, since, until, { signal, feedError } = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { deals: [], error: 'ANTHROPIC_API_KEY not configured' };
 
@@ -172,10 +328,7 @@ Search the web before answering — do not answer from memory alone. Return the 
       body: JSON.stringify({
         model: 'claude-opus-5',
         max_tokens: 8000,
-        system: NEWS_SYSTEM_PROMPT,
-        // A PE firm's add-ons are spread across its portfolio companies,
-        // so it needs more searches than an operating company whose deals
-        // all carry its own name.
+        system: WEB_SEARCH_SYSTEM_PROMPT,
         tools: [{
           type: 'web_search_20260209',
           name: 'web_search',
@@ -188,12 +341,12 @@ Search the web before answering — do not answer from memory alone. Return the 
 
     if (!resp.ok) {
       const errText = await resp.text();
+      const halt = haltReasonFor(resp.status, errText);
+      if (halt) throw new ResearchHaltedError(halt);
       return { deals: [], error: `Claude API error ${resp.status}: ${errText.slice(0, 300)}` };
     }
 
     const data = await resp.json();
-    // A safety decline arrives as HTTP 200 with stop_reason "refusal" and
-    // no usable content, so check it before parsing.
     if (data.stop_reason === 'refusal') {
       return { deals: [], error: 'Claude declined this research request' };
     }
@@ -211,20 +364,74 @@ Search the web before answering — do not answer from memory alone. Return the 
     try { parsed = JSON.parse(match[0]); }
     catch { return { deals: [], error: 'Malformed JSON in response' }; }
 
-    return { deals: normalizeDeals(parsed.deals, since, until), error: null };
+    // Flag the fallback rather than reporting it as this company's error:
+    // the search ran and answered, and filing "found nothing" under
+    // "search failed" is the exact conflation this digest keeps relapsing
+    // into. The email notes it in one line at the bottom instead, so a
+    // digest quietly falling back every week is still visible.
+    return { deals: normalizeDeals(parsed.deals, since, until), error: null, viaWebSearch: true, feedError };
   } catch (err) {
+    if (err instanceof ResearchHaltedError) throw err;
     if (err?.name === 'AbortError') return { deals: [], error: 'Research timed out' };
     return { deals: [], error: String(err?.message || err).slice(0, 200) };
   }
 }
 
-// Keep only deals that carry a target, a source URL, and an announcement
-// date inside the window. The date check is repeated here because the
-// model occasionally returns a well-sourced deal from just outside it,
-// and a digest that quietly widens its own window is worse than a short one.
-function normalizeDeals(raw, since, until) {
+const DEAL_TYPES = ['Platform', 'Add-on', 'Take-private', 'Asset purchase', 'Acquisition'];
+const str = (v, max) => String(v ?? '').trim().slice(0, max);
+
+function baseDeal(d) {
+  const dealType = str(d.dealType, 40);
+  return {
+    target: str(d.target, 200),
+    buyer: str(d.buyer, 200),
+    dealType: DEAL_TYPES.includes(dealType) ? dealType : 'Acquisition',
+    sector: str(d.sector, 80),
+    sites: str(d.sites, 60),
+    value: str(d.value, 40),
+    summary: str(d.summary, 220),
+  };
+}
+
+// Turn the classifier's answer back into deals, taking every fact it could
+// have got wrong — the date, the link, the publication — from the feed item
+// it pointed at rather than from the model.
+export function dealsFromHeadlines(raw, items) {
   if (!Array.isArray(raw)) return [];
-  const str = (v, max) => String(v ?? '').trim().slice(0, max);
+
+  const out = [];
+  const seen = new Set();
+  for (const d of raw) {
+    if (!d || typeof d !== 'object') continue;
+    const i = Number(d.index);
+    // An index outside the list means the model answered about a deal it
+    // was not shown, which is exactly what feeding it headlines is meant
+    // to prevent. Drop it rather than guess which item was meant.
+    if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
+    const item = items[i];
+    const deal = baseDeal(d);
+    if (!deal.target) continue;
+
+    const key = `${deal.target.toLowerCase()}|${isoDate(item.publishedAt)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    out.push({
+      ...deal,
+      announcedOn: isoDate(item.publishedAt),
+      sourceTitle: item.source || item.title.slice(0, 200) || 'Source',
+      sourceUrl: item.link,
+    });
+  }
+  out.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
+  return out.slice(0, 25);
+}
+
+// Keep only deals that carry a target, a source URL, and an announcement
+// date inside the window. Used by the web-search fallback, where all three
+// come from the model and none of them can be trusted on sight.
+export function normalizeDeals(raw, since, until) {
+  if (!Array.isArray(raw)) return [];
   // Compare on the calendar day so a deal announced on the window's first
   // or last day survives the timestamp-vs-date mismatch.
   const lo = isoDate(since);
@@ -234,29 +441,23 @@ function normalizeDeals(raw, since, until) {
   const seen = new Set();
   for (const d of raw) {
     if (!d || typeof d !== 'object') continue;
-    const target = str(d.target, 200);
+    const deal = baseDeal(d);
     const sourceUrl = str(d.sourceUrl || d.url, 500);
     const announcedOn = str(d.announcedOn, 10);
-    if (!target || !sourceUrl) continue;
+    if (!deal.target || !sourceUrl) continue;
     if (!/^https?:\/\//i.test(sourceUrl)) continue;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(announcedOn)) continue;
     if (announcedOn < lo || announcedOn > hi) continue;
 
     // The same deal often surfaces from two outlets; key on the target and
     // date so the email lists it once.
-    const key = `${target.toLowerCase()}|${announcedOn}`;
+    const key = `${deal.target.toLowerCase()}|${announcedOn}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
     out.push({
-      target,
+      ...deal,
       announcedOn,
-      buyer: str(d.buyer, 200),
-      dealType: str(d.dealType, 40) || 'Acquisition',
-      sector: str(d.sector, 80),
-      sites: str(d.sites, 60),
-      value: str(d.value, 40),
-      summary: str(d.summary, 220),
       sourceTitle: str(d.sourceTitle, 200) || 'Source',
       sourceUrl,
     });
@@ -274,14 +475,16 @@ function normalizeDeals(raw, since, until) {
 // names every single run, because the list order never changed.
 //
 // So: a small worker pool instead. The cap stays low on purpose — the risk
-// that motivated the sequential version (a burst of parallel web searches
+// that motivated the sequential version (a burst of parallel requests
 // tripping Anthropic's rate limit) is real, but it is no longer fatal: a 429
 // comes back through researchCompanyAcquisitions as that one company's error
 // and the rest of the digest still lands.
 const RESEARCH_CONCURRENCY = 4;
 
 // No single company may spend more than this, however much budget is left.
-// Without it one slow firm can still consume an entire run.
+// Without it one slow firm can still consume an entire run. A feed lookup
+// plus a classification call is a few seconds; the ceiling exists for the
+// web-search fallback, which is the only thing here that can approach it.
 const PER_COMPANY_MS = 45_000;
 
 // Below this there isn't time for a search loop to finish, so don't start
@@ -297,6 +500,12 @@ export async function researchAll(companies, since, until, {
   const deadline = Date.now() + budgetMs;
   const results = new Array(companies.length);
   let next = 0;
+  // Set once a company hits an account-wide failure — no key, a rejected
+  // key, an empty credit balance. Every company after it would fail the
+  // same way, so the run stops instead of spending its remaining slots
+  // rediscovering the same fact twenty times over and burying it in a list
+  // of per-company errors.
+  let halted = null;
 
   // Workers pull indices in order and the deadline only moves one way, so
   // the companies actually attempted are always a prefix of the list. The
@@ -307,6 +516,13 @@ export async function researchAll(companies, since, until, {
       if (i >= companies.length) return;
       const entry = companies[i];
 
+      // A halted run leaves the rest unsearched, not "searched and empty":
+      // the cursor must not advance past companies nobody looked at.
+      if (halted) {
+        results[i] = { ...entry, deals: [], error: halted, skipped: true, halted: true };
+        continue;
+      }
+
       const remaining = deadline - Date.now();
       if (remaining < MIN_SLICE_MS) {
         results[i] = { ...entry, deals: [], error: null, skipped: true };
@@ -316,9 +532,14 @@ export async function researchAll(companies, since, until, {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), Math.min(remaining, PER_COMPANY_MS));
       try {
-        const { deals, error } = await research(entry, since, until, { signal: controller.signal });
-        results[i] = { ...entry, deals, error, skipped: false };
+        const { deals, error, viaWebSearch } = await research(entry, since, until, { signal: controller.signal });
+        results[i] = { ...entry, deals, error, skipped: false, viaWebSearch: !!viaWebSearch };
       } catch (err) {
+        if (err instanceof ResearchHaltedError) {
+          halted = err.reason;
+          results[i] = { ...entry, deals: [], error: halted, skipped: true, halted: true };
+          continue;
+        }
         // researchCompanyAcquisitions answers with an error rather than
         // throwing, but a hole in `results` would crash the email builder
         // and lose the whole digest, so don't rely on that.
@@ -401,7 +622,9 @@ function companySection(result) {
        </table>`
     : `<div style="color:#94A3B8;font-size:13px;padding:6px 0">
          ${result.skipped
-           ? 'Not searched this run — the digest ran out of time before reaching it. It moves to the front of the queue next run.'
+           ? (result.halted
+               ? 'Not searched — the run stopped before reaching it.'
+               : 'Not searched this run — the digest ran out of time before reaching it. It moves to the front of the queue next run.')
            : result.error
              ? `Couldn't be researched: ${escapeHtml(result.error)}`
              : 'No acquisitions announced in this window.'}
@@ -445,29 +668,56 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
 
   const searchedEmpty = withoutDeals.filter((r) => !r.skipped && !r.error);
   const failed = withoutDeals.filter((r) => !r.skipped && r.error);
-  const notSearched = withoutDeals.filter((r) => r.skipped);
+  const notSearched = withoutDeals.filter((r) => r.skipped && !r.halted);
+  const blocked = withoutDeals.filter((r) => r.halted);
 
   const quietList = [
     quiet('No acquisitions found', searchedEmpty),
     quiet('Search failed', failed, (r) => ` — ${escapeHtml(String(r.error).slice(0, 160))}`),
     quiet('Not searched this run — first in line next run', notSearched),
+    quiet('Not searched — the run stopped before reaching them', blocked),
   ].join('');
+
+  // An account-wide failure is not a per-company footnote. Twenty-one
+  // firms each printing the same truncated billing error is how a digest
+  // reports "nothing is running" as if it were news, so say it once, at
+  // the top, in the words that name the fix.
+  const fellBack = results.filter((r) => r.viaWebSearch);
+  const haltReason = results.find((r) => r.halted)?.error;
+  const haltBanner = haltReason
+    ? `<div style="margin:0 0 18px;padding:12px 14px;border-radius:6px;background:#FEF2F2;border:1px solid #FCA5A5">
+         <div style="color:#991B1B;font-size:13px;font-weight:700;margin-bottom:3px">Research stopped early</div>
+         <div style="color:#7F1D1D;font-size:13px;line-height:1.5">
+           ${escapeHtml(haltReason)}. No further companies were searched, so this digest is incomplete —
+           the ones it missed are first in line once that is fixed.
+         </div>
+       </div>`
+    : '';
 
   return `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:0 auto;padding:8px">
       <h2 style="color:#009530;margin:0 0 4px;font-size:20px">Company Acquisition News</h2>
       <div style="color:#64748B;font-size:12px;margin:0 0 18px">
         ${escapeHtml(formatWindow(since, until))} ·
-        ${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} across ${withDeals.length} of ${searchedCount} searched${searchedCount < results.length ? ` (${results.length} tracked)` : ''}
+        ${totalDeals
+          ? `${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} at ${withDeals.length} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
+          : `no acquisitions · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}
       </div>
+      ${haltBanner}
       ${intro}
       ${withDeals.length
         ? withDeals.map(companySection).join('')
         : `<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions were found in this window${searchedCount < results.length ? ` among the ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} this run reached` : ''}.</div>`}
       ${quietList}
+      ${fellBack.length
+        ? `<div style="margin-top:22px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
+             No news feed could be reached for ${fellBack.length} ${fellBack.length === 1 ? 'company' : 'companies'}
+             (${fellBack.map((r) => escapeHtml(r.company)).join(', ')}), so those fell back to a slower web search.
+           </div>`
+        : ''}
       <div style="margin-top:26px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
-        Deals are found by web search and can be incomplete — always confirm against the linked source before acting.
+        Deals are found in public news feeds and can be incomplete — always confirm against the linked source before acting.
       </div>
     </div>`;
 }
@@ -503,7 +753,10 @@ export async function buildDigest(db, uid, email, {
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);
 
-  if (deals === 0 && skipWhenEmpty) {
+  const halted = results.find((r) => r.halted)?.error || null;
+  // Never suppress a halted run: "skip when empty" means "don't mail me a
+  // quiet fortnight", not "don't tell me the research stopped working".
+  if (deals === 0 && skipWhenEmpty && !halted) {
     return { empty: true, reason: 'no-deals', companies: companies.length, deals: 0, html: null, nextStartIndex };
   }
 
@@ -512,6 +765,10 @@ export async function buildDigest(db, uid, email, {
     reason: null,
     companies: companies.length,
     searched: results.filter((r) => !r.skipped).length,
+    // An account-wide stop belongs on the schedule row too — the email
+    // says it, but the user looking at "why is this empty" in the UI
+    // should not have to open the email to find out.
+    halted,
     deals,
     since,
     until,
