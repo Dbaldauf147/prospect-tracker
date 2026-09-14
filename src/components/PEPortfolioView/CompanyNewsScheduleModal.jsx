@@ -223,11 +223,15 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
                         To: {(s.recipients || []).join(', ') || '-'}
                       </div>
                       {s.lastStatus && (
-                        <div style={{ fontSize: '0.68rem', marginTop: 3, color: s.lastStatus === 'error' ? '#B91C1C' : '#64748B' }}>
+                        /* 'sent-incomplete' is a digest that went out while the research
+                           was blocked (no API credit, a rejected key). It reads as a
+                           success in the list unless it is coloured and explained like
+                           the failure it is. */
+                        <div style={{ fontSize: '0.68rem', marginTop: 3, color: s.lastStatus === 'error' || s.lastStatus === 'sent-incomplete' ? '#B91C1C' : '#64748B' }}>
                           Last: {s.lastStatus}
                           {s.lastSentAt ? ` · ${new Date(s.lastSentAt).toLocaleString()}` : ''}
                           {s.lastStatus === 'sent' && s.lastDealCount != null ? ` · ${s.lastDealCount} deal(s)` : ''}
-                          {s.lastStatus === 'error' && s.lastError ? `: ${s.lastError}` : ''}
+                          {s.lastError && (s.lastStatus === 'error' || s.lastStatus === 'sent-incomplete') ? `: ${s.lastError}` : ''}
                         </div>
                       )}
                     </div>

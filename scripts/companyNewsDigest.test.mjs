@@ -19,7 +19,17 @@ import {
   nextCursor,
   buildNewsEmailHtml,
   digestWindow,
+  dealsFromHeadlines,
+  haltReasonFor,
+  ResearchHaltedError,
 } from '../api/_lib/companyNews.js';
+import {
+  nameVariants,
+  feedQuery,
+  parseRssItems,
+  fetchHeadlines,
+  mentionsCompany,
+} from '../api/_lib/newsFeeds.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -182,7 +192,7 @@ const stubResearch = (ms, deals = () => []) => (entry, since, until, { signal } 
   ok(html.includes('Search failed (1)'), 'email: a failure is not filed under "no acquisitions found"');
   ok(html.includes('Research timed out'), 'email: the failure reason is actually printed');
   ok(html.includes('Not searched this run'), 'email: unreached companies are called out');
-  ok(html.includes('0 of 2 searched'), 'email: the header counts searched companies, not tracked ones');
+  ok(html.includes('2 companies searched'), 'email: the header counts searched companies, not tracked ones');
   ok(html.includes('(3 tracked)'), 'email: the header still says how many are tracked');
   ok(html.includes('this run reached'), 'email: an empty digest says it did not cover everything');
 }
@@ -206,6 +216,223 @@ const stubResearch = (ms, deals = () => []) => (entry, since, until, { signal } 
   const html = buildNewsEmailHtml(results, { since: 0, until: 1 });
   ok(!html.includes('<script>'), 'email: company names are escaped');
   ok(!html.includes('<img onerror'), 'email: error text is escaped');
+}
+
+
+// ---- Company names -------------------------------------------------------
+// Tracked names are typed by hand and carry parentheticals. Searching the
+// literal string finds nothing, because no headline writes it that way —
+// and the acronym in the brackets is often the *only* way the press names
+// the firm.
+{
+  eq(nameVariants('Blackstone'), ['Blackstone'], 'names: a plain name is left alone');
+  eq(nameVariants('Clayton, Dubilier & Rice (CD&R)'),
+    ['Clayton, Dubilier & Rice', 'CD&R'],
+    'names: an acronym in brackets becomes a second search term');
+  eq(nameVariants('Strategic Value Partners (SVP) Global'),
+    ['Strategic Value Partners Global', 'SVP'],
+    'names: a mid-name acronym is lifted out and the rest closes up');
+  eq(nameVariants('TowerBrook Capital Partners (a Blue Owl co.)'),
+    ['TowerBrook Capital Partners'],
+    'names: a prose aside is dropped, not searched for');
+  eq(nameVariants('Pritzker Private Capital (PPC)'),
+    ['Pritzker Private Capital', 'PPC'], 'names: PPC is an alias');
+  eq(nameVariants('  '), [], 'names: a blank company yields nothing');
+
+  ok(feedQuery('Ara Partners').includes('"Ara Partners"'), 'query: the name is quoted');
+  ok(feedQuery('Clayton, Dubilier & Rice (CD&R)').includes('"CD&R"'), 'query: the alias is searched too');
+  eq(feedQuery(''), '', 'query: a blank company has no query');
+}
+
+{
+  // Bing matches loosely, so an item has to actually name the company.
+  const v = nameVariants('Berkshire Partners');
+  ok(mentionsCompany('Berkshire Partners acquires Foo', v), 'match: an exact mention counts');
+  ok(!mentionsCompany('Blackstone acquires Foo', v), 'match: an unrelated firm does not');
+  // "Capital"/"Partners" are too common to carry a match on their own.
+  ok(!mentionsCompany('Acme Partners buys Foo', v), 'match: a shared generic word is not a match');
+  ok(mentionsCompany('CD&R to acquire Foo', nameVariants('Clayton, Dubilier & Rice (CD&R)')),
+    'match: the alias matches on its own');
+}
+
+// ---- RSS parsing ---------------------------------------------------------
+const RSS = `<?xml version="1.0"?><rss version="2.0"><channel>
+  <item>
+    <title>Blackstone to acquire Acme Facilities - Reuters</title>
+    <link>https://example.com/a</link>
+    <pubDate>Mon, 07 Sep 2026 12:00:00 GMT</pubDate>
+    <source url="https://reuters.com">Reuters</source>
+    <description>&lt;p&gt;Deal values Acme at &amp;pound;450m&lt;/p&gt;</description>
+  </item>
+  <item>
+    <title><![CDATA[Blackstone names new CFO]]></title>
+    <link>https://example.com/b</link>
+    <pubDate>Tue, 08 Sep 2026 09:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>Undated item</title><link>https://example.com/c</link>
+  </item>
+</channel></rss>`;
+
+{
+  const items = parseRssItems(RSS);
+  eq(items.length, 3, 'rss: every item is read');
+  eq(items[0].title, 'Blackstone to acquire Acme Facilities - Reuters', 'rss: the title comes through');
+  eq(items[0].source, 'Reuters', 'rss: <source> gives the publisher');
+  eq(items[0].publishedAt, Date.parse('Mon, 07 Sep 2026 12:00:00 GMT'), 'rss: pubDate is parsed');
+  eq(items[1].title, 'Blackstone names new CFO', 'rss: CDATA is unwrapped');
+  eq(items[2].publishedAt, null, 'rss: a missing pubDate is null, not NaN or now');
+  // Escaped markup in a description must not survive into the prompt.
+  ok(!items[0].description.includes('<p>'), 'rss: escaped HTML is stripped from the description');
+  eq(parseRssItems('').length, 0, 'rss: junk yields no items');
+}
+
+// ---- Feed candidates -----------------------------------------------------
+const WINDOW = { since: Date.parse('2026-09-01T00:00:00Z'), until: Date.parse('2026-09-14T00:00:00Z') };
+const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => xml });
+
+{
+  const { items, error } = await fetchHeadlines(
+    { company: 'Blackstone', isPe: true }, WINDOW.since, WINDOW.until,
+    { fetchImpl: feedOf(RSS) },
+  );
+  eq(error, null, 'feeds: a reachable feed is not an error');
+  eq(items.length, 1, 'feeds: only the acquisition headline survives the gate');
+  eq(items[0].link, 'https://example.com/a', 'feeds: the surviving item is the right one');
+}
+
+{
+  // The distinction the old digest could not make: a feed that answered
+  // "nothing" is a real answer and must cost no model call, while a feed
+  // that could not be reached is a failure that has to say so.
+  const empty = '<rss><channel></channel></rss>';
+  const quiet = await fetchHeadlines({ company: 'Ara Partners' }, WINDOW.since, WINDOW.until,
+    { fetchImpl: feedOf(empty) });
+  eq(quiet.items.length, 0, 'feeds: a quiet feed returns nothing');
+  eq(quiet.error, null, 'feeds: a quiet feed is not a failure');
+
+  const dead = await fetchHeadlines({ company: 'Ara Partners' }, WINDOW.since, WINDOW.until,
+    { fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
+  eq(dead.items.length, 0, 'feeds: an unreachable feed returns nothing');
+  ok(dead.error, 'feeds: an unreachable feed IS a failure');
+
+  // Google first, Bing second — one blocked host must not take it down.
+  let calls = 0;
+  const flaky = async (url) => {
+    calls++;
+    if (url.includes('news.google.com')) throw new Error('403');
+    return { ok: true, status: 200, text: async () => RSS };
+  };
+  const viaBing = await fetchHeadlines({ company: 'Blackstone' }, WINDOW.since, WINDOW.until,
+    { fetchImpl: flaky });
+  eq(calls, 2, 'feeds: a blocked Google falls through to Bing');
+  eq(viaBing.items.length, 1, 'feeds: the fallback feed still yields the deal');
+}
+
+{
+  // Out-of-window items are dropped before they reach the model — the
+  // window is the one thing the digest promises.
+  const stale = RSS.replace('Mon, 07 Sep 2026', 'Mon, 07 Jul 2026');
+  const { items } = await fetchHeadlines({ company: 'Blackstone' }, WINDOW.since, WINDOW.until,
+    { fetchImpl: feedOf(stale) });
+  eq(items.length, 0, 'feeds: an item published outside the window is dropped');
+}
+
+// ---- Classifier output ---------------------------------------------------
+// The point of feeding headlines in is that the facts come back out of the
+// feed. The model picks an index; the date, link and publisher are ours.
+{
+  const items = parseRssItems(RSS);
+  const deals = dealsFromHeadlines(
+    [{ index: 0, target: 'Acme Facilities', dealType: 'Add-on', summary: 'Facilities services roll-up.' }],
+    items,
+  );
+  eq(deals.length, 1, 'deals: a valid index yields a deal');
+  eq(deals[0].sourceUrl, 'https://example.com/a', 'deals: the URL comes from the feed, not the model');
+  eq(deals[0].announcedOn, '2026-09-07', 'deals: the date comes from the feed, not the model');
+  eq(deals[0].sourceTitle, 'Reuters', 'deals: the publisher comes from the feed');
+
+  eq(dealsFromHeadlines([{ index: 99, target: 'Ghost Co' }], items).length, 0,
+    'deals: an index outside the list is dropped, not guessed at');
+  eq(dealsFromHeadlines([{ index: 0 }], items).length, 0, 'deals: a deal with no target is dropped');
+  eq(dealsFromHeadlines([{ index: 0, target: 'X' }, { index: 0, target: 'X' }], items).length, 1,
+    'deals: the same deal twice is listed once');
+  eq(dealsFromHeadlines([{ index: 0, target: 'X', dealType: 'Rumour' }], items)[0].dealType, 'Acquisition',
+    'deals: an off-list deal type falls back to "Acquisition"');
+  eq(dealsFromHeadlines('nope', items).length, 0, 'deals: a non-array answer yields nothing');
+}
+
+// ---- Account-wide failures -----------------------------------------------
+// The run that prompted this: fourteen firms each reporting the same
+// truncated billing error, and nothing anywhere saying the account was out
+// of credit. It is one fact, it stops everything, and it says so once.
+{
+  ok(haltReasonFor(400, '{"error":{"message":"Your credit balance is too low to access the Anthropic API."}}'),
+    'halt: an empty credit balance halts the run');
+  ok(haltReasonFor(401, 'unauthorized'), 'halt: a rejected key halts the run');
+  eq(haltReasonFor(429, 'rate limited'), null, 'halt: a rate limit is per-call, not fatal');
+  eq(haltReasonFor(400, 'max_tokens too large'), null, 'halt: an ordinary 400 is not fatal');
+  eq(haltReasonFor(500, 'oops'), null, 'halt: a server error is not fatal');
+}
+
+{
+  // One company throws the halt; nobody after it is searched, and the
+  // cursor must not advance past companies nobody looked at.
+  let attempts = 0;
+  const results = await researchAll(firms(6), 0, 0, {
+    budgetMs: 60_000,
+    concurrency: 1,
+    research: async () => {
+      attempts++;
+      throw new ResearchHaltedError('Anthropic account is out of credit');
+    },
+  });
+
+  eq(attempts, 1, 'halt: the second company is never attempted');
+  eq(results.length, 6, 'halt: every company still gets a result slot');
+  eq(results.filter((r) => r.halted).length, 6, 'halt: all six are marked as blocked by the halt');
+  eq(nextCursor(0, results), 0, 'halt: the cursor does not advance past unsearched companies');
+
+  const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
+  ok(html.includes('Research stopped early'), 'halt: the email leads with a banner, not a footnote');
+  ok(html.includes('out of credit'), 'halt: the banner names the actual problem');
+  ok(!html.includes('No acquisitions found'), 'halt: a halted run does not claim it found nothing');
+  ok(html.includes('0 companies searched'), 'halt: the header admits nothing was searched');
+}
+
+{
+  // A halt part-way through keeps what it already found.
+  let n = 0;
+  const results = await researchAll(firms(4), 0, 0, {
+    budgetMs: 60_000,
+    concurrency: 1,
+    research: async () => {
+      if (n++ === 0) return { deals: [], error: null };
+      throw new ResearchHaltedError('Anthropic API key rejected');
+    },
+  });
+  eq(results.filter((r) => !r.skipped).length, 1, 'halt: the company searched before the halt still counts');
+  eq(nextCursor(0, results), 1, 'halt: the cursor advances by exactly what was searched');
+}
+
+{
+  // A web-search fallback that found nothing is a *successful* search.
+  // Filing it under "search failed" is the conflation this digest keeps
+  // relapsing into, so the fallback gets its own line instead.
+  const results = [
+    { company: 'Fallback Co', isPe: true, deals: [], error: null, skipped: false, viaWebSearch: true },
+  ];
+  const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
+  ok(!html.includes('Search failed'), 'fallback: a fallback with no deals is not a failure');
+  ok(html.includes('No acquisitions found'), 'fallback: it is filed as searched-and-empty');
+  ok(html.includes('fell back to a slower web search'), 'fallback: the email still says the feeds were down');
+  ok(html.includes('Fallback Co'), 'fallback: the affected company is named');
+
+  const clean = buildNewsEmailHtml(
+    [{ company: 'Quiet Co', deals: [], error: null, skipped: false }],
+    { since: 0, until: 86_400_000 },
+  );
+  ok(!clean.includes('fell back'), 'fallback: a normal run says nothing about fallbacks');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

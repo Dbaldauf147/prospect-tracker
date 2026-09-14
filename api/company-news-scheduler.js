@@ -97,8 +97,12 @@ export default async function handler(req, res) {
 
       await ref.update({
         lastSentAt: now,
-        lastStatus: 'sent',
-        lastError: null,
+        // A digest that went out while the research was blocked still sent,
+        // but it is not a healthy run — record why, so the schedule row in
+        // the UI says so instead of showing a clean "sent" over an email
+        // that covered nothing.
+        lastStatus: digest.halted ? 'sent-incomplete' : 'sent',
+        lastError: digest.halted || null,
         lastDealCount: digest.deals,
         lastCompanyCount: digest.companies,
         lastSearchedCount: digest.searched,
