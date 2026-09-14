@@ -3,6 +3,7 @@
 // A tree is `{ rootId, nodes: { [id]: node } }` and a node is:
 //
 //   { id, kind: 'question' | 'outcome', title, detail,
+//     services: ['Sub-metering', …],
 //     branches: [{ id, label, to }] }
 //
 // `to` is another node's id, or null for a branch that hasn't been pointed
@@ -29,8 +30,33 @@ const MAX_TITLE = 200;
 const MAX_DETAIL = 4000;
 const MAX_LABEL = 120;
 const MAX_NODES = 500;
+// Services tagged onto a step, by name — the same names the Solutions list
+// and the rate card are keyed on, so a step says which of OUR services do
+// the thing it describes. Names rather than ids because that is what the
+// whole service vocabulary uses; a rename is followed by renameServiceInTree
+// rather than by an id nothing else has.
+const MAX_SERVICES = 40;
+const MAX_SERVICE_NAME = 120;
 
 const text = (v, max) => String(v ?? '').slice(0, max);
+
+// A step's service tags, cleaned: trimmed, blanks dropped, duplicates
+// dropped, order kept (it is the order the user added them in), capped.
+// A name the catalog no longer has is KEPT — the service may be renamed,
+// retired or simply on another user's list, and dropping it silently would
+// lose a decision somebody made. The page marks those instead.
+export function normalizeServices(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const value of Array.isArray(raw) ? raw : []) {
+    const name = text(value, MAX_SERVICE_NAME).trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+    if (out.length >= MAX_SERVICES) break;
+  }
+  return out;
+}
 
 /** A short unique id, avoiding anything already in `taken`. */
 export function makeId(prefix, taken) {
@@ -57,7 +83,13 @@ function normalizeNode(raw, id) {
       to: b.to == null ? null : String(b.to),
     });
   }
-  return { id, kind, title: text(raw?.title, MAX_TITLE), detail: text(raw?.detail, MAX_DETAIL), branches };
+  return {
+    id, kind,
+    title: text(raw?.title, MAX_TITLE),
+    detail: text(raw?.detail, MAX_DETAIL),
+    services: normalizeServices(raw?.services),
+    branches,
+  };
 }
 
 // Read a tree from anywhere it might have been stored — a settings document
@@ -205,6 +237,12 @@ export function treeStats(tree) {
     unlinked,
     orphans: orphanIds(tree).length,
     ends: nodes.filter(n => n.branches.length === 0).length,
+    // The service tags, both ways round: how many steps carry at least one,
+    // and how many distinct services are tagged anywhere. Two numbers
+    // because they answer different questions — "is the flow wired to what
+    // we sell" and "how much of what we sell has a place in the flow".
+    tagged: nodes.filter(n => (n.services?.length || 0) > 0).length,
+    services: serviceUsage(tree).size,
   };
 }
 
@@ -221,6 +259,7 @@ export function updateNode(tree, id, patch) {
   if ('title' in patch) next.title = text(patch.title, MAX_TITLE);
   if ('detail' in patch) next.detail = text(patch.detail, MAX_DETAIL);
   if ('kind' in patch && KINDS.has(patch.kind)) next.kind = patch.kind;
+  if ('services' in patch) next.services = normalizeServices(patch.services);
   return withNode(tree, id, next);
 }
 
@@ -232,7 +271,14 @@ export function updateNode(tree, id, patch) {
 export function addNode(tree, { parentId = null, branchId = null, title = '', kind = 'question', detail = '' } = {}) {
   if (Object.keys(tree.nodes).length >= MAX_NODES) return { tree, id: null };
   const id = makeId('n', new Set(Object.keys(tree.nodes)));
-  let next = withNode(tree, id, { id, kind: KINDS.has(kind) ? kind : 'question', title: text(title, MAX_TITLE), detail: text(detail, MAX_DETAIL), branches: [] });
+  let next = withNode(tree, id, {
+    id,
+    kind: KINDS.has(kind) ? kind : 'question',
+    title: text(title, MAX_TITLE),
+    detail: text(detail, MAX_DETAIL),
+    services: [],
+    branches: [],
+  });
   if (parentId && next.nodes[parentId]) {
     if (branchId) next = setBranchTarget(next, parentId, branchId, id);
     else next = addBranch(next, parentId, { label: '', to: id });
@@ -317,6 +363,66 @@ export function deleteNode(tree, id, { cascade = false } = {}) {
 /** Make `id` the node the walk starts from. */
 export function setRoot(tree, id) {
   return getNode(tree, id) ? { ...tree, rootId: id } : tree;
+}
+
+// ── the services tagged onto a step ──────────────────────────────────────
+
+/**
+ * Tag a service onto a step, or take it off — one click, either way, because
+ * the picker that calls this is a list of names you click to toggle.
+ * Unknown node, blank name, or a full list: the tree comes back untouched.
+ */
+export function toggleNodeService(tree, id, name) {
+  const node = getNode(tree, id);
+  const clean = text(name, MAX_SERVICE_NAME).trim();
+  if (!node || !clean) return tree;
+  const has = node.services.includes(clean);
+  if (!has && node.services.length >= MAX_SERVICES) return tree;
+  const services = has
+    ? node.services.filter(s => s !== clean)
+    : [...node.services, clean];
+  return withNode(tree, id, { ...node, services });
+}
+
+/**
+ * Which steps each tagged service appears on: a Map of name → [nodeId], in
+ * the tree's own node order. The reverse of the tag — "we sell this; where
+ * does it land in the flow?" — and what the page counts its coverage from.
+ */
+export function serviceUsage(tree) {
+  const usage = new Map();
+  for (const node of Object.values(tree?.nodes || {})) {
+    for (const name of node.services || []) {
+      if (!usage.has(name)) usage.set(name, []);
+      usage.get(name).push(node.id);
+    }
+  }
+  return usage;
+}
+
+/**
+ * Follow a service rename through every step tagged with it. Returns the next
+ * tree, or null when nothing carried the old name — the caller only writes
+ * when there is something to write.
+ *
+ * Tags are the service's NAME, so a rename on the Solutions list would
+ * otherwise leave every step pointing at a service that no longer exists —
+ * the same silent break renaming a service used to make on the rate card.
+ * A step already tagged with the new name absorbs the old one rather than
+ * ending up tagged twice.
+ */
+export function renameServiceInTree(tree, from, to) {
+  const oldName = String(from ?? '').trim();
+  const newName = text(to, MAX_SERVICE_NAME).trim();
+  if (!oldName || !newName || oldName === newName) return null;
+  let touched = false;
+  const nodes = {};
+  for (const [key, node] of Object.entries(tree?.nodes || {})) {
+    if (!node.services?.includes(oldName)) { nodes[key] = node; continue; }
+    touched = true;
+    nodes[key] = { ...node, services: normalizeServices(node.services.map(s => (s === oldName ? newName : s))) };
+  }
+  return touched ? { ...tree, nodes } : null;
 }
 
 // ── reading the detail text ──────────────────────────────────────────────

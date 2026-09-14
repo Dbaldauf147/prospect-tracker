@@ -23,6 +23,7 @@ import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
+import { normalizeTree, renameServiceInTree } from '../../utils/decisionTree';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
@@ -1573,6 +1574,16 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
       if (edit?.renamedFrom && edit?.renamedTo) {
         const repriced = renameServicePricing(getServicePricing(settings), edit.renamedFrom, edit.renamedTo);
         if (repriced) updates.servicePricing = repriced;
+        // Same story for the steps of the Efficiency Decision Tree tagged
+        // with the service: the tag is the name, so without this a rename
+        // leaves every step pointing at a service nothing lists. Only
+        // written when a step actually carried the old name.
+        if (settings?.efficiencyDecisionTree) {
+          const retagged = renameServiceInTree(
+            normalizeTree(settings.efficiencyDecisionTree), edit.renamedFrom, edit.renamedTo,
+          );
+          if (retagged) updates.efficiencyDecisionTree = retagged;
+        }
       }
     }
     updateSettings?.(updates);

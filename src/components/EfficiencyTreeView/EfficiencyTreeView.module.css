@@ -956,3 +956,148 @@
   background: var(--color-surface-alt);
   flex-shrink: 0;
 }
+
+/* ── service tags ────────────────────────────────────────────────────── */
+
+/* The block that holds a step's services, wherever it appears: under the
+   step you're walking, in the popup behind a box, and in the editor. */
+.tagBlock {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* A tagged service, read-only. Teal rather than the accent blue the flow
+   itself uses: the tree is the customer's process and these are ours, and
+   the two shouldn't read as the same kind of thing. */
+.tagChip,
+.tagChipGone,
+.tagChipOn,
+.tagChipGoneOn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.tagChip,
+.tagChipOn {
+  background: #CCFBF1;
+  color: #0F766E;
+  border-color: #99F6E4;
+}
+
+/* Tagged, but the Solutions list no longer has it — renamed, retired, or
+   typed on another device. Kept and marked rather than dropped, because a
+   tag that vanished would take somebody's decision with it. */
+.tagChipGone,
+.tagChipGoneOn {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  border-style: dashed;
+}
+
+/* The editable forms of both: a whole chip is the click target for taking
+   the tag off, so the × is a cue rather than a four-pixel button. */
+.tagChipOn,
+.tagChipGoneOn {
+  cursor: pointer;
+}
+
+.tagChipOn:hover,
+.tagChipGoneOn:hover {
+  background: #FEE2E2;
+  color: #B91C1C;
+  border-color: #FECACA;
+}
+
+.tagChipX {
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.65;
+}
+
+/* The catalog to add from. Bounded and scrolled: a hundred and fifty
+   services would otherwise push the branch editor off the bottom of the
+   panel every time the picker is open. */
+.tagPicker {
+  display: flex;
+  flex-direction: column;
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.tagOption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  font-family: inherit;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-light, var(--color-border));
+  cursor: pointer;
+}
+
+.tagOption:last-child {
+  border-bottom: 0;
+}
+
+.tagOption:hover {
+  background: #F0FDFA;
+}
+
+.tagOptionName {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.tagOptionBucket {
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tagPickerMore {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+  background: var(--color-surface-alt);
+  border-top: 1px solid var(--color-border);
+}
+
+/* On a box in the diagram there is room for the count and nothing else —
+   the names are in the popup, and in the tooltip for a scan that doesn't
+   want to open one. */
+.serviceChip {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  background: #CCFBF1;
+  color: #0F766E;
+  white-space: nowrap;
+}

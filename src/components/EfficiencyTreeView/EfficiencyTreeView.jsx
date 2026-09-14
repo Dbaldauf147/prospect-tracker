@@ -4,10 +4,11 @@ import styles from './EfficiencyTreeView.module.css';
 import { DEFAULT_EFFICIENCY_TREE } from '../../data/efficiencyDecisionTree';
 import {
   addBranch, addNode, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
-  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, treeStats,
-  updateBranch, updateNode,
+  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
+  treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
 import { edgePath, layoutTree } from '../../utils/treeLayout';
+import { pricedServiceRows } from '../../utils/serviceRows';
 
 // The page for the C&I efficiency decision tree: walk it to make a call on a
 // measure, or open the map and edit the flow itself.
@@ -24,6 +25,141 @@ import { edgePath, layoutTree } from '../../utils/treeLayout';
 
 const SETTINGS_KEY = 'efficiencyDecisionTree';
 const SAVE_DELAY_MS = 800;
+// How much of the catalog the picker lists at once. The Solutions list runs
+// to a hundred and fifty services, and a dropdown that long is scrolled
+// rather than read — so it shows a window and the search box narrows it.
+const PICKER_ROWS = 10;
+
+// The services tagged onto a step, as chips.
+//
+// The tree says what to do; these say which of ours does it. Read-only here
+// — this is the row you read off in front of a customer, on the box you have
+// landed on, and the editor below is where it gets changed.
+//
+// A name the Solutions list no longer has is still shown, marked: the
+// service may have been renamed or retired since somebody tagged it, and a
+// tag that silently disappeared would take a decision with it.
+function ServiceTags({ services = [], known = null }) {
+  if (services.length === 0) return null;
+  return (
+    <div className={styles.tagRow}>
+      {services.map(name => {
+        const gone = known && !known.has(name);
+        return (
+          <span
+            key={name}
+            className={gone ? styles.tagChipGone : styles.tagChip}
+            title={gone
+              ? `${name} — not on the Solutions list any more. Open the step in Edit to swap or remove it.`
+              : name}
+          >{name}</span>
+        );
+      })}
+    </div>
+  );
+}
+
+// Tagging services onto one step: the chips already on it, and the catalog
+// to add from.
+//
+// A picker rather than a text box, because a tag typed by hand is a tag
+// spelled a second way — and the names here are the ones the rate card and
+// the Scope picker are keyed on, so a near-miss is a service that prices
+// nothing. Everything is one click: a chip to take it off, a row to put it
+// on. The search box narrows the catalog rather than the tags, since the
+// list it is narrowing is the long one.
+function ServiceTagger({ tree, nodeId, catalog = [], onChange }) {
+  const [query, setQuery] = useState('');
+  const node = getNode(tree, nodeId);
+  // The step's own tags — the stored array, not a `|| []` copy, so it is the
+  // same reference from one render to the next and the list below is rebuilt
+  // when the tags change rather than on every keystroke in the search box.
+  const tagged = node?.services;
+  const known = useMemo(() => new Set(catalog.map(s => s.name)), [catalog]);
+  const term = query.trim().toLowerCase();
+
+  // The catalog minus what is already on this step, narrowed by the search.
+  // The bucket is searched too, so "compliance" offers the whole box of them
+  // rather than only the services with the word in their name.
+  const { rows, total } = useMemo(() => {
+    const chosen = new Set(tagged || []);
+    const pool = catalog.filter(s => !chosen.has(s.name));
+    const hits = term
+      ? pool.filter(s => s.name.toLowerCase().includes(term) || String(s.bucket || '').toLowerCase().includes(term))
+      : pool;
+    return { rows: hits.slice(0, PICKER_ROWS), total: hits.length };
+  }, [catalog, tagged, term]);
+
+  const toggle = (name) => onChange(toggleNodeService(tree, nodeId, name));
+
+  if (!node) return null;
+
+  return (
+    <div className={styles.tagBlock}>
+      <div className={styles.fieldLabel}>
+        Services delivered at this step
+        <span className={styles.fieldHint}>
+          Click a service to tag it; click a chip to take it off. The names come from the Solutions list on Dropdowns.
+        </span>
+      </div>
+
+      {!tagged?.length
+        ? <div className={styles.emptyNote}>Nothing tagged yet.</div>
+        : (
+          <div className={styles.tagRow}>
+            {tagged.map(name => (
+              <button
+                key={name}
+                type="button"
+                className={known.has(name) ? styles.tagChipOn : styles.tagChipGoneOn}
+                onClick={() => toggle(name)}
+                title={known.has(name)
+                  ? `Take "${name}" off this step`
+                  : `${name} — not on the Solutions list any more. Click to take it off this step.`}
+              >{name}<span className={styles.tagChipX} aria-hidden="true">×</span></button>
+            ))}
+          </div>
+        )}
+
+      <input
+        className={styles.input}
+        type="text"
+        value={query}
+        placeholder={catalog.length ? `Search ${catalog.length} services…` : 'No services on the Solutions list yet'}
+        onChange={e => setQuery(e.target.value)}
+        // Enter takes the top match, so tagging a service you can name is
+        // type-three-letters-and-go rather than type-then-aim.
+        onKeyDown={e => {
+          if (e.key !== 'Enter' || !rows[0]) return;
+          e.preventDefault();
+          toggle(rows[0].name);
+          setQuery('');
+        }}
+      />
+
+      <div className={styles.tagPicker}>
+        {rows.length === 0 && (
+          <div className={styles.emptyNote}>
+            {catalog.length === 0
+              ? 'The Solutions list is empty — add services on Dropdowns and they show up here.'
+              : (term ? `Nothing matches "${query}".` : 'Every service is already tagged here.')}
+          </div>
+        )}
+        {rows.map(s => (
+          <button key={s.name} type="button" className={styles.tagOption} onClick={() => toggle(s.name)} title={`Tag ${s.name} onto this step`}>
+            <span className={styles.tagOptionName}>{s.name}</span>
+            {s.bucket && <span className={styles.tagOptionBucket}>{s.bucket}</span>}
+          </button>
+        ))}
+        {total > rows.length && (
+          <div className={styles.tagPickerMore}>
+            {`${rows.length} of ${total} shown — type to narrow`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function NodeDetail({ detail }) {
   const blocks = useMemo(() => detailBlocks(detail), [detail]);
@@ -45,7 +181,7 @@ function NodeDetail({ detail }) {
 // Shown in both modes — in WALK it sits under the step you're standing on, so
 // a gate can be corrected at the moment you notice it's wrong, without
 // leaving the route you were walking.
-function NodeEditor({ tree, nodeId, onChange, onSelect }) {
+function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
   // Every node is a possible branch target, named for the dropdown. A branch
   // may point at any of them — including one already used above, which is how
   // the five tiers all continue at the economics gate. Built before the
@@ -95,6 +231,11 @@ function NodeEditor({ tree, nodeId, onChange, onSelect }) {
           onChange={e => onChange(updateNode(tree, nodeId, { detail: e.target.value }))}
         />
       </label>
+
+      {/* Between the detail and the branches, which is where it belongs in
+          the reading: what this step is, what we sell to do it, then where
+          it goes next. */}
+      <ServiceTagger tree={tree} nodeId={nodeId} catalog={catalog} onChange={onChange} />
 
       <div className={styles.branchBlock}>
         <div className={styles.fieldLabel}>Branches out of this step</div>
@@ -158,7 +299,7 @@ function NodeEditor({ tree, nodeId, onChange, onSelect }) {
 // when you click one: what leads here, and where does it go next. Both lists
 // are clickable, so the popup doubles as a way to move around the flow
 // without hunting for the next box on the canvas.
-function NodeDetailModal({ tree, nodeId, editing, onClose, onGoTo, onWalkFrom, onChange }) {
+function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClose, onGoTo, onWalkFrom, onChange }) {
   const node = getNode(tree, nodeId);
 
   useEffect(() => {
@@ -196,6 +337,15 @@ function NodeDetailModal({ tree, nodeId, editing, onClose, onGoTo, onWalkFrom, o
             ? <NodeDetail detail={node.detail} />
             : <div className={styles.emptyNote}>No detail on this step yet.{editing ? '' : ' Turn on Edit to write some.'}</div>}
 
+          {/* Above the wiring, because it is about this step rather than
+              about the route: what we sell to do the thing this box says. */}
+          {node.services.length > 0 && (
+            <div className={styles.modalSection}>
+              <div className={styles.fieldLabel}>Services delivered here</div>
+              <ServiceTags services={node.services} known={knownServices} />
+            </div>
+          )}
+
           {parents.length > 0 && (
             <div className={styles.modalSection}>
               <div className={styles.fieldLabel}>Reached from</div>
@@ -228,7 +378,7 @@ function NodeDetailModal({ tree, nodeId, editing, onClose, onGoTo, onWalkFrom, o
             })}
           </div>
 
-          {editing && <NodeEditor tree={tree} nodeId={node.id} onChange={onChange} onSelect={onGoTo} />}
+          {editing && <NodeEditor tree={tree} nodeId={node.id} catalog={catalog} onChange={onChange} onSelect={onGoTo} />}
         </div>
 
         <div className={styles.modalFoot}>
@@ -298,6 +448,12 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     if (savedJson === JSON.stringify(treeRef.current)) return;
     setTree(normalizeTree(JSON.parse(savedJson)));
   }, [savedJson, settingsLoaded]);
+
+  // The service vocabulary to tag from: the same rows the Services Pricing
+  // card prices, minus the retired ones — a service nobody can put in a deal
+  // is not one to hang off a step of the flow.
+  const catalog = useMemo(() => pricedServiceRows(settings), [settings]);
+  const knownServices = useMemo(() => new Set(catalog.map(s => s.name)), [catalog]);
 
   const stats = useMemo(() => treeStats(tree), [tree]);
   const rows = useMemo(() => outlineRows(tree), [tree]);
@@ -437,6 +593,14 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
 
       <div className={styles.statusBar}>
         <span>{stats.nodes} steps · {stats.branches} branches · {stats.ends} ends</span>
+        {/* Both ways round: how much of the flow is wired to what we sell,
+            and how much of what we sell has a place in the flow. */}
+        {stats.tagged > 0 && (
+          <span
+            className={styles.muted}
+            title={`${stats.tagged} of ${stats.nodes} steps carry a service tag, covering ${stats.services} of the ${catalog.length} services on the Solutions list.`}
+          >{stats.tagged} step{stats.tagged === 1 ? '' : 's'} tagged · {stats.services} service{stats.services === 1 ? '' : 's'}</span>
+        )}
         {stats.unlinked > 0 && <span className={styles.warn}>{stats.unlinked} branch{stats.unlinked === 1 ? '' : 'es'} not pointed anywhere</span>}
         {orphans.length > 0 && <span className={styles.warn}>{orphans.length} step{orphans.length === 1 ? '' : 's'} nothing reaches</span>}
         {!settingsLoaded && <span className={styles.muted}>Loading your saved tree…</span>}
@@ -531,6 +695,16 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       {box.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       {box.orphan && <span className={styles.repeatChip}>unreachable</span>}
                       {node.branches.length === 0 && !box.orphan && <span className={styles.repeatChip}>end</span>}
+                      {/* The count, not the names: the box has room for a
+                          title and little else, and the names are one click
+                          away in the popup. The tooltip lists them for the
+                          scan that doesn't want to click. */}
+                      {node.services.length > 0 && (
+                        <span
+                          className={styles.serviceChip}
+                          title={`Services delivered here:\n${node.services.join('\n')}`}
+                        >{node.services.length} service{node.services.length === 1 ? '' : 's'}</span>
+                      )}
                     </span>
                   </button>
                 );
@@ -568,6 +742,16 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               </div>
               <NodeDetail detail={current.detail} />
 
+              {/* The point of the tags, on the screen they are for: you are
+                  standing on a step in front of a customer and this is what
+                  we sell to do it. */}
+              {current.services.length > 0 && (
+                <div className={styles.tagBlock}>
+                  <div className={styles.fieldLabel}>Services delivered here</div>
+                  <ServiceTags services={current.services} known={knownServices} />
+                </div>
+              )}
+
               {current.branches.length > 0 ? (
                 <div className={styles.choices}>
                   {current.branches.map(b => {
@@ -592,7 +776,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               )}
 
               {editing && (
-                <NodeEditor tree={tree} nodeId={current.id} onChange={applyTree} onSelect={() => {}} />
+                <NodeEditor tree={tree} nodeId={current.id} catalog={catalog} onChange={applyTree} onSelect={() => {}} />
               )}
             </div>
           ) : (
@@ -716,10 +900,16 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   <button type="button" className={styles.smallBtn} onClick={() => walkFrom(selectedId)}>Walk from here</button>
                 </div>
                 {editing ? (
-                  <NodeEditor tree={tree} nodeId={selectedId} onChange={applyTree} onSelect={setSelectedId} />
+                  <NodeEditor tree={tree} nodeId={selectedId} catalog={catalog} onChange={applyTree} onSelect={setSelectedId} />
                 ) : (
                   <>
                     <NodeDetail detail={getNode(tree, selectedId).detail} />
+                    {getNode(tree, selectedId).services.length > 0 && (
+                      <div className={styles.tagBlock}>
+                        <div className={styles.fieldLabel}>Services delivered here</div>
+                        <ServiceTags services={getNode(tree, selectedId).services} known={knownServices} />
+                      </div>
+                    )}
                     <div className={styles.muted}>Turn on Edit to change this step.</div>
                   </>
                 )}
@@ -735,6 +925,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         <NodeDetailModal
           tree={tree}
           nodeId={popupId}
+          catalog={catalog}
+          knownServices={knownServices}
           editing={editing}
           onClose={() => setPopupId(null)}
           onGoTo={(id) => { setPopupId(id); setSelectedId(id); }}
