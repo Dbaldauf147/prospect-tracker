@@ -272,7 +272,7 @@ const injected = renderWeeklyReportHtml({
   capturedAt: Date.now(),
   periodLabel: '<b>label</b>',
   kpiCards: [{ label: '<b>k</b>', value: '<i>v</i>', lines: ['<u>line</u>'] }],
-  tiles: [{ label: '<b>t</b>', value: 1, goal: 2, sub: '<u>sub</u>' }],
+  trends: { emailsByWeek: [{ key: '2026-08-31', label: '<u>wk</u>', value: 1 }], newOppsByMonth: [] },
   funnel: {
     stages: [{ label: '<img src=x>', count: 1, amount: '<i>$1</i>', life: '<u>1</u>', closeRate: '<b>1%</b>' }],
     outcome: { soldLabel: '<b>sold</b>', sold: '<i>$1</i>', weighted: '<u>$2</u>', total: '<b>$3</b>', note: '<script>n</script>' },
@@ -296,6 +296,7 @@ check('goal text is escaped', injected.includes('&lt;script&gt;g&lt;/script&gt;'
 check('funnel stage names are escaped', injected.includes('&lt;img src=x&gt;'), true);
 check('trend rates are escaped', injected.includes('&lt;i&gt;17%&lt;/i&gt;'), true);
 check('trend month heads are escaped', injected.includes('&lt;b&gt;Apr&lt;/b&gt;'), true);
+check('trend period labels are escaped', injected.includes('&lt;u&gt;wk&lt;/u&gt;'), true);
 check('no attacker tag survives anywhere', /<(script|img|u)\b/i.test(injected), false);
 
 // ---- snapshot builder ----------------------------------------------------
@@ -309,7 +310,13 @@ check('no attacker tag survives anywhere', /<(script|img|u)\b/i.test(injected), 
 const built = buildSnapshotDoc({
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
-  tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' }],
+  trends: {
+    emailsByWeek: [
+      { key: '2026-08-24', label: 'Aug 24', value: 18, recorded: true },
+      { key: '2026-08-31', label: 'Aug 31', value: 27, recorded: false },
+    ],
+    newOppsByMonth: [{ key: '2026-09', label: 'Sep', value: 2 }],
+  },
   funnel: {
     stages: [{ label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
     outcome: { soldLabel: 'Closed YTD', sold: '$485K', weighted: '$349K', total: '$833K', note: '63% of $1.3M target' },
@@ -322,7 +329,15 @@ check('a posted snapshot is stamped with a capture time',
 check('an unstamped snapshot no longer reads as unknown',
   freshnessNote(built).text.startsWith('Captured at an unknown time'), false);
 check('ownership comes from the token, not the payload', built.ownerUid, 'u1');
-check('the tile provenance note survives', built.tiles[0].sub, 'recorded Sep 3');
+check('the emails-by-week series survives', built.trends.emailsByWeek.length, 2);
+check('a point keeps its recorded flag', built.trends.emailsByWeek[0].recorded, true);
+check('the new-opps-by-month series survives', built.trends.newOppsByMonth[0].value, 2);
+// A week with no recording and no feed is not a week with no sends, and the
+// clamp that turns every value into a number would erase the difference.
+check('an unknown week stays null, not 0',
+  buildSnapshotDoc({ trends: { emailsByWeek: [{ key: 'k', label: 'Aug 3', value: null }] } }, {})
+    .trends.emailsByWeek[0].value, null);
+check('a snapshot with no trends stores none', buildSnapshotDoc({}, {}).trends, null);
 check('the funnel survives', built.funnel.stages[0].count, 3);
 check('the goals survive', [built.goals.created.length, built.goals.active.length], [1, 1]);
 check('a snapshot with no funnel stores none', buildSnapshotDoc({ funnel: { stages: [] } }, {}).funnel, null);
@@ -452,10 +467,16 @@ const html = renderWeeklyReportHtml({
       },
     ],
   },
-  tiles: [
-    { label: 'Emails sent', value: 27, goal: 50, accent: 'blue', sub: 'recorded Sep 3' },
-    { label: 'New opps', value: 2, goal: 1, accent: 'green' },
-  ],
+  trends: {
+    emailsByWeek: [
+      { key: '2026-08-24', label: 'Aug 24', value: 18, recorded: true },
+      { key: '2026-08-31', label: 'Aug 31', value: 27, recorded: false },
+    ],
+    newOppsByMonth: [
+      { key: '2026-08', label: 'Aug', value: 3 },
+      { key: '2026-09', label: 'Sep', value: 2 },
+    ],
+  },
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'], closed: [] },
   goals: { created: ['Book two site walks'], completed: [], active: ['#1 Close Berkshire'] },
   narrative: '## Summary\nTwo new opps landed.',
@@ -463,12 +484,15 @@ const html = renderWeeklyReportHtml({
 
 check('renders the KPI value', html.includes('36.6%'), true);
 check('renders the chip', html.includes('Behind pace'), true);
-check('a missed goal draws a blue bar under 100%',
-  html.includes('width:54%') && html.includes('#3B82F6'), true);
-check('the tile carries the number the tab shows', html.includes('>27<'), true);
-check('the tile says where an off-feed number came from', html.includes('recorded Sep 3'), true);
-check('a met goal draws a green bar capped at 100%',
-  html.includes('width:100%') && html.includes('#10B981'), true);
+check('the current week draws in the accent, the one before it in grey',
+  html.includes('bgcolor="#2a78d6"') && html.includes('bgcolor="#7C8B9D"'), true);
+check('the series carries the number the tab shows', html.includes('>27<'), true);
+// A week answered by the Activity tab's banked total rather than the live
+// feed says so once, under the series — the tile used to say it per number.
+check('the series says when a week came off the recording',
+  html.includes('banked on the Activity tab'), true);
+check('the new-opps series draws in its own accent',
+  html.includes('bgcolor="#0E9F6E"'), true);
 check('lists the opp changes', html.includes('Acme: HQ retrofit'), true);
 check('omits sections with nothing in them', html.includes('Deals closed'), false);
 check('includes the narrative', html.includes('Two new opps landed.'), true);

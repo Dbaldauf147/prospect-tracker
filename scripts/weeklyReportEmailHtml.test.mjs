@@ -56,7 +56,22 @@ const snapshot = {
       },
     ],
   },
-  tiles: [{ label: 'Emails sent', value: 27, goal: 50, accent: 'blue' }],
+  trends: {
+    emailsByWeek: [
+      { key: '2026-08-03', label: 'Aug 3', value: 31, recorded: true },
+      { key: '2026-08-10', label: 'Aug 10', value: null, recorded: false },
+      { key: '2026-08-17', label: 'Aug 17', value: 44, recorded: true },
+      { key: '2026-08-24', label: 'Aug 24', value: 18, recorded: true },
+      { key: '2026-08-31', label: 'Aug 31', value: 27, recorded: false },
+    ],
+    newOppsByMonth: [
+      { key: '2026-05', label: 'May', value: 4, recorded: false },
+      { key: '2026-06', label: 'Jun', value: 2, recorded: false },
+      { key: '2026-07', label: 'Jul', value: 6, recorded: false },
+      { key: '2026-08', label: 'Aug', value: 3, recorded: false },
+      { key: '2026-09', label: 'Sep', value: 1, recorded: false },
+    ],
+  },
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'] },
   goals: { active: ['#1 Close Berkshire'] },
   funnelImage: { src: PNG, width: 1600, height: 349, alt: 'Pipeline funnel: bands by stage' },
@@ -102,8 +117,20 @@ check('every table is a presentation table with no spacing',
 
 // Bars are drawn as table cells with a bgcolor — never as a coloured div
 // alone, and never as a picture, which a client can refuse to load.
-check('a progress bar is a bgcolor cell sized both ways',
-  /width="54%" bgcolor="#3B82F6"[^>]*width:54%/.test(html), true);
+//
+// The tallest bar in a series is the scale: 44 emails is the max, so it is
+// the 100% bar and 18 is scaled against it, not against a 0–50 axis that
+// would render five near-identical stubs.
+check('a trend bar is a bgcolor cell sized both ways',
+  /width="100%" bgcolor="#7C8B9D"[^>]*width:100%/.test(html), true);
+check('bars scale to the series max, not to a fixed axis',
+  /width="41%" bgcolor="#7C8B9D"/.test(html), true);
+// Emphasis: the period this report covers wears the accent, the history
+// behind it wears the de-emphasis grey.
+check('the current period carries the accent colour',
+  /width="61%" bgcolor="#2a78d6"/.test(html), true);
+check('the current month carries the opps accent',
+  /bgcolor="#0E9F6E"/.test(html), true);
 check('a funnel bar uses the chart’s own stage colour',
   html.includes('bgcolor="#104281"'), true);
 
@@ -176,7 +203,7 @@ check('the projected total is readable text under the picture',
     periodEnd: Date.parse('2026-09-06T23:59:59Z'),
     scope: 'week',
     periodLabel: 'Mon, Aug 31 — Sun, Sep 6, 2026',
-    tiles: [{ label: 'Emails sent', value: 0, goal: 50, accent: 'blue', sub: 'recorded Sep 3' }],
+    trends: { emailsByWeek: [{ key: '2026-08-31', label: 'Aug 31', value: 0, recorded: true }], newOppsByMonth: [] },
   }, {});
   const banner = stale.indexOf('These numbers are');
   check('a stale report carries a banner', banner > -1, true);

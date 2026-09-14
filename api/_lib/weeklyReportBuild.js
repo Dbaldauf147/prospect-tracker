@@ -34,10 +34,12 @@
 
 import {
   weekBounds, dayBounds, periodLabel,
-  computeActivity, computeOppChanges, computeGoalsProgress,
+  computeOppChanges, computeGoalsProgress,
 } from '../../src/utils/weeklyReport.js';
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
-import { emailsSentFor } from '../../src/utils/weeklyActivityLog.js';
+import {
+  emailsByWeek, newOppsByMonth, recentWeeks, TREND_WEEKS, TREND_MONTHS,
+} from '../../src/utils/weeklyReportTrends.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../src/utils/pipelineFunnelData.js';
@@ -98,6 +100,13 @@ export function completedPeriodBounds(now, { scope = 'week', timeZone = '' } = {
   }
 }
 
+// The start of the oldest week the emails-by-week series covers, which is
+// how far back the live feed has to reach. Exported so the scheduler asks
+// for the same span the build will read.
+export function trendHistoryStart(periodStart) {
+  return recentWeeks(periodStart, TREND_WEEKS)[0].start;
+}
+
 /**
  * Every input the report needs, read from Firestore and HubSpot.
  *
@@ -105,7 +114,7 @@ export function completedPeriodBounds(now, { scope = 'week', timeZone = '' } = {
  * than thrown: a missing pipeline dashboard should cost the KPI cards, not
  * the whole email. `errors` is what the caller logs.
  */
-export async function loadReportSources(db, uid, { token = '', start, end, fetchOpts } = {}) {
+export async function loadReportSources(db, uid, { token = '', start, end, historyStart, fetchOpts } = {}) {
   const errors = [];
   const settle = async (name, fn, fallback) => {
     try { return await fn(); } catch (err) {
@@ -138,7 +147,13 @@ export async function loadReportSources(db, uid, { token = '', start, end, fetch
       // build carries on and emailsSentFor falls back to the recorded
       // weekly total, which is exactly what the tab does with a feed the
       // storage quota dropped.
-      settle('hubspotActivity', () => fetchActivityWindow(token, start, end, fetchOpts), null),
+      // Back to the first week of the emails-by-week series, not just the
+      // reported window. The feed is stamped `fetchedAt: now`, so
+      // liveCacheCovers treats it as an answer for every week in the
+      // series — and a feed holding only the current week would then
+      // answer 0 for the four behind it and draw a collapse in outbound
+      // that never happened.
+      settle('hubspotActivity', () => fetchActivityWindow(token, historyStart ?? start, end, fetchOpts), null),
     ]);
 
   return {
@@ -164,20 +179,27 @@ export function buildReportPayload(sources, period) {
   const { start, end, scope, label } = period;
   const settings = s.settings || {};
   const workEmail = String(settings.workEmail || '').toLowerCase().trim();
-  const weeklyTargets = (settings.weeklyTargets && typeof settings.weeklyTargets === 'object')
-    ? settings.weeklyTargets
-    : {};
-
-  const activity = computeActivity(s.activityCache, workEmail, start, end);
-  const emailsSent = emailsSentFor({
-    cache: s.activityCache,
-    log: s.activityLog,
-    start,
-    live: activity.emails.length,
-    weekly: scope !== 'day',
-  });
   const oppChanges = computeOppChanges(s.oppsRecords, start, end);
   const goalsProgress = computeGoalsProgress(s.goals, start, end);
+
+  // The two history series the email carries in place of the old tiles.
+  // Same pure functions the tab calls, over the same caches — the weekly
+  // one leans on emailsSentFor per week, so a week the feed cannot answer
+  // for falls back to the Activity tab's banked total rather than to zero.
+  // A day-scoped report gets no weekly series: the log is kept per week,
+  // and a week's total is not an answer about a day.
+  const trends = {
+    emailsByWeek: scope === 'day' ? [] : emailsByWeek({
+      cache: s.activityCache,
+      log: s.activityLog,
+      senderEmail: workEmail,
+      refMs: start,
+      weeks: TREND_WEEKS,
+    }),
+    newOppsByMonth: newOppsByMonth({
+      records: s.oppsRecords, refMs: start, months: TREND_MONTHS,
+    }),
+  };
 
   const reviewSnapshot = buildReviewSnapshot({
     pipeline: s.pipeline,
@@ -209,8 +231,7 @@ export function buildReportPayload(sources, period) {
     // capture a picture.
     funnelImage: null,
     closeRateTrend: emailCloseRateTrend(closeRateTrendByStage(s.oppsRecords, { months: 6 })),
-    emailsSent,
-    weeklyTargets,
+    trends,
     oppChanges,
     goalsProgress,
     // The recap is the tab's one on-demand piece; a cron that wrote its own
@@ -228,7 +249,9 @@ export function payloadHasFigures(payload) {
   if ((payload.kpiCards || []).length) return true;
   if (payload.funnel) return true;
   if (payload.closeRateTrend) return true;
-  if ((payload.tiles || []).some(t => Number(t.value) > 0)) return true;
+  const tr = payload.trends || {};
+  const points = [...(tr.emailsByWeek || []), ...(tr.newOppsByMonth || [])];
+  if (points.some(p => Number(p.value) > 0)) return true;
   const oc = payload.oppChanges || {};
   return Object.values(oc).some(v => Array.isArray(v) && v.length > 0);
 }
@@ -243,7 +266,13 @@ export async function buildWeeklyReport(db, uid, {
 } = {}) {
   const period = completedPeriodBounds(now, { scope, timeZone });
   const sources = await loadReportSources(db, uid, {
-    token, start: period.start, end: period.end, fetchOpts,
+    token,
+    start: period.start,
+    end: period.end,
+    // The live feed has to reach back across the whole emails-by-week
+    // series, not just the reported week.
+    historyStart: trendHistoryStart(period.start),
+    fetchOpts,
   });
   const payload = buildReportPayload(sources, period);
   return { payload, period, errors: sources.errors, usable: payloadHasFigures(payload) };

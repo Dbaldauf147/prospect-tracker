@@ -27,6 +27,9 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
+  emailsByWeek, newOppsByMonth, TREND_WEEKS, TREND_MONTHS,
+} from '../../utils/weeklyReportTrends';
+import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
@@ -555,10 +558,23 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  // What the scheduled email will send. The report's numbers come from
-  // caches that only exist in this browser, so rather than have the server
-  // recompute them (a second copy of the same arithmetic, free to drift)
-  // the tab publishes what it rendered and the cron mails that back.
+  // The two history series the email carries in place of the tab's tiles.
+  // Both are recomputed from the same caches the tiles read, over windows
+  // the current period sits at the end of, so the last bar in each is the
+  // period this report covers.
+  const trendSeries = useMemo(() => ({
+    emailsByWeek: emailsByWeek({
+      cache, log: activityLog, senderEmail, refMs: bounds.start, weeks: TREND_WEEKS,
+    }),
+    newOppsByMonth: newOppsByMonth({
+      records: oppsRecords, refMs: bounds.start, months: TREND_MONTHS,
+    }),
+  }), [cache, activityLog, senderEmail, oppsRecords, bounds]);
+
+  // What the tab publishes. The cron rebuilds the report from Firestore and
+  // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing
+  // this back, but both go through emailSnapshotPayload so the document the
+  // preview renders is the document the email is.
   const emailSnapshot = useMemo(() => emailSnapshotPayload({
     scope: mode,
     periodLabel: label,
@@ -568,15 +584,18 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     funnelSummary,
     funnelImage,
     closeRateTrend: closeRateTrendSummary,
-    emailsSent,
-    weeklyTargets,
+    // History, not tiles. A tile said how this week went against its
+    // target; the email is read by someone who wants to know which way the
+    // line is going, and "27 emails, /50" cannot answer that. The tab keeps
+    // its tiles; this is the email's version.
+    trends: trendSeries,
     oppChanges,
     goalsProgress: goalsProg,
     // Only ship a recap that was written for this period; a stale one
     // would describe a different week under this week's heading.
     narrative: narrativeStale ? '' : narrative,
   }), [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
-    emailsSent, oppChanges, goalsProg, weeklyTargets, narrative, narrativeStale]);
+    trendSeries, oppChanges, goalsProg, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

@@ -54,6 +54,16 @@ const STATUS = {
 };
 const statusOf = (s) => STATUS[s] || STATUS.none;
 
+// The two trend series' fills. `strong` is the accent the tab already gives
+// that metric and marks the period this report covers; the history behind
+// it is the de-emphasis grey, not a paler tint of the same hue — one bar
+// carries the eye, the rest are context, and a second shade of the accent
+// would read as a second thing being measured. Both greys and both accents
+// clear 3:1 on white, so every bar is visible and no bar competes.
+const TREND_HISTORY = '#7C8B9D';
+const TREND_BLUE = { strong: '#2a78d6', soft: TREND_HISTORY };
+const TREND_GREEN = { strong: '#0E9F6E', soft: TREND_HISTORY };
+
 // The stage ramp the Pipeline funnel draws with, earliest stage darkest.
 const STAGE_FILL = ['#104281', '#1c5cab', '#2a78d6', '#6da7ec'];
 
@@ -138,38 +148,72 @@ function cardRow(cells) {
   return table(`width="100%" style="border-collapse:collapse"`, `<tr>${tds}</tr>`);
 }
 
-// A stat tile, with the same progress bar the tab draws under a tile that
-// carries a weekly target. `sub` is the tile's provenance note ("recorded
-// Sep 3") — a number the live feed can no longer answer for says where it
-// came from here too.
-function tileHtml(tile) {
-  const value = Number(tile.value) || 0;
-  const goal = Number(tile.goal) || 0;
-  const accent = tile.accent === 'green' ? '#10B981' : '#3B82F6';
-  let bar = '';
-  if (goal > 0) {
-    const pct = Math.max(0, Math.min(100, Math.round((value / goal) * 100)));
-    const fill = value >= goal ? '#10B981' : '#3B82F6';
-    // Bulletproof bar: nested tables with bgcolor, since a coloured <div>
-    // of a given width is the one thing every client agrees on.
-    const track = table(
-      `width="100%" bgcolor="${BORDER}" style="border-collapse:collapse;border-radius:3px"`,
-      `<tr><td height="5" style="height:5px;font-size:0;line-height:0;mso-line-height-rule:exactly">${pct > 0
-        ? table(`width="${pct}%" bgcolor="${fill}" style="border-collapse:collapse;width:${pct}%;border-radius:3px"`, `<tr><td height="5" style="height:5px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>`)
-        : '&nbsp;'}</td></tr>`,
-    );
-    bar = table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, `<tr>
-        <td valign="middle" style="padding-right:6px">${track}</td>
-        <td valign="middle" width="34" style="font-family:${FONT};font-size:12px;font-weight:700;color:${MUTED};white-space:nowrap">/${goal}</td>
-      </tr>`);
-  }
-  return `
-      ${cardOpen({ left: accent })}
-        <div style="font-family:${FONT};font-size:26px;font-weight:700;line-height:1.1;color:${INK}">${esc(value)}</div>
-        <div style="margin-top:2px;font-family:${FONT};font-size:12px;font-weight:600;color:${MUTED}">${esc(tile.label)}</div>
-        ${tile.sub ? `<div style="margin-top:2px;font-family:${FONT};font-size:12px;color:${MUTED}">${esc(tile.sub)}</div>` : ''}
-        ${bar}
+// A trend series, as a row of horizontal bars — one period per row, oldest
+// at the top, each bar direct-labelled with its own number.
+//
+// Horizontal rather than columns because the period labels ("Aug 11",
+// "Sep") need room to sit beside their bar, and because a row of cells
+// with set heights is the layout Word is least reliable about. Every bar
+// carries its value in text next to it, so the series is legible even
+// where the fills do not render at all — which is also the relief a
+// low-contrast fill on white requires.
+//
+// A null value is NOT a zero. For the emails series it means the week has
+// no recording and the feed cannot answer for it; drawing that as an empty
+// bar would assert a quiet week that nobody actually measured.
+function trendRowHtml(point, max, accent, isLast) {
+  const known = point.value != null;
+  const value = known ? point.value : 0;
+  // Scale to the tallest bar in the series, never to the axis: five weeks
+  // of 20-30 emails against a 0-50 axis is five stubs that all look alike.
+  const pct = max > 0 && known ? Math.max(2, Math.round((value / max) * 100)) : 0;
+  // The current period is the one the reader is being told about, so it
+  // carries the full accent and the rest recede — emphasis, rather than
+  // five bars competing for the same attention.
+  const fill = isLast ? accent.strong : accent.soft;
+  const labelInk = isLast ? INK : MUTED;
+
+  const bar = pct > 0
+    ? table(`width="${pct}%" bgcolor="${fill}" style="border-collapse:collapse;width:${pct}%;border-radius:0 3px 3px 0"`,
+      `<tr><td height="14" style="height:14px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>`)
+    : '&nbsp;';
+
+  return `<tr>
+      <td width="58" valign="middle" style="width:58px;padding:3px 8px 3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${labelInk};white-space:nowrap">${esc(point.label)}</td>
+      <td valign="middle" style="padding:3px 0">${table(`width="100%" style="border-collapse:collapse"`, `<tr><td>${bar}</td></tr>`)}</td>
+      <td width="42" valign="middle" style="width:42px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? esc(point.value) : '&mdash;'}</td>
+    </tr>`;
+}
+
+// One trend card: heading, the bars, then the footnotes the series needs.
+function trendCardHtml({ title, note, points, accent, emptyNote }) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return `${cardOpen({ left: accent.strong })}
+        <div style="font-family:${FONT};font-size:13px;font-weight:700;color:${INK}">${esc(title)}</div>
+        ${mutedRow(emptyNote)}
       ${CARD_CLOSE}`;
+  }
+
+  const max = points.reduce((m, p) => (p.value != null && p.value > m ? p.value : m), 0);
+  const rows = points.map((p, i) => trendRowHtml(p, max, accent, i === points.length - 1)).join('');
+  // Say once, under the series, what the two things a bar can't show mean —
+  // rather than a per-bar asterisk that has to be hunted for.
+  const unknown = points.some(p => p.value == null);
+  const recorded = points.some(p => p.recorded);
+  const feet = [
+    recorded ? 'Weeks the live feed no longer covers are the totals banked on the Activity tab.' : '',
+    unknown ? '\u2014 marks a week with no recording and no feed to count.' : '',
+  ].filter(Boolean).join(' ');
+
+  return `${cardOpen({ left: accent.strong })}
+      ${table(`width="100%" style="border-collapse:collapse"`, `<tr>
+        <td valign="bottom" style="font-family:${FONT};font-size:13px;font-weight:700;color:${INK};white-space:nowrap">${esc(title)}</td>
+        <td valign="bottom" style="padding-left:8px;font-family:${FONT};font-size:12px;color:${MUTED};white-space:nowrap">${esc(note)}</td>
+        <td width="99%" style="width:99%"></td>
+      </tr>`)}
+      ${table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, rows)}
+      ${feet ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(feet)}</div>` : ''}
+    ${CARD_CLOSE}`;
 }
 
 // A group of changes, as the tab lists them: uppercase title, a count pill,
@@ -550,7 +594,7 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
   const s = snapshot || {};
   const fresh = freshnessNote(s);
   const cards = Array.isArray(s.kpiCards) ? s.kpiCards : [];
-  const tiles = Array.isArray(s.tiles) ? s.tiles : [];
+  const tr = s.trends || {};
   const oc = s.oppChanges || {};
   const gl = s.goals || {};
   // "this week" / "this day", so the goal headings read the way they do on
@@ -565,7 +609,29 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
     ? cardRow(cards.map(kpiCardHtml))
     : `<div style="font-family:${FONT};font-size:13px;color:${MUTED};padding:12px 14px;border:1px dashed ${BORDER};background-color:${SURFACE_ALT};border-radius:6px">No chart data was cached when this snapshot was taken. Open Charts → Pipeline (and paste BFO Activity) to seed the target, pipeline and run rate.</div>`;
 
-  const tileRow = tiles.length ? cardRow(tiles.map(tileHtml)) : '';
+  // The two series that replaced the "Emails sent" and "New opps" tiles.
+  // Each is its own chart on its own scale: one axis per chart, because a
+  // week of ~30 emails and a month of ~2 opps share no axis worth drawing.
+  // Colours are the accents the tab already gives these two metrics, so the
+  // same number is the same colour in both places.
+  const trendRow = (s.trends && (tr.emailsByWeek?.length || tr.newOppsByMonth?.length))
+    ? cardRow([
+      trendCardHtml({
+        title: 'Emails sent',
+        note: `last ${(tr.emailsByWeek || []).length} weeks`,
+        points: tr.emailsByWeek,
+        accent: TREND_BLUE,
+        emptyNote: 'No weekly email history recorded yet.',
+      }),
+      trendCardHtml({
+        title: 'New opps',
+        note: `last ${(tr.newOppsByMonth || []).length} months`,
+        points: tr.newOppsByMonth,
+        accent: TREND_GREEN,
+        emptyNote: 'No monthly opp history in the cache yet.',
+      }),
+    ])
+    : `<div style="font-family:${FONT};font-size:13px;color:${MUTED};padding:12px 14px;border:1px dashed ${BORDER};background-color:${SURFACE_ALT};border-radius:6px">The email history series were not in this snapshot. Open Charts \u2192 Weekly Report once and the next send will carry them.</div>`;
   const shot = s.funnelImage;
   const funnel = funnelHtml(s.funnel, funnelImageSrc && shot
     ? { ...shot, src: funnelImageSrc }
@@ -626,7 +692,11 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
      is what a desktop reader wants; narrow clients stack instead. */
   @media only screen and (max-width:620px) {
     .col { display:block !important; width:100% !important; height:auto !important; }
-    .col + .col { padding-top:12px !important; }
+    /* General sibling, not adjacent: the gutter cell still sits between the
+       two columns in the markup, so an adjacent-sibling rule never matched
+       and every
+       stacked pair rendered flush against its neighbour on a phone. */
+    .col ~ .col { padding-top:12px !important; }
     td.gut { display:none !important; width:0 !important; }
     /* Narrow enough and the note wraps beside its heading instead of
        being squeezed against the slack cell, which goes away. */
@@ -661,7 +731,7 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
 
     ${trend ? `${spacer(20)}${headingHtml('Close rate trend', `Last ${trendMonths} months, by the stage each closed deal reached`)}${spacer(8)}${trend}` : ''}
 
-    ${tileRow ? `${spacer(16)}${tileRow}` : ''}
+    ${spacer(16)}${trendRow}
 
     ${narrative ? `${spacer(16)}${narrative}` : ''}
 

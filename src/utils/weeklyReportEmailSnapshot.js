@@ -109,8 +109,7 @@ export function emailSnapshotPayload({
   funnelSummary = null,
   funnelImage = null,
   closeRateTrend = null,
-  emailsSent = { count: 0, recorded: false },
-  weeklyTargets = {},
+  trends = null,
   oppChanges = {},
   goalsProgress = {},
   narrative = '',
@@ -141,25 +140,17 @@ export function emailSnapshotPayload({
     // Independent of the funnel: the trend reads the Opps cache alone, so a
     // report with no stage volumes cached still carries it.
     closeRateTrend,
-    // `emailsSent.count`, not a raw live count: for a week the HubSpot feed
-    // no longer covers, the Activity tab's recording is the only thing that
-    // can answer. Mailing the live count instead is what made a week of
-    // sent mail arrive as 0.
-    tiles: [
-      {
-        label: 'Emails sent',
-        value: emailsSent?.count ?? 0,
-        goal: weeklyTargets?.emails ?? null,
-        accent: 'blue',
-        sub: emailsSent?.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null,
-      },
-      {
-        label: 'New opps',
-        value: (oc.newOpps || []).length,
-        goal: weeklyTargets?.newOpps ?? null,
-        accent: 'green',
-      },
-    ],
+    // Emails by week and new opps by month, in place of the two tiles this
+    // email used to lead with. A tile said how one week went against a
+    // target; the reader wants to know which way the line is going, and a
+    // number over a goal cannot say that. Built by the caller (both of them
+    // hold the caches these read) via utils/weeklyReportTrends.
+    trends: trends && (trends.emailsByWeek?.length || trends.newOppsByMonth?.length)
+      ? {
+        emailsByWeek: trends.emailsByWeek || [],
+        newOppsByMonth: trends.newOppsByMonth || [],
+      }
+      : null,
     oppChanges: {
       closed: list(oc.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),
       newOpps: list(oc.newOpps, x => `${who(x)}${x.stage ? ` (${x.stage})` : ''}`),

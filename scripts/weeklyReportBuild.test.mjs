@@ -19,7 +19,7 @@
 // flagged stale by freshnessNote on every single send.
 import {
   completedPeriodBounds, loadReportSources, buildReportPayload,
-  payloadHasFigures, buildWeeklyReport,
+  payloadHasFigures, buildWeeklyReport, trendHistoryStart,
 } from '../api/_lib/weeklyReportBuild.js';
 import { readChunkedJson, MIRROR } from '../api/_lib/firestoreChunks.js';
 import { freshnessNote } from '../api/_lib/weeklyReportEmailHtml.js';
@@ -243,16 +243,26 @@ function fakeFetch(emails) {
     p.kpiCards[1].value, '1.78×');
   check('and says what it is a share of', p.kpiCards[1].lines[0], '55.5% of the 3.21× goal');
 
-  // The tiles. Two external sends inside the week, the internal-only one
-  // dropped and last week's excluded — counted by computeActivity, the same
-  // function the tab counts with.
-  check('emails sent counts the live window', p.tiles[0].value, 2);
-  check('against the stored weekly target', p.tiles[0].goal, 50);
+  // The two history series. The reported week is the last point in each,
+  // so the figures the email leads with are the same ones the change lists
+  // below it are drawn from.
+  const wk = p.trends.emailsByWeek;
+  check('five weeks of email history', wk.length, 5);
+  // Two external sends inside the week, the internal-only one dropped and
+  // last week's excluded — counted by computeActivity, the same function
+  // the tab counts with.
+  check('the reported week counts the live window', wk[4].value, 2);
   // A live feed that covers the window outranks the recording, so the
   // planted 99 must not surface.
-  check('a covering live feed beats the recorded total', p.tiles[0].sub, null);
-  check('new opps counts the one that first appeared this week', p.tiles[1].value, 1);
-  check('and carries its own target', p.tiles[1].goal, 1);
+  check('a covering live feed beats the recorded total', wk[4].recorded, false);
+  check('the last point is the week the report covers',
+    wk[4].key, '2026-09-07');
+
+  const mo = p.trends.newOppsByMonth;
+  check('five months of opp history', mo.length, 5);
+  check('the current month counts the opp that first appeared', mo[4].value, 1);
+  check('the months run oldest first', mo.map(x => x.key).join(','),
+    '2026-05,2026-06,2026-07,2026-08,2026-09');
 
   // The change lists, named the way the tab names them.
   check('the new opp is listed', p.oppChanges.newOpps[0], 'Acme: HQ retrofit (Stage 4: Influence and Develop)');
@@ -274,16 +284,53 @@ function fakeFetch(emails) {
   check('no narrative is invented', p.narrative, '');
 }
 
-// Without a live feed the recorded weekly total stands in, exactly as the
-// tile does in the browser when the storage quota has dropped the cache.
+// Without a live feed the recorded weekly totals stand in, exactly as the
+// tile did in the browser when the storage quota had dropped the cache.
+// This matters more for a five-week series than it did for one number: a
+// series that counted the missing feed would read zero across every week
+// and draw a collapse in outbound that never happened.
 {
   const built = await buildWeeklyReport(fakeDb(docs), UID, { now: NOW, token: '' });
-  check('no feed → the recording answers', built.payload.tiles[0].value, 99);
-  // The date itself renders in the runner's zone; what matters is that the
-  // tile owns up to the number not coming from the live feed.
-  check('and the tile says where the number came from',
-    built.payload.tiles[0].sub.startsWith('recorded '), true);
-  check('the rest of the report is unaffected', built.payload.tiles[1].value, 1);
+  const wk = built.payload.trends.emailsByWeek;
+  check('no feed → the recording answers', wk[4].value, 99);
+  check('and the series owns up to where the number came from', wk[4].recorded, true);
+  // The four weeks before it were never recorded either, and with no feed
+  // to count they are unknown — not zero. An empty bar would assert four
+  // quiet weeks that nobody measured.
+  check('unrecorded weeks with no feed are blank, not zero',
+    wk.slice(0, 4).map(x => x.value).join(','), ',,,');
+  check('the rest of the report is unaffected',
+    built.payload.trends.newOppsByMonth[4].value, 1);
+}
+
+// The live feed has to be asked for the whole span the weekly series
+// covers. A fetch bounded to the reported week would come back stamped
+// `fetchedAt: now` — which liveCacheCovers reads as an answer for every
+// week in the series — and would then answer 0 for the four weeks whose
+// emails it never fetched. Five bars, four of them a confident lie.
+{
+  const windows = [];
+  const spyFetch = async (url, opts) => {
+    const body = JSON.parse(opts?.body || '{}');
+    const f = (body.filterGroups?.[0]?.filters || []);
+    const from = Number(f.find(x => x.operator === 'GTE')?.value);
+    if (Number.isFinite(from)) windows.push(from);
+    return fakeFetch(hubspotEmails)(url, opts);
+  };
+  await buildWeeklyReport(fakeDb(docs), UID, {
+    now: NOW, token: 'tok', fetchOpts: { fetchImpl: spyFetch },
+  });
+
+  const period = completedPeriodBounds(NOW, { scope: 'week' });
+  const seriesStart = trendHistoryStart(period.start);
+  check('HubSpot was actually asked', windows.length > 0, true);
+  check('and asked back to the start of the five-week series',
+    Math.min(...windows) <= seriesStart, true);
+  // Bounded, not unbounded: widening the fetch is only acceptable because
+  // it is still a fixed span. A whole-history page is what the cron was
+  // built to stop doing.
+  check('but no further back than the series needs',
+    Math.min(...windows) > seriesStart - 40 * 24 * 60 * 60 * 1000, true);
 }
 
 // ---- when there is nothing to rebuild from ------------------------------
