@@ -328,9 +328,20 @@ export function ServicePricingModal({
               panel is a screen of blank rate boxes with no reason on it. */}
           {row.noFee && (
             <div className={styles.pricingNoFeeNote}>
-              <strong>Marked no fee.</strong> This service is delivered at no charge: it prices to
-              $0 on every deal and no longer reads as one nobody has got round to pricing. Typing a
-              rate below takes the mark off.
+              {row._noFeeByBucket ? (
+                <>
+                  <strong>No fee — it&rsquo;s in {row.serviceBucket}.</strong> A retired service is
+                  delivered at no charge: it prices to $0 on every deal. Its rate card below is kept
+                  exactly as it was — move the service to another bucket on the Services subtab and
+                  it prices off those rates again.
+                </>
+              ) : (
+                <>
+                  <strong>Marked no fee.</strong> This service is delivered at no charge: it prices
+                  to $0 on every deal and no longer reads as one nobody has got round to pricing.
+                  Typing a rate below takes the mark off.
+                </>
+              )}
             </div>
           )}
           <div className={styles.pricingModalSectionTitle}>Fee breakdown</div>
@@ -365,9 +376,18 @@ export function ServicePricingModal({
           {onToggleNoFee && (
             <label
               className={styles.pricingModalScope}
-              title="This service is delivered at no charge. It prices to $0 instead of reading as unpriced — and marking it clears the rates below, which unmarking won't bring back."
+              title={row._noFeeByBucket
+                ? `In ${row.serviceBucket}: a retired service charges nothing, so there is no mark here to take off. Move it to another bucket on the Services subtab and its rate card prices it again.`
+                : "This service is delivered at no charge. It prices to $0 instead of reading as unpriced — and marking it clears the rates below, which unmarking won't bring back."}
             >
-              <input type="checkbox" checked={!!row.noFee} onChange={onToggleNoFee} />
+              {/* The bucket's tick, where the bucket made it: not this
+                  panel's to undo, any more than the table's is. */}
+              <input
+                type="checkbox"
+                checked={!!row.noFee}
+                disabled={!!row._noFeeByBucket}
+                onChange={onToggleNoFee}
+              />
               No fee
             </label>
           )}
