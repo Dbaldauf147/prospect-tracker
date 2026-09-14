@@ -38,7 +38,7 @@ const IMPORT = {
   account: 'Ventas', id: '17', stage: 'Lead', company: 'Ventas Inc',
   services: 5, unmatchedTokens: ['widget polishing'],
   filled: [{ unit: 'sites', label: 'Sites', value: 819, source: 'the opp’s “Sites” column' }],
-  dealSizeSource: 'the opp’s Quoted Amount', missing: ['Meters'], noPrice: [],
+  missing: ['Meters'], noPrice: [],
 };
 const ESTIMATE = {
   scenario: {
@@ -50,7 +50,6 @@ const ESTIMATE = {
     // Invoice processing at 40 of the 819 sites: a fact about this deal,
     // which is why it travels with the estimate and not the rate card.
     serviceUnits: { Metering: 40 },
-    dealSize: 300000,
   },
   pinned: ['Bill Pay', 'Metering'],
   oppImport: IMPORT,
@@ -72,7 +71,7 @@ const ESTIMATE = {
 
 // ── Clearing the scope clears the record ──────────────────────────────
 {
-  savePricingEstimate(UID, { scenario: { services: [], counts: {}, serviceUnits: {}, dealSize: '' }, pinned: null, oppImport: null });
+  savePricingEstimate(UID, { scenario: { services: [], counts: {}, serviceUnits: {} }, pinned: null, oppImport: null });
   check('an emptied estimator leaves nothing behind', loadPricingEstimate(UID), null);
   check('and the key is gone, not just blank',
     globalThis.localStorage.getItem(pricingEstimateKey(UID)), null);
@@ -84,8 +83,12 @@ const ESTIMATE = {
   check('a count that isn’t a number is dropped, not passed on as NaN',
     normalizeEstimate({ scenario: { services: ['A'], counts: { sites: 'lots', meters: -4, accounts: 12 } } }).scenario.counts,
     { accounts: 12 });
-  check('a deal size that isn’t a number reads as unanswered',
-    normalizeEstimate({ scenario: { services: ['A'], dealSize: 'three hundred grand' } }).scenario.dealSize, '');
+  // The estimator has no deal size box any more - a percentage service is
+  // a cut of the bundle it is sold with, worked out on the page - so a deal
+  // size left in an old saved record is dropped rather than restored into a
+  // field nothing reads.
+  check('a deal size left over from an older record is not carried back',
+    normalizeEstimate({ scenario: { services: ['A'], dealSize: 300000 } }).scenario.dealSize, undefined);
   check('an import with no account is no import',
     normalizeEstimate({ scenario: { services: ['A'] }, oppImport: { ...IMPORT, account: '  ' } }).oppImport, null);
   check('a filled figure that isn’t a number is dropped from the note',
@@ -97,12 +100,12 @@ const ESTIMATE = {
     normalizeEstimate({ scenario: { services: ['A'] }, pinned: [] }).pinned, null);
   check('junk is not an estimate', normalizeEstimate('nope'), null);
   check('an empty estimate is not stored', normalizeEstimate({ scenario: { services: [] } }), null);
-  check('an untouched estimator is empty', isEmptyEstimate({ scenario: { services: [], counts: {}, dealSize: '' } }), true);
+  check('an untouched estimator is empty', isEmptyEstimate({ scenario: { services: [], counts: {} } }), true);
   // A company on its own IS worth remembering: picking an account is most
   // of the work of setting the page up, and a reload that threw it away
   // would mean typing the name again to see the same ranking.
   check('but an account picked with nothing ticked is not',
-    isEmptyEstimate({ scenario: { company: 'Ventas Inc', services: [], counts: {}, dealSize: '' } }), false);
+    isEmptyEstimate({ scenario: { company: 'Ventas Inc', services: [], counts: {} } }), false);
   check('and it survives on its own',
     normalizeEstimate({ scenario: { company: 'Ventas Inc' } })?.scenario.company, 'Ventas Inc');
   // Whitespace is not an account. Left untrimmed it would keep a record

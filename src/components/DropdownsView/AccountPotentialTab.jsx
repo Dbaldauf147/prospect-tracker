@@ -9,7 +9,7 @@ import { OppImportModal } from './OppImportModal';
 import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
-import { clientCounts, needsDealSize } from '../../utils/clientDealSizing';
+import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
 import {
@@ -68,8 +68,12 @@ const DEAL_TABLE_COLUMNS = [
   // Wide enough for a range: "$1,105,650 – $1,474,200" is what these hold
   // once a service is quoted on two rates, and a clipped figure is a wrong
   // figure. A saved width still wins — this is only the default.
+  // The one money column. There was an Est. Deal Value beside it, the same
+  // services priced over their contract term, and two totals for one
+  // service is one more than a reader can hold: the term figure is bigger,
+  // so it is the one that gets quoted, and this page is asked about year
+  // one.
   { key: 'fee',          label: 'Estimated Year 1 Fee', width: 210 },
-  { key: 'value',        label: 'Est. Deal Value',      width: 210 },
 ];
 
 // Dropdowns › Deal Pricing. One deal at a time, priced off the rate card the
@@ -130,7 +134,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // this analysis and nothing else — not the other opps, and not the
   // account's own site count, which this tab never writes to at all.
   const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
-  const dealSize = scenario?.dealSize ?? '';
 
   // ---- the account this potential is being read for -------------------
   const company = String(scenario?.company || '').trim();
@@ -178,14 +181,13 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     pricing,
     bases,
     counts: effectiveCounts,
-    dealSize,
     serviceUnits,
     oppStages,
     // Which services drag others in behind them. The Services tab's own
     // Auto-add cells, read through the same overrides the Scope picker
     // reads, so a bundle here is the bundle that would actually be ticked.
     overrides: settings?.serviceOverrides,
-  }), [client, serviceRows, pricing, bases, effectiveCounts, dealSize, serviceUnits, oppStages,
+  }), [client, serviceRows, pricing, bases, effectiveCounts, serviceUnits, oppStages,
     settings?.serviceOverrides]);
 
   // What the account has already ruled on, said in words. A count alone
@@ -245,11 +247,11 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // writes nothing and clears the record (see savePricingEstimate).
   useEffect(() => {
     savePricingEstimate(user?.uid, {
-      scenario: { services: [...inScope], counts, serviceUnits, dealSize },
+      scenario: { services: [...inScope], counts, serviceUnits },
       pinned: pinnedNames ? [...pinnedNames] : null,
       oppImport,
     });
-  }, [user?.uid, inScope, counts, serviceUnits, dealSize, pinnedNames, oppImport]);
+  }, [user?.uid, inScope, counts, serviceUnits, pinnedNames, oppImport]);
 
   // The last save, so the note under the bar can say it landed — and say
   // it didn't when it didn't. { ok, at, error }.
@@ -268,7 +270,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     setSaving(true);
     try {
       const analysis = buildPricingAnalysis({
-        totals, counts: effectiveCounts, dealSize, bases, account: oppImport.account,
+        totals, counts: effectiveCounts, bases, account: oppImport.account,
       });
       await setOppFields(user?.uid, oppId, {
         [ANALYSIS_FIELD]: analysis,
@@ -287,7 +289,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // clears itself rather than going on claiming figures that are no longer
   // the ones on the opp. Saving doesn't touch these, so the note survives
   // its own save.
-  useEffect(() => { setSaved(null); }, [inScope, counts, serviceUnits, dealSize]);
+  useEffect(() => { setSaved(null); }, [inScope, counts, serviceUnits]);
 
   // The Opps 2 dataset, fetched once and shared by the two things that need
   // it: the import picker, and the statuses an account's opportunities
@@ -337,7 +339,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
       if (basis.unit && entry.units === null) needed.add(basis.unit);
     }
 
-    setScenario({ services: scen.services, counts: scen.counts, serviceUnits: {}, dealSize: scen.dealSize });
+    setScenario({ services: scen.services, counts: scen.counts, serviceUnits: {} });
     setPinnedNames(scen.services.length > 0 ? new Set(scen.services) : null);
     setSaved(null);
     setOppImport({
@@ -355,7 +357,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         value: scen.counts[unit],
         source: scen.countSources[unit],
       })),
-      dealSizeSource: scen.dealSizeSource,
       missing: [...needed].filter(u => scen.counts[u] === undefined).map(u => unitLabels[u] || u),
       noPrice,
     });
@@ -414,9 +415,9 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     setScenario(s => ({ ...s, counts: { ...(s?.counts || {}), [unit]: value } }));
   }
 
-  // The estimate for every service on the page, in scope or not — the two
-  // Est. columns show what a service would add if it were ticked, which is
-  // what makes the table itself answer "what would adding this cost?".
+  // The estimate for every service on the page, in scope or not — the fee
+  // column shows what a service would add if it were ticked, which is what
+  // makes the table itself answer "what would adding this cost?".
   // Taken off the potential run rather than computed again: that already
   // priced every open service, and a second pass would be a second opinion.
   const allEstimates = useMemo(
@@ -425,9 +426,18 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   );
 
   // The deal itself: only what's ticked.
+  //
+  // Percentage services are priced against the bundle the potential run put
+  // them in, not against the ticked scope: Client management is a cut of the
+  // bill payment deal it comes with whether or not somebody has ticked both
+  // boxes, and re-deriving it from the scope would move the fee every time
+  // an unrelated service was ticked.
   const totals = useMemo(
-    () => estimateScope({ rows: openRows, services: [...inScope], pricing, counts: effectiveCounts, dealSize, bases, serviceUnits }),
-    [openRows, inScope, pricing, effectiveCounts, dealSize, bases, serviceUnits],
+    () => estimateScope({
+      rows: openRows, services: [...inScope], pricing, counts: effectiveCounts, bases, serviceUnits,
+      dealSizeByService: potential.dealSizes,
+    }),
+    [openRows, inScope, pricing, effectiveCounts, bases, serviceUnits, potential],
   );
   // Whether there is a setup fee in the scope at all. Either end of it: a
   // fee quoted from nothing up to a figure is still a setup fee.
@@ -477,27 +487,14 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
   // that already has a number keeps its box even after the service that
   // wanted it is un-ticked — otherwise a typed figure would vanish.
-  // Deal size is a count box like any other, and it now behaves like one:
-  // shown when something on the page is priced as a cut of it, hidden when
-  // nothing is. It used to be the one box always on the bar, which on a
-  // book where no service is priced that way is a permanent, prominent
-  // field asking for a number that changes nothing - and worse, a number
-  // somebody had typed sat there reading like an input to the totals
-  // beside it when it was an input to nothing.
   //
-  // Every service on the page, not just the ticked ones: the Est. columns
-  // price the unticked rows too, so a percentage service nobody has ticked
-  // yet still has a fee that needs this to be right.
-  //
-  // Purely on need, with no "but something is typed in it" escape. A figure
-  // left in the box by an earlier deal is the exact thing worth hiding: it
-  // is the one nobody meant, and it can only be consumed by a percentage
-  // line, which is the case that puts the box back on screen with that
-  // figure still in it.
-  const showDealSize = useMemo(
-    () => needsDealSize({ services: openRows.map(r => r.name), pricing, bases }),
-    [openRows, pricing, bases],
-  );
+  // There is no deal size box among them any more. Every count on this bar
+  // is a fact about the account that the page can check, and a deal size
+  // was the one figure nobody could: a number typed once, sitting on the
+  // bar reading like an input to the totals beside it, and quietly setting
+  // the biggest line on the page. A percentage service is now a cut of the
+  // bundle it is sold with - see dealSizesByBundle - which is a deal this
+  // page can actually point at.
 
   const visibleUnits = useMemo(() => units.filter(u =>
     totals.unitsUsed.has(u.unit)
@@ -552,15 +549,13 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
         _unitsOwn: ownUnits !== null,
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',
-        // The two money columns carry the BUNDLE, because the bundle is
-        // what gets sold: a lead quoted without the services its Auto-add
-        // cell drags in behind it is quoted short by whatever they come
-        // to. The breakdown under the row says how the figure splits, so
-        // a number nobody can account for never reaches the page.
+        // The money column carries the BUNDLE, because the bundle is what
+        // gets sold: a lead quoted without the services its Auto-add cell
+        // drags in behind it is quoted short by whatever they come to. The
+        // breakdown under the row says how the figure splits, so a number
+        // nobody can account for never reaches the page.
         fee: bundle?.totals.priced ? bundle.totals.fee : null,
         feeHigh: bundle?.totals.priced ? bundle.totals.feeHigh : null,
-        value: bundle?.totals.priced ? bundle.totals.value : null,
-        valueHigh: bundle?.totals.priced ? bundle.totals.valueHigh : null,
         // The lead's own share of that, for the first line of the
         // breakdown.
         _ownFee: est?.priced ? est.fee : null,
@@ -848,19 +843,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
               >{formatMoneyRange(row.fee, row.feeHigh)}</span>
             )),
         };
-      case 'value':
-        return {
-          ...base,
-          getSortValue: (row) => row.value,
-          render: (row) => (row.value === null
-            ? <span className={styles.serviceMutedCell} title={row._note || 'Not priced yet'}>-</span>
-            : (
-              <span
-                className={row._scoped ? styles.pricingEstScoped : undefined}
-                title={row._note || undefined}
-              >{formatMoneyRange(row.value, row.valueHigh)}</span>
-            )),
-        };
       default:
         return { ...base, render: (row) => (row[col.key] || <span className={styles.serviceMutedCell}>-</span>) };
     }
@@ -936,14 +918,14 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
               two and a quarter million" - and a total alone never answers
               the question that follows it, which is "of what?". */}
           <div className={styles.potentialTop} title={potential.top
-            ? `${potential.top.name} is the biggest untapped service on this account, at ${formatMoneyRange(potential.top.value, potential.top.valueHigh)} over its term`
+            ? `${potential.top.name} is the biggest untapped service on this account, at ${formatMoneyRange(potential.top.fee, potential.top.feeHigh)} in its first year`
             : 'Nothing here can be priced from the rate card yet'}
           >
             <span className={styles.pricingTotalLabel}>Biggest deal</span>
             {potential.top ? (
               <>
                 <span className={styles.pricingTotalValue}>
-                  {formatMoneyRange(potential.top.value, potential.top.valueHigh)}
+                  {formatMoneyRange(potential.top.fee, potential.top.feeHigh)}
                 </span>
                 <span className={styles.potentialTopName}>{potential.top.name}</span>
               </>
@@ -955,19 +937,18 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
             <span className={styles.pricingTotalLabel}>Untapped services</span>
             <span className={styles.pricingTotalValue}>{openRows.length}</span>
           </div>
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>Year 1 potential</span>
-            <span className={styles.pricingTotalValue}>
-              {formatMoneyRange(potential.estimate.year1Total, potential.estimate.year1TotalHigh) || '$0'}
-            </span>
-          </div>
+          {/* The whole account in its first year. The term total used to
+              sit beside this as the headline, and it is the bigger number
+              of the two - which is exactly why it went: a page read in a
+              pipeline review answers one question, and answering it twice
+              at two sizes is how the wrong one gets quoted. */}
           <div
             className={styles.pricingTotalMain}
-            title="Every service this account has not ruled on, priced over its contract term. What the account is still worth if we sold them all of it."
+            title="Every service this account has not ruled on, priced over its first twelve months. What the account is worth in year one if we sold them all of it."
           >
-            <span className={styles.pricingTotalLabel}>Total potential</span>
+            <span className={styles.pricingTotalLabel}>Year 1 potential</span>
             <span className={styles.pricingTotalValueMain}>
-              {formatMoneyRange(potential.estimate.contractValue, potential.estimate.contractValueHigh) || '$0'}
+              {formatMoneyRange(potential.estimate.year1Total, potential.estimate.year1TotalHigh) || '$0'}
             </span>
           </div>
         </div>
@@ -1020,18 +1001,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
               onCommit={(v) => setCount(u.unit, v)}
             />
           ))}
-          {/* Seven digits in a bare number box are easy to misread by a
-              factor of ten, and every percentage-based fee is a cut of this
-              one figure — so the label reads it back formatted. */}
-          {showDealSize && (
-            <CountInput
-              label={dealSize === '' || dealSize == null ? 'Deal size ($)' : `Deal size · ${formatMoney(dealSize)}`}
-              wide
-              placeholder="for % fees"
-              value={dealSize}
-              onCommit={(v) => setScenario(s => ({ ...s, dealSize: v }))}
-            />
-          )}
           {oppImport?.id && inScope.size > 0 && (
             <button
               type="button"
@@ -1077,16 +1046,6 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
                 ? `Billed once: ${formatMoneyRange(totals.setup, totals.setupHigh)} of setup fees${totals.oneTime > totals.setup ? ` and ${formatMoney(totals.oneTime - totals.setup)} of one-off project work` : ''}.`
                 : undefined}
             >{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
-          </div>
-          {/* The term total still has to be somewhere — it's the number a
-              multi-year deal is signed at — but it's no longer the headline,
-              so it sits with the other supporting figures. */}
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>Contract value</span>
-            <span
-              className={styles.pricingTotalValue}
-              title="Every service across its full term: a recurring fee times its years, plus the one-off projects and every setup fee once."
-            >{formatMoneyRange(totals.contractValue, totals.contractValueHigh) || '$0'}</span>
           </div>
           {/* Year one, not the term: the recurring services at one year each
               plus the projects in full. Ties out to the Estimated Year 1 Fee
@@ -1185,7 +1144,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           {oppImport.filled.length > 0 && (
             <>{'; filled '}{oppImport.filled.map(f => `${f.label} ${f.value.toLocaleString('en-US')} from ${f.source}`).join(', ')}</>
           )}
-          {oppImport.dealSizeSource && <>{'; deal size from '}{oppImport.dealSizeSource}</>}.
+          {'.'}
           {oppImport.missing.length > 0 && (
             <span className={styles.oppImportGap}>
               {' Nothing on file for '}{oppImport.missing.join(', ')} - the services priced on {oppImport.missing.length === 1 ? 'it' : 'those'} count as $0 until you enter {oppImport.missing.length === 1 ? 'it' : 'them'} above.

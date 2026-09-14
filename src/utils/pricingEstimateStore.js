@@ -3,8 +3,8 @@
 //
 // The rate card is in settings and syncs across devices; this is the other
 // half of that page — which company is on it, which services are ticked,
-// the counts they're priced against, the deal size, which opp the numbers
-// came from, and which rows the import pinned to the top. It used to die with the view, so stepping
+// the counts they're priced against, which opp the numbers came from, and
+// which rows the import pinned to the top. It used to die with the view, so stepping
 // over to Opps for a figure, or reloading the page, threw an imported deal
 // away and the import had to be done again.
 //
@@ -87,7 +87,6 @@ function normalizeImport(raw) {
     services: asCount(raw.services) ?? 0,
     unmatchedTokens: asStringList(raw.unmatchedTokens),
     filled,
-    dealSizeSource: asString(raw.dealSizeSource),
     missing: asStringList(raw.missing),
     noPrice: asStringList(raw.noPrice),
   };
@@ -101,7 +100,6 @@ export function isEmptyEstimate(estimate) {
     && (scenario.services || []).length === 0
     && Object.keys(scenario.counts || {}).length === 0
     && Object.keys(scenario.serviceUnits || {}).length === 0
-    && (scenario.dealSize === '' || scenario.dealSize == null)
     && !estimate.oppImport
     && (estimate.pinned || []).length === 0;
 }
@@ -114,7 +112,6 @@ export function isEmptyEstimate(estimate) {
 export function normalizeEstimate(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const scenarioRaw = (raw.scenario && typeof raw.scenario === 'object') ? raw.scenario : {};
-  const dealSize = asCount(scenarioRaw.dealSize);
   const pinned = asStringList(raw.pinned);
   const estimate = {
     scenario: {
@@ -127,7 +124,6 @@ export function normalizeEstimate(raw) {
       services: asStringList(scenarioRaw.services),
       counts: normalizeCounts(scenarioRaw.counts),
       serviceUnits: normalizeServiceUnits(scenarioRaw.serviceUnits),
-      dealSize: dealSize === null ? '' : dealSize,
     },
     // Null rather than an empty list: the tab reads it as "nothing is
     // pinned" and skips the whole grouping pass.

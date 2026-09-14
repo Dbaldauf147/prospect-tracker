@@ -26,7 +26,7 @@
 //      with whatever is least understood.
 import {
   accountPotential, serviceDecision, splitByDecision, decidedCounts, rankByPotential,
-  bundleAutoAdds, bundleTotals,
+  bundleAutoAdds, bundleTotals, dealSizesByBundle, pricesOnDeal,
 } from '../src/utils/accountPotential.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
@@ -86,7 +86,8 @@ const run = (client, oppStages = null) => accountPotential({
   // The one line worth reading out in a pipeline review, stated rather
   // than left as "whatever is at the top of the list".
   check('the biggest single deal is named', p.top.name, 'GHG reporting');
-  check('with what it is worth', p.top.value, 150000);
+  check('with what it bills in year one', p.top.fee, 50000);
+  check('the term figure is still worked out', p.top.value, 150000);
   check('the whole prize is the contract value', p.estimate.contractValue,
     (100 * 100 * 3) + 50000 * 3 + (1000 * 5 * 3) + (100 * 10 * 3));
 }
@@ -148,25 +149,36 @@ const run = (client, oppStages = null) => accountPotential({
     revived.decidedNames.has('Bill payment'), true);
 }
 
-// ---- ranking on the low end ----------------------------------------------
-// A range is an admission of uncertainty. Rank on its top and the head of
-// the list fills with whatever we understand least.
+// ---- ranking on year one, at the low end ---------------------------------
+// The page is read for the first twelve months, so that is what it ranks
+// on: a three-year deal and a one-off of the same annual size are the same
+// first year, and the term total answers a question nobody asked here.
+//
+// And at the low end of a range. A range is an admission of uncertainty:
+// rank on its top and the head of the list fills with whatever we
+// understand least.
 {
+  const byYear1 = rankByPotential([
+    { name: 'Long term', priced: true, fee: 10000, feeHigh: 10000, value: 500000 },
+    { name: 'Big first year', priced: true, fee: 90000, feeHigh: 90000, value: 90000 },
+  ]);
+  check('a long term does not outrank a bigger first year', byYear1[0].name, 'Big first year');
+
   const ranked = rankByPotential([
-    { name: 'Wide guess', priced: true, value: 0, valueHigh: 500000, fee: 0 },
-    { name: 'Known quantity', priced: true, value: 400000, valueHigh: 400000, fee: 400000 },
+    { name: 'Wide guess', priced: true, fee: 0, feeHigh: 500000, value: 0 },
+    { name: 'Known quantity', priced: true, fee: 400000, feeHigh: 400000, value: 400000 },
   ]);
   check('a wide guess does not outrank a known quantity', ranked[0].name, 'Known quantity');
 
   const tied = rankByPotential([
-    { name: 'B', priced: true, value: 100, valueHigh: 100, fee: 100 },
-    { name: 'A', priced: true, value: 100, valueHigh: 900, fee: 100 },
+    { name: 'B', priced: true, fee: 100, feeHigh: 100, value: 100 },
+    { name: 'A', priced: true, fee: 100, feeHigh: 900, value: 100 },
   ]);
   check('the top of the range breaks a tie', tied[0].name, 'A');
 
   const sameBoth = rankByPotential([
-    { name: 'Zeta', priced: true, value: 1, valueHigh: 1, fee: 1 },
-    { name: 'Alpha', priced: true, value: 1, valueHigh: 1, fee: 1 },
+    { name: 'Zeta', priced: true, fee: 1, feeHigh: 1, value: 1 },
+    { name: 'Alpha', priced: true, fee: 1, feeHigh: 1, value: 1 },
   ]);
   check('and the name settles it, so two runs rank the same',
     sameBoth.map(l => l.name).join(','), 'Alpha,Zeta');
@@ -333,6 +345,73 @@ const run = (client, oppStages = null) => accountPotential({
   check('it counts what it names', totals.addCount, 2);
   check('and what it charges for', totals.openAddCount, 1);
   check('no lines, no bundles', bundleAutoAdds([], null).length, 0);
+}
+
+// ---- a service priced as a cut of the deal it comes with ------------------
+// Client management is not sold on its own: it rides on a bill payment deal
+// and the card prices it as a percentage. There used to be a Deal size box
+// on the bar for that percentage to bite on - one figure, typed once, for
+// the whole page, which is a number nobody can check and the biggest single
+// line on the account. The deal a service is a cut of is the bundle it was
+// auto-added into, and this works it out per bundle instead.
+{
+  const rows = [row('Bill payment'), row('Client management'), row('GHG reporting', 'GHG Reporting')];
+  const pricing = {
+    'Bill payment': { basis: 'per_site', rate: 100, rateHigh: 200 },
+    // 35% to 36% of whatever deal it comes with, billed once.
+    'Client management': { basis: 'pct_deal', rate: 35, rateHigh: 36 },
+    'GHG reporting': { basis: 'flat', rate: 50000 },
+  };
+  const overrides = { 'Bill payment': { autoAdd: 'Client management' } };
+  const p = accountPotential({
+    client: { company: 'Acme', servicesExplored: {} },
+    serviceRows: rows, pricing, bases, counts: COUNTS, overrides,
+  });
+  const bill = p.bundleOf.get('Bill payment');
+  const cm = bill.adds.find(a => a.name === 'Client management').line;
+  // 100 sites x $100 = $10,000 in year one, and 35% of that is $3,500.
+  check('a percentage service is a cut of the bundle it comes with', cm.fee, 3500);
+  // The top end is the high rate on the HIGH deal, not on the low one:
+  // 100 x $200 = $20,000, and 36% of that is $7,200. Reading both ends off
+  // the low deal would quote the service against a deal nobody offered.
+  check('and both ends of that deal, not just its bottom', cm.feeHigh, 7200);
+  check('so the bundle is the lead plus its cut', bill.totals.fee, 13500);
+  check('at the top of the range too', bill.totals.feeHigh, 27200);
+  // The share the page prints beside it: a quarter of the bundle, not the
+  // seventy per cent a figure typed into a box once made it.
+  check('and the cut is the same share at either end of the range',
+    Math.round((cm.fee / bill.totals.fee) * 100), Math.round((cm.feeHigh / bill.totals.feeHigh) * 100));
+
+  // The page still foots: rearranging money into bundles never makes any.
+  check('the year 1 total is the sum of the bundles',
+    p.bundles.reduce((n, b) => n + b.totals.fee, 0), p.estimate.year1Total);
+
+  // Nothing to be a cut of. A percentage service nobody auto-adds has no
+  // deal under it, and a fee invented for it would be a fee from nowhere.
+  const alone = accountPotential({
+    client: { company: 'Acme', servicesExplored: {} },
+    serviceRows: rows, pricing, bases, counts: COUNTS,
+  });
+  const own = alone.estimate.lines.find(l => l.name === 'Client management');
+  check('sold on its own it prices at nothing', own.fee, 0);
+  check('and says why', own.note, 'No deal to price on');
+  check('so it is not the biggest deal on the account', alone.top.name, 'GHG reporting');
+
+  // The bundle it is a cut of is the bundle the FIRST pass built. A cut
+  // big enough to outrank its own lead must not go on to lead the bundle
+  // it is a percentage of.
+  check('a cut never leads the bundle it is a cut of', p.bundledNames.has('Client management'), true);
+
+  // And the pieces on their own.
+  check('a percentage line is spotted on the card', pricesOnDeal('Client management', pricing, bases), true);
+  check('and an ordinary one is not', pricesOnDeal('Bill payment', pricing, bases), false);
+  check('a bundle with no percentage in it needs no deal',
+    dealSizesByBundle([{ lead: { name: 'A', priced: true, fee: 1, feeHigh: 1 }, adds: [] }], () => false).size, 0);
+  check('and a percentage service is kept out of its own base',
+    dealSizesByBundle(
+      [{ lead: { name: 'Pct', priced: true, fee: 9, feeHigh: 9 }, adds: [] }],
+      name => name === 'Pct',
+    ).size, 0);
 }
 
 // ---- no company picked ---------------------------------------------------
