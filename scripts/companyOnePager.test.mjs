@@ -22,7 +22,10 @@ import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES,
 } from '../src/utils/companyOnePager.js';
-import { onePagerDocumentXml, buildOnePagerDocx, xmlEsc } from '../src/utils/onePagerDocx.js';
+import {
+  onePagerDocumentXml, onePagerHeaderXml, buildOnePagerDocx, xmlEsc,
+  CONTENT_TYPES_XML, DOCUMENT_RELS_XML,
+} from '../src/utils/onePagerDocx.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -201,7 +204,9 @@ const full = {
   const xml = onePagerDocumentXml(onePagerModel(full));
   check('it is WordprocessingML, not HTML', xml.startsWith('<?xml'), true);
   check('with a body', xml.includes('<w:document'), true);
-  check('the brand band is a shaded cell', xml.includes('w:fill="009530"'), true);
+  // The band itself is asserted against the header part (see above); what
+  // the body has to keep is the brand green on the boxes it still draws.
+  check('the body still shades its own cells', xml.includes('<w:shd'), true);
   check('the contacts are a table', xml.includes('<w:tbl>'), true);
   check('the day-to-day contact is marked', xml.includes('DAY TO DAY'), true);
   check('and the decision maker too', xml.includes('DM'), true);
@@ -298,8 +303,12 @@ const full = {
     xmlEsc(`a${String.fromCharCode(7)}b`), 'ab');
   check('tabs and newlines survive',
     xmlEsc('a\tb\nc'), 'a\tb\nc');
-  const xml = onePagerDocumentXml(onePagerModel({ company: 'A & B <script>', generatedAt: AT }));
-  check('a company name cannot break the document', xml.includes('A &amp; B &lt;script&gt;'), true);
+  const model = onePagerModel({ company: 'A & B <script>', generatedAt: AT });
+  // The company name is on the band, which is the header part now - and an
+  // unescaped & there makes the file just as unopenable as one in the body.
+  check('a company name cannot break the header',
+    onePagerHeaderXml(model).includes('A &amp; B &lt;script&gt;'), true);
+  check('nor the document', onePagerDocumentXml(model).includes('<w:body>'), true);
 }
 
 // ---- the file that lands in Downloads ------------------------------------
@@ -309,6 +318,52 @@ const full = {
     onePagerFileName('A/B: C*D?'), 'A_B_ C_D_ - Account summary.docx');
   check('a company with no name still gets a file',
     onePagerFileName(''), 'Company - Account summary.docx');
+}
+
+// ---- the green band is the page header -----------------------------------
+//
+// It used to be the first thing in the body, which put the page's top
+// margin above it as a white strip and let it be pushed down the page.
+// As a header part it is drawn in the margin itself, at the top of every
+// page. The wiring is four things that all have to agree, and Word's
+// answer to any one of them being wrong is to refuse the file.
+{
+  const model = onePagerModel({ ...full, company: 'BlackRock' });
+  const doc = onePagerDocumentXml(model);
+  const hdr = onePagerHeaderXml(model);
+
+  check('the band is in the header part', hdr.includes('ACCOUNT SUMMARY'), true);
+  check('with the company on it', hdr.includes('BlackRock'), true);
+  check('and the lockup', hdr.includes('LIFE IS ON'), true);
+  check('the header part is a header', hdr.includes('<w:hdr'), true);
+  // A header ending in a table leaves Word joining the band to the body.
+  check('it ends in a paragraph', /<\/w:p>\s*<\/w:hdr>/.test(hdr), true);
+
+  check('the body no longer draws it', doc.includes('ACCOUNT SUMMARY'), false);
+  check('the body starts with the owners', doc.indexOf('CDM') < doc.indexOf('KEY CONTACTS'), true);
+
+  // 1. the section points at a header, 2. by an id the document's own
+  // relationships define, 3. as a part the package declares, 4. in a
+  // document that declares the namespace r:id is in.
+  check('the section references a header', doc.includes('<w:headerReference w:type="default" r:id="rId1"/>'), true);
+  check('the relationship is there to find', DOCUMENT_RELS_XML.includes('Id="rId1"') && DOCUMENT_RELS_XML.includes('Target="header1.xml"'), true);
+  check('and it is a header relationship', DOCUMENT_RELS_XML.includes('/relationships/header'), true);
+  check('the part is declared', CONTENT_TYPES_XML.includes('/word/header1.xml'), true);
+  check('with the header content type', CONTENT_TYPES_XML.includes('wordprocessingml.header+xml'), true);
+  check('the r namespace is declared', doc.includes('xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'), true);
+
+  // The children of w:sectPr are a schema SEQUENCE and the header
+  // references open it. Out of order is "unreadable content".
+  check('the header reference comes before the page size',
+    doc.indexOf('<w:headerReference') < doc.indexOf('<w:pgSz'), true);
+
+  // The band is drawn `w:header` from the top of the page and the body
+  // starts at `w:top`: the first has to be the smaller, or the band lands
+  // on top of the first row of the page.
+  const header = Number(/w:header="(\d+)"/.exec(doc)?.[1]);
+  const top = Number(/w:top="(\d+)"/.exec(doc)?.[1]);
+  check('the band starts above the body', header < top, true);
+  check('and not so high a printer cannot reach it', header >= 180, true);
 }
 
 // ---- what the zip actually contains --------------------------------------
@@ -323,13 +378,19 @@ const full = {
   check('the content types are declared', names.includes('[Content_Types].xml'), true);
   check('the package points at the document', names.includes('_rels/.rels'), true);
   check('and the document is a real part', names.includes('word/document.xml'), true);
+  check('the header is a part of its own', names.includes('word/header1.xml'), true);
+  check('and the document knows how to find it',
+    names.includes('word/_rels/document.xml.rels'), true);
   check('there is no altChunk left anywhere',
     names.some(n => n.includes('afchunk')), false);
   const doc = await zip.file('word/document.xml').async('string');
   check('the text is IN the document, not in an attachment',
-    doc.includes('BRE Hotels &amp; Resorts'), true);
+    doc.includes('CLIENT MANAGER'), true);
   check('including the opp', doc.includes('Chiller replacement'), true);
   check('and the day-to-day marker', doc.includes('DAY TO DAY'), true);
+  const hdrPart = await zip.file('word/header1.xml').async('string');
+  check('the band travels in the header part', hdrPart.includes('ACCOUNT SUMMARY'), true);
+  check('named for the company', hdrPart.includes('BRE Hotels &amp; Resorts'), true);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');

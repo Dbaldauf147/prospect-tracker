@@ -289,11 +289,29 @@ function servicesBullets({ groups, hidden }) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+/**
+ * The running head: the green band, as its own document part.
+ *
+ * In the page header rather than at the top of the body, which is where a
+ * letterhead belongs and what the band has always been. Three things fall
+ * out of the move: it sits at the top of the PAGE instead of below the top
+ * margin, so there is no white strip above it; it repeats if the page ever
+ * runs to two; and it cannot be pushed down the page by whatever the body
+ * grows into.
+ */
+export function onePagerHeaderXml(model) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${headerBand(model)}${
+    // A header part must end in a paragraph: a bare table leaves Word
+    // joining the band to the first thing in the body, and an empty one
+    // with no spacing is the thinnest legal way to close it.
+    para([run('', { size: 2 })], { spaceAfter: 0 })
+  }</w:hdr>`;
+}
+
 /** The document body, as WordprocessingML. */
 export function onePagerDocumentXml(model) {
   const body = [
-    headerBand(model),
-    para([run('')], { spaceAfter: 80 }),
     ownersBand(model.owners, model.clientSince),
     heading('Key contacts', 'shaded = day to day    DM = decision maker'),
     contactsTable(model.contacts),
@@ -307,11 +325,20 @@ export function onePagerDocumentXml(model) {
       { spaceBefore: 150, rule: SE_BORDER }),
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
-    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-      + '<w:pgMar w:top="1080" w:right="1440" w:bottom="1080" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>',
+    //
+    // `w:header` is how far down the page the band starts, and the top
+    // margin is where the body starts under it: 360 twips (a quarter inch)
+    // clears what a printer cannot reach without leaving the white strip
+    // the band used to sit below, and 1440 leaves the band its half inch
+    // plus a little air before the first row of the page.
+    '<w:sectPr><w:headerReference w:type="default" r:id="rId1"/><w:pgSz w:w="12240" w:h="15840"/>'
+      + '<w:pgMar w:top="1440" w:right="1440" w:bottom="1080" w:left="1440" w:header="360" w:footer="720" w:gutter="0"/></w:sectPr>',
   ].join('');
+  // The `r` namespace is not optional here: r:id on the header reference
+  // is in it, and an undeclared prefix is "unreadable content" rather than
+  // a header Word quietly ignores.
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`;
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}</w:body></w:document>`;
 }
 
 // The three files besides document.xml that make a zip a .docx. Minimal on
@@ -322,7 +349,17 @@ export const CONTENT_TYPES_XML = `<?xml version="1.0" encoding="UTF-8" standalon
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
 </Types>`;
+
+// The document's own relationships. There were none until the band moved
+// into the header: a part Word is told to use by r:id has to be findable
+// by that id, and a header referenced from nowhere is a header nobody
+// draws.
+export const DOCUMENT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+</Relationships>`;
 
 export const ROOT_RELS_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -341,7 +378,10 @@ export async function buildOnePagerDocx(model) {
   const zip = new JSZip();
   zip.file('[Content_Types].xml', CONTENT_TYPES_XML);
   zip.folder('_rels').file('.rels', ROOT_RELS_XML);
-  zip.folder('word').file('document.xml', onePagerDocumentXml(model));
+  const word = zip.folder('word');
+  word.file('document.xml', onePagerDocumentXml(model));
+  word.file('header1.xml', onePagerHeaderXml(model));
+  word.folder('_rels').file('document.xml.rels', DOCUMENT_RELS_XML);
   const inBrowser = typeof Blob !== 'undefined' && typeof window !== 'undefined';
   return zip.generateAsync({
     type: inBrowser ? 'blob' : 'uint8array',
