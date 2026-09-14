@@ -1,7 +1,12 @@
 // Vercel Cron entry point. Runs once a week (see vercel.json `crons`) and
-// emails the rolling 90-day crude oil price: the latest close, how it
-// moved over the week / month / window, the window's high, low and
-// average, and a week-by-week chart and table.
+// emails the rolling 90-day price of the commodities the report covers —
+// WTI crude and Henry Hub natural gas: the latest close, how it moved
+// over the week / month / window, the window's high, low and average, and
+// a week-by-week chart and table for each.
+//
+// The path still says "oil" because it is a cron entry in vercel.json and
+// the URL anyone tests by hand; gas was added underneath it rather than
+// moving everybody's bookmark.
 //
 // Protected by CRON_SECRET exactly like daily-backup: Vercel attaches
 // `Authorization: Bearer <CRON_SECRET>`; a `?secret=` query param works
@@ -15,10 +20,11 @@
 //   OIL_PRICE_EMAIL_TO — comma-separated recipients. Defaults to
 //                        BACKUP_NOTIFY_EMAIL, then to GMAIL_USER, so it
 //                        works with no configuration at all.
-//   EIA_API_KEY        — use the official EIA WTI spot series as the
-//                        first source instead of the keyless feeds.
+//   EIA_API_KEY        — use the official EIA spot series (WTI at
+//                        Cushing, Henry Hub gas) as the first source
+//                        instead of the keyless feeds.
 
-import { fetchOilSeries, buildOilEmail } from './_lib/oilPrices.js';
+import { fetchAllSeries, buildCommodityEmail } from './_lib/commodityPrices.js';
 import { sendEmail } from './_lib/mailer.js';
 
 function recipients() {
@@ -46,18 +52,23 @@ export default async function handler(req, res) {
   }
 
   let series;
+  let failures;
   try {
-    series = await fetchOilSeries();
+    // Both commodities, fetched together. One that fails every source is
+    // reported inside the mail rather than thrown: the crude price the
+    // reader came for must not be lost to a gas feed being down.
+    ({ series, failures } = await fetchAllSeries());
   } catch (err) {
-    // Every source failed. Say so in the response rather than sending a
-    // mail with nothing in it — a weekly email that arrives empty is
+    // Nothing at all came back. Say so in the response rather than sending
+    // a mail with nothing in it — a weekly email that arrives empty is
     // worse than one that doesn't arrive, because it reads as "flat".
     return res.status(502).json({ error: String(err?.message || err) });
   }
 
-  // The preview embeds the chart as a data: URI so it renders in a
-  // browser; the sent mail attaches it and references it by cid.
-  const { subject, html, attachments, chartError, stats } = buildOilEmail(series, { inlineImage: dry });
+  // The preview embeds each chart as a data: URI so it renders in a
+  // browser; the sent mail attaches them and references them by cid.
+  const { subject, html, attachments, chartError, sections } =
+    buildCommodityEmail(series, { inlineImage: dry, failures });
 
   // A dry run renders the mail and returns it, so the thing can be read
   // before anyone's inbox sees it.
@@ -76,12 +87,22 @@ export default async function handler(req, res) {
     ok: true,
     sentTo: to,
     subject,
-    source: series.source,
-    attempts: series.attempts,
-    // Present only when the chart failed to draw: the mail still went,
-    // without its picture, and this says why.
+    // Per commodity, so a run that fell through to the backstop for one of
+    // them says which one.
+    commodities: sections.map(({ spec, stats }, i) => ({
+      key: spec.key,
+      name: spec.name,
+      unit: spec.unit,
+      source: series[i].source,
+      attempts: series[i].attempts,
+      days: stats.days,
+      latest: { date: stats.latest.date, close: stats.latest.close },
+    })),
+    // Present only when a commodity's sources all failed. The mail still
+    // went, naming it, and this says why.
+    ...(failures.length ? { failures } : {}),
+    // Present only when a chart failed to draw: the mail still went,
+    // without that picture, and this says why.
     ...(chartError ? { chartError } : {}),
-    days: stats.days,
-    latest: { date: stats.latest.date, close: stats.latest.close },
   });
 }
