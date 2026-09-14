@@ -43,7 +43,7 @@ export function searchable(parts) {
  * rather than content, so it stays out - a search for "-" finding every
  * unpriced service would be an accident, not a feature.
  */
-export function rowSearchText(row, bases) {
+export function rowSearchText(row, bases, adds = null) {
   return searchable([
     row._rank,
     row.name,
@@ -59,5 +59,10 @@ export function rowSearchText(row, bases) {
       : '',
     row.fee === null || row.fee === undefined ? '' : formatMoneyRange(row.fee, row.feeHigh),
     row.notes,
+    // What this row SELLS, beyond the service it is named for. A service
+    // another one drags in has no row of its own, so a search for it by
+    // name would find nothing and read as the page having dropped it -
+    // when it is right there, one bundle down.
+    ...((adds || row._adds || []).map(a => (typeof a === 'string' ? a : a?.name)).filter(Boolean)),
   ]);
 }

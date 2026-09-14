@@ -103,5 +103,30 @@ check('en dash becomes a hyphen', searchable('$6–$30'), '6-30');
 check('nullish is the empty string', searchable(null), '');
 check('a list skips its blanks', searchable(['a', '', null, 'b']), 'a b');
 
+// ── a service that comes with another one ────────────────────────────────
+//
+// It has no row of its own: the page folds it into the bundle of whatever
+// sells it. So a search for it by name has to find the row that carries
+// it, or the page reads as having dropped the service.
+{
+  const row = {
+    name: 'Rate analysis', serviceBucket: 'Efficiency', basisLabel: 'Per site',
+    units: 12, fee: 91380, feeHigh: 95475, notes: '',
+    _entry: { basis: 'per_site', rate: 6000 },
+    _adds: [{ name: 'Bill payment', open: true }, { name: 'Tariff review', open: true }],
+  };
+  const text = rowSearchText(row, []);
+  check('the lead is searchable, as it always was', text.includes('rate analysis'), true);
+  check('and so is what comes with it', text.includes('bill payment'), true);
+  check('every one of them', text.includes('tariff review'), true);
+  // Passed in rather than read off the row, which is how the table calls it.
+  check('the add-ons can be handed in',
+    rowSearchText({ ...row, _adds: [] }, [], [{ name: 'Bill payment' }]).includes('bill payment'), true);
+  check('plain names work too',
+    rowSearchText({ ...row, _adds: [] }, [], ['Bill payment']).includes('bill payment'), true);
+  check('a row that sells nothing else is unchanged',
+    rowSearchText({ ...row, _adds: [] }, []).includes('bill payment'), false);
+}
+
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
