@@ -895,13 +895,44 @@ export function subscribeIndicativeAnalysisMeta(prospectId, onChange) {
   });
 }
 
-export async function deleteIndicativeAnalysis(prospectId) {
+/**
+ * Take a company's saved analysis off it: the `main` record, the `pending`
+ * bookkeeping, and every chunk behind them.
+ *
+ * Listed rather than addressed by id on purpose. `main` names one
+ * generation, but the collection can also hold chunks from a save that
+ * died before swinging `main` over, and those are exactly the megabytes a
+ * remove is expected to reclaim. Deleting what is there is the only way to
+ * leave nothing behind.
+ *
+ * Sliced, because a batch takes 500 writes and a collection that has
+ * collected orphans across several generations can pass that - at which
+ * point an unsliced commit rejects and removes nothing at all.
+ *
+ * Timed out on every leg, like the rest of this file: a Firestore read of
+ * a collection that isn't cached never settles when the client can't reach
+ * the server, and neither does a write. Without these the Remove button
+ * spins for as long as the modal stays open.
+ */
+export async function deleteIndicativeAnalysis(prospectId, {
+  // Overridable so the tests can watch a stall without waiting out the
+  // real ceilings, the same way saveIndicativeAnalysis takes them.
+  readTimeoutMs = ANALYSIS_READ_TIMEOUT_MS,
+  writeTimeoutMs = ANALYSIS_WRITE_TIMEOUT_MIN_MS,
+} = {}) {
   const col = getAnalysisCol(prospectId);
-  const existing = await getDocs(col);
+  const existing = await withTimeout(
+    getDocs(col), readTimeoutMs, 'reading the saved analysis',
+  );
   if (existing.empty) return;
-  const batch = writeBatch(db);
-  existing.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
+  const refs = existing.docs.map(d => d.ref);
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + 400).forEach(ref => batch.delete(ref));
+    await withTimeout(
+      batch.commit(), writeTimeoutMs, 'removing the saved analysis',
+    );
+  }
 }
 
 export async function seedProspects(prospects) {
