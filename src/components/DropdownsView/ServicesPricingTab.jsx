@@ -428,7 +428,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       ? 'The first year: the ongoing fee plus what the service costs to stand up.'
       : 'The first year. This service has no setup fee, so it is the ongoing fee alone.';
     const split = parts.length > 1
-      ? ' Charged against more than one count, so the parts are shown side by side rather than added — what one account pays is the Deal Pricing subtab, which has the counts.'
+      ? ' Charged against more than one count, so the parts are shown side by side rather than added - what one account pays is the Deal Pricing subtab, which has the counts.'
       : '';
     const range = end === 'hi' ? ' The top of the range.' : '';
     return `${head}${body}${split}${range}`;
@@ -582,7 +582,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                   className={styles.serviceMutedCell}
                   title={col.key === 'year1High'
                     ? 'One figure, not a range: this service is quoted on a single rate. Add a High Rate and both ends show here.'
-                    : 'Not priced yet — set a pricing basis and a rate, or mark the service no fee.'}
+                    : 'Not priced yet - set a pricing basis and a rate, or mark the service no fee.'}
                 >-</span>
               );
             }
