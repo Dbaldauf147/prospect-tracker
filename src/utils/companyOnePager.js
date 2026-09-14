@@ -115,6 +115,10 @@ export function groupServices(services, bucketOf, { ungrouped = 'Other services'
 /**
  * The opportunities still open, in the order the Opps board ranks them.
  *
+ * What is being sold, what stage it is at and what it is worth. No close
+ * date: it is the one column of the four that was usually empty, and an
+ * expected close is a forecast rather than a fact about the account.
+ *
  * Takes the rows companyOppRows already built, which carry `active` - the
  * app's one answer to "is this still live", shared with the board and the
  * close-rate maths. Deciding it again here against a list of stage names
@@ -128,7 +132,6 @@ export function orderOpps(opps) {
       scope: clean(o.scope),
       stage: clean(o.stage),
       amount: clean(o.amount),
-      closeDate: clean(o.closeDate),
     }));
 }
 

@@ -219,43 +219,38 @@ function contactsTable({ shown, hidden }) {
   return table(widths, [head, ...rows]) + more;
 }
 
-// Open opportunities. A table rather than chips: every column here is a
-// question somebody asks out loud - what stage, how much, when does it
-// land - and a chip can only carry the name.
+// Open opportunities. A table rather than chips: what is being sold, what
+// stage it is at and what it is worth are all questions somebody asks out
+// loud, and a chip can only carry the name.
 function oppsTable({ shown, hidden }) {
   if (!shown.length) return emptyNote('Nothing open on this account right now.');
   // The opportunity column takes the width, because it is the only one
-  // whose contents wrap. Amount and Close hold ten characters between
-  // them and were sized as if they held a sentence.
-  const widths = [CONTENT_WIDTH * 0.46, CONTENT_WIDTH * 0.22, CONTENT_WIDTH * 0.16, CONTENT_WIDTH * 0.16];
-  const head = ['Opportunity', 'Stage', 'Amount', 'Close'].map((h, i) => cell(
+  // whose contents wrap. Amount holds six characters and was sized as if
+  // it held a sentence.
+  const widths = [CONTENT_WIDTH * 0.62, CONTENT_WIDTH * 0.22, CONTENT_WIDTH * 0.16];
+  const head = ['Opportunity', 'Stage', 'Amount'].map((h, i) => cell(
     para([run(h.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], { spaceAfter: 0 }),
     { width: widths[i], borders: { ...NO_BORDER, bottom: SE_BORDER } },
   ));
   const rows = shown.map((o) => {
-    // The scope of services leads, with the opp's own name under it.
+    // The scope of services, not the opp's own name.
     //
-    // That way round because a BFO opportunity name is a coded string -
-    // "SB - SUSUP - New - Project - NAM - YEAR1 - Bill payment-Blackrock,
-    // Inc." - built for a CRM's uniqueness rules rather than for reading.
-    // The one part of it anybody wants, what work is being sold, is buried
-    // in the middle. The Scope field says exactly that, so it gets the
-    // bold line, and the coded name stays underneath in small type for
-    // looking the opp up again in BFO.
+    // A BFO opportunity name is a coded string - "SB - SUSUP - New -
+    // Project - NAM - YEAR1 - Bill payment-Blackrock, Inc." - built for a
+    // CRM's uniqueness rules rather than for reading. The one part of it
+    // anybody wants, what work is being sold, is buried in the middle, and
+    // the Scope field says exactly that on its own. So the coded name is
+    // not printed at all: somebody looking an opp up again has BFO open
+    // anyway, and on a sheet read in five minutes it was a line of noise
+    // under every row.
     //
-    // It also buys the space the extra line costs: set bold and first, the
-    // name wrapped to three lines of an 86pt row, and four of those is
-    // most of what is left of the page.
+    // The name is still the fallback, for an opp with no Scope recorded -
+    // a row naming nothing would be worse than a coded row.
     const scope = o.scope && o.scope !== o.name ? o.scope : '';
-    const first = [
-      para([run(scope || o.name, { bold: true, size: 18 })], { spaceAfter: 0 }),
-      scope ? para([run(o.name, { color: SE_MUTED, size: 13 })], { spaceAfter: 0 }) : '',
-    ].join('');
     return [
-      cell(first, { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
+      cell(para([run(scope || o.name, { bold: true, size: 18 })], { spaceAfter: 0 }), { width: widths[0], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
       cell(para([run(o.stage || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[1], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
       cell(para([run(o.amount || '-', { bold: true, color: SE_GRAPHITE, size: 17 })], { spaceAfter: 0 }), { width: widths[2], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
-      cell(para([run(o.closeDate || '-', { color: SE_SLATE, size: 17 })], { spaceAfter: 0 }), { width: widths[3], borders: { ...NO_BORDER, bottom: 'EEF2F6' } }),
     ];
   });
   const more = hidden
@@ -462,9 +457,9 @@ export function onePagerDocumentXml(model) {
     ownersBand(model.owners, model.clientSince),
     heading('Key contacts', 'shaded = day to day    DM = decision maker'),
     contactsTable(model.contacts),
-    heading('Open opportunities', plural(model.opps.total, 'open')),
+    heading('Open opportunities'),
     oppsTable(model.opps),
-    heading('In scope today', `${plural(model.services.total, 'service')} sold`),
+    heading('Current services'),
     servicesBullets(model.services),
     model.notes ? heading('Notes') : '',
     model.notes ? para([run(model.notes, { color: SE_SLATE, size: 18 })]) : '',
