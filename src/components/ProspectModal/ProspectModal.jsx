@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_HOLD } from '../../utils/metInPerson';
+import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
@@ -878,7 +878,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // Checked state for the known tags
   const [checkedTags, setCheckedTags] = useState(() => checkedTagsFrom(rawTags));
   // "Met In Person" is its own dropdown, stored locally (never in HubSpot):
-  // Yes, No, or Hold off. Prefer the saved local answer; for contacts that
+  // Yes, Asked, No or Hold off. Prefer the saved local answer; for contacts that
   // haven't been touched yet, fall back to the legacy HubSpot tag so anyone
   // already tagged reads as Yes. Everyone else is No, the default.
   //
@@ -1789,21 +1789,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-          {/* Three answers rather than a tick: "hold off" is somebody we
-              have deliberately parked, which a checkbox could only record
-              as the same thing it recorded for somebody nobody had reached
-              — and the visit ladder asked about them again every week.
-              Yes reads blue like the flag beside it, hold off greys out. */}
+          {/* Four answers rather than a tick: a checkbox recorded the same
+              thing for somebody we have deliberately parked, somebody we
+              have asked and are waiting on, and somebody nobody had
+              reached — and the visit ladder asked about all three again
+              every week. Yes reads blue like the flag beside it, asked
+              amber because it is waiting on somebody, hold off greys out. */}
           {(() => {
             const met = metInPerson === MET_YES;
             const held = metInPerson === MET_HOLD;
-            const border = met ? '#7DD3FC' : held ? '#CBD5E1' : '#E2E8F0';
-            const background = met ? '#F0F9FF' : held ? '#F1F5F9' : '#fff';
-            const color = met ? '#0369A1' : held ? '#64748B' : '#374151';
+            const asked = metInPerson === MET_ASKED;
+            const border = met ? '#7DD3FC' : asked ? '#FDE68A' : held ? '#CBD5E1' : '#E2E8F0';
+            const background = met ? '#F0F9FF' : asked ? '#FFFBEB' : held ? '#F1F5F9' : '#fff';
+            const color = met ? '#0369A1' : asked ? '#92400E' : held ? '#64748B' : '#374151';
             return (
               <label
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', padding: '0.45rem 0.7rem', border: `1px solid ${border}`, borderRadius: '8px', background }}
-                title="Yes once you have sat down with them. Hold off parks them: still not met, but off the Prospecting page's list of Key contacts to go and see."
+                title="Yes once you have sat down with them. Asked means the invitation is out and unanswered - they stay on the Prospecting page's list of Key contacts to go and see, marked so the next move is a chase rather than the same ask again. Hold off parks them: still not met, and off that list."
               >
                 <span style={{ fontSize: '0.82rem', fontWeight: 600, color }}>Met In Person</span>
                 <select
@@ -5762,11 +5764,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [settings.contactTeamNames, updateSettings]);
 
   // "Met In Person" is stored locally (never in HubSpot). Persist the
-  // explicit answer so a contact set to No - or parked on Hold off - sticks
-  // instead of falling back to the legacy HubSpot tag.
+  // explicit answer so a contact set to No - or marked Asked, or parked on
+  // Hold off - sticks instead of falling back to the legacy HubSpot tag.
   //
   // Normalized on the way in so the older callers that still hand this a
-  // boolean write one of the three answers rather than a second shape for
+  // boolean write one of the four answers rather than a second shape for
   // the same map to hold.
   const handleSaveContactMetInPerson = useCallback((contactId, met) => {
     const current = settings.contactMetInPerson || {};
