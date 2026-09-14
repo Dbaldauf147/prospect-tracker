@@ -20,7 +20,7 @@
 // exactly the places a leave-behind gets opened.
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
-  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES,
+  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, CHARS_PER_LINE, cappedServices,
 } from '../src/utils/companyOnePager.js';
 import {
   onePagerDocumentXml, onePagerHeaderXml, buildOnePagerDocx, xmlEsc,
@@ -36,7 +36,7 @@ function check(label, actual, expected) {
 
 const AT = new Date('2026-09-14T12:00:00Z');
 const contact = (name, over = {}) => ({ name, title: 'Director', email: `${name.split(' ')[0].toLowerCase()}@acme.com`, ...over });
-const opp = (name, over = {}) => ({ name, stage: 'Quoting', amount: '$120,000', closeDate: '11/30/2026', active: true, ...over });
+const opp = (name, over = {}) => ({ name, scope: 'Scope 3 estimates', stage: 'Quoting', amount: '$120,000', closeDate: '11/30/2026', active: true, ...over });
 
 const BUCKETS = { 'Bill Pay': 'DATA', 'Invoice collection': 'DATA', 'GHG Reporting': 'GHG Reporting' };
 const bucketOf = (n) => BUCKETS[n] || '';
@@ -68,6 +68,19 @@ const full = {
   check('with the figures somebody asks for out loud',
     `${m.opps.shown[0].stage}|${m.opps.shown[0].amount}|${m.opps.shown[0].closeDate}`,
     'Quoting|$120,000|11/30/2026');
+  check('and the scope of services it covers', m.opps.shown[0].scope, 'Scope 3 estimates');
+  // Some exports put the scope in the name field as well. Printing it
+  // twice under itself is noise, not information.
+  const echoed = onePagerDocumentXml(onePagerModel({
+    ...full, opps: [opp('Bill payment', { scope: 'Bill payment' })],
+  }));
+  check('a scope that only repeats the name is not printed twice',
+    (echoed.match(/Bill payment/g) || []).length, 1);
+  // An opp with no Scope recorded keeps its one line rather than gaining a
+  // blank one.
+  check('and a missing scope leaves no empty line',
+    onePagerDocumentXml(onePagerModel({ ...full, opps: [opp('Nameless', { scope: '' })] }))
+      .includes('Scope 3 estimates'), false);
 }
 
 // ---- who to call ---------------------------------------------------------
@@ -143,40 +156,81 @@ const full = {
   check('and the rest are counted, not dropped silently', m.contacts.hidden, 9);
   check('the total is still the truth', m.contacts.total, MAX_CONTACTS + 9);
 
-  // Services are capped by the LINES they print, because a bucket heading
-  // costs a line whatever sits under it. One cap, not two: a count cap on
-  // top of it could never bind, since even a single bucket spends a line
-  // before its first service.
+  // Services are budgeted by the LINES they print, because a bucket heading
+  // costs a line whatever sits under it. Lines rather than a count: even a
+  // single bucket spends one before its first service, so a count cap on
+  // top of this could never bind.
+  //
+  // But the budget is not a cap. A book that overruns it is RESET, not cut:
+  // the bullets become comma lists under the same headings, a line carries
+  // three or four services instead of one, and the whole book fits. That
+  // matters more here than anywhere else on the page - "In scope today"
+  // exists to answer what we already do for these people, and an answer
+  // that quietly omits seven of the fifteen is not an answer.
   const services = Array.from({ length: 20 }, (_, i) => `Service ${i}`);
   const oneBucket = onePagerModel({ ...full, services, bucketOf: () => 'Bucket' });
-  check('one bucket spends a line, and the rest is services',
-    oneBucket.services.shown.length, MAX_SERVICE_LINES - 1);
-  check('the groups carry exactly what is shown',
-    oneBucket.services.groups.reduce((n, g) => n + g.items.length, 0), oneBucket.services.shown.length);
-  check('and every one left out is counted',
-    oneBucket.services.shown.length + oneBucket.services.hidden, services.length);
+  check('a book too long to bullet is set in commas instead', oneBucket.services.mode, 'commas');
+  check('and every service survives the change', oneBucket.services.hidden, 0);
+  check('which is more than the bullets could have held',
+    oneBucket.services.shown.length > MAX_SERVICE_LINES, true);
 
-  // The same services filed one per bucket are twice as tall. This is the
-  // shape that ran the page over onto a second one.
-  const perBucket = onePagerModel({ ...full, services, bucketOf: (n) => `B ${n}` });
-  const linesUsed = perBucket.services.groups.reduce((n, g) => n + g.items.length + 1, 0);
-  check('one bucket each is stopped by the same budget', linesUsed <= MAX_SERVICE_LINES, true);
-  check('which shows fewer services than a single bucket would',
-    perBucket.services.shown.length < oneBucket.services.shown.length, true);
-  check('and still counts every one it left out',
-    perBucket.services.shown.length + perBucket.services.hidden, services.length);
+  // A book that fits keeps the bullets, which are the better read. The
+  // fallback is for when it is that or losing services, not the default.
+  const few = onePagerModel({ ...full, services: ['Bill Pay', 'GHG Reporting'], bucketOf });
+  check('a short book stays bulleted', few.services.mode, 'bullets');
+  check('with nothing hidden', few.services.hidden, 0);
+  const bulletLines = few.services.groups.reduce((n, g) => n + g.lines, 0);
+  check('inside the budget', bulletLines <= MAX_SERVICE_LINES, true);
+  check('and the groups carry the lines they cost, for the column split',
+    few.services.groups.every(g => g.lines === g.items.length + 1), true);
+
+  // The real shape this was built for: fifteen services across four
+  // buckets, which is a mid-sized account and was the case that printed
+  // "+ 7 more sold."
+  const real = onePagerModel({
+    ...full,
+    services: ['Client sends invoices', 'Invoice recalculation', 'Invoice variance testing',
+      'Manual data upload', 'UPRs', 'Comp GHG', 'GHG', 'Scope 3 estimates', 'Bill payment',
+      'Utility bill audit', 'Rate analysis', 'Tariff review', 'Budget forecasting',
+      'Accrual reporting', 'Invoice recalculation - light'],
+    bucketOf: (n) => (/invoice|upload|sends/i.test(n) ? 'DATA'
+      : /GHG|Scope 3/i.test(n) ? 'GHG Reporting'
+        : /UPR/i.test(n) ? 'Efficiency' : 'Bill Management'),
+  });
+  check('a mid-sized book lists every service it sold', real.services.hidden, 0);
+  check('inside the same budget',
+    real.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
+  const realXml = onePagerDocumentXml(real);
+  check('and prints them run together rather than one per line',
+    realXml.includes('Comp GHG, GHG, Scope 3 estimates'), true);
+  check('with no count of what was left out, because none was',
+    realXml.includes('more sold.'), false);
+
+  // Past even the comma budget - a book no arrangement fits - the section
+  // still owns up to what it left out rather than trailing off.
+  const huge = onePagerModel({
+    ...full,
+    services: Array.from({ length: 120 }, (_, i) => `Long service name number ${i}`),
+    bucketOf: (n) => `Bucket ${n.slice(-2)}`,
+  });
+  check('a book nothing could fit is still counted, not trailed off',
+    huge.services.shown.length + huge.services.hidden, 120);
+  check('something is left on the page', huge.services.shown.length > 0, true);
+  check('and it stays inside the budget',
+    huge.services.groups.reduce((n, g) => n + g.lines, 0) <= MAX_SERVICE_LINES, true);
 
   // A bucket that only half fits keeps what fits: dropping it whole would
   // read as "we sell nothing in Compliance here", which is a different and
   // wrong claim.
-  const straddle = onePagerModel({
-    ...full,
-    services: Array.from({ length: 10 }, (_, i) => `a${i}`).concat('b1'),
-    bucketOf: (n) => (n.startsWith('a') ? 'A' : 'B'),
-  });
-  check('a bucket that half fits keeps the half', straddle.services.groups[0].items.length > 0, true);
+  const wide = 'x'.repeat(CHARS_PER_LINE);
+  const straddle = cappedServices(
+    Array.from({ length: 14 }, (_, i) => `${wide}${i}`).concat('b1'),
+    (n) => (n === 'b1' ? 'B' : 'A'),
+  );
+  check('a bucket that half fits keeps the half', straddle.groups[0].items.length > 0, true);
   check('and no bucket is printed with nothing under it',
-    straddle.services.groups.every(g => g.items.length > 0), true);
+    straddle.groups.every(g => g.items.length > 0), true);
+  check('the rest are counted', straddle.shown.length + straddle.hidden, 15);
 
   const opps = Array.from({ length: MAX_OPPS + 4 }, (_, i) => opp(`Opp ${i}`));
   const om = onePagerModel({ ...full, opps });
@@ -217,6 +271,16 @@ const full = {
   check('with a hanging indent so a long name lines up', xml.includes('<w:ind '), true);
   check('the open opp is on the page', xml.includes('Chiller replacement'), true);
   check('the closed one is not', xml.includes('Closed one'), false);
+  // The scope under the opp name, in the same column. A BFO opp name is a
+  // coded string and the part a reader wants - what work is being sold -
+  // is buried in the middle of it; the Scope field says it plainly.
+  check('the scope of services is printed with the opp',
+    xml.includes('Scope 3 estimates'), true);
+  // The scope LEADS and the coded BFO name sits under it. A BFO name is
+  // built for a CRM's uniqueness rules, not for reading, and set bold and
+  // first it wrapped to three lines of a row there are four of.
+  check('and it leads, with the coded name under it',
+    xml.indexOf('Scope 3 estimates') < xml.indexOf('Chiller replacement'), true);
   check('the page is Letter with one-inch margins',
     xml.includes('<w:pgSz w:w="12240" w:h="15840"/>'), true);
   // Every table cell needs a paragraph or Word calls the file corrupt.

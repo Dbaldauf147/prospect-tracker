@@ -32,12 +32,16 @@ const clean = (v) => String(v ?? '').trim();
 // worse than no cap - the reader would have no way to know.
 export const MAX_CONTACTS = 5;
 export const MAX_OPPS = 4;
-// Services are capped by the LINES they print, not by how many there are.
-// A bucket heading costs a line whatever sits under it, so twelve services
-// filed into two buckets and the same twelve filed into twelve are very
-// different heights - and it was the second that pushed this page onto a
-// second one. Sixteen lines across two columns is eight deep, which is
+// Services are budgeted by the LINES they print, not by how many there
+// are. A bucket heading costs a line whatever sits under it, so twelve
+// services filed into two buckets and the same twelve filed into twelve
+// are very different heights - and it was the second that pushed this page
+// onto a second one. Twelve lines across two columns is six deep, which is
 // what fits under everything above it.
+//
+// Unlike the other two this is a budget rather than a cap: a book that
+// overruns it gets set in commas instead of bullets and fits, rather than
+// getting cut. See cappedServices.
 export const MAX_SERVICE_LINES = 12;
 
 /**
@@ -143,29 +147,89 @@ export function clientSince(dates) {
   return new Date(Math.min(...times));
 }
 
+// Roughly how many characters of a service name fit across one column.
+//
+// The bullets and the comma list are set in the same 9pt face in a column
+// half the 9360-twip content width, which is 3.25 inches - about 52
+// characters of Segoe UI at that size. 46 is that with room to be wrong:
+// over-estimating the width is what puts a line onto the page that was
+// budgeted away, and the cost of under-estimating is a little white space.
+export const CHARS_PER_LINE = 46;
+
+/** How many lines a bucket's services take when run together with commas. */
+const commaLines = (items) => Math.max(1, Math.ceil(items.join(', ').length / CHARS_PER_LINE));
+
+/** How many of `items` fit in `lines` lines of comma-separated text. */
+function itemsWithin(items, lines) {
+  const room = Math.max(0, lines) * CHARS_PER_LINE;
+  let used = 0;
+  let n = 0;
+  for (const item of items) {
+    const cost = (n ? 2 : 0) + item.length; // the ", " counts
+    if (used + cost > room) break;
+    used += cost;
+    n += 1;
+  }
+  return n;
+}
+
 /**
- * The sold services, grouped and then trimmed to what fits.
+ * The sold services, grouped and then fitted to the space there is.
  *
- * Trimmed by printed lines rather than by count, and a bucket that only
- * half fits keeps the services that fit rather than being dropped whole -
- * losing a bucket entirely would read as "we sell nothing in Compliance
- * here", which is a different and wrong claim.
+ * Two shapes, and which one gets used is decided by whether the services
+ * fit rather than by a setting. Bullets are the better read - one service
+ * per line, scannable - so they are what a normal account gets. But a
+ * bullet costs a whole line for two words, and on a book of fifteen or
+ * twenty services that arithmetic ends with a third of them replaced by
+ * "+ 7 more sold.", which is the one thing this section must not say: the
+ * page exists to answer "what do we already do for these people", and an
+ * answer that omits seven of them is not an answer.
+ *
+ * So when the bullets do not fit, the same services are run together under
+ * their bucket headings with commas. A line then carries three or four
+ * instead of one, and the whole book fits in the space the bullets could
+ * not. It reads slightly worse and says everything, which is the right way
+ * round for this section.
+ *
+ * Either way a bucket that only half fits keeps the services that fit -
+ * dropping it whole would read as "we sell nothing in Compliance here",
+ * which is a different and wrong claim - and anything past the budget is
+ * counted rather than silently dropped.
  */
 export function cappedServices(sold, bucketOf) {
   const all = groupServices(sold, bucketOf);
+  // Each group carries the lines it costs, so the renderer splits the two
+  // columns on the same measure this budgeted with. Two opinions about how
+  // tall a bucket is would put six lines in one column and two in the other.
+  const bulleted = all.map(g => ({ ...g, lines: g.items.length + 1 }));
+  const spend = (groups) => groups.reduce((n, g) => n + g.lines, 0);
+  const done = (groups, mode) => {
+    const shown = groups.flatMap(g => g.items);
+    return { mode, groups, shown, total: sold.length, hidden: Math.max(0, sold.length - shown.length) };
+  };
+
+  if (spend(bulleted) <= MAX_SERVICE_LINES) return done(bulleted, 'bullets');
+
   const groups = [];
   let lines = 0;
-  let shown = 0;
   for (const g of all) {
-    if (lines + 1 >= MAX_SERVICE_LINES) break;
-    lines += 1; // the bucket heading
-    const room = Math.min(g.items.length, MAX_SERVICE_LINES - lines);
-    if (room <= 0) { lines -= 1; break; }
-    groups.push({ bucket: g.bucket, items: g.items.slice(0, room) });
+    // A heading with nothing under it is not worth a line.
+    if (lines + 2 > MAX_SERVICE_LINES) break;
+    lines += 1;
+    const room = MAX_SERVICE_LINES - lines;
+    const want = commaLines(g.items);
+    if (want <= room) {
+      groups.push({ ...g, lines: want + 1 });
+      lines += want;
+      continue;
+    }
+    const n = itemsWithin(g.items, room);
+    if (!n) { lines -= 1; break; }
+    groups.push({ bucket: g.bucket, items: g.items.slice(0, n), lines: room + 1 });
     lines += room;
-    shown += room;
+    break;
   }
-  return { shown: groups.flatMap(g => g.items), total: sold.length, hidden: Math.max(0, sold.length - shown), groups };
+  return done(groups, 'commas');
 }
 
 /**
