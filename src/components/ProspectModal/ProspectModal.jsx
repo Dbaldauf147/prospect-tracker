@@ -5629,6 +5629,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // shows them where the phone column used to be, and page two's chart
       // groups by them - one reading of the field for both.
       const contactTeams = settings.contactTeamNames || {};
+      // What each person is actually called, from the Goes By field on
+      // their card. Stored per contact like the team name is.
+      const contactGoesBy = settings.contactNicknames || {};
       const contacts = (companyContacts || []).map((c) => {
         const id = String(c.id || c.vid || '');
         const raw = reportsToMap[id];
@@ -5657,6 +5660,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           title: c.jobtitle || '',
           email: c.email || '',
           team: String(contactTeams[id] || '').trim(),
+          nickname: String(contactGoesBy[id] || '').trim(),
+          // Their LinkedIn profile, for the link behind the name. Both
+          // spellings of the field, the same two the popup's own "View on
+          // LinkedIn" reads.
+          linkedin: c.hs_linkedin_url || c.linkedin_url || '',
           decisionMaker,
           dayToDay,
           metInPerson: metInPersonState(c, metMap) === MET_YES,

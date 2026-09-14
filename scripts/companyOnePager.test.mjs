@@ -26,10 +26,9 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   orgChartRows,
-  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, cappedServices,
-} from '../src/utils/companyOnePager.js';
+  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, cappedServices, linkedinUrl } from '../src/utils/companyOnePager.js';
 import {
-  onePagerDocumentXml, onePagerHeaderXml, buildOnePagerDocx, xmlEsc,
+  onePagerDocumentXml, onePagerHeaderXml, onePagerParts, buildOnePagerDocx, xmlEsc,
   CONTENT_TYPES_XML, DOCUMENT_RELS_XML,
 } from '../src/utils/onePagerDocx.js';
 
@@ -338,9 +337,16 @@ const full = {
       ...full,
       contacts: [contact('Solo', { reportsTo: ['Someone Elsewhere'] })],
     })).includes('reports to Someone Elsewhere'), true);
-  // The phone column is gone; the team is what stands in its place.
+  // The phone column is gone; the team is what stands in its place. The
+  // email went the same way: every one of them is the same pattern on the
+  // same domain, and the name is a link to the person now.
   check('the team is a column', xml.includes('TEAM'), true);
   check('and the phone is not', xml.includes('PHONE'), false);
+  check('nor the email', xml.includes('>EMAIL<') || xml.includes('EMAIL<'), false);
+  // The legend under the heading is gone: what the shading and the indents
+  // mean is legible from the table itself.
+  check('the heading carries no legend', xml.includes('shaded = day to day'), false);
+  check('nor the indent note', xml.includes('indented = reports to'), false);
   check('the bucket heads the bullets', xml.includes('DATA'), true);
   check('services are bulleted', xml.includes('•'), true);
   check('with a hanging indent so a long name lines up', xml.includes('<w:ind '), true);
@@ -662,6 +668,58 @@ const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name =
     onePagerFileName('A/B: C*D?'), 'A_B_ C_D_ - Account summary.docx');
   check('a company with no name still gets a file',
     onePagerFileName(''), 'Company - Account summary.docx');
+}
+
+// ---- the name is a link to the person -------------------------------------
+//
+// A link in Word is a relationship id in the paragraph and the URL in the
+// relationships part, so the two have to be written from the same walk.
+// Every id the document points at has to be defined, or the file will not
+// open at all - which is what the last check here is for.
+{
+  check('a full URL is taken as it is',
+    linkedinUrl('https://www.linkedin.com/in/herb'), 'https://www.linkedin.com/in/herb');
+  check('a bare handle becomes one', linkedinUrl('herb-tracy-123'), 'https://www.linkedin.com/in/herb-tracy-123');
+  check('and so does a URL with no scheme', linkedinUrl('linkedin.com/in/herb'), 'https://www.linkedin.com/in/herb');
+  check('www is not mistaken for a handle', linkedinUrl('www.linkedin.com/in/herb'), 'https://www.linkedin.com/in/herb');
+  check('nothing is nothing', linkedinUrl('  '), '');
+  // The one value on this page a reader CLICKS. A document that carries
+  // somebody else's javascript: URL into a meeting is a different kind of
+  // object from a sheet of contact details.
+  check('a script URL is never a profile', linkedinUrl('javascript:alert(1)'), '');
+  check('nor is a mailto', linkedinUrl('mailto:a@b.com'), '');
+
+  const model = onePagerModel({
+    ...full,
+    contacts: [
+      contact('Herb Tracy', { linkedin: 'herb-tracy' }),
+      contact('John Dennehy', { reportsTo: ['Herb Tracy'], linkedin: 'herb-tracy' }),
+      contact('Nobody Linked', { nickname: 'Nob' }),
+    ],
+  });
+  const { documentXml, relsXml } = onePagerParts(model);
+
+  check('the linked name is a hyperlink', /<w:hyperlink r:id="rId\d+">/.test(documentXml), true);
+  check('pointing at the profile', relsXml.includes('Target="https://www.linkedin.com/in/herb-tracy"'), true);
+  check('as an external target', relsXml.includes('TargetMode="External"'), true);
+  // Two people linked to the same profile is one relationship, not two.
+  check('the same profile is one relationship',
+    (relsXml.match(/relationships\/hyperlink/g) || []).length, 1);
+  check('a contact with no profile is not linked',
+    (documentXml.match(/<w:hyperlink/g) || []).length, 2);
+  check('what they go by is beside the name', documentXml.includes('(Nob)'), true);
+
+  // The integrity check: every id the document points at is defined.
+  const used = new Set([...documentXml.matchAll(/r:id="(rId\d+)"/g)].map(x => x[1]));
+  const defined = new Set([...relsXml.matchAll(/Id="(rId\d+)"/g)].map(x => x[1]));
+  check('every relationship the document uses exists',
+    [...used].filter(id => !defined.has(id)).join(','), '');
+  check('and the header is still one of them', used.has('rId1'), true);
+
+  // Without a collector there is nowhere to record a URL, so a link would
+  // be an id nothing defines - the document says the name plainly instead.
+  check('a body built with no collector carries no dangling ids',
+    onePagerDocumentXml(model).includes('<w:hyperlink'), false);
 }
 
 // ---- the green band is the page header -----------------------------------
