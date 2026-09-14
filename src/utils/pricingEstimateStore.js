@@ -1,10 +1,10 @@
-// Where the Deal Pricing estimator's working scenario lives between
+// Where the Account Potential estimator's working scenario lives between
 // visits.
 //
 // The rate card is in settings and syncs across devices; this is the other
-// half of that page — which services are ticked, the counts they're priced
-// against, the deal size, which opp the numbers came from, and which rows
-// the import pinned to the top. It used to die with the view, so stepping
+// half of that page — which company is on it, which services are ticked,
+// the counts they're priced against, the deal size, which opp the numbers
+// came from, and which rows the import pinned to the top. It used to die with the view, so stepping
 // over to Opps for a figure, or reloading the page, threw an imported deal
 // away and the import had to be done again.
 //
@@ -97,7 +97,8 @@ function normalizeImport(raw) {
 export function isEmptyEstimate(estimate) {
   if (!estimate) return true;
   const scenario = estimate.scenario || {};
-  return (scenario.services || []).length === 0
+  return !String(scenario.company || '').trim()
+    && (scenario.services || []).length === 0
     && Object.keys(scenario.counts || {}).length === 0
     && Object.keys(scenario.serviceUnits || {}).length === 0
     && (scenario.dealSize === '' || scenario.dealSize == null)
@@ -117,6 +118,12 @@ export function normalizeEstimate(raw) {
   const pinned = asStringList(raw.pinned);
   const estimate = {
     scenario: {
+      // The company the potential is being read for. A name rather than an
+      // id: the page resolves it against the prospect list the same way
+      // every other typed company name in the app is resolved, and a record
+      // that vanished leaves a name the user can see rather than a dangling
+      // key that silently picks nobody.
+      company: asString(scenarioRaw.company).trim(),
       services: asStringList(scenarioRaw.services),
       counts: normalizeCounts(scenarioRaw.counts),
       serviceUnits: normalizeServiceUnits(scenarioRaw.serviceUnits),

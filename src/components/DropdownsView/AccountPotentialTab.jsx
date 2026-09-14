@@ -7,6 +7,11 @@ import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEst
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../../utils/pricingAnalysis';
 import { OppImportModal } from './OppImportModal';
 import { CountInput, NumberCell } from './pricingCells';
+import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
+import { accountPotential } from '../../utils/accountPotential';
+import { clientCounts } from '../../utils/clientDealSizing';
+import { buildOppStagesByClient } from '../../utils/serviceCoverage';
+import { findProspectByCompany } from '../../utils/companyLookup';
 import {
   basisFor,
   estimateScope,
@@ -25,15 +30,30 @@ import {
 import styles from './DropdownsView.module.css';
 
 // Where this table's column widths, order and visibility are remembered,
-// alongside every other table's under settings.tablePrefs.
+// alongside every other table's under settings.tablePrefs. Deliberately
+// still the Deal Pricing id: the columns are the same columns, and a new id
+// would silently reset every width anybody had dragged.
 const DEAL_TABLE_ID = 'dropdowns-deal-pricing';
 
 // The scope checkbox sits inside a row whose own click toggles the scope, so
 // its click has to stop there or the two would cancel each other out.
 const swallow = (e) => e.stopPropagation();
 
+// 1st, 2nd, 3rd, 4th - including the teens, which are all -th however they
+// end.
+function ordinal(n) {
+  const v = Math.abs(Math.trunc(Number(n) || 0));
+  const teen = v % 100;
+  if (teen >= 11 && teen <= 13) return `${v}th`;
+  return `${v}${({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th'}`;
+}
+
 const DEAL_TABLE_COLUMNS = [
   { key: 'scope',        label: 'In Scope',            width: 78 },
+  // Where this service came in the money order. A fixed position rather
+  // than the row's index, so re-sorting by name or bucket to find one
+  // still tells you what it is worth relative to the rest.
+  { key: 'rank',         label: '#',                   width: 56 },
   { key: 'name',         label: 'Service',             width: 280 },
   { key: 'serviceBucket',label: 'Service Bucket',      width: 200 },
   // What the rate card says, read-only: this tab prices a deal, it doesn't
@@ -66,7 +86,7 @@ const DEAL_TABLE_COLUMNS = [
 // parent rather than here so switching subtabs and coming back doesn't lose
 // a half-built estimate. It's a scratch calculation, so it isn't saved into
 // settings — the rate card is the part worth keeping, and that's over there.
-export function DealPricingTab({ settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [] }) {
+export function AccountPotentialTab({ settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [] }) {
   const [search, setSearch] = useState('');
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
@@ -112,6 +132,93 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
   const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
   const dealSize = scenario?.dealSize ?? '';
 
+  // ---- the account this potential is being read for -------------------
+  const company = String(scenario?.company || '').trim();
+  const companyOptions = useMemo(
+    () => [...new Set((prospects || []).map(p => String(p?.company || '').trim()).filter(Boolean))].sort(),
+    [prospects],
+  );
+  // The record behind the typed name. A name that matches nothing leaves
+  // this null, which the page shows as "no record" rather than pretending
+  // to have found one - the counts and the statuses both come off the
+  // record, so a wrong match would price the page against somebody else.
+  const client = useMemo(
+    () => (company ? findProspectByCompany(prospects, company) : null),
+    [prospects, company],
+  );
+
+  // What this account's opportunities say about each service. The company
+  // page treats an opp whose Scope names a service as having explored it,
+  // so this page has to as well or the two disagree about what is still
+  // open. Needs the opp store, which is loaded lazily - until it arrives
+  // only the manual statuses are read, which is the same page with fewer
+  // services ruled out rather than a wrong one.
+  const oppStages = useMemo(() => {
+    if (!client || !Array.isArray(oppRecords)) return null;
+    return buildOppStagesByClient([client], oppRecords).get(client) || new Map();
+  }, [client, oppRecords]);
+
+  // The account's own figures, with anything typed on the page winning.
+  // Sites and meters are facts about the company and belong to its record;
+  // typing over one is a what-if, and a what-if has to beat the fact or the
+  // box would not do anything.
+  const effectiveCounts = useMemo(
+    () => (client ? clientCounts(client, { counts }).counts : counts),
+    [client, counts],
+  );
+  const countSourceByUnit = useMemo(
+    () => (client ? clientCounts(client, { counts }).sources : {}),
+    [client, counts],
+  );
+
+  // The page itself: what is left to sell this account, in prize order.
+  const potential = useMemo(() => accountPotential({
+    client,
+    serviceRows,
+    pricing,
+    bases,
+    counts: effectiveCounts,
+    dealSize,
+    serviceUnits,
+    oppStages,
+  }), [client, serviceRows, pricing, bases, effectiveCounts, dealSize, serviceUnits, oppStages]);
+
+  // What the account has already ruled on, said in words. A count alone
+  // ("29 left out") reads as a filter that might be wrong; naming the
+  // outcomes says why each one went, which is the difference between a
+  // number somebody trusts and one they come and ask about.
+  const decidedSentence = useMemo(() => {
+    const c = potential.decidedCounts;
+    const total = potential.decided.length;
+    if (!total) return 'Nothing ruled out yet - every service is still open.';
+    const parts = [];
+    if (c.sold) parts.push(`${c.sold} sold`);
+    if (c.inProgress) parts.push(`${c.inProgress} in flight`);
+    if (c.notSold) parts.push(`${c.notSold} not sold`);
+    if (c.na) parts.push(`${c.na} N/A`);
+    return `${total} left out: ${parts.join(', ')}`;
+  }, [potential]);
+
+  // Only the undecided services reach the table. A service this account
+  // already buys is not potential, and neither is one they turned down, one
+  // marked N/A, or one already sitting in a live opp - that money is in the
+  // pipeline and counting it here would count it twice in the same review.
+  const openRows = potential.open;
+
+  function setCompany(name) {
+    const next = String(name || '').trim();
+    if (next === company) return;
+    // Picking an account changes which services are even on the page, so a
+    // scope ticked against the last one is not a scope against this one.
+    // The typed counts go too: sites belong to a company, and carrying one
+    // account's estate onto another's page is the quiet way to price a deal
+    // against the wrong estate.
+    setScenario(s2 => ({ ...s2, company: next, services: [], counts: {}, serviceUnits: {} }));
+    setOppImport(null);
+    setPinnedNames(null);
+    if (next) ensureOpps();
+  }
+
   // What the last import filled in, so the bar can say where its numbers
   // came from and what it couldn't answer. Cleared when the scope is.
   const [oppImport, setOppImport] = useState(() => restored?.oppImport || null);
@@ -156,7 +263,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
     setSaving(true);
     try {
       const analysis = buildPricingAnalysis({
-        totals, counts, dealSize, bases, account: oppImport.account,
+        totals, counts: effectiveCounts, dealSize, bases, account: oppImport.account,
       });
       await setOppFields(user?.uid, oppId, {
         [ANALYSIS_FIELD]: analysis,
@@ -164,7 +271,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
       });
       setSaved({ ok: true, at: Date.now() });
     } catch (err) {
-      console.error('Deal Pricing: could not save the analysis to the opp', err);
+      console.error('Account Potential: could not save the analysis to the opp', err);
       setSaved({ ok: false, error: err?.message || 'The save did not go through.' });
     } finally {
       setSaving(false);
@@ -177,8 +284,11 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
   // its own save.
   useEffect(() => { setSaved(null); }, [inScope, counts, serviceUnits, dealSize]);
 
-  async function openOppPicker() {
-    setOppPicker(true);
+  // The Opps 2 dataset, fetched once and shared by the two things that need
+  // it: the import picker, and the statuses an account's opportunities
+  // imply. Pulled lazily either way - it is the whole opp store, and a
+  // visit that only reads the rate card shouldn't be charged for it.
+  async function ensureOpps() {
     if (oppRecords || oppLoading) return;
     setOppLoading(true);
     setOppError('');
@@ -186,12 +296,17 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
       const data = await loadOpps2Newest(user?.uid);
       setOppRecords(Array.isArray(data?.records) ? data.records : []);
     } catch (err) {
-      console.error('Deal Pricing: could not load opps', err);
+      console.error('Account Potential: could not load opps', err);
       setOppError('Could not load the opportunities. Open the Opps 2 tab to sync them, then try again.');
       setOppRecords([]);
     } finally {
       setOppLoading(false);
     }
+  }
+
+  function openOppPicker() {
+    setOppPicker(true);
+    ensureOpps();
   }
 
   // Apply an opp to the estimator. The scenario is replaced rather than
@@ -272,22 +387,20 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
     setScenario(s => ({ ...s, counts: { ...(s?.counts || {}), [unit]: value } }));
   }
 
-  // The estimate for every service, in scope or not — the two Est. columns
-  // show what a service would add if it were ticked, which is what makes the
-  // table itself answer "what would adding this cost?".
-  const allEstimates = useMemo(() => {
-    const { lines } = estimateScope({
-      rows: serviceRows,
-      services: serviceRows.map(r => r.name),
-      pricing, counts, dealSize, bases, serviceUnits,
-    });
-    return new Map(lines.map(l => [l.name, l]));
-  }, [serviceRows, pricing, counts, dealSize, bases, serviceUnits]);
+  // The estimate for every service on the page, in scope or not — the two
+  // Est. columns show what a service would add if it were ticked, which is
+  // what makes the table itself answer "what would adding this cost?".
+  // Taken off the potential run rather than computed again: that already
+  // priced every open service, and a second pass would be a second opinion.
+  const allEstimates = useMemo(
+    () => new Map(potential.estimate.lines.map(l => [l.name, l])),
+    [potential],
+  );
 
   // The deal itself: only what's ticked.
   const totals = useMemo(
-    () => estimateScope({ rows: serviceRows, services: [...inScope], pricing, counts, dealSize, bases, serviceUnits }),
-    [serviceRows, inScope, pricing, counts, dealSize, bases, serviceUnits],
+    () => estimateScope({ rows: openRows, services: [...inScope], pricing, counts: effectiveCounts, dealSize, bases, serviceUnits }),
+    [openRows, inScope, pricing, effectiveCounts, dealSize, bases, serviceUnits],
   );
   // Whether there is a setup fee in the scope at all. Either end of it: a
   // fee quoted from nothing up to a figure is still a setup fee.
@@ -313,25 +426,39 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
   );
   // What a row with no number of its own is priced on. Shown as the input's
   // placeholder so a blank box reads as "using this" rather than as zero.
-  const sharedProjects = parseMoney(counts?.[PROJECT_UNIT]);
+  const sharedProjects = parseMoney(effectiveCounts?.[PROJECT_UNIT]);
 
-  // Where each count came from, by unit, so the box can say so. Only an
-  // import knows: a number the user typed came from them.
-  const countSources = useMemo(() => Object.fromEntries(
-    (oppImport?.filled || []).map(f => [f.unit, f.source]),
-  ), [oppImport]);
+  // Where each count came from, by unit, so the box can say so. Three
+  // answers: the company record, an import, or the user - and only the
+  // first two are worth naming, because a number somebody typed came from
+  // them and they know it.
+  //
+  // The import wins where both speak: it is the more specific claim (this
+  // opp's own site count, or a saved site list) and it is what the note
+  // under the bar is already describing.
+  const countSources = useMemo(() => {
+    const fromRecord = Object.fromEntries(Object.entries(countSourceByUnit || {})
+      .filter(([, src]) => src === 'client')
+      .map(([unit]) => [unit, `the ${company} record`]));
+    return {
+      ...fromRecord,
+      ...Object.fromEntries((oppImport?.filled || []).map(f => [f.unit, f.source])),
+    };
+  }, [countSourceByUnit, company, oppImport]);
 
   // Count boxes are shown for the units the scope actually needs, so the bar
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
   // that already has a number keeps its box even after the service that
   // wanted it is un-ticked — otherwise a typed figure would vanish.
   const visibleUnits = useMemo(() => units.filter(u =>
-    totals.unitsUsed.has(u.unit) || (counts?.[u.unit] !== '' && counts?.[u.unit] != null)
-  ), [units, totals.unitsUsed, counts]);
+    totals.unitsUsed.has(u.unit)
+    || potential.estimate.unitsUsed.has(u.unit)
+    || (effectiveCounts?.[u.unit] !== '' && effectiveCounts?.[u.unit] != null)
+  ), [units, totals.unitsUsed, potential, effectiveCounts]);
 
   const term = search.trim().toLowerCase();
   // Every service as a table row, before the search box has its say.
-  const allRows = useMemo(() => serviceRows
+  const allRows = useMemo(() => openRows
     .map(({ name, meta, bucket }) => {
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
@@ -376,9 +503,10 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
         _note: est?.note || '',
         _scoped: inScope.has(name),
         _pinned: !!pinnedNames?.has(name),
+        _rank: potential.rank.get(name) ?? null,
       };
     }),
-  [serviceRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames]);
+  [openRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
 
   const rows = useMemo(
     () => (term
@@ -417,6 +545,23 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
               aria-label={`${row.name} in scope`}
               style={{ cursor: 'pointer' }}
             />
+          ),
+        };
+      case 'rank':
+        return {
+          ...base,
+          // A service the rate card cannot price has no rank rather than a
+          // last one: it is not worth nothing, it is unknown, and that is
+          // the reason to go and price it.
+          getSortValue: (row) => (row._rank ?? Number.MAX_SAFE_INTEGER),
+          exportValue: (row) => (row._rank ?? ''),
+          render: (row) => (
+            <span
+              className={styles.pricingRank}
+              title={row._rank
+                ? `${row.name} is the ${ordinal(row._rank)} biggest untapped service on this account`
+                : 'Not ranked - the rate card cannot price this service yet'}
+            >{row._rank ?? '-'}</span>
           ),
         };
       case 'name':
@@ -584,10 +729,84 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           title="Pull an opportunity's scope and its account's site / accounts figures into the estimator"
         >Import opp</button>
         <span className={styles.resultCount}>
-          {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
+          {term ? `${rows.length} of ${openRows.length} services` : `${openRows.length} services`}
           {` · ${inScope.size} in scope`}
         </span>
       </div>
+
+      {/* The account. Everything below reads off it: its own site and meter
+          figures price the services, and its Services Explored decides
+          which services are on the page at all. */}
+      <div className={styles.potentialBar}>
+        <div className={styles.potentialPick}>
+          <span className={styles.pricingBarTitle}>Account potential</span>
+          <div className={styles.potentialCombo}>
+            <ColumnFilterCombo
+              value={company}
+              onChange={setCompany}
+              suggestions={companyOptions}
+              label="Company"
+              placeholder="Type a company…"
+            />
+          </div>
+          {company && !client && (
+            <span className={styles.potentialWarn} title="Nothing in the client list matches this name, so no counts and no service statuses could be read. The services below are priced on whatever is typed in the boxes.">
+              No record for this name
+            </span>
+          )}
+          {client && oppLoading && (
+            <span className={styles.potentialNote}>Reading their opportunities…</span>
+          )}
+          {client && (
+            <span className={styles.potentialNote}>
+              {decidedSentence}
+            </span>
+          )}
+          {company && (
+            <button
+              type="button"
+              className={styles.showHiddenBtn}
+              onClick={() => setCompany('')}
+              title="Go back to the whole catalogue with nothing ruled out"
+            >Clear account</button>
+          )}
+        </div>
+        <div className={styles.pricingTotals}>
+          <div className={styles.pricingTotal}>
+            <span className={styles.pricingTotalLabel}>Untapped services</span>
+            <span className={styles.pricingTotalValue}>{openRows.length}</span>
+          </div>
+          <div className={styles.pricingTotal}>
+            <span className={styles.pricingTotalLabel}>Year 1 potential</span>
+            <span className={styles.pricingTotalValue}>
+              {formatMoneyRange(potential.estimate.year1Total, potential.estimate.year1TotalHigh) || '$0'}
+            </span>
+          </div>
+          <div
+            className={styles.pricingTotalMain}
+            title="Every service this account has not ruled on, priced over its contract term. What the account is still worth if we sold them all of it."
+          >
+            <span className={styles.pricingTotalLabel}>Total potential</span>
+            <span className={styles.pricingTotalValueMain}>
+              {formatMoneyRange(potential.estimate.contractValue, potential.estimate.contractValueHigh) || '$0'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* What the rate card cannot answer yet. Said out loud rather than
+          left as a row of dashes: an unpriced service is not worth nothing,
+          it is unknown, and the total above is short by however much it
+          turns out to be. */}
+      {client && potential.estimate.unpriced.length > 0 && (
+        <div className={styles.potentialGap}>
+          {`${potential.estimate.unpriced.length} of these ${openRows.length} have no rate on the card, so the totals above leave them out: `}
+          <span className={styles.potentialGapNames}>
+            {potential.estimate.unpriced.slice(0, 6).join(', ')}
+            {potential.estimate.unpriced.length > 6 ? `, and ${potential.estimate.unpriced.length - 6} more` : ''}
+          </span>
+        </div>
+      )}
 
       {/* The estimator. Everything in it is a scenario rather than saved
           data, so it reads left to right as one sentence: this many sites,
@@ -615,7 +834,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             <CountInput
               key={u.unit}
               label={u.label}
-              value={counts?.[u.unit] ?? ''}
+              value={effectiveCounts?.[u.unit] ?? ''}
               title={`${u.label} this estimate prices against`
                 + (countSources[u.unit] ? ` - filled from ${countSources[u.unit]}.` : '.')
                 + ' Editing it re-prices this estimate only: the account record and every other deal stay as they are.'}
@@ -832,6 +1051,14 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
           tableId={DEAL_TABLE_ID}
           columns={columns}
           rows={rows}
+          // Biggest prize first, because that is the question the page
+          // answers. Alphabetical is what the table did as a rate card,
+          // where every row was as interesting as every other; here the
+          // top of the list IS the output, and a reader who has to sort a
+          // column to find it has been handed a spreadsheet instead of an
+          // answer. A header click still re-sorts, and the # column
+          // carries the money order into whatever order that is.
+          defaultSort={{ key: 'rank', direction: 'asc' }}
           alwaysVisible={['scope', 'name']}
           // The Units cell swallows its own click, so this fires for the
           // row itself — the name, the read-only cells, and the padding
@@ -843,7 +1070,7 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
             row._scoped ? styles.pricingRowScoped : '',
             row._pinned ? styles.pricingRowPinned : '',
           ].filter(Boolean).join(' ') || undefined}
-          exportFileName="Deal Pricing"
+          exportFileName="Account Potential"
           settings={settings}
           updateSettings={updateSettings}
           emptyMessage={serviceRows.length === 0
@@ -865,4 +1092,4 @@ export function DealPricingTab({ settings, updateSettings, serviceRows = [], sce
   );
 }
 
-export default DealPricingTab;
+export default AccountPotentialTab;

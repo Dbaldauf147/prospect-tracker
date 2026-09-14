@@ -42,6 +42,9 @@ const IMPORT = {
 };
 const ESTIMATE = {
   scenario: {
+    // The account the potential is being read for. A name rather than an
+    // id, because that is what the page resolves against the client list.
+    company: 'Ventas Inc',
     services: ['Bill Pay', 'Metering'],
     counts: { sites: 819, accounts: 15000 },
     // Invoice processing at 40 of the 819 sites: a fact about this deal,
@@ -95,6 +98,17 @@ const ESTIMATE = {
   check('junk is not an estimate', normalizeEstimate('nope'), null);
   check('an empty estimate is not stored', normalizeEstimate({ scenario: { services: [] } }), null);
   check('an untouched estimator is empty', isEmptyEstimate({ scenario: { services: [], counts: {}, dealSize: '' } }), true);
+  // A company on its own IS worth remembering: picking an account is most
+  // of the work of setting the page up, and a reload that threw it away
+  // would mean typing the name again to see the same ranking.
+  check('but an account picked with nothing ticked is not',
+    isEmptyEstimate({ scenario: { company: 'Ventas Inc', services: [], counts: {}, dealSize: '' } }), false);
+  check('and it survives on its own',
+    normalizeEstimate({ scenario: { company: 'Ventas Inc' } })?.scenario.company, 'Ventas Inc');
+  // Whitespace is not an account. Left untrimmed it would keep a record
+  // alive that names nobody and rules nothing out.
+  check('whitespace is not an account',
+    normalizeEstimate({ scenario: { company: '   ' } }), null);
   check('units typed for this deal are worth remembering on their own',
     normalizeEstimate({ scenario: { serviceUnits: { 'Bill Pay': 40, 'Bad': 'lots' } } }).scenario.serviceUnits,
     { 'Bill Pay': 40 });
