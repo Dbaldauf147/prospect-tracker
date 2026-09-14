@@ -14,7 +14,8 @@
 
 import { sendEmail } from './mailer.js';
 import { companyNewsBudgetMs } from './researchBudget.js';
-import { fetchHeadlines } from './newsFeeds.js';
+import { fetchHeadlines, nameVariants } from './newsFeeds.js';
+import { classifyHeadline, stripPublisher } from './dealHeadline.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -246,34 +247,107 @@ Return the JSON object as specified.`;
   try { parsed = JSON.parse(match[0]); }
   catch { return { deals: [], error: 'Malformed JSON in response' }; }
 
-  return { deals: dealsFromHeadlines(parsed.deals, items), error: null };
+  return { deals: dealsFromHeadlines(parsed.deals, items), unsure: [], error: null };
 }
 
-// One research pass for one company. Returns { deals, error } — a failure
-// on one company must never sink the whole digest, so errors come back as
-// data rather than thrown. The exception is ResearchHaltedError, which is
-// meant to stop the run and is deliberately rethrown.
+// Which classifier reads the headlines the feed returned.
+//
+// "rules" is the default and costs nothing: dealHeadline.js reads the
+// BUYER VERB TARGET shape that news headlines are written to, and the
+// digest makes no API call at any point. "claude" is the opt-in, for a
+// reader who would rather pay for the shapes rules don't catch.
+//
+// The default matters beyond the bill. An API key can be rejected or run
+// out of credit, and when it does this feature stops entirely — which is
+// exactly what it did. A digest built out of an RSS feed and a regex has
+// nothing to run out of.
+export function classifierMode() {
+  return String(process.env.COMPANY_NEWS_CLASSIFIER || '').trim().toLowerCase() === 'claude'
+    ? 'claude'
+    : 'rules';
+}
+
+// One research pass for one company. Returns { deals, unsure, error } — a
+// failure on one company must never sink the whole digest, so errors come
+// back as data rather than thrown. The exception is ResearchHaltedError,
+// which is meant to stop the run and is deliberately rethrown.
 export async function researchCompanyAcquisitions(entry, since, until, { signal } = {}) {
   const { items, error: feedError } = await fetchHeadlines(entry, since, until, { signal });
 
   if (feedError) {
-    // The feeds are the cheap path, not the only one. If neither host can
-    // be reached the company still deserves an answer, so fall back to the
-    // old web-search pass for it — expensive, but better than a blank.
+    // No feed, and no paid fallback unless one was asked for: spending
+    // money to answer for one unreachable company is how the whole
+    // feature's budget went last time.
+    if (classifierMode() !== 'claude') {
+      return { deals: [], unsure: [], error: feedError };
+    }
     return researchViaWebSearch(entry, since, until, { signal, feedError });
   }
 
-  // A quiet feed is an answer, and answering it costs nothing. This is
-  // where nearly all of the old bill went.
-  if (items.length === 0) return { deals: [], error: null };
+  // A quiet feed is an answer, and answering it costs nothing.
+  if (items.length === 0) return { deals: [], unsure: [], error: null };
+
+  if (classifierMode() !== 'claude') return classifyByRules(entry, items);
 
   try {
     return await classifyHeadlines(entry, items, { signal });
   } catch (err) {
     if (err instanceof ResearchHaltedError) throw err;
-    if (err?.name === 'AbortError') return { deals: [], error: 'Research timed out' };
-    return { deals: [], error: String(err?.message || err).slice(0, 200) };
+    if (err?.name === 'AbortError') return { deals: [], unsure: [], error: 'Research timed out' };
+    return { deals: [], unsure: [], error: String(err?.message || err).slice(0, 200) };
   }
+}
+
+// The no-API path: read each headline with dealHeadline's rules.
+//
+// Anything the rules can't place comes back as `unsure` rather than being
+// dropped. Rules will always miss shapes a model would catch; what they
+// must not do is lose them silently, so those headlines are listed under
+// the firm for the reader to glance at. Two seconds to dismiss, against a
+// missed platform acquisition.
+export function classifyByRules(entry, items) {
+  const variants = nameVariants(entry.company);
+  const deals = [];
+  const unsure = [];
+  const seen = new Set();
+
+  for (const item of items) {
+    const verdict = classifyHeadline(item, entry, variants);
+    if (verdict.skip) continue;
+
+    if (verdict.unsure) {
+      unsure.push({
+        title: stripPublisher(item.title),
+        announcedOn: isoDate(item.publishedAt),
+        sourceTitle: item.source || 'Source',
+        sourceUrl: item.link,
+      });
+      continue;
+    }
+
+    const d = verdict.deal;
+    if (!d?.target) continue;
+    const key = `${d.target.toLowerCase()}|${isoDate(item.publishedAt)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    deals.push({
+      target: d.target,
+      buyer: d.buyer || entry.company,
+      dealType: d.dealType || 'Acquisition',
+      sector: '',
+      sites: '',
+      value: d.value || '',
+      summary: d.summary || '',
+      announcedOn: isoDate(item.publishedAt),
+      sourceTitle: item.source || stripPublisher(item.title).slice(0, 200) || 'Source',
+      sourceUrl: item.link,
+    });
+  }
+
+  deals.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
+  unsure.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
+  return { deals: deals.slice(0, 25), unsure: unsure.slice(0, 8), error: null };
 }
 
 // The pre-feed implementation, kept for the case the feeds can't answer:
@@ -369,7 +443,7 @@ Search the web before answering — do not answer from memory alone. Return the 
     // "search failed" is the exact conflation this digest keeps relapsing
     // into. The email notes it in one line at the bottom instead, so a
     // digest quietly falling back every week is still visible.
-    return { deals: normalizeDeals(parsed.deals, since, until), error: null, viaWebSearch: true, feedError };
+    return { deals: normalizeDeals(parsed.deals, since, until), unsure: [], error: null, viaWebSearch: true, feedError };
   } catch (err) {
     if (err instanceof ResearchHaltedError) throw err;
     if (err?.name === 'AbortError') return { deals: [], error: 'Research timed out' };
@@ -519,31 +593,33 @@ export async function researchAll(companies, since, until, {
       // A halted run leaves the rest unsearched, not "searched and empty":
       // the cursor must not advance past companies nobody looked at.
       if (halted) {
-        results[i] = { ...entry, deals: [], error: halted, skipped: true, halted: true };
+        results[i] = { ...entry, deals: [], unsure: [], error: halted, skipped: true, halted: true };
         continue;
       }
 
       const remaining = deadline - Date.now();
       if (remaining < MIN_SLICE_MS) {
-        results[i] = { ...entry, deals: [], error: null, skipped: true };
+        results[i] = { ...entry, deals: [], unsure: [], error: null, skipped: true };
         continue;
       }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), Math.min(remaining, PER_COMPANY_MS));
       try {
-        const { deals, error, viaWebSearch } = await research(entry, since, until, { signal: controller.signal });
-        results[i] = { ...entry, deals, error, skipped: false, viaWebSearch: !!viaWebSearch };
+        const { deals, unsure, error, viaWebSearch } = await research(entry, since, until, { signal: controller.signal });
+        results[i] = {
+          ...entry, deals, unsure: unsure || [], error, skipped: false, viaWebSearch: !!viaWebSearch,
+        };
       } catch (err) {
         if (err instanceof ResearchHaltedError) {
           halted = err.reason;
-          results[i] = { ...entry, deals: [], error: halted, skipped: true, halted: true };
+          results[i] = { ...entry, deals: [], unsure: [], error: halted, skipped: true, halted: true };
           continue;
         }
         // researchCompanyAcquisitions answers with an error rather than
         // throwing, but a hole in `results` would crash the email builder
         // and lose the whole digest, so don't rely on that.
-        results[i] = { ...entry, deals: [], error: String(err?.message || err).slice(0, 200), skipped: false };
+        results[i] = { ...entry, deals: [], unsure: [], error: String(err?.message || err).slice(0, 200), skipped: false };
       } finally {
         clearTimeout(timer);
       }
@@ -637,13 +713,42 @@ function companySection(result) {
         ${result.deals.length ? `<span style="float:right;color:#009530;font-size:12px;font-weight:700">${result.deals.length} deal${result.deals.length === 1 ? '' : 's'}</span>` : ''}
       </div>
       ${body}
+      ${unsureBlock(result.unsure)}
+    </div>`;
+}
+
+// Headlines the rules could not place, listed rather than dropped.
+//
+// This is the honest half of a rules-based reader. It will miss shapes a
+// model would catch — "backs the management buyout of", "agrees terms
+// with" — and the failure mode that matters is not missing one, it is
+// missing one silently. A line and a link lets the reader decide in two
+// seconds, and keeps the digest's promise that what the feed found, the
+// reader sees.
+function unsureBlock(unsure) {
+  if (!Array.isArray(unsure) || unsure.length === 0) return '';
+  const rows = unsure.map((u) => `
+    <div style="padding:4px 0;font-size:12px;line-height:1.45">
+      <span style="color:#94A3B8">${escapeHtml(u.announcedOn)}</span>
+      <a href="${escapeHtml(u.sourceUrl)}" style="color:#475569;text-decoration:none">${escapeHtml(u.title)}</a>
+      <span style="color:#94A3B8">· ${escapeHtml(u.sourceTitle)}</span>
+    </div>`).join('');
+  return `
+    <div style="margin-top:8px;padding-top:7px;border-top:1px dashed #E2E8F0">
+      <div style="color:#64748B;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em">
+        Also in the news — worth a look
+      </div>
+      ${rows}
     </div>`;
 }
 
 export function buildNewsEmailHtml(results, { since, until, message } = {}) {
-  const withDeals = results.filter((r) => r.deals.length > 0);
-  const withoutDeals = results.filter((r) => r.deals.length === 0);
-  const totalDeals = withDeals.reduce((n, r) => n + r.deals.length, 0);
+  const hasContent = (r) => r.deals.length > 0 || (r.unsure || []).length > 0;
+  const withDeals = results.filter(hasContent);
+  const withoutDeals = results.filter((r) => !hasContent(r));
+  const totalDeals = results.reduce((n, r) => n + r.deals.length, 0);
+  const dealFirms = results.filter((r) => r.deals.length > 0).length;
+  const totalUnsure = results.reduce((n, r) => n + (r.unsure || []).length, 0);
   const searchedCount = results.filter((r) => !r.skipped).length;
 
   const intro = message
@@ -700,8 +805,8 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
       <div style="color:#64748B;font-size:12px;margin:0 0 18px">
         ${escapeHtml(formatWindow(since, until))} ·
         ${totalDeals
-          ? `${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} at ${withDeals.length} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
-          : `no acquisitions · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}
+          ? `${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} at ${dealFirms} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
+          : `no acquisitions · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}${totalUnsure ? ` · ${totalUnsure} headline${totalUnsure === 1 ? '' : 's'} to check` : ''}
       </div>
       ${haltBanner}
       ${intro}
@@ -717,7 +822,7 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
         : ''}
       <div style="margin-top:26px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
-        Deals are found in public news feeds and can be incomplete — always confirm against the linked source before acting.
+        Deals are read from public news feed headlines and can be incomplete — always confirm against the linked source before acting.
       </div>
     </div>`;
 }

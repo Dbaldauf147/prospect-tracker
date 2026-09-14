@@ -14,6 +14,9 @@
 //   - the email collapsing "found nothing", "search failed" and "never
 //     searched" back into one indistinguishable line.
 import {
+  classifyByRules,
+  classifierMode,
+  researchCompanyAcquisitions,
   researchAll,
   rotateForRun,
   nextCursor,
@@ -26,6 +29,8 @@ import {
 import {
   nameVariants,
   feedQuery,
+  siteQuery,
+  hostOf,
   parseRssItems,
   fetchHeadlines,
   mentionsCompany,
@@ -433,6 +438,162 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
     { since: 0, until: 86_400_000 },
   );
   ok(!clean.includes('fell back'), 'fallback: a normal run says nothing about fallbacks');
+}
+
+// ---- The digest runs on no API at all ------------------------------------
+// The point of the rules classifier: the feature has nothing to run out of.
+// An empty Anthropic balance stopped this feature dead; a digest built from
+// an RSS feed and a regex cannot be stopped that way.
+{
+  eq(classifierMode(), 'rules', 'mode: rules is the default, so the default spends nothing');
+
+  const items = [
+    { title: 'Blackstone to acquire Acme Facilities for $450M - Reuters', link: 'https://ex.com/a',
+      publishedAt: Date.parse('2026-09-07T12:00:00Z'), source: 'Reuters' },
+    { title: 'Blackstone closes $20bn fund - Bloomberg', link: 'https://ex.com/b',
+      publishedAt: Date.parse('2026-09-08T12:00:00Z'), source: 'Bloomberg' },
+    { title: 'Blackstone backs management buyout of Delta - PE Hub', link: 'https://ex.com/c',
+      publishedAt: Date.parse('2026-09-09T12:00:00Z'), source: 'PE Hub' },
+  ];
+  const { deals, unsure, error } = classifyByRules({ company: 'Blackstone', isPe: true }, items);
+
+  eq(error, null, 'rules: reading headlines cannot fail');
+  eq(deals.length, 1, 'rules: the one real acquisition is found');
+  eq(deals[0].target, 'Acme Facilities', 'rules: with the target read off the headline');
+  eq(deals[0].value, '$450M', 'rules: and the price, when the headline states one');
+  eq(deals[0].sourceUrl, 'https://ex.com/a', 'rules: the link is the feed\u2019s, so it cannot be invented');
+  eq(deals[0].announcedOn, '2026-09-07', 'rules: and so is the date');
+  eq(unsure.length, 1, 'rules: the shape it could not read is kept, not dropped');
+  eq(unsure[0].title, 'Blackstone backs management buyout of Delta', 'rules: and it is the right one');
+  // The fund close is neither a deal nor a headline worth the reader's time.
+  eq(deals.concat(unsure).some(x => /fund/i.test(x.title || x.summary || '')), false,
+    'rules: a disqualified headline is gone from both lists');
+}
+
+{
+  // The same deal reported by three outlets is one deal in the email.
+  const dup = (n, src) => ({
+    title: `Blackstone acquires Acme Facilities - ${src}`, link: `https://ex.com/${n}`,
+    publishedAt: Date.parse('2026-09-07T12:00:00Z'), source: src,
+  });
+  const { deals } = classifyByRules({ company: 'Blackstone', isPe: true },
+    [dup(1, 'Reuters'), dup(2, 'Bloomberg'), dup(3, 'PE Hub')]);
+  eq(deals.length, 1, 'rules: syndicated coverage of one deal is listed once');
+}
+
+{
+  // End to end with no key and no classifier set: a feed answers, the
+  // digest reads it, and fetch is never called against Anthropic.
+  const realFetch = globalThis.fetch;
+  const key = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  let anthropicCalls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('anthropic.com')) { anthropicCalls++; throw new Error('should not be called'); }
+    return { ok: true, status: 200, text: async () => `<rss><channel><item>
+      <title>Blackstone acquires Acme Facilities</title><link>https://ex.com/a</link>
+      <pubDate>${new Date(Date.parse('2026-09-07T12:00:00Z')).toUTCString()}</pubDate>
+      <source url="https://reuters.com">Reuters</source></item></channel></rss>` };
+  };
+
+  const out = await researchCompanyAcquisitions(
+    { company: 'Blackstone', isPe: true },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'),
+  );
+  eq(anthropicCalls, 0, 'no-api: the digest never reaches for the API');
+  eq(out.deals.length, 1, 'no-api: and still finds the deal');
+  eq(out.error, null, 'no-api: a missing API key is no longer an error');
+
+  // An unreachable feed must not quietly fall back to the paid path.
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('anthropic.com')) { anthropicCalls++; throw new Error('should not be called'); }
+    throw new Error('ECONNREFUSED');
+  };
+  const dead = await researchCompanyAcquisitions(
+    { company: 'Blackstone', isPe: true },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'),
+  );
+  eq(anthropicCalls, 0, 'no-api: a dead feed does not silently start spending');
+  ok(dead.error, 'no-api: it reports the feed failure instead');
+
+  globalThis.fetch = realFetch;
+  if (key) process.env.ANTHROPIC_API_KEY = key;
+}
+
+{
+  // Headlines the rules could not place are listed under the firm, so a
+  // company with only those still gets a section rather than being filed
+  // under "no acquisitions found".
+  const results = [{
+    company: 'Blackstone', isPe: true, deals: [], skipped: false, error: null,
+    unsure: [{ title: 'Blackstone backs management buyout of Delta', announcedOn: '2026-09-09',
+      sourceTitle: 'PE Hub', sourceUrl: 'https://ex.com/c' }],
+  }];
+  const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
+  ok(html.includes('Also in the news'), 'email: unplaced headlines get their own block');
+  ok(html.includes('management buyout'), 'email: and the headline itself is printed');
+  ok(html.includes('https://ex.com/c'), 'email: with a link to the source');
+  ok(!html.includes('No acquisitions found'), 'email: a firm with headlines is not filed as empty');
+  ok(html.includes('1 headline to check'), 'email: the header counts them');
+}
+
+// ---- The firm's own newsroom ---------------------------------------------
+// A PE firm announces every deal on its own site, usually before the trade
+// press and always without a reporter's hedging. The website is already on
+// the prospect record, so this costs a query and nothing else.
+{
+  eq(hostOf('https://www.blackstone.com/'), 'blackstone.com', 'site: a URL reduces to a bare host');
+  eq(hostOf('carlyle.com/news'), 'carlyle.com', 'site: a path is dropped');
+  eq(hostOf(''), '', 'site: no website, no host');
+  eq(hostOf('not a website'), '', 'site: junk does not become a search operator');
+
+  ok(siteQuery('Blackstone', 'https://www.blackstone.com').startsWith('site:blackstone.com'),
+    'site: the query is restricted to the firm\u2019s own domain');
+  eq(siteQuery('Blackstone', ''), '', 'site: no website, no second query');
+}
+
+{
+  // The newsroom's own wording, merged ahead of the press coverage of the
+  // same deal — and counted once, not twice.
+  const day = (d) => new Date(Date.parse(`2026-09-${d}T12:00:00Z`)).toUTCString();
+  const rss = (title, src) => `<rss><channel><item><title>${title}</title>
+    <link>https://ex.com/${encodeURIComponent(src)}</link><pubDate>${day('07')}</pubDate>
+    <source url="https://x.com">${src}</source></item></channel></rss>`;
+
+  const seenUrls = [];
+  const fetchImpl = async (url) => {
+    seenUrls.push(String(url));
+    const own = String(url).includes('site%3Ablackstone.com');
+    return {
+      ok: true,
+      status: 200,
+      text: async () => rss(
+        own ? 'Blackstone Announces Acquisition of Acme Facilities' : 'Blackstone acquires Acme Facilities',
+        own ? 'Blackstone' : 'Reuters',
+      ),
+    };
+  };
+
+  const { items } = await fetchHeadlines(
+    { company: 'Blackstone', isPe: true, website: 'https://www.blackstone.com' },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'), { fetchImpl },
+  );
+  ok(seenUrls.some(u => u.includes('site%3Ablackstone.com')), 'site: the newsroom is actually queried');
+  eq(items.length, 2, 'site: a differently-worded story from each source survives');
+  eq(items[0].source, 'Blackstone', 'site: the firm\u2019s own announcement is put first');
+
+  // A newsroom that cannot be reached must not cost the company its
+  // ordinary result.
+  const flaky = async (url) => {
+    if (String(url).includes('site%3A')) throw new Error('404');
+    return { ok: true, status: 200, text: async () => rss('Blackstone acquires Acme Facilities', 'Reuters') };
+  };
+  const fallback = await fetchHeadlines(
+    { company: 'Blackstone', isPe: true, website: 'https://www.blackstone.com' },
+    Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-09-14T00:00:00Z'), { fetchImpl: flaky },
+  );
+  eq(fallback.items.length, 1, 'site: an unreachable newsroom is not fatal');
+  eq(fallback.error, null, 'site: and is not reported as a failure');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
