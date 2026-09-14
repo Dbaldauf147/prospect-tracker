@@ -84,7 +84,7 @@ function LogEntry({ entry, last }) {
           <div style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
             {entry.summarized
               ? 'No follow-ups came out of this call.'
-              : 'Not summarized yet — run Summarize on the Call Recordings page and its follow-ups will appear here.'}
+              : 'Not summarized yet - run Summarize on the Call Recordings page and its follow-ups will appear here.'}
           </div>
         )}
       </div>
@@ -138,7 +138,7 @@ export function CallNextStepsLog({ oppId }) {
     return (
       <div style={emptyStyle}>
         No call recordings are mapped to this deal yet. Tag one from{' '}
-        <strong>Calls to map</strong> above the opps table, or on the Call Recordings page —
+        <strong>Calls to map</strong> above the opps table, or on the Call Recordings page -
         whatever it said to do next is listed here, call by call. It stays here rather than
         being copied onto the Notes tab, which holds what you put on it.
       </div>

@@ -36,11 +36,11 @@ export function BfoCloseOutPreview({ competition, reason, hint = null, mappedHin
       </>
     )
     : !comp
-      ? <>Set <strong>Competition</strong> — with Reason Not Sold it decides the BFO Status and Reason.</>
+      ? <>Set <strong>Competition</strong> - with Reason Not Sold it decides the BFO Status and Reason.</>
       : !compHasRules
         ? <>No Reason Not Sold maps under <strong>{comp}</strong>, so there is no BFO Status or Reason to set.</>
         : !rsn
-          ? <>Pick a <strong>Reason Not Sold</strong> — under <strong>{comp}</strong> each one maps to a BFO Status and Reason.</>
+          ? <>Pick a <strong>Reason Not Sold</strong> - under <strong>{comp}</strong> each one maps to a BFO Status and Reason.</>
           // A pair that is filled in and still doesn't map. Names both
           // halves: which one is wrong is the user's call, and the table
           // has no opinion on it.

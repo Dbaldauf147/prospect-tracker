@@ -627,7 +627,7 @@ export async function downloadPortfolioCompaniesWorkbook({
                     addSectionHeader('Component Weights');
                     addKV('Est. Energy (GWh/yr)', '30%: linearly normalized against the maximum value in the exported table. Tied with Site Count as the largest driver of the score.');
                     addKV('Sector Fit Score', '25%: uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
-                    addKV('Site Count', '30%: linearly normalized against the maximum value in the exported table. Tied with Est. Energy as the largest driver of the score. Estimated counts — cells marked (E) — are weighted exactly the same as confirmed counts.');
+                    addKV('Site Count', '30%: linearly normalized against the maximum value in the exported table. Tied with Est. Energy as the largest driver of the score. Estimated counts - cells marked (E) - are weighted exactly the same as confirmed counts.');
                     addKV('Acquisition Year', '15%: most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
@@ -657,7 +657,7 @@ export async function downloadPortfolioCompaniesWorkbook({
 
                     addSectionHeader('Key Assumptions & Caveats');
                     addKV('Relative scoring', 'Scores are relative to the current table. Adding or removing rows changes the normalization max/min and can shift every row\'s score.');
-                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates: Claude research output or manual input. They are not audited figures. Site counts marked (E) are still scored at full weight — an estimated footprint is treated as a real one.');
+                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates: Claude research output or manual input. They are not audited figures. Site counts marked (E) are still scored at full weight - an estimated footprint is treated as a real one.');
                     addKV('Industry keywords', 'Matching is substring-based and may mis-classify broad terms. Review the Fit Tier column and correct the Industry text if needed.');
                     addKV('Missing values', 'Blank energy / sites / year cells contribute 0 to their component, never negative.');
 

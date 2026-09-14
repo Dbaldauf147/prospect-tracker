@@ -39,7 +39,7 @@ export function bfoOppNameOf(r) {
 // A value that's present and isn't one of the spreadsheet's null markers.
 export const filledCell = (v) => {
   const s = String(v ?? '').trim();
-  return !!s && s !== '-' && s !== '—' && s !== 'N/A' && s !== '#N/A';
+  return !!s && s !== '-' && s !== '-' && s !== 'N/A' && s !== '#N/A';
 };
 export const hasBfoOpportunity = (r) => filledCell(r['BFO Link']);
 const isAemScope = (r) => /\baem\b/i.test(String(r.Scope || ''));

@@ -50,7 +50,7 @@ function ServiceTags({ services = [], known = null }) {
             key={name}
             className={gone ? styles.tagChipGone : styles.tagChip}
             title={gone
-              ? `${name} — not on the Solutions list any more. Open the step in Edit to swap or remove it.`
+              ? `${name} - not on the Solutions list any more. Open the step in Edit to swap or remove it.`
               : name}
           >{name}</span>
         );
@@ -115,7 +115,7 @@ function ServiceTagger({ tree, nodeId, catalog = [], onChange }) {
                 onClick={() => toggle(name)}
                 title={known.has(name)
                   ? `Take "${name}" off this step`
-                  : `${name} — not on the Solutions list any more. Click to take it off this step.`}
+                  : `${name} - not on the Solutions list any more. Click to take it off this step.`}
               >{name}<span className={styles.tagChipX} aria-hidden="true">×</span></button>
             ))}
           </div>
@@ -141,7 +141,7 @@ function ServiceTagger({ tree, nodeId, catalog = [], onChange }) {
         {rows.length === 0 && (
           <div className={styles.emptyNote}>
             {catalog.length === 0
-              ? 'The Solutions list is empty — add services on Dropdowns and they show up here.'
+              ? 'The Solutions list is empty - add services on Dropdowns and they show up here.'
               : (term ? `Nothing matches "${query}".` : 'Every service is already tagged here.')}
           </div>
         )}
@@ -153,7 +153,7 @@ function ServiceTagger({ tree, nodeId, catalog = [], onChange }) {
         ))}
         {total > rows.length && (
           <div className={styles.tagPickerMore}>
-            {`${rows.length} of ${total} shown — type to narrow`}
+            {`${rows.length} of ${total} shown - type to narrow`}
           </div>
         )}
       </div>
@@ -201,7 +201,7 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
           <input
             className={styles.input}
             value={node.title}
-            placeholder="e.g. Gate 4 — Is the economics priced properly?"
+            placeholder="e.g. Gate 4 - Is the economics priced properly?"
             onChange={e => onChange(updateNode(tree, nodeId, { title: e.target.value }))}
           />
         </label>
@@ -212,8 +212,8 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
             value={node.kind}
             onChange={e => onChange(updateNode(tree, nodeId, { kind: e.target.value }))}
           >
-            <option value="question">Question — branches out</option>
-            <option value="outcome">Outcome — what to do</option>
+            <option value="question">Question - branches out</option>
+            <option value="outcome">Outcome - what to do</option>
           </select>
         </label>
       </div>
@@ -240,14 +240,14 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
       <div className={styles.branchBlock}>
         <div className={styles.fieldLabel}>Branches out of this step</div>
         {node.branches.length === 0 && (
-          <div className={styles.emptyNote}>No branches — this step is an end of the route.</div>
+          <div className={styles.emptyNote}>No branches - this step is an end of the route.</div>
         )}
         {node.branches.map((b, i) => (
           <div key={b.id} className={styles.branchRow}>
             <input
               className={styles.input}
               value={b.label}
-              placeholder={i === 0 ? 'Yes — …' : 'No — …'}
+              placeholder={i === 0 ? 'Yes - …' : 'No - …'}
               onChange={e => onChange(updateBranch(tree, nodeId, b.id, { label: e.target.value }))}
             />
             <div className={styles.branchTarget}>
@@ -257,7 +257,7 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
                 value={b.to || ''}
                 onChange={e => onChange(updateBranch(tree, nodeId, b.id, { to: e.target.value || null }))}
               >
-                <option value="">— nowhere yet —</option>
+                <option value="">- nowhere yet -</option>
                 {targets.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
               <button
@@ -360,7 +360,7 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
 
           <div className={styles.modalSection}>
             <div className={styles.fieldLabel}>Leads to</div>
-            {node.branches.length === 0 && <div className={styles.emptyNote}>Nothing — this is an end of the route.</div>}
+            {node.branches.length === 0 && <div className={styles.emptyNote}>Nothing - this is an end of the route.</div>}
             {node.branches.map(b => {
               const target = b.to ? getNode(tree, b.to) : null;
               return (
@@ -531,7 +531,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       await navigator.clipboard.writeText(json);
       setStatus('Copied the tree as JSON');
     } catch {
-      setStatus('Clipboard blocked — paste from the import box instead');
+      setStatus('Clipboard blocked - paste from the import box instead');
     }
   }
 
@@ -604,7 +604,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         {stats.unlinked > 0 && <span className={styles.warn}>{stats.unlinked} branch{stats.unlinked === 1 ? '' : 'es'} not pointed anywhere</span>}
         {orphans.length > 0 && <span className={styles.warn}>{orphans.length} step{orphans.length === 1 ? '' : 's'} nothing reaches</span>}
         {!settingsLoaded && <span className={styles.muted}>Loading your saved tree…</span>}
-        {settingsLoaded && !saved && <span className={styles.muted}>Showing the built-in template — your first edit saves a copy of your own.</span>}
+        {settingsLoaded && !saved && <span className={styles.muted}>Showing the built-in template - your first edit saves a copy of your own.</span>}
         {mode === 'diagram' && <span className={styles.muted}>Click a box for the detail · drag to pan</span>}
         {status && <span className={styles.muted}>{status}</span>}
       </div>
@@ -660,7 +660,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   className={e.back ? styles.edgeLabelBack : styles.edgeLabel}
                   style={{ left: e.labelX, top: e.labelY }}
                   title={e.label}
-                >{e.label || '—'}</span>
+                >{e.label || '-'}</span>
               ))}
 
               {layout.nodes.map(box => {
@@ -763,7 +763,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                         className={target ? styles.choiceBtn : styles.choiceBtnDead}
                         disabled={!target}
                         onClick={() => choose(b)}
-                        title={target ? `Go to: ${target.title}` : 'This branch isn\'t pointed anywhere yet — turn on Edit to link it'}
+                        title={target ? `Go to: ${target.title}` : 'This branch isn\'t pointed anywhere yet - turn on Edit to link it'}
                       >
                         <span className={styles.choiceLabel}>{b.label || '(unlabelled branch)'}</span>
                         <span className={styles.choiceNext}>{target ? target.title : 'not linked yet'}</span>
@@ -814,7 +814,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                         {node.title || '(untitled step)'}
                         {node.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       </button>
-                      {row.repeat && <span className={styles.repeatChip} title="Drawn in full higher up — the flow rejoins here">↩ rejoins above</span>}
+                      {row.repeat && <span className={styles.repeatChip} title="Drawn in full higher up - the flow rejoins here">↩ rejoins above</span>}
                       {editing && !row.repeat && (
                         <span className={styles.rowActions}>
                           <button type="button" className={styles.iconBtn} title="Add a step under this one"
@@ -839,7 +839,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                               className={styles.iconBtnDanger}
                               title="Delete this step"
                               onClick={() => {
-                                const cascade = window.confirm(`Delete "${node.title || 'this step'}".\n\nOK also deletes the steps only it led to.\nCancel keeps them — they'll be listed as unreachable.`);
+                                const cascade = window.confirm(`Delete "${node.title || 'this step'}".\n\nOK also deletes the steps only it led to.\nCancel keeps them - they'll be listed as unreachable.`);
                                 applyTree(deleteNode(tree, node.id, { cascade }));
                                 if (selectedId === node.id) setSelectedId(null);
                               }}
@@ -867,7 +867,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
 
             {orphans.length > 0 && (
               <div className={styles.orphanBlock}>
-                <div className={styles.fieldLabel}>Nothing reaches these — link them from a branch, or delete them</div>
+                <div className={styles.fieldLabel}>Nothing reaches these - link them from a branch, or delete them</div>
                 {orphans.map(id => {
                   const node = getNode(tree, id);
                   return (

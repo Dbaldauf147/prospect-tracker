@@ -88,7 +88,7 @@ export function SetupFeeFloorPanel({
               <>
                 Year 1 is already <strong>{fmtMoney(result.shortfall)}</strong> short
                 ({fmtMoney(result.currentY1Revenue)} revenue vs {fmtMoney(y1Cost)} cost).
-                Cutting Setup fees widens that gap — there is no room to discount.
+                Cutting Setup fees widens that gap - there is no room to discount.
                 Year 1 needs {fmtMoney(result.shortfall)} more fee, or that much cost moved out of it.
               </>
             )}
@@ -96,21 +96,21 @@ export function SetupFeeFloorPanel({
               <>
                 No Setup fee bills in Year 1, so there is nothing here to discount.
                 Year 1 currently nets <strong>{fmtMoney(currentCashFlow)}</strong>.
-                {' '}(Pass-through rows and fees starting after month 12 are left out — neither moves Year 1.)
+                {' '}(Pass-through rows and fees starting after month 12 are left out - neither moves Year 1.)
               </>
             )}
             {status === 'zero-floor' && (
               <>
                 The rest of the deal already pays for Year 1: Setup fees can go all the way to
-                {' '}<strong>$0</strong> — all {fmtMoney(setupY1Revenue)} of them — and Year 1 fees
+                {' '}<strong>$0</strong> - all {fmtMoney(setupY1Revenue)} of them - and Year 1 fees
                 still clear Year 1 cost by <strong>{fmtMoney(result.resultingCashFlow)}</strong>.
               </>
             )}
             {status === 'ok' && (maxReduction > 0 ? (
               <>
                 Setup fees can come down by <strong>{fmtMoney(maxReduction)}</strong>
-                {' '}(<strong>{pctOff.toFixed(1)}%</strong> off) — from {fmtMoney(setupY1Revenue)} to
-                {' '}<strong>{fmtMoney(floorSetupY1Revenue)}</strong> — before total Year 1 fees drop
+                {' '}(<strong>{pctOff.toFixed(1)}%</strong> off) - from {fmtMoney(setupY1Revenue)} to
+                {' '}<strong>{fmtMoney(floorSetupY1Revenue)}</strong> - before total Year 1 fees drop
                 below total Year 1 cost (incl. tech depreciation).
               </>
             ) : (
@@ -172,12 +172,12 @@ export function SetupFeeFloorPanel({
           {(status === 'ok' || status === 'zero-floor') && maxReduction > 0 && (
             <div className={styles.floorNote}>
               {status === 'zero-floor'
-                ? <>Even at $0 the year covers its own cost, so nothing here stops the cut —
+                ? <>Even at $0 the year covers its own cost, so nothing here stops the cut -
                   the recurring stream is carrying it.</>
                 : <>At the floor Year 1 fees cover Year 1 cost and nothing more.</>}
               {belowCost && (
                 <> That bills the Setup work {fmtMoney(result.belowSetupCostBy)} under what Setup
-                itself costs to deliver ({fmtMoney(reducibleFloor)} incl. tech depreciation) — the
+                itself costs to deliver ({fmtMoney(reducibleFloor)} incl. tech depreciation) - the
                 year carries it, that line does not.</>
               )}
               {' '}It is a limit to negotiate against, not a price to open with.
@@ -198,7 +198,7 @@ export function SetupFeeFloorPanel({
                   <strong>{(shift.proposedMargin * 100).toFixed(1)}%</strong></>
                 )}
                 . Year 1 goes from {fmtWhole(shift.currentY1Revenue)} to{' '}
-                {fmtWhole(shift.proposedY1Revenue)} against {fmtWhole(y1Cost)} of cost —{' '}
+                {fmtWhole(shift.proposedY1Revenue)} against {fmtWhole(y1Cost)} of cost -{' '}
                 <span className={shift.proposedY1CashFlow < 0 ? styles.floorNeg : styles.floorPos}>
                   {fmtWhole(shift.proposedY1CashFlow)}
                 </span>
@@ -235,13 +235,13 @@ export function SetupFeeFloorPanel({
               </table>
               <div className={styles.floorNote}>
                 Every dollar off Setup is added back across the recurring fees over the term, in
-                proportion to what each already bills — so the term brings in the same money at the
+                proportion to what each already bills - so the term brings in the same money at the
                 same margin, and the customer pays {shift.bindingConstraint === 'zeroSetup' ? 'none of it' : 'less of it'} up front.
                 {shift.bindingConstraint === 'cashFlow' && (
                   <> The shift stops here because Year 1 has to keep covering its own cost: Setup bills
                   in Year 1 in full while the uplift only bills a year of itself.</>
                 )}
-                {' '}Any smaller move works the same way — this is the far end of it.
+                {' '}Any smaller move works the same way - this is the far end of it.
               </div>
               <div className={styles.floorActions}>
                 <button
@@ -251,7 +251,7 @@ export function SetupFeeFloorPanel({
                     onApply(shift.rows.map(r => ({ index: r.index, fee: r.proposedFee })));
                     setApplied(`Wrote the proposed fees into ${shift.rows.length} row${shift.rows.length === 1 ? '' : 's'}. Clear a Fee cell to put it back on auto.`);
                   }}
-                  title="Type this structure into the schedule's Fee column — Setup down, recurring up, same term revenue. Any row that was auto-deriving its fee gets a fixed value written over it."
+                  title="Type this structure into the schedule's Fee column - Setup down, recurring up, same term revenue. Any row that was auto-deriving its fee gets a fixed value written over it."
                 >
                   Apply this structure
                 </button>

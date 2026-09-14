@@ -138,7 +138,7 @@ function wordingKey(text) {
  */
 export async function appendContractLanguage(userId, entries) {
   const tally = { ok: true, added: 0, skipped: 0, services: 0, error: '', code: '' };
-  if (!userId) return { ...tally, ok: false, error: 'Not signed in — nothing was saved.' };
+  if (!userId) return { ...tally, ok: false, error: 'Not signed in - nothing was saved.' };
   for (const entry of entries || []) {
     const name = String(entry?.service || '').trim();
     const incoming = normalizeClauses(entry?.clauses).filter(c => c.text.trim());

@@ -46,8 +46,8 @@ const INFRASTRUCTURE = new Set([
 // silenced. Keep these honest: if a reason stops being true, mirror it.
 const LOCAL_BY_DESIGN = {
   // Caches. The real copy is server-side; losing these costs a refetch.
-  'callHistoryCache.js': 'cache — the call history itself is one document per call in Firestore',
-  'hubspotContactsCache.js': 'cache — refetched from HubSpot',
+  'callHistoryCache.js': 'cache - the call history itself is one document per call in Firestore',
+  'hubspotContactsCache.js': 'cache - refetched from HubSpot',
 
   // Backup layers. Mirroring a backup to the cloud defeats its purpose:
   // these exist to survive a bad cloud write, not to be one.
@@ -55,7 +55,7 @@ const LOCAL_BY_DESIGN = {
   'opps2Backup.js': 'IS the local rolling backup for the Opps 2 blob',
 
   // Cannot meaningfully leave this browser.
-  'localRecordings.js': 'holds a FileSystemDirectoryHandle — not serialisable, and machine-specific',
+  'localRecordings.js': 'holds a FileSystemDirectoryHandle - not serialisable, and machine-specific',
   'nfatSchedules.js':
     'the schedules themselves live on userSettings (Firestore); the only key written here is '
     + "this browser's shadow copy of the newest config it has seen, which exists to REPAIR that "
@@ -75,8 +75,8 @@ const LOCAL_BY_DESIGN = {
   'stageTableColumns.js': 'per-browser column layout',
 
   // Not a store: helpers that write through to other stores' keys.
-  'companyRenameCascade.js': 'rename helper — writes through the stores it cascades into',
-  'fullBackup.js': 'IS the export/restore path — it reads and writes every other store by definition',
+  'companyRenameCascade.js': 'rename helper - writes through the stores it cascades into',
+  'fullBackup.js': 'IS the export/restore path - it reads and writes every other store by definition',
 };
 
 // Should have a cloud copy and does not. Listed rather than ignored so the
@@ -180,14 +180,14 @@ ok(
   stale.length === 0,
   'no stale entries in LOCAL_BY_DESIGN / KNOWN_GAPS',
   stale.length === 0 ? '' :
-    `${stale.join(', ')} — no longer persists locally (or was renamed/deleted). Remove the entry.`,
+    `${stale.join(', ')} - no longer persists locally (or was renamed/deleted). Remove the entry.`,
 );
 
 const contradiction = cloudBacked.filter((f) => f in LOCAL_BY_DESIGN || f in KNOWN_GAPS);
 ok(
   contradiction.length === 0,
   'no store is both backed up and listed as not backed up',
-  contradiction.length === 0 ? '' : `${contradiction.join(', ')} — now has a cloud copy, so remove the entry.`,
+  contradiction.length === 0 ? '' : `${contradiction.join(', ')} - now has a cloud copy, so remove the entry.`,
 );
 
 // ── Report ─────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ console.log(
   + ` · ${Object.keys(LOCAL_BY_DESIGN).length} local by design · ${Object.keys(KNOWN_GAPS).length} known gaps`,
 );
 if (Object.keys(KNOWN_GAPS).length) {
-  console.log('\nKnown gaps — no cloud copy; a downloaded full backup is the only one:');
+  console.log('\nKnown gaps - no cloud copy; a downloaded full backup is the only one:');
   for (const [file, why] of Object.entries(KNOWN_GAPS)) console.log(`  ${file}\n      ${why}`);
 }
 

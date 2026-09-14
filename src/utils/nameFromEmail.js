@@ -39,7 +39,7 @@ const ROLE_LOCALS = new Set([
 
 // Longer than this, a run-together local part is far more likely a whole name
 // jammed together (jennifermartinez) than an initial plus a surname
-// (jmartinez) — and "Ennifermartinez" is a suggestion nobody wants offered.
+// (jmartinez) - and "Ennifermartinez" is a suggestion nobody wants offered.
 const MAX_RUN_TOGETHER = 12;
 
 // Split the local part into name tokens. Dots and underscores separate names;

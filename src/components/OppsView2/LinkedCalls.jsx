@@ -140,7 +140,7 @@ export function LinkedCalls({ oppId }) {
                   <p style={{ margin: '0.4rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
                     {autoSummaryGaveUp(c)
                       ? `Couldn’t be summarized automatically${c.autoSummaryError ? `: ${String(c.autoSummaryError).replace(/[.\s]+$/, '')}` : ''}. Open the Call Recordings page and run Summarize to try again.`
-                      : 'Transcribed. The summary is written automatically within the hour — or run Summarize on the Call Recordings page now.'}
+                      : 'Transcribed. The summary is written automatically within the hour - or run Summarize on the Call Recordings page now.'}
                   </p>
                 )}
               </>

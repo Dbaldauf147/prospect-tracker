@@ -44,7 +44,7 @@ const NOW = '2026-08-05T12:00:00.000Z';
 {
   const patch = patchFromRecap({
     noteId: 'granola:not_abc',
-    name: 'Acme — pricing review',
+    name: 'Acme - pricing review',
     recordedAt: '2026-08-04T15:00:00.000Z',
     company: 'Acme Corp',
     oppId: '42',

@@ -7,7 +7,7 @@
 import { SE_GREEN_DARK } from './schneiderBrand.js';
 
 export const COVERAGE_MARK_TITLE =
-  'Tracked in Service Exploration Coverage on the Pipeline page — you are watching what share of your clients have explored this.';
+  'Tracked in Service Exploration Coverage on the Pipeline page - you are watching what share of your clients have explored this.';
 
 // The rail down the left of a tracked service's row. Spread onto the row's
 // own style so it survives whatever background the service's status put

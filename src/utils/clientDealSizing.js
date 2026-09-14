@@ -284,14 +284,14 @@ export function dealSizingWarnings({ estimate, pricing, bases = PRICING_BASES })
     out.push({
       key: 'unpriced',
       chip: `${estimate.unpriced.length} unpriced`,
-      detail: `No rate set on ${list(estimate.unpriced)} — price ${estimate.unpriced.length === 1 ? 'it' : 'them'} on Dropdowns › Services Pricing.`,
+      detail: `No rate set on ${list(estimate.unpriced)} - price ${estimate.unpriced.length === 1 ? 'it' : 'them'} on Dropdowns › Services Pricing.`,
     });
   }
   if (estimate?.missing?.length) {
     out.push({
       key: 'catalog',
       chip: `${estimate.missing.length} not in catalog`,
-      detail: `${list(estimate.missing)} ${estimate.missing.length === 1 ? 'is' : 'are'} no longer in the service catalog — renamed or retired since this scope was set.`,
+      detail: `${list(estimate.missing)} ${estimate.missing.length === 1 ? 'is' : 'are'} no longer in the service catalog - renamed or retired since this scope was set.`,
     });
   }
   return out;

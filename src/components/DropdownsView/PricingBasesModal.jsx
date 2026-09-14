@@ -78,7 +78,7 @@ export function PricingBasesModal({ bases, usage, onSave, onClose }) {
     if (draft.length === 0) return 'Add at least one basis, or the Pricing Basis column has nothing to offer.';
     if (draft.some(r => !r.label.trim())) return 'Every basis needs a name.';
     const unitGap = draft.find(r => r.kind === 'unit' && !r.unitLabel.trim());
-    if (unitGap) return `"${unitGap.label.trim()}" is per-unit, so it needs the name of the count it multiplies — Sites, Meters, Trucks.`;
+    if (unitGap) return `"${unitGap.label.trim()}" is per-unit, so it needs the name of the count it multiplies - Sites, Meters, Trucks.`;
     const seen = new Set();
     for (const r of draft) {
       const k = r.label.trim().toLowerCase();
@@ -209,7 +209,7 @@ export function PricingBasesModal({ bases, usage, onSave, onClose }) {
                   type="button"
                   className={styles.stageRemoveBtn}
                   onClick={() => removeRow(row)}
-                  title={used > 0 ? `Delete — ${used} service${used === 1 ? '' : 's'} price on this` : 'Delete'}
+                  title={used > 0 ? `Delete - ${used} service${used === 1 ? '' : 's'} price on this` : 'Delete'}
                   aria-label={`Delete ${row.label || 'basis'}`}
                 >×</button>
               </div>
@@ -238,7 +238,7 @@ export function PricingBasesModal({ bases, usage, onSave, onClose }) {
             className={styles.importOppBtn}
             onClick={save}
             disabled={!!error}
-            title={error || 'Save the list — services keep the basis they’re already on'}
+            title={error || 'Save the list - services keep the basis they’re already on'}
           >Save</button>
         </div>
       </div>

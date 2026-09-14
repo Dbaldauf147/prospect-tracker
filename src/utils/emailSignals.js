@@ -148,7 +148,7 @@ export function clickSignals(clickSummary, { sentAt, openSummary } = {}) {
     out.push({
       key: 'booking',
       label: 'Opened booking page',
-      title: 'They followed your scheduling link, so they went to look at your availability. This is NOT a booking: whether they picked a slot happens on the booking provider\'s site and reaches you as that provider\'s notification, never as anything recorded here. A click with no booking in your calendar means somebody opened your availability and didn\'t commit — usually the best follow-up on the page.',
+      title: 'They followed your scheduling link, so they went to look at your availability. This is NOT a booking: whether they picked a slot happens on the booking provider\'s site and reaches you as that provider\'s notification, never as anything recorded here. A click with no booking in your calendar means somebody opened your availability and didn\'t commit - usually the best follow-up on the page.',
     });
   }
 
@@ -160,7 +160,7 @@ export function clickSignals(clickSummary, { sentAt, openSummary } = {}) {
     out.push({
       key: 'shared',
       label: 'Maybe forwarded',
-      title: `Links were followed from ${shape.places} locations on ${shape.devices} kinds of device. That usually means the message was passed to someone else — but a VPN, travel, or a corporate proxy can look the same, so treat it as a lead, not a fact.`,
+      title: `Links were followed from ${shape.places} locations on ${shape.devices} kinds of device. That usually means the message was passed to someone else - but a VPN, travel, or a corporate proxy can look the same, so treat it as a lead, not a fact.`,
     });
   }
 
@@ -170,7 +170,7 @@ export function clickSignals(clickSummary, { sentAt, openSummary } = {}) {
     out.push({
       key: 'repeat',
       label: `Clicked on ${shape.days} days`,
-      title: 'Links were followed again on separate days. The hardest shape on the page to explain away as automation — a security gateway scans a message once, when it arrives, and never returns.',
+      title: 'Links were followed again on separate days. The hardest shape on the page to explain away as automation - a security gateway scans a message once, when it arrives, and never returns.',
     });
   }
 
@@ -179,7 +179,7 @@ export function clickSignals(clickSummary, { sentAt, openSummary } = {}) {
     out.push({
       key: 'fast',
       label: `Clicked in ${shortDuration(shape.msToFirstClick)}`,
-      title: 'The first click landed within an hour of the send — the message reached the top of the inbox and was acted on. Worth reading alongside the device in the expanded row: a click within seconds of the send is far more likely to be a security gateway than a reader.',
+      title: 'The first click landed within an hour of the send - the message reached the top of the inbox and was acted on. Worth reading alongside the device in the expanded row: a click within seconds of the send is far more likely to be a security gateway than a reader.',
     });
   }
 
@@ -192,7 +192,7 @@ export function clickSignals(clickSummary, { sentAt, openSummary } = {}) {
     out.push({
       key: 'screened',
       label: screening.scanner ? `Screened (${screening.scanner})` : 'Screened',
-      title: `A security gateway${screening.scanner ? ` — ${screening.scanner} —` : ''} followed the links before the recipient saw them, and those hits are excluded from the count. Two things follow: the mail definitely arrived (a scanner can only scan what it received), and a gateway like this rewrites links for the real reader, so a low count on this row says less than it would on another.`,
+      title: `A security gateway${screening.scanner ? ` - ${screening.scanner} -` : ''} followed the links before the recipient saw them, and those hits are excluded from the count. Two things follow: the mail definitely arrived (a scanner can only scan what it received), and a gateway like this rewrites links for the real reader, so a low count on this row says less than it would on another.`,
     });
   }
 

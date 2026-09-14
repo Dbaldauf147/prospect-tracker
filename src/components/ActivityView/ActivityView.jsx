@@ -1939,7 +1939,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         <strong>This week:</strong>{' '}
         {recorded.thisWeek
           ? `${recorded.thisWeek.emails} email${recorded.thisWeek.emails === 1 ? '' : 's'} to contacts outside @se.com`
-          : 'not recorded yet — waiting on the HubSpot feed'}
+          : 'not recorded yet - waiting on the HubSpot feed'}
         {recorded.lastWeek ? ` · last week: ${recorded.lastWeek.emails}` : ''}
         <span className={styles.weekRecordNote}>
           {' '}Recorded for the Weekly Report&rsquo;s &ldquo;Emails sent&rdquo; tile.

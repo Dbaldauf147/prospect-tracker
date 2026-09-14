@@ -55,7 +55,7 @@ let scanned = 0;
 for (const file of walk(ROOT)) {
   // Normalise to forward slashes: ALLOWED is written with them, and on
   // Windows this slice yields "utils\firestoreSync.js", which matched
-  // nothing — so the one module that IS allowed to touch the collection
+  // nothing - so the one module that IS allowed to touch the collection
   // was reported as the offender.
   const rel = file.slice(ROOT.length).split(sep).join('/');
   scanned++;

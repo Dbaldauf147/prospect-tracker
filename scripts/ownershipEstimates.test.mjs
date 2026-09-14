@@ -152,7 +152,7 @@ const QSR = 'Restaurant (Quick-Service)';  // whole building by default
   // A type with real equipment must not round away to zero.
   check('a small suite keeps at least the one asset that says it has any',
     equipmentForTenure(TENURE.SUITE, 'Retail - High Street') >= 1, true);
-  check('but a real zero stays zero — there is no building on a land parcel',
+  check('but a real zero stays zero - there is no building on a land parcel',
     equipmentForTenure(TENURE.SUITE, 'Land'), 0);
   check('and an unknown type is null, not zero', equipmentForTenure(TENURE.SUITE, 'Nope'), null);
 }

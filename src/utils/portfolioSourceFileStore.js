@@ -94,7 +94,7 @@ export async function saveSourceFile(companyName, file) {
   const userId = getDbUserId();
   if (!userId) return;
   if (file.size > PORTFOLIO_FILE_MAX_SYNC_BYTES) {
-    console.warn(`Portfolio source file for ${companyName} is ${file.size} bytes — too big to back up to Firestore; it stays on this device.`);
+    console.warn(`Portfolio source file for ${companyName} is ${file.size} bytes - too big to back up to Firestore; it stays on this device.`);
     return;
   }
   // Best-effort: an offline browser must not lose the file just uploaded.

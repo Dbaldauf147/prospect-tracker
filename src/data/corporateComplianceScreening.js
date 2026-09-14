@@ -133,7 +133,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       // rather than a derivation.
       regulation: 'CBAM',
       timeline: '2026 imports (definitive regime from 1 Jan 2026; first declaration 30 Sep 2027)',
-      description: 'Importers bringing covered carbon-intensive goods into the EU — cement, iron and steel, aluminium, fertilisers, hydrogen and electricity. From 1 Jan 2026 an importer must hold authorised CBAM declarant status and surrender certificates against the emissions embedded in what it imports. The Omnibus regulation exempts importers of 50 tonnes or less of covered goods a year outright, which drops most occasional importers while keeping the bulk of embedded emissions in scope; the threshold does not apply to hydrogen or electricity.',
+      description: 'Importers bringing covered carbon-intensive goods into the EU - cement, iron and steel, aluminium, fertilisers, hydrogen and electricity. From 1 Jan 2026 an importer must hold authorised CBAM declarant status and surrender certificates against the emissions embedded in what it imports. The Omnibus regulation exempts importers of 50 tonnes or less of covered goods a year outright, which drops most occasional importers while keeping the bulk of embedded emissions in scope; the threshold does not apply to hydrogen or electricity.',
       thresholds: [
         { value: '50', metric: 'Covered goods imported (tonnes/year: at or below this, exempt)' },
       ],
@@ -339,7 +339,7 @@ export const EU_CRITERIA_GROUPS = [
   {
     key: 'cbam-inputs',
     label: 'CBAM screening',
-    note: 'What the company imports into the EU — the only thing that decides CBAM, and the one thing no figure on this card implies',
+    note: 'What the company imports into the EU - the only thing that decides CBAM, and the one thing no figure on this card implies',
     rows: [
       {
         key: 'cbam-goods',

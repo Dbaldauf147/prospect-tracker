@@ -31,7 +31,7 @@ eq(serviceStatusBucket(''), 'none', 'no status is a gap');
 eq(serviceStatusBucket('-'), 'none', 'the auto sentinel is a gap');
 eq(serviceStatusBucket('Exploring'), 'inProgress', 'Exploring is in progress');
 eq(serviceStatusBucket('Quoting'), 'inProgress', 'so is Quoting');
-eq(serviceStatusBucket('Verbal'), 'inProgress', 'and Verbal — not sold until it is Sold');
+eq(serviceStatusBucket('Verbal'), 'inProgress', 'and Verbal - not sold until it is Sold');
 
 // --- the grid ------------------------------------------------------------
 {
@@ -52,7 +52,7 @@ eq(serviceStatusBucket('Verbal'), 'inProgress', 'and Verbal — not sold until i
   eq(report.rows[0].sold, 1, 'only the sold one counts as sold');
   eq(report.rows[1].explored, 1, 'a company with one gap counts one explored');
   eq(report.rows[1].statuses.Sustainability, '', 'the gap reports as an empty status');
-  eq(report.rows[2].explored, 1, 'N/A still counts as explored — it is an answer');
+  eq(report.rows[2].explored, 1, 'N/A still counts as explored - it is an answer');
 
   const [proc, sus] = report.services;
   eq({ sold: proc.sold, notSold: proc.notSold, inProgress: proc.inProgress, na: proc.na, none: proc.none },
@@ -141,7 +141,7 @@ eq(buildPeServicesReport({}).totals.companies, 0, 'no companies is not a crash')
 eq(exportStatusLabel('Sold'), 'Existing service', 'a sold service reads as what the company already has');
 eq(exportStatusLabel(''), 'Not explored', 'an unexplored one says so rather than sitting blank');
 eq(exportStatusLabel('-'), 'Not explored', 'and so does the auto sentinel');
-eq(exportStatusLabel('Not Sold'), 'Not Sold', 'Not Sold is reported verbatim — it is not "Sold"');
+eq(exportStatusLabel('Not Sold'), 'Not Sold', 'Not Sold is reported verbatim - it is not "Sold"');
 eq(exportStatusLabel('Exploring'), 'Exploring', 'an in-flight status keeps its own wording');
 eq(exportStatusLabel('Quoting'), 'Quoting', 'so the sheet still tells Exploring from Quoting');
 eq(exportStatusLabel('N/A'), 'N/A', 'N/A is reported verbatim');
@@ -153,7 +153,7 @@ eq(bucketExportLabel(serviceBucket('notSold')), 'Not sold', 'buckets without an 
   eq(fill('sold'), 'FFDCFCE7', 'an existing service is green');
   eq(fill('notSold'), 'FFFEE2E2', 'not sold is red');
   eq(fill('na'), 'FFE2E8F0', 'N/A is grey');
-  eq(fill('none'), 'FFFEF9C3', 'not explored is yellow — the work to do, not an empty cell');
+  eq(fill('none'), 'FFFEF9C3', 'not explored is yellow - the work to do, not an empty cell');
   eq(fill('inProgress'), 'FFDBEAFE', 'in flight is blue, so it cannot be mistaken for a gap');
 
   const fills = SERVICE_BUCKETS.map(b => b.xlsx.bg);

@@ -267,8 +267,8 @@ function TagCombo({ value, suggestions, onCommit, placeholder, ariaLabel, inputC
           footer={options.length === 0 ? (
             <div className={styles.comboEmpty}>
               {(suggestions || []).length
-                ? `Nothing used here matches “${draft.trim()}” — Enter adds it as a new tag.`
-                : 'Nothing tagged in this column yet — type the first one.'}
+                ? `Nothing used here matches “${draft.trim()}” - Enter adds it as a new tag.`
+                : 'Nothing tagged in this column yet - type the first one.'}
             </div>
           ) : null}
         />
@@ -495,7 +495,7 @@ function SiaLineItemTags({
     // than letting the row quietly fail to appear.
     const hasContent = S2C_TAG_FIELDS.some(f => draft[f.key].trim() !== '') || draft.notes.trim() !== '';
     if (!hasContent) {
-      setAddError('Add at least one tag or a note — there would be nothing to store otherwise.');
+      setAddError('Add at least one tag or a note - there would be nothing to store otherwise.');
       return;
     }
     addLineItem(name, draft);
@@ -516,9 +516,9 @@ function SiaLineItemTags({
       </h3>
       <div className={styles.intro}>
         Every Line Item in the uploaded workbook, plus any you add by hand. Tag each with the
-        Service Segment, Product Name and Deliverable it belongs to — each column suggests back
+        Service Segment, Product Name and Deliverable it belongs to - each column suggests back
         what it already holds, and takes anything new you type. Tags are saved against the line
-        item itself — not the row, the Type or the file — so one answer covers its Setup and
+        item itself - not the row, the Type or the file - so one answer covers its Setup and
         Recurring rows and every option, and it survives a re-upload, removing the SIA, the Clear
         button and parser updates, the same way the Linked To defaults do.
       </div>
@@ -608,7 +608,7 @@ function SiaLineItemTags({
 
       {pairs.length === 0 ? (
         <div className={styles.siaEmpty}>
-          No line items yet — upload a workbook on the Pricing subtab and its line items show up
+          No line items yet - upload a workbook on the Pricing subtab and its line items show up
           here, or add one by hand with “+ Line item”.
         </div>
       ) : (

@@ -35,7 +35,7 @@ function contactTagList(c) {
 const TAG_STATUSES = [
   { key: 'yes',     label: 'Yes',      bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Contacts carrying this tag with no sold / not sold answer recorded yet' },
   { key: 'sold',    label: 'Sold',     bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59', tip: 'Contacts who own this area at a company that has bought it. They keep the tag, so a plain pull of it returns them too' },
-  { key: 'notsold', label: 'Not sold', bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3', tip: 'Contacts who own this area but whose company hasn\'t bought it yet — held off in the contact popup, so they stay out of a plain pull of this tag. This is the list of accounts still to sell on it' },
+  { key: 'notsold', label: 'Not sold', bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3', tip: 'Contacts who own this area but whose company hasn\'t bought it yet - held off in the contact popup, so they stay out of a plain pull of this tag. This is the list of accounts still to sell on it' },
   { key: 'unsure',  label: 'Not sure', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Contacts answered "Not sure" for this tag in the contact popup' },
   { key: 'no',      label: 'No',       bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B', tip: 'Contacts answered "No" for this tag in the contact popup' },
 ];
@@ -375,7 +375,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. The <strong>Totals</strong> pills double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through — any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. The <strong>Totals</strong> pills double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through - any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -443,7 +443,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
               key={label}
               data-tagged-pill={label}
               title={count > 0
-                ? `${t.answered} of ${t.slots} tag answers recorded across ${count} ${label === 'All' ? '' : label + ' '}contact${count === 1 ? '' : 's'} — ${t.done} fully tagged. A tag counts as answered when it's on the contact (Yes) or marked No / Not sure in the contact popup. Hide, Left, Test and Met In Person don't count.`
+                ? `${t.answered} of ${t.slots} tag answers recorded across ${count} ${label === 'All' ? '' : label + ' '}contact${count === 1 ? '' : 's'} - ${t.done} fully tagged. A tag counts as answered when it's on the contact (Yes) or marked No / Not sure in the contact popup. Hide, Left, Test and Met In Person don't count.`
                 : `No ${label === 'All' ? '' : label + ' '}contacts to score`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -452,7 +452,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
                 fontSize: '0.68rem', fontWeight: 700,
               }}
             >
-              {label} <span style={{ fontWeight: 800 }}>{count > 0 ? `${pct}%` : '—'}</span>
+              {label} <span style={{ fontWeight: 800 }}>{count > 0 ? `${pct}%` : '-'}</span>
             </span>
           );
         })}
@@ -463,7 +463,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
           id="all-contacts-tag-filter"
           value={activeTag}
           onChange={e => pickTag(e.target.value)}
-          title={`Show only contacts carrying this tag. Picking one starts on ${DEFAULT_TAG_STATUS_LABEL} — toggle the status pills for the rest. Unlike the Tags column filter, this matches a contact by any one of its tags.`}
+          title={`Show only contacts carrying this tag. Picking one starts on ${DEFAULT_TAG_STATUS_LABEL} - toggle the status pills for the rest. Unlike the Tags column filter, this matches a contact by any one of its tags.`}
           style={{
             padding: '2px 6px', borderRadius: 4,
             border: '1px solid ' + (activeTag ? '#6366F1' : '#CBD5E1'),
@@ -495,7 +495,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             than hidden, so the control doesn't appear out of nowhere. */}
         <span
           style={{ fontSize: '0.7rem', color: activeTag ? '#475569' : '#94A3B8', fontWeight: 700, marginLeft: 6 }}
-          title={activeTag ? undefined : 'Pick a tag first — an answer is recorded per contact per tag'}
+          title={activeTag ? undefined : 'Pick a tag first - an answer is recorded per contact per tag'}
         >Tag statuses:</span>
         {TAG_STATUSES.map(({ key, label, bg, border, color, tip }) => {
           const on = activeTag && tagStatusFilter.has(key);
@@ -513,7 +513,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
               })}
               title={activeTag
                 ? `${tip}. Toggle to show only the answers you pick; a tag opens on ${DEFAULT_TAG_STATUS_LABEL}, and with none picked the filter falls back to every contact carrying the tag.`
-                : 'Pick a tag first — an answer is recorded per contact per tag'}
+                : 'Pick a tag first - an answer is recorded per contact per tag'}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
                 padding: '1px 8px', borderRadius: 999,

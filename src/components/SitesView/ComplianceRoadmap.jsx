@@ -331,7 +331,7 @@ export function ComplianceRoadmap({
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {(companyLabel || scopeLabel) && (
             <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.2 }}>
-              {[companyLabel, scopeLabel].filter(Boolean).join(' \u2014 ')}
+              {[companyLabel, scopeLabel].filter(Boolean).join(' - ')}
             </div>
           )}
           <h1 className={styles.title}>Compliance Roadmap</h1>
@@ -358,7 +358,7 @@ export function ComplianceRoadmap({
           <strong>Every loaded site is leased.</strong>
           <div className={styles.emptySub}>
             All {loadedSites.length.toLocaleString()} loaded site{loadedSites.length === 1 ? ' is' : 's are'} marked Leased,
-            so excluding leased buildings leaves nothing to chart — these obligations fall on the owner. Switch to
+            so excluding leased buildings leaves nothing to chart - these obligations fall on the owner. Switch to
             {' '}<strong>All sites</strong> above to chart them anyway.
           </div>
         </div>

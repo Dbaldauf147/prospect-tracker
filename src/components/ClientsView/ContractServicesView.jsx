@@ -85,7 +85,7 @@ async function buildPayload(file) {
     if (file.size <= MAX_PDF_BYTES) {
       return { fileName: file.name, mediaType: 'application/pdf', dataBase64: await toBase64(file), readAs: 'pdf' };
     }
-    throw new Error(`That PDF is ${fmtBytes(file.size)} — over the ${fmtBytes(MAX_PDF_BYTES)} upload limit. Split it, or save the pages that carry the scope as a smaller PDF.`);
+    throw new Error(`That PDF is ${fmtBytes(file.size)} - over the ${fmtBytes(MAX_PDF_BYTES)} upload limit. Split it, or save the pages that carry the scope as a smaller PDF.`);
   }
   if (ext === 'docx') {
     const { default: mammoth } = await import('mammoth/mammoth.browser');
@@ -96,7 +96,7 @@ async function buildPayload(file) {
     return { fileName: file.name, text, readAs: 'text' };
   }
   if (ext === 'doc') {
-    throw new Error('Legacy .doc isn’t readable here — save it as .docx or PDF first.');
+    throw new Error('Legacy .doc isn’t readable here - save it as .docx or PDF first.');
   }
   const text = (await file.text()).trim();
   if (!text) throw new Error('That file is empty.');
@@ -229,7 +229,7 @@ function ScopeLanguageModal({ row, catalogLabel, labelForFile, onClose }) {
                   // out its scope, or the review predates full-wording capture
                   // — a re-read of the file is what tells the two apart.
                   <div style={{ fontSize: '0.74rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                    Only the quote above came back for this document — either it names the service without setting out
+                    Only the quote above came back for this document - either it names the service without setting out
                     a scope clause, or this review was run before full wording was captured. Re-read the file to pull
                     the clause in.
                   </div>
@@ -663,7 +663,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
     }
     if (res.added === 0) {
       setLanguageNote(res.skipped > 0
-        ? 'Already in the library — nothing new to save'
+        ? 'Already in the library - nothing new to save'
         : 'Nothing to save');
       return;
     }
@@ -725,7 +725,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           Upload a contract and Claude transcribes the services it puts in scope, mapped onto the tracked service
           catalogue. Review the rows, then apply the ones you want to a client&apos;s <strong>Services Explored</strong>.
-          The same ticked rows can have their scope wording — as the contract sets it out, in full — saved to the
+          The same ticked rows can have their scope wording - as the contract sets it out, in full - saved to the
           <strong> Contract Language</strong> subtab, filed under each service. Nothing is written until you press a button.
         </div>
       </div>
@@ -763,7 +763,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
           }}
         >{busy ? 'Reading…' : 'Choose contract files'}</button>
         <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 6 }}>
-          …or drop them here. PDF, .docx, .txt — several at once is fine (an agreement plus its amendments).
+          …or drop them here. PDF, .docx, .txt - several at once is fine (an agreement plus its amendments).
           PDFs up to {fmtBytes(MAX_PDF_BYTES)} are read as documents, so scanned contracts work too.
         </div>
       </div>
@@ -863,7 +863,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
             }}>
               <strong>Couldn’t save the contract language.</strong>{' '}
               {languageError.code === 'permission-denied'
-                ? 'Firestore refused the write \u2014 the deployed rules are missing the userSettings/{uid}/contractLanguage path.'
+                ? 'Firestore refused the write - the deployed rules are missing the userSettings/{uid}/contractLanguage path.'
                 : 'Check your connection and try again. Nothing on this page was lost.'}
               <div style={{ marginTop: 4, opacity: 0.85 }}>{languageError.error}</div>
             </div>
@@ -924,9 +924,9 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                 style={{ padding: '0.3rem 0.45rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 420 }}
               >
                 <option value="">
-                  {!client ? '\u2014 pick a client first \u2014'
-                    : clientDeals.length === 0 ? `\u2014 no deals for ${client.company} \u2014`
-                    : '\u2014 pick a deal \u2014'}
+                  {!client ? '- pick a client first -'
+                    : clientDeals.length === 0 ? `- no deals for ${client.company} -`
+                    : '- pick a deal -'}
                 </option>
                 {clientDeals.map(({ row, index }) => (
                   <option key={index} value={index}>
@@ -957,7 +957,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
               <div style={{ marginTop: '0.4rem', fontSize: '0.7rem', color: '#991B1B', fontWeight: 600 }}>{dealError}</div>
             )}
             <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: '0.4rem', lineHeight: 1.45 }}>
-              Read from the documents above and correctable here. Only fields with a value are written — a term the
+              Read from the documents above and correctable here. Only fields with a value are written - a term the
               contract doesn’t state leaves the deal’s existing value alone.
             </div>
           </div>
@@ -965,8 +965,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
           <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
             {rows.length} distinct service{rows.length === 1 ? '' : 's'} across {done.length} document{done.length === 1 ? '' : 's'}
             {ignoredCount > 0 && `, ${ignoredCount} ignored`}.
-            {ignoredCount > 0 && ' Ignored wording is remembered, so it arrives ignored on the next contract too — restore a row to undo that.'}
-            {unmatchedCount > 0 && ` ${unmatchedCount} row${unmatchedCount === 1 ? '' : 's'} still need${unmatchedCount === 1 ? 's' : ''} a catalogue service picked before ${unmatchedCount === 1 ? 'it' : 'they'} can be applied — ignore the ones whose scope doesn’t tie to a service.`}
+            {ignoredCount > 0 && ' Ignored wording is remembered, so it arrives ignored on the next contract too - restore a row to undo that.'}
+            {unmatchedCount > 0 && ` ${unmatchedCount} row${unmatchedCount === 1 ? '' : 's'} still need${unmatchedCount === 1 ? 's' : ''} a catalogue service picked before ${unmatchedCount === 1 ? 'it' : 'they'} can be applied - ignore the ones whose scope doesn’t tie to a service.`}
             {' '}The box in the header row selects (or clears) every matched row at once, and clicking a row’s
             evidence quote opens the scope language behind it in full.
           </div>
@@ -986,7 +986,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                       onChange={e => setAllChecked(e.target.checked)}
                       aria-label={allSelected ? 'Clear all' : 'Select all'}
                       title={selectableRows.length === 0
-                        ? 'No row has a catalogue match yet — pick one first.'
+                        ? 'No row has a catalogue match yet - pick one first.'
                         : allSelected
                           ? `Clear all ${selectableRows.length}`
                           : `Select all ${selectableRows.length} matched service${selectableRows.length === 1 ? '' : 's'}`}
@@ -1013,7 +1013,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                           checked={st.checked}
                           disabled={!st.catalogKey || st.ignored}
                           onChange={e => setRowState(row, { checked: e.target.checked })}
-                          title={st.ignored ? 'Ignored — restore it to apply it.' : st.catalogKey ? '' : 'Pick a catalogue service first, or ignore the row.'}
+                          title={st.ignored ? 'Ignored - restore it to apply it.' : st.catalogKey ? '' : 'Pick a catalogue service first, or ignore the row.'}
                         />
                         {/* Ignore / restore. Kept beside the tick because the
                             two are the same decision: this row is in, or it
@@ -1037,7 +1037,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', minWidth: 200 }}>
                         <div style={{ fontWeight: 600, color: '#1E293B', textDecoration: st.ignored ? 'line-through' : 'none' }}>{row.name}</div>
                         <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
-                          {st.ignored && pill('ignored', { bg: '#E2E8F0', color: '#475569' }, 'Set aside — not applied, not saved to Contract Language, and not counted as needing a match. Remembered, so this wording arrives ignored on future contracts too')}
+                          {st.ignored && pill('ignored', { bg: '#E2E8F0', color: '#475569' }, 'Set aside - not applied, not saved to Contract Language, and not counted as needing a match. Remembered, so this wording arrives ignored on future contracts too')}
                           {row.removed && pill('removed', { bg: '#FEE2E2', color: '#B91C1C' }, 'A document says this service type ceases')}
                           {pill(row.confidence, CONFIDENCE_STYLE[row.confidence] || CONFIDENCE_STYLE.medium, 'How sure the model is this is a named service')}
                           {row.match?.basis === 'alias' && pill('alias', { bg: '#E0E7FF', color: '#3730A3' }, 'Mapped through the hand-maintained wording table')}
@@ -1054,7 +1054,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                           // to fix, so it loses the red border that says so.
                           style={{ padding: '0.25rem 0.4rem', border: '1px solid', borderColor: (st.catalogKey || st.ignored) ? '#E2E8F0' : '#FCA5A5', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit', maxWidth: 260 }}
                         >
-                          <option value="">— no match —</option>
+                          <option value="">- no match -</option>
                           {catalog.map(cat => (
                             <optgroup key={cat.name} label={cat.name}>
                               {cat.items.map(it => <option key={it.key} value={it.key}>{it.label}</option>)}
@@ -1073,14 +1073,14 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                           onChange={e => setRowState(row, { status: e.target.value })}
                           style={{ padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit' }}
                         >
-                          {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '— clear —' : s}</option>)}
+                          {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '- clear -' : s}</option>)}
                         </select>
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', whiteSpace: 'nowrap', color: current ? '#1E293B' : '#94A3B8' }}>
-                        {client ? (current || 'untouched') : '—'}
+                        {client ? (current || 'untouched') : '-'}
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', color: '#475569', minWidth: 240 }}>
-                        {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>—</span> : row.evidence.map((e, i) => {
+                        {row.evidence.length === 0 ? <span style={{ color: '#94A3B8' }}>-</span> : row.evidence.map((e, i) => {
                           const language = e.language || '';
                           // The quote is the handle on the whole clause: one
                           // click on any of a row's quotes opens the row's
@@ -1093,7 +1093,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                                 type="button"
                                 onClick={() => setWordingKey(row.key)}
                                 title={hasMore
-                                  ? 'Read the full scope wording as the contract sets it out — this is what gets filed under this service on Contract Language'
+                                  ? 'Read the full scope wording as the contract sets it out - this is what gets filed under this service on Contract Language'
                                   : 'Read what the document gave for this service'}
                                 style={{
                                   border: 'none', background: 'none', padding: 0, margin: 0, textAlign: 'left',
@@ -1120,7 +1120,7 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
 
       {files.length > 0 && rows.length === 0 && !busy && done.length > 0 && (
         <div style={{ padding: '0.75rem 0', color: '#64748B', fontSize: '0.8rem', fontStyle: 'italic' }}>
-          Nothing readable as a service in {done.length === 1 ? 'that document' : 'those documents'} — check the scope note above.
+          Nothing readable as a service in {done.length === 1 ? 'that document' : 'those documents'} - check the scope note above.
         </div>
       )}
 

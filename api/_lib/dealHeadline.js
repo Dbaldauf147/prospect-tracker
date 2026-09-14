@@ -26,7 +26,7 @@
 // before any position test, or the publisher's name lands in the target.
 export function stripPublisher(title) {
   return String(title || '')
-    .replace(/\s+[-–—]\s+[^-–—]{2,40}$/, '')
+    .replace(/\s+[-–—]\s+[^-–—]{2,40}$/, '') // em-dash-ok: parses headlines
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -180,7 +180,7 @@ const TAIL_BOUNDARIES = [
   /\s+as\s+it\s+/i,
   /\s+amid\s+/i,
   /\s*[,:;]\s+(?:the|a|an|which|adding|expanding|marking)\b/i,
-  /\s+—\s+/,
+  /\s+—\s+/, // em-dash-ok: parses headlines
 ];
 
 function cutTail(s) {
@@ -200,7 +200,7 @@ function cleanParty(s) {
     .replace(/\s+private\s*$/i, '')
     // Leading date/section junk some outlets prefix.
     .replace(/^(exclusive|breaking|update\s*\d*|deal news)\s*[:|-]\s*/i, '')
-    .replace(/^[\s,:;–—-]+|[\s,:;.–—-]+$/g, '')
+    .replace(/^[\s,:;–—-]+|[\s,:;.–—-]+$/g, '') // em-dash-ok: parses headlines
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 200);

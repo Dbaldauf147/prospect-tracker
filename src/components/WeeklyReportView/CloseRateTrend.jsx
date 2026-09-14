@@ -71,7 +71,7 @@ function Sparkline({ cells, months, color, label }) {
   const drawn = points.filter(Boolean).length;
 
   if (drawn === 0) {
-    return <span className={styles.sparkEmpty} title={`${label}: nothing closed in this window.`}>—</span>;
+    return <span className={styles.sparkEmpty} title={`${label}: nothing closed in this window.`}>-</span>;
   }
 
   return (
@@ -128,7 +128,7 @@ function Sparkline({ cells, months, color, label }) {
 function closeRateBreakdown({ tally, row, windowLabel, windowPhrase }) {
   const total = tally.sold + tally.notSold;
   return {
-    title: `${row.short}: Close Rate — ${windowLabel}`,
+    title: `${row.short}: Close Rate - ${windowLabel}`,
     value: `${pct(tally.rate)}  (${tally.sold}/${total})`,
     formula: row.signal
       ? `Sold ÷ (Sold + Not Sold), over opps ${windowPhrase} that reached this stage (signal: ${row.signal}) with a Scope without "pull through".`
@@ -151,7 +151,7 @@ function RateCell({ cell, row, month }) {
   if (cell === null) {
     return (
       <td className={styles.cellEmpty} title={`${row.short}: nothing closed in ${month.label}. No evidence isn’t a 0% rate, so this is blank rather than zero.`}>
-        —
+        -
       </td>
     );
   }
@@ -161,7 +161,7 @@ function RateCell({ cell, row, month }) {
       <LiveValue
         id={`crt-${row.key}-${month.key}`}
         className={styles.cellLive}
-        title={`${row.short}, ${month.label}: ${cell.sold} sold and ${cell.notSold} not sold of ${total} closed — ${pct(cell.rate)}.`}
+        title={`${row.short}, ${month.label}: ${cell.sold} sold and ${cell.notSold} not sold of ${total} closed - ${pct(cell.rate)}.`}
         breakdown={closeRateBreakdown({
           tally: cell,
           row,
@@ -189,7 +189,7 @@ function RateCell({ cell, row, month }) {
  */
 function TotalCell({ tally, row, id, title, windowLabel, windowPhrase, strong, better, betterBy }) {
   if (tally === null) {
-    return <td className={styles.overallCell}><span className={styles.cellEmptyInline}>—</span></td>;
+    return <td className={styles.overallCell}><span className={styles.cellEmptyInline}>-</span></td>;
   }
   const total = tally.sold + tally.notSold;
   const cls = [
@@ -207,8 +207,8 @@ function TotalCell({ tally, row, id, title, windowLabel, windowPhrase, strong, b
         id={id}
         className={better ? styles.betterChip : styles.cellLive}
         title={better
-          ? `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}, ${betterBy} points above the rolling year. The recent months are running ahead of it.`
-          : `${title} ${tally.sold} sold of ${total} closed — ${pct(tally.rate)}.`}
+          ? `${title} ${tally.sold} sold of ${total} closed - ${pct(tally.rate)}, ${betterBy} points above the rolling year. The recent months are running ahead of it.`
+          : `${title} ${tally.sold} sold of ${total} closed - ${pct(tally.rate)}.`}
         breakdown={closeRateBreakdown({ tally, row, windowLabel, windowPhrase })}
       >
         <span className={styles.cellRate}>
@@ -219,7 +219,7 @@ function TotalCell({ tally, row, id, title, windowLabel, windowPhrase, strong, b
           {pct(tally.rate)}
         </span>
         <span className={styles.cellCount}>{tally.sold}/{total}</span>
-        {better && <span className={styles.srOnly}> — ahead of the rolling year</span>}
+        {better && <span className={styles.srOnly}> - ahead of the rolling year</span>}
       </LiveValue>
     </td>
   );
@@ -260,7 +260,7 @@ export function CloseRateTrend({ trend }) {
                 number that can be checked against both. It reaches back
                 further than the columns to its left, which is the point: it
                 is what the recent months are a departure from. */}
-            <th className={styles.rollingHead} scope="col" title="A rolling 365 days to today — the same window the pipeline funnel and Pipeline Metrics use for Close Rate, so this figure matches theirs. Reaches further back than the months on the left.">
+            <th className={styles.rollingHead} scope="col" title="A rolling 365 days to today - the same window the pipeline funnel and Pipeline Metrics use for Close Rate, so this figure matches theirs. Reaches further back than the months on the left.">
               12 mo
             </th>
           </tr>
@@ -320,7 +320,7 @@ export function CloseRateTrend({ trend }) {
         stage closed nothing is blank, not 0%. <strong>{months.length} mo</strong> adds up the months
         shown; <strong>12 mo</strong> is a rolling 365 days, the same window the funnel above uses, so it
         reaches back past the first column. A <strong>6 mo</strong> figure in green with a ▲ is
-        running above the rolling year — the recent months are better than the run rate behind them.
+        running above the rolling year - the recent months are better than the run rate behind them.
         Hover any rate for the deals behind it; click to pin that panel open, then
         <strong> ⬇ Excel</strong> to take the full list away.
       </div>

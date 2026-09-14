@@ -53,7 +53,7 @@ function escapeHtmlMultiline(s) {
 // Build a plain bordered table for the given records. `columnKeys` selects
 // and orders the columns (any subset of NEW_OPPS_EMAIL_COLUMNS); when
 // omitted, all columns in default order are used. Black text on white with
-// 1px solid black cell borders — no other styling.
+// 1px solid black cell borders - no other styling.
 export function buildNewOppsTableHtml(records, columnKeys) {
   const byKey = new Map(NEW_OPPS_EMAIL_COLUMNS.map((c) => [c.key, c]));
   const keys = Array.isArray(columnKeys) ? columnKeys : NEW_OPPS_EMAIL_COLUMN_KEYS;
@@ -69,7 +69,7 @@ export function buildNewOppsTableHtml(records, columnKeys) {
     `<th style="text-align:${align(c)};padding:6px 9px;font:bold 13px Arial,sans-serif;color:#000;${cellBorder}">${escapeHtml(c.label)}</th>`
   ).join('');
 
-  // The row's BFO Address, but only when it actually looks like a web URL —
+  // The row's BFO Address, but only when it actually looks like a web URL -
   // blanks and sentinel values ('-', '#N/A') never become hrefs.
   const bfoUrl = (r) => {
     const u = String(r['BFO Address'] || '').trim();
@@ -125,7 +125,7 @@ export function buildOppsTableEmailHtml(records, columnKeys, { greeting = 'Keith
     : '';
   const table = buildNewOppsTableHtml(records, columnKeys);
   // Signature is trusted HTML (the same settings.emailSignature the Draft
-  // Email tab appends) — included verbatim.
+  // Email tab appends) - included verbatim.
   const sigBlock = signature ? `<br><br><div>${signature}</div>` : '';
   return `<div style="font-family:Arial,sans-serif;max-width:920px;margin:0 auto">${hello}${table}${sigBlock}</div>`;
 }

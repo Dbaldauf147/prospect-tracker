@@ -131,7 +131,7 @@ Do NOT count, even when the headline is about the company:
 - Earnings, leadership changes, expansions, partnerships, product launches, litigation.
 - Rumoured, "exploring", "in talks", or unconfirmed deals.
 
-Work only from the headlines given. Do not add deals you remember from elsewhere — a deal that is not in the list does not go in the answer. When several headlines cover the same deal, return the clearest one only.
+Work only from the headlines given. Do not add deals you remember from elsewhere - a deal that is not in the list does not go in the answer. When several headlines cover the same deal, return the clearest one only.
 
 Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
 {
@@ -139,7 +139,7 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
     {
       "index": the number of the headline this deal comes from,
       "target": "name of the company/asset acquired",
-      "buyer": "the acquiring entity — the portfolio company for an add-on, otherwise the company itself",
+      "buyer": "the acquiring entity - the portfolio company for an add-on, otherwise the company itself",
       "dealType": one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition",
       "sector": "short sector label for the target, e.g. Industrial Services, or empty string",
       "sites": "site/facility count or footprint if the headline reports one, else empty string",
@@ -167,9 +167,9 @@ export class ResearchHaltedError extends Error {
 // Both are account-wide and neither improves by asking again.
 export function haltReasonFor(status, body) {
   const text = String(body || '');
-  if (status === 401 || status === 403) return 'Anthropic API key rejected — check ANTHROPIC_API_KEY';
+  if (status === 401 || status === 403) return 'Anthropic API key rejected - check ANTHROPIC_API_KEY';
   if (status === 400 && /credit balance is too low/i.test(text)) {
-    return 'Anthropic account is out of credit — top up at console.anthropic.com/settings/billing';
+    return 'Anthropic account is out of credit - top up at console.anthropic.com/settings/billing';
   }
   return null;
 }
@@ -389,7 +389,7 @@ export async function researchViaWebSearch(entry, since, until, { signal, feedEr
 
   const userPrompt = `Find every acquisition made by "${entry.company}" announced between ${isoDate(since)} and ${isoDate(until)} (inclusive).${peHint}${siteHint}
 
-Search the web before answering — do not answer from memory alone. Return the JSON object as specified.`;
+Search the web before answering - do not answer from memory alone. Return the JSON object as specified.`;
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -699,8 +699,8 @@ function companySection(result) {
     : `<div style="color:#94A3B8;font-size:13px;padding:6px 0">
          ${result.skipped
            ? (result.halted
-               ? 'Not searched — the run stopped before reaching it.'
-               : 'Not searched this run — the digest ran out of time before reaching it. It moves to the front of the queue next run.')
+               ? 'Not searched - the run stopped before reaching it.'
+               : 'Not searched this run - the digest ran out of time before reaching it. It moves to the front of the queue next run.')
            : result.error
              ? `Couldn't be researched: ${escapeHtml(result.error)}`
              : 'No acquisitions announced in this window.'}
@@ -720,7 +720,7 @@ function companySection(result) {
 // Headlines the rules could not place, listed rather than dropped.
 //
 // This is the honest half of a rules-based reader. It will miss shapes a
-// model would catch — "backs the management buyout of", "agrees terms
+// model would catch - "backs the management buyout of", "agrees terms
 // with" — and the failure mode that matters is not missing one, it is
 // missing one silently. A line and a link lets the reader decide in two
 // seconds, and keeps the digest's promise that what the feed found, the
@@ -736,7 +736,7 @@ function unsureBlock(unsure) {
   return `
     <div style="margin-top:8px;padding-top:7px;border-top:1px dashed #E2E8F0">
       <div style="color:#64748B;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em">
-        Also in the news — worth a look
+        Also in the news - worth a look
       </div>
       ${rows}
     </div>`;
@@ -778,9 +778,9 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
 
   const quietList = [
     quiet('No acquisitions found', searchedEmpty),
-    quiet('Search failed', failed, (r) => ` — ${escapeHtml(String(r.error).slice(0, 160))}`),
-    quiet('Not searched this run — first in line next run', notSearched),
-    quiet('Not searched — the run stopped before reaching them', blocked),
+    quiet('Search failed', failed, (r) => ` - ${escapeHtml(String(r.error).slice(0, 160))}`),
+    quiet('Not searched this run - first in line next run', notSearched),
+    quiet('Not searched - the run stopped before reaching them', blocked),
   ].join('');
 
   // An account-wide failure is not a per-company footnote. Twenty-one
@@ -793,7 +793,7 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
     ? `<div style="margin:0 0 18px;padding:12px 14px;border-radius:6px;background:#FEF2F2;border:1px solid #FCA5A5">
          <div style="color:#991B1B;font-size:13px;font-weight:700;margin-bottom:3px">Research stopped early</div>
          <div style="color:#7F1D1D;font-size:13px;line-height:1.5">
-           ${escapeHtml(haltReason)}. No further companies were searched, so this digest is incomplete —
+           ${escapeHtml(haltReason)}. No further companies were searched, so this digest is incomplete -
            the ones it missed are first in line once that is fixed.
          </div>
        </div>`
@@ -822,7 +822,7 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
         : ''}
       <div style="margin-top:26px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
-        Deals are read from public news feed headlines and can be incomplete — always confirm against the linked source before acting.
+        Deals are read from public news feed headlines and can be incomplete - always confirm against the linked source before acting.
       </div>
     </div>`;
 }
@@ -830,8 +830,8 @@ export function buildNewsEmailHtml(results, { since, until, message } = {}) {
 export function newsSubject(results, since, until) {
   const total = results.reduce((n, r) => n + r.deals.length, 0);
   return total
-    ? `Acquisition news — ${total} deal${total === 1 ? '' : 's'} (${isoDate(since)} → ${isoDate(until)})`
-    : `Acquisition news — no deals (${isoDate(since)} → ${isoDate(until)})`;
+    ? `Acquisition news - ${total} deal${total === 1 ? '' : 's'} (${isoDate(since)} → ${isoDate(until)})`
+    : `Acquisition news - no deals (${isoDate(since)} → ${isoDate(until)})`;
 }
 
 export async function sendCompanyNewsEmail({ to, subject, html, replyTo }) {

@@ -65,7 +65,7 @@ eq(scopeTokenMatchesService('---', 'GHG'), false, 'a token with no words in it m
 
 // Word ORDER and adjacency matter: a run, not a bag of words.
 eq(scopeTokenMatchesService('payment bill', 'Bill payment'), false, 'the words have to be in order');
-eq(scopeTokenMatchesService('RA report', 'RA AV report'), false, 'and adjacent — a gap is a different service');
+eq(scopeTokenMatchesService('RA report', 'RA AV report'), false, 'and adjacent - a gap is a different service');
 
 // ---- against the real catalogue ---------------------------------------------
 

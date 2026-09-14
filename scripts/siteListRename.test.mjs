@@ -43,7 +43,7 @@ function eq(actual, expected, name) {
 
   const caseOnly = renameMasterSiteRows([{ company: 'iberconsa' }], 'iberconsa', 'Iberconsa');
   eq([caseOnly.count, caseOnly.rows[0].company], [1, 'Iberconsa'],
-    'a capitalisation-only rename is still written — the cell stores what is displayed');
+    'a capitalisation-only rename is still written - the cell stores what is displayed');
 }
 
 // ── Utility Lookup sites file (raw uploaded headers) ───────────────────
@@ -81,7 +81,7 @@ function eq(actual, expected, name) {
   };
   const res = renameCompanySiteListEntry(entry, 'Acme Corp', 'Acme Holdings');
   eq(res.entry.company, 'Acme Holdings',
-    'the label moves — it is what the Site List Overview and the Utility Lookup picker render');
+    'the label moves - it is what the Site List Overview and the Utility Lookup picker render');
   eq([res.cells, res.entry.rows.map(r => r.Company)],
     [2, ['Acme Holdings', 'Acme Holdings', 'Sublease Tenant']],
     'the rows move with it; a row naming someone else does not');

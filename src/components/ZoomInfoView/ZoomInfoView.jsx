@@ -425,7 +425,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
   const isPlaceholderCompany = (s) => {
     const t = String(s || '').trim();
     if (!t) return true;
-    if (/^[-\u2013\u2014_]+$/.test(t)) return true;
+    if (/^[-\u2013\u2014_]+$/.test(t)) return true; // em-dash-ok: reads pasted cells
     if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
     return false;
   };
@@ -1316,7 +1316,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-          {/* LEFT — target fields */}
+          {/* LEFT - target fields */}
           <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
             <div style={colHeader}>Zoom Info field</div>
             {PASTE_TARGETS.map(t => {
@@ -1341,7 +1341,7 @@ function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
               );
             })}
           </div>
-          {/* RIGHT — source columns */}
+          {/* RIGHT - source columns */}
           <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
             <div style={colHeader}>Columns in your paste ({headers.length})</div>
             {headers.map(h => {

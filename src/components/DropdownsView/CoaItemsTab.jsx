@@ -101,7 +101,7 @@ export function CoaItemsTab() {
           <div className={`${styles.cardBody} ${styles.questionsCardBody}`}>
             {items.length === 0 ? (
               <div className={styles.optionEmpty}>
-                (no items — opps show an empty COA table until one is added)
+                (no items - opps show an empty COA table until one is added)
               </div>
             ) : (
               items.map((item, idx) => (
@@ -158,12 +158,12 @@ export function CoaItemsTab() {
         <h3 className={styles.sectionTitle}>How these are used</h3>
         <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '46rem' }}>
           Every item here shows as a row in the <strong>COA Approval Items</strong> table on the
-          Opp details <strong>Stage 6 — Negotiate to Win</strong> tab, on every opp. Record the
+          Opp details <strong>Stage 6 - Negotiate to Win</strong> tab, on every opp. Record the
           date it was requested and the date it came back approved, or press <strong>N/A</strong>
           {' '}when it doesn't apply to that deal.
           <br /><br />
           Nothing is written to an opp until one of those happens, so adding an item here changes
-          no records — it asks the question. An opp at <strong>Agreement Sent</strong> that still
+          no records - it asks the question. An opp at <strong>Agreement Sent</strong> that still
           has items neither approved nor marked N/A carries the{' '}
           <strong>COA approvals needed</strong> flag, so the list is also the checklist that has
           to be clear before a signature comes back.
@@ -212,12 +212,12 @@ function CoaItemRow({ value, first, last, onCommit, onRemove, onMove }) {
       <button
         type="button" style={arrow} disabled={first}
         onClick={() => onMove(-1)}
-        title="Move up — the order here is the order the rows appear in on every opp"
+        title="Move up - the order here is the order the rows appear in on every opp"
       >▲</button>
       <button
         type="button" style={arrow} disabled={last}
         onClick={() => onMove(1)}
-        title="Move down — the order here is the order the rows appear in on every opp"
+        title="Move down - the order here is the order the rows appear in on every opp"
       >▼</button>
       <button
         type="button" onClick={onRemove} title="Remove this COA item"

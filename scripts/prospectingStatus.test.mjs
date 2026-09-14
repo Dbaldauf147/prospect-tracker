@@ -165,7 +165,7 @@ eq(stateOf(STEPS, { opps: 2, renewals: 0 }, MAPPED, 'market-updates'), 'open',
 eq(stateOf(STEPS, { opps: 0, renewals: 3 }, MAPPED, 'market-updates'), 'open',
   'renewals still to work keep it waiting too');
 eq(stateOf(STEPS, { opps: 0, renewals: null }, MAPPED, 'market-updates'), 'open',
-  'a count still loading above it is not "clear" — no red on data that has not arrived');
+  'a count still loading above it is not "clear" - no red on data that has not arrived');
 eq(stateOf(STEPS, {}, MAPPED, 'market-updates'), 'open',
   'no counts handed over at all leaves every tracked step unknown, so nothing goes red');
 eq(stateOf(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY }, 'market-updates'), 'caught-up',
@@ -184,7 +184,7 @@ eq(countDueSteps(ladder(STEPS, CLEAR, {})), 1, 'one dot while the step stands');
 // Two flagged steps in a row, and still one dot: only the topmost
 // unresolved one is owed, which is the point of walking the ladder.
 eq(countDueSteps(ladder(STEPS, CLEAR, MAPPED)), 1,
-  'still one dot with mapping marked — the campaigns step has it now');
+  'still one dot with mapping marked - the campaigns step has it now');
 eq(countDueSteps(ladder(STEPS, CLEAR, { ...MAPPED, 'market-updates': TODAY })), 0,
   'no dot once both are marked');
 eq(countDueSteps(ladder(STEPS, { opps: 1, renewals: 0 }, {})), 0,
@@ -308,7 +308,7 @@ eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
   // The closed-opp case the old count also dropped.
   const closedOverdue = [{ Stage: 'Sold', 'Follow Up': iso(-5) }];
   eq(countDueSteps(fromRecords(closedOverdue)), 0,
-    'a badged closed opp holds the dot back too — the two readouts agree or neither fires');
+    'a badged closed opp holds the dot back too - the two readouts agree or neither fires');
 
   // Clear the badge and the dot is free to fire again.
   const settled = [{ Stage: 'Qualifying', 'Follow Up': iso(0), 'No Further Action Today': 'Yes' }];

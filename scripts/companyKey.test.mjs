@@ -52,7 +52,7 @@ apart('Brookfield Logistics (France)', 'Brookfield Logistics (US)', 'two regions
 apart('Edmond de Rothschild REIM (UK) Limited', 'Edmond de Rothschild REIM (Suisse) SA', 'two national entities');
 apart('Fund A', 'Fund B', 'a lone trailing letter is not an initialism to collapse');
 apart('CH Guenther', 'C.H. Guenther & Son (a Pritzker Private Capital co.)',
-  'names that differ by more than punctuation stay apart — this pair needs a manual merge');
+  'names that differ by more than punctuation stay apart - this pair needs a manual merge');
 apart('Blackstone', 'Blackstone GP Stakes', 'a brand prefix does not make one company');
 
 // ── Pieces ─────────────────────────────────────────────────────────────

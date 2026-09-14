@@ -111,10 +111,10 @@ export const DEAL_TERM_FIELDS = [
 export function applyDealTerms(index, guard, terms) {
   const { data } = loadDealsList();
   const row = data[index];
-  if (!row) return { ok: false, error: 'That deal is no longer in the roster — reload the Deals subtab.', written: [] };
+  if (!row) return { ok: false, error: 'That deal is no longer in the roster - reload the Deals subtab.', written: [] };
   const same = (k) => String(row[k] ?? '').trim() === String(guard?.[k] ?? '').trim();
   if (!same('Client Name') || !same('Agreement Name')) {
-    return { ok: false, error: 'The Deals roster changed since this list was built — reopen the picker and try again.', written: [] };
+    return { ok: false, error: 'The Deals roster changed since this list was built - reopen the picker and try again.', written: [] };
   }
   const patch = {};
   for (const f of DEAL_TERM_FIELDS) {

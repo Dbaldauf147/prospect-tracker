@@ -163,7 +163,7 @@ export function describeApiError(status, body, projectId) {
       + `Note that a missing permission on this API can come back as 404 rather than 403.\n${detail}`;
   }
   if (status === 400) {
-    return `Firebase rejected the ruleset (HTTP 400) — it did not compile. The diagnostics below `
+    return `Firebase rejected the ruleset (HTTP 400) - it did not compile. The diagnostics below `
       + `give the line and column.\n${detail}`;
   }
   return `Firebase Rules API returned HTTP ${status}.\n${detail}`;
@@ -335,7 +335,7 @@ async function deployRules(log) {
   if (existing) {
     const files = await deployedSource(token, existing, projectId);
     if (sameSource(files, fileName, content)) {
-      log(`already up to date on ${projectId} (${existing.split('/').pop()}) — nothing to release.`);
+      log(`already up to date on ${projectId} (${existing.split('/').pop()}) - nothing to release.`);
       return;
     }
   }
@@ -353,7 +353,7 @@ async function main() {
     // Silent on a local build; a one-liner on a preview, where seeing
     // "skipped" is the reassurance that a branch cannot overwrite the
     // live rules.
-    if (process.env.VERCEL_ENV) say(`skipped — VERCEL_ENV is "${process.env.VERCEL_ENV}", not production.`);
+    if (process.env.VERCEL_ENV) say(`skipped - VERCEL_ENV is "${process.env.VERCEL_ENV}", not production.`);
     return;
   }
 
@@ -365,7 +365,7 @@ async function main() {
       // Loud, but not fatal. Vercel shows this in the build log, and the
       // app still deploys — with rules that may now be behind git, which
       // the Call Recordings page will say for itself if they are.
-      console.warn(`\nfirestore rules: NOT RELEASED — the deployed rules may be behind git.\n${message}\n`);
+      console.warn(`\nfirestore rules: NOT RELEASED - the deployed rules may be behind git.\n${message}\n`);
       return;
     }
     console.error(`firestore rules: ${message}`);

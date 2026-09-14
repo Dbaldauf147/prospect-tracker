@@ -240,7 +240,7 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
             <NumberCell
               value={stage.duration}
               min={0}
-              placeholder="—"
+              placeholder="-"
               title={durationLabel
                 ? `This step lasts ${durationLabel} (${months.span} month${months.span === 1 ? '' : 's'} on the chart)`
                 : 'How long the step lasts. Blank leaves its length to the dates or the Span cell.'}
@@ -283,7 +283,7 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
             )}
             {!range && (
               <span className={styles.undatedTag} title={stage.dependsOn
-                ? `Undated: placed after the step${parseDependsOn(stage.dependsOn).length === 1 ? '' : 's'} it waits on — month ${months.month}. Give it dates or a month to pin it instead.`
+                ? `Undated: placed after the step${parseDependsOn(stage.dependsOn).length === 1 ? '' : 's'} it waits on - month ${months.month}. Give it dates or a month to pin it instead.`
                 : 'Without dates this step falls back to month 1. Give it dates, position it by months, or say which step it waits on.'}>no date</span>
             )}
           </td>
@@ -385,7 +385,7 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
           // shuffle within the run-up or within the engagement, and a button
           // that looks live but silently refuses is worse than a dim one.
           disabled={!canMoveUp}
-          title={canMoveUp ? 'Move stage earlier' : 'First step on this side of signature — use the Signature cell to move it across'}
+          title={canMoveUp ? 'Move stage earlier' : 'First step on this side of signature - use the Signature cell to move it across'}
           aria-label="Move stage earlier"
         >↑</button>
         <button
@@ -393,7 +393,7 @@ function StageRow({ index, siblings, stage, mode, columns, priorSteps, placed, o
           className={styles.stageMoveBtn}
           onClick={() => onMove(1)}
           disabled={!canMoveDown}
-          title={canMoveDown ? 'Move stage later' : 'Last step on this side of signature — use the Signature cell to move it across'}
+          title={canMoveDown ? 'Move stage later' : 'Last step on this side of signature - use the Signature cell to move it across'}
           aria-label="Move stage later"
         >↓</button>
         <button

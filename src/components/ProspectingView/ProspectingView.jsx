@@ -231,7 +231,7 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
           padding: '4px 9px', borderTop: '1px solid #F1F5F9',
           fontSize: '0.66rem', color: '#94A3B8',
         }}>
-          Showing {shown.length} of {people.length} — open in Contacts for the rest.
+          Showing {shown.length} of {people.length} - open in Contacts for the rest.
         </div>
       )}
     </div>
@@ -260,12 +260,12 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onA
         const empty = pct == null;
         const title = empty
           ? `No contacts on the ${label} roster yet`
-          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer — the same figure the All Contacts page's Tagged row shows for this group. Click to list them.`;
+          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer - the same figure the All Contacts page's Tagged row shows for this group. Click to list them.`;
         const body = (
           <>
             <span style={{ fontWeight: 700 }}>{label}</span>
             <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-              {empty ? '—' : `${pct}%`}
+              {empty ? '-' : `${pct}%`}
             </span>
           </>
         );
@@ -311,14 +311,14 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onA
         const isOpen = openKey === target;
         const which = missing.length === 1
           ? `Click to list the ${missing[0].label} contacts, least-tagged first.`
-          : `Click to list the ${missing[0].label} contacts, least-tagged first — then the other chips for the rest.`;
+          : `Click to list the ${missing[0].label} contacts, least-tagged first - then the other chips for the rest.`;
         return (
           <button
             data-tag-debt
             type="button"
             onClick={() => setOpenKey(isOpen ? null : target)}
             aria-expanded={isOpen}
-            title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out — it's a rolling window rather than a book to work through — and All is the union of the rest. ${which}`}
+            title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out - it's a rolling window rather than a book to work through - and All is the union of the rest. ${which}`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '1px 8px', borderRadius: 999,
@@ -427,8 +427,8 @@ function CampaignOutreachList({ rows, onNavigate }) {
         <div
           key={`${c.index}-${c.label}`}
           title={(c.total > 0
-            ? `${c.sent} of ${c.total} sent (${c.pct}%) — ${c.remaining} still to go`
-            : 'Saved with nobody on it yet — 0% sent. Open the campaign to build its list')
+            ? `${c.sent} of ${c.total} sent (${c.pct}%) - ${c.remaining} still to go`
+            : 'Saved with nobody on it yet - 0% sent. Open the campaign to build its list')
             + (c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
           style={{
             display: 'flex', alignItems: 'baseline', gap: '0.5rem',
@@ -527,7 +527,7 @@ function PeFirmRow({ row, onSelectProspect, byId, last }) {
     <div style={{ padding: '4px 0', borderBottom: last ? 'none' : '1px dashed #EEF0FA', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
         <span
-          title={`PE Stage: ${row.stage}. Lead firms and Not Sold ones are left off this list — one hasn’t been opened, the other has answered.`}
+          title={`PE Stage: ${row.stage}. Lead firms and Not Sold ones are left off this list - one hasn’t been opened, the other has answered.`}
           style={{
             flexShrink: 0, padding: '1px 6px', borderRadius: 999,
             background: tint.bg, border: `1px solid ${tint.border}`, color: tint.ink,
@@ -560,7 +560,7 @@ function PeFirmRow({ row, onSelectProspect, byId, last }) {
             the PE Portfolio table is showing them. */}
         {row.closedCount > 0 && (
           <span
-            title={`${row.closedCount} closed opportunit${row.closedCount === 1 ? 'y' : 'ies'} on this firm or its portfolio companies and nothing open — the PE Opps column reads 0/${row.closedCount}. Closed deals aren't something in flight, so the firm still belongs on this list.`}
+            title={`${row.closedCount} closed opportunit${row.closedCount === 1 ? 'y' : 'ies'} on this firm or its portfolio companies and nothing open - the PE Opps column reads 0/${row.closedCount}. Closed deals aren't something in flight, so the firm still belongs on this list.`}
             style={{
               flexShrink: 0, padding: '0 6px', borderRadius: 999,
               border: '1px solid #E2E8F0', background: '#F8FAFC',
@@ -644,7 +644,7 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
     <div style={{ marginTop: 8, fontSize: '0.72rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
         <span
-          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No — the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
+          title="Contacts on the Key roster (tagged Dan Key Target) whose Met In Person answer in the contact popup is No - the same flag the Key Contacts table's Met In Person column shows. Set it to Yes there or on a name below and they drop off this list; set it to Hold off to park them without claiming you've met them."
           style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
         >
           Key contacts not met in person: {summary.total}
@@ -655,7 +655,7 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
             against the roster. */}
         {summary.onHold > 0 && (
           <span
-            title="Key contacts whose Met In Person answer is “Hold off”. Still not met — they're just not on the list of people to go and see."
+            title="Key contacts whose Met In Person answer is “Hold off”. Still not met - they're just not on the list of people to go and see."
             style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}
           >
             · {summary.onHold} on hold
@@ -699,7 +699,7 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
                   is in the same place as the one above it. */}
               <span
                 title={g.location
-                  ? `${g.location} — the city and state on these contacts' records`
+                  ? `${g.location} - the city and state on these contacts' records`
                   : 'No city on these contacts’ records'}
                 style={{
                   flexShrink: 0, padding: '0 6px', borderRadius: 999,
@@ -819,7 +819,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
           return (
             <span
               key={t.tier}
-              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot — ${t.missing.length} still to map. Accounts that already have a history are left out entirely — Client, Old Client, Hold Off and Lost - Not Sold — since cold outreach is for names with no relationship yet. The rest are the accounts on your Table View.`}
+              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot - ${t.missing.length} still to map. Accounts that already have a history are left out entirely - Client, Old Client, Hold Off and Lost - Not Sold - since cold outreach is for names with no relationship yet. The rest are the accounts on your Table View.`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 padding: '1px 8px', borderRadius: 999,
@@ -844,7 +844,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
 
       {!focus ? (
         <div style={{ fontSize: '0.72rem', color: '#166534' }}>
-          Every tiered account has a decision maker tagged — nothing left to map.
+          Every tiered account has a decision maker tagged - nothing left to map.
         </div>
       ) : (
         <>
@@ -858,7 +858,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
               borderBottom: `1px solid ${tierTint(focus.tier).border}`,
               fontSize: '0.68rem', fontWeight: 700, color: tierTint(focus.tier).ink,
             }}>
-              {focus.tier} — {focus.missing.length} account{focus.missing.length === 1 ? '' : 's'} with no decision maker identified
+              {focus.tier} - {focus.missing.length} account{focus.missing.length === 1 ? '' : 's'} with no decision maker identified
             </div>
             <div style={{ maxHeight: expanded ? 280 : 'none', overflowY: expanded ? 'auto' : 'visible' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -896,7 +896,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
                         )}
                       </td>
                       <td style={{ ...DM_CELL, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {p.status || '—'}
+                        {p.status || '-'}
                       </td>
                       <td
                         style={{
@@ -904,9 +904,9 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
                           color: p.contactCount ? '#B45309' : '#94A3B8',
                         }}
                         title={p.contactCount
-                          ? `${p.contactCount} contact${p.contactCount === 1 ? '' : 's'} at this company in HubSpot, none tagged Decision Maker — tag one and this row clears`
-                          : 'No contacts at this company in HubSpot yet — the decision maker still has to be found'}
-                      >{p.contactCount || '—'}</td>
+                          ? `${p.contactCount} contact${p.contactCount === 1 ? '' : 's'} at this company in HubSpot, none tagged Decision Maker - tag one and this row clears`
+                          : 'No contacts at this company in HubSpot yet - the decision maker still has to be found'}
+                      >{p.contactCount || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1022,7 +1022,7 @@ function AddStepForm({ onAdd }) {
         value={title}
         onChange={e => setTitle(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-        placeholder="What the step is — e.g. “Work the conference follow-up list”"
+        placeholder="What the step is - e.g. “Work the conference follow-up list”"
         style={{ ...EDIT_INPUT, fontSize: '0.84rem', fontWeight: 700 }}
       />
       <input
@@ -1042,7 +1042,7 @@ function AddStepForm({ onAdd }) {
           }}
         >Add step</button>
         <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
-          Added at the bottom — move it up with the arrows.
+          Added at the bottom - move it up with the arrows.
         </span>
       </div>
     </div>
@@ -1220,7 +1220,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
     // place and it isn't obvious that the two travel together.
     const warning = isCustomStep(step.key)
       ? `Remove “${step.title}”?`
-      : `Remove “${step.title}”?\n\nThis is one of the built-in steps. Anything it counts or lists for you goes with it — “Reset to defaults” brings it back.`;
+      : `Remove “${step.title}”?\n\nThis is one of the built-in steps. Anything it counts or lists for you goes with it - “Reset to defaults” brings it back.`;
     if (!window.confirm(warning)) return;
     commitSteps(steps.filter(s => s.key !== step.key));
   };
@@ -1264,9 +1264,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
           {editing
             ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
-            : `The order prospecting work gets done, ranked. Start at the top and work down —
+            : `The order prospecting work gets done, ranked. Start at the top and work down -
                each step is warmer than the one below it. A step turns green once it is clear:
-               counted steps answer for themselves, the rest you mark caught up for the day —
+               counted steps answer for themselves, the rest you mark caught up for the day -
                and the first one you haven't shows as outstanding once everything above it
                is clear.`}
         </div>
@@ -1320,10 +1320,10 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                 : 'Mark caught up';
           const title = state === 'work' ? step.workTitle(count)
             : state === 'caught-up'
-              ? (tracked || autoCleared ? step.clearTitle : 'Marked caught up today — clears tomorrow. Click to undo.')
+              ? (tracked || autoCleared ? step.clearTitle : 'Marked caught up today - clears tomorrow. Click to undo.')
               : state === 'due'
-                ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today — the mark clears tomorrow.'
-                : 'Nothing counts this step automatically — click once you\'ve worked it today';
+                ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today - the mark clears tomorrow.'
+                : 'Nothing counts this step automatically - click once you\'ve worked it today';
           // Several steps print their work under the detail line rather
           // than only counting it — those rows are tall, so their
           // right-hand cells sit at the top rather than floating in the

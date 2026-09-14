@@ -1882,7 +1882,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const sameName = (existing.company || '').toLowerCase().trim() === company.toLowerCase();
       const asName = sameName ? '' : ` as "${existing.company}"`;
       const why = reasons.length
-        ? `it ${reasons.join(', it ')} — that is why it isn't showing on My Accounts`
+        ? `it ${reasons.join(', it ')} - that is why it isn't showing on My Accounts`
         : `the two names just aren't linked, so it keeps reading as missing`;
       const ok = confirm(`${company} is already on the tracker${asName}, and ${why}.
 
@@ -1934,7 +1934,7 @@ Fix that now?
 
     const parts = [`Add ${plans.length} Target Accounts ${plans.length === 1 ? 'account' : 'accounts'} to My Accounts?`];
     if (creates.length > 0) parts.push(`\nCreate ${creates.length} new record${creates.length === 1 ? '' : 's'}:\n${sampleNames(creates)}`);
-    if (repairs.length > 0) parts.push(`\n${repairs.length} already on the tracker — fixed in place (tier, dismissal, target-name link) rather than duplicated:\n${sampleNames(repairs)}`);
+    if (repairs.length > 0) parts.push(`\n${repairs.length} already on the tracker - fixed in place (tier, dismissal, target-name link) rather than duplicated:\n${sampleNames(repairs)}`);
     if (reassigns.length > 0) {
       const who = reassigns.slice(0, 8).map(pl => `• ${pl.company} (currently ${pl.existing.cdm})`).join('\n');
       const more = reassigns.length > 8 ? `\n…and ${reassigns.length - 8} more` : '';
@@ -3033,7 +3033,7 @@ Fix that now?
   // Same CSV, cut to the accounts still being worked by inside sales.
   function downloadZoomExport() {
     // Sits beside Export Excel, so it exports the same rows that button
-    // would — the table's own filtered set, not just the page filters.
+    // would - the table's own filtered set, not just the page filters.
     const source = tableVisibleRows || filteredAccounts;
     const insideSales = source.filter(a => a.status === 'Inside Sales');
     if (insideSales.length === 0) {
@@ -3080,7 +3080,7 @@ Fix that now?
     return [...names].sort();
   }, [targetAccountsData]);
 
-  // Detect duplicate target account name mappings — map of targetName -> [company names]
+  // Detect duplicate target account name mappings - map of targetName -> [company names]
   const duplicateTargetNames = useMemo(() => {
     const byTarget = {};
     for (const a of allAccounts) {
@@ -3099,7 +3099,7 @@ Fix that now?
   }, [allAccounts]);
 
   // For each account, the set of OTHER Table View prospects whose
-  // company name normalizes to the same key — catches near-duplicate
+  // company name normalizes to the same key - catches near-duplicate
   // spellings like "Affinius Capital" vs "Affinius Capital, a USAA Co."
   // that would otherwise live as separate prospects. Normalization
   // strips parentheticals, corporate suffixes, and punctuation.
@@ -3235,7 +3235,7 @@ Fix that now?
       if (col.key === 'type') {
         const typeMismatchAccounts = filteredAccounts.filter(a => a.typeMismatch).map(a => a.company);
         // Source the dropdown options from the configurable "Type" list on
-        // the Dropdowns tab — through the shared builder, so this picker
+        // the Dropdowns tab - through the shared builder, so this picker
         // offers exactly what the company card and Table View do: the list,
         // then any Type already in use, then legacy customTypes, falling
         // back to the built-in enum if the list has been hidden or emptied.
@@ -3333,7 +3333,7 @@ Fix that now?
           );
         }};
       }
-      // Skip computed columns — they stay read-only
+      // Skip computed columns - they stay read-only
       if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
@@ -3385,7 +3385,7 @@ Fix that now?
   }, [columns, selectedIds]);
 
   // Selectable ids among the rows actually on screen, and how many of them
-  // are already selected — drives the select-all-visible toggle. When the
+  // are already selected - drives the select-all-visible toggle. When the
   // table's own column-header filters are active, tableVisibleRows is that
   // post-filter subset; when they're not, DataTable reports back the whole
   // filteredAccounts set it was handed, so this tracks the screen either
@@ -3445,7 +3445,7 @@ Fix that now?
     }
   }
 
-  // Company Type subtab — the My Accounts firms grouped by their Type
+  // Company Type subtab - the My Accounts firms grouped by their Type
   // column instead of listed row-by-row. It renders from the same hooks as
   // the table below, so the two tabs can never disagree about which firms
   // are in the list. Everything past this point is the standard table.
@@ -3534,7 +3534,7 @@ Fix that now?
                       key={a.id || a.company}
                       type="button"
                       className={styles.typeRow}
-                      title={`${a.company}${a.status ? ` · ${a.status}` : ''} · ${a.contactCount || 0} contact${(a.contactCount || 0) === 1 ? '' : 's'} — click to open`}
+                      title={`${a.company}${a.status ? ` · ${a.status}` : ''} · ${a.contactCount || 0} contact${(a.contactCount || 0) === 1 ? '' : 's'} - click to open`}
                       onClick={() => onSelect(a)}
                     >
                       {a.company}
@@ -3556,7 +3556,7 @@ Fix that now?
   return (
     <div className={styles.wrapper}>
       {(() => {
-        // Company mappings resolve against `targetAccounts` — the Target
+        // Company mappings resolve against `targetAccounts` - the Target
         // Accounts list, filtered to this CDM + Tier 1/2/3. When that list
         // comes back empty, every auto-fuzzy mapping silently vanishes and
         // the picker dropdown empties, which reads as "all my mappings
@@ -3600,7 +3600,7 @@ Fix that now?
           return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
         })}
         {(() => {
-          // Surface inactive-hidden matches only — the accounts list
+          // Surface inactive-hidden matches only - the accounts list
           // also hides prospects assigned to other CDMs / no-tier
           // rows, but those don't read as "hidden" to the user. The
           // ones they care about are companies in their territory
@@ -3656,7 +3656,7 @@ Fix that now?
           );
         })()}
         {(() => {
-          // Surface dismissed matches — dismissed companies are removed
+          // Surface dismissed matches - dismissed companies are removed
           // from the accounts list entirely, so searching for one comes up
           // empty with no explanation. Flag them like inactive-hidden rows,
           // with a quick restore so they can be brought back to the list.

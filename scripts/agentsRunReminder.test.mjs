@@ -76,7 +76,7 @@ eq(isAgentsRunDue(iso(thu), at(2026, 8, 7, 9, 0).getTime()), false, 'quiet the n
 eq(isAgentsRunDue(iso(thu), at(2026, 8, 8, 12, 0).getTime()), false, 'quiet on Saturday');
 eq(isAgentsRunDue(iso(thu), at(2026, 8, 9, 12, 0).getTime()), false, 'quiet on Sunday');
 eq(isAgentsRunDue(iso(thu), at(2026, 8, 10, 9, 0).getTime()), false,
-  'still quiet Monday morning — the stamp was an evening one');
+  'still quiet Monday morning - the stamp was an evening one');
 eq(isAgentsRunDue(iso(thu), at(2026, 8, 10, 19, 0).getTime()), true, 'up Monday evening');
 
 // A Friday run gets the same treatment, one day over.
@@ -134,7 +134,7 @@ eq(agentsSnoozeEndAt(byKey('4h'), fri.getTime()), fri.getTime() + 4 * 3600000, '
 eq(label(new Date(agentsSnoozeEndAt(byKey('1d'), fri.getTime()))), label(at(2026, 8, 10)),
   'a Friday one-day snooze ends Monday');
 eq(label(new Date(agentsSnoozeEndAt(byKey('1w'), thu.getTime()))), label(at(2026, 8, 13)),
-  'a week is five business days — the same weekday next week');
+  'a week is five business days - the same weekday next week');
 eq(agentsSnoozeEndAt(null, fri.getTime()), null, 'no duration, no end');
 eq(agentsSnoozeEndAt({ key: 'bogus' }, fri.getTime()), null, 'an unrecognised duration has no end');
 

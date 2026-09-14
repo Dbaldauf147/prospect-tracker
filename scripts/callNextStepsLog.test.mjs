@@ -92,7 +92,7 @@ const call = (over) => ({ id: 'c', oppId: '7', recordedAt: '2026-05-05T00:00:00Z
     nextStepsPushed: 2,
     followUps: [{ text: 'Send the quote', owner: 'Dan', due: 'Friday' }, { text: 'Book the walk' }],
   })], '7');
-  eq(log[0].steps, ['Send the quote — Dan (due Friday)', 'Book the walk'],
+  eq(log[0].steps, ['Send the quote - Dan (due Friday)', 'Book the walk'],
     'the steps read exactly as the ones pushed onto the checklist');
   eq(log[0].name, 'Acme pricing review', 'the call names itself');
   eq(log[0].url, 'https://granola.example/a', 'and links back to where it came from');

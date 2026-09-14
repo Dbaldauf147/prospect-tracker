@@ -25,7 +25,7 @@ export function ProspectsLoadError({ message }) {
         Your companies could not be loaded
       </h1>
       <p style={{ color: 'var(--color-text-muted)', fontSize: 13, lineHeight: 1.5 }}>
-        {explainProspectsLoadError(text)} Nothing has been changed or deleted — this is a failed
+        {explainProspectsLoadError(text)} Nothing has been changed or deleted - this is a failed
         read, so your data is exactly as you left it.
       </p>
       <pre style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.75rem', fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
@@ -43,7 +43,7 @@ export function ProspectsLoadError({ message }) {
               navigator.clipboard.writeText(details);
               b.textContent = 'Copied';
             } catch {
-              b.textContent = 'Copy failed — see console';
+              b.textContent = 'Copy failed - see console';
               console.log(details);
             }
           }}

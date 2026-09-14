@@ -21,7 +21,7 @@ function ok(value, name) { eq(!!value, true, name); }
 
 const call = (over = {}) => ({
   id: 'granola:not_abc',
-  name: 'Renewal call — Acme Corp',
+  name: 'Renewal call - Acme Corp',
   recordedAt: '2026-08-05T15:00:00.000Z',
   granolaUrl: 'https://notes.granola.ai/d/not_abc',
   summary: 'Talked through the renewal and the March expiry.\n\nThey want two term options.',
@@ -32,7 +32,7 @@ const call = (over = {}) => ({
 {
   const s = lastCallStamp(call());
   eq(s._lastCallId, 'granola:not_abc', 'the recording id travels, so the stamp can be matched later');
-  eq(s._lastCallName, 'Renewal call — Acme Corp', 'so does the call name');
+  eq(s._lastCallName, 'Renewal call - Acme Corp', 'so does the call name');
   eq(s._lastCallAt, '2026-08-05T15:00:00.000Z', 'and when the call happened');
   eq(s._lastCallUrl, 'https://notes.granola.ai/d/not_abc', 'and the link back to the note');
   eq(s._lastCallGist, 'Talked through the renewal and the March expiry.',
@@ -98,13 +98,13 @@ const call = (over = {}) => ({
 {
   const opp = {
     _lastCallId: 'granola:not_abc',
-    _lastCallName: 'Renewal call — Acme Corp',
+    _lastCallName: 'Renewal call - Acme Corp',
     _lastCallAt: '2026-08-05T15:00:00.000Z',
     _lastCallUrl: 'https://notes.granola.ai/d/not_abc',
     _lastCallGist: 'Talked through the renewal.',
   };
   const read = lastCallOn(opp);
-  eq(read.name, 'Renewal call — Acme Corp', 'the popup reads the name back');
+  eq(read.name, 'Renewal call - Acme Corp', 'the popup reads the name back');
   ok(read.atMs > 0, 'and a sortable timestamp');
   eq(lastCallOn({}), null, 'an opp that never had a call mapped reads as nothing to show');
   eq(lastCallOn(null), null, 'and so does no opp at all');
@@ -169,7 +169,7 @@ const call = (over = {}) => ({
   const records = [call({ id: 'granola:aug', oppId: 'opp-1', summary: 'A better summary.' })];
   const stale = [{
     _id: 'opp-1', _lastCallId: 'granola:aug', _lastCallAt: '2026-08-05T15:00:00.000Z',
-    _lastCallName: 'Renewal call — Acme Corp', _lastCallGist: 'The old gist.',
+    _lastCallName: 'Renewal call - Acme Corp', _lastCallGist: 'The old gist.',
   }];
   eq(backfillLastCallPatches(records, stale).patches['opp-1']._lastCallGist, 'A better summary.',
     'the same call with a fresher summary refreshes the gist');

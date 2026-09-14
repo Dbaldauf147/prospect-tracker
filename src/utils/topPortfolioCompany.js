@@ -91,7 +91,7 @@ export function topPcCompanyKeys(name) {
     // A short leading token before a dash or colon is an acronym for what
     // follows, not part of the name. Capped at 6 characters so a real
     // first word ("Perform - …") isn't thrown away.
-    const acronym = base.match(/^[A-Za-z0-9&.]{1,6}\s*[-–—:|]\s+(\S.*)$/);
+    const acronym = base.match(/^[A-Za-z0-9&.]{1,6}\s*[-–—:|]\s+(\S.*)$/); // em-dash-ok: reads company names
     if (acronym) add(acronym[1]);
     // Both sides of an fka/dba: the row may name either.
     const aka = base.split(/\s+(?:fka|f\/k\/a|dba|d\/b\/a)\b\.?\s+/i);

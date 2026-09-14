@@ -722,7 +722,7 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
         onKeyDown={handleKeyDown}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        title="Type part of the company name — matches are ranked as you type"
+        title="Type part of the company name - matches are ranked as you type"
         style={{
           width: '100%', padding: '0.2rem 0.3rem',
           border: '1px solid #3B82F6', borderRadius: 4,
@@ -768,7 +768,7 @@ function ClientSearchPicker({ options, current, clearLabel, anchor, inputStyle, 
             ))}
             {matches.length >= SUGGEST_LIMIT && (
               <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.62rem', color: '#94A3B8', borderTop: '1px solid #F1F5F9' }}>
-                Showing the first {SUGGEST_LIMIT} — keep typing to narrow.
+                Showing the first {SUGGEST_LIMIT} - keep typing to narrow.
               </div>
             )}
           </div>
@@ -1230,7 +1230,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
           : (Number.isFinite(oppPreview)
             ? (v) => (isFilled(v) ? renderValue(v) : (
               <span
-                title={`From the opp tied to this deal${row.__oppYear1__.optionName ? ` (option “${row.__oppYear1__.optionName}”)` : ''}: ${k === DEAL_SETUP_KEY ? 'Year 1 Setup + One Time' : 'Year 1 recurring revenue'} ${fmtCurrency(oppPreview)}. Nothing is stored yet — use “Import Year 1 figures” above the grid, or type your own.`}
+                title={`From the opp tied to this deal${row.__oppYear1__.optionName ? ` (option “${row.__oppYear1__.optionName}”)` : ''}: ${k === DEAL_SETUP_KEY ? 'Year 1 Setup + One Time' : 'Year 1 recurring revenue'} ${fmtCurrency(oppPreview)}. Nothing is stored yet - use “Import Year 1 figures” above the grid, or type your own.`}
                 style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F766E', fontStyle: 'italic', opacity: 0.85 }}
               >({fmtCurrency(oppPreview)})</span>
             ))
@@ -2228,7 +2228,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
           <button
             type="button"
             onClick={() => setShowPaste(true)}
-            title="Paste tab-separated rows copied from Google Sheets — or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each deal field. New deals are added and deals already here fill in their blank cells; values already on a deal are left alone."
+            title="Paste tab-separated rows copied from Google Sheets - or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each deal field. New deals are added and deals already here fill in their blank cells; values already on a deal are left alone."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >Paste from Sheets</button>
           <button
@@ -2297,7 +2297,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
                 <button
                   type="button"
                   onClick={importOppYear1}
-                  title="Write each deal's Year 1 Setup and Year 1 recurring revenue from the Pricing Option saved on the opp its BFO opp name ties it to. Only blank cells are filled — a figure already on the deal is left alone."
+                  title="Write each deal's Year 1 Setup and Year 1 recurring revenue from the Pricing Option saved on the opp its BFO opp name ties it to. Only blank cells are filled - a figure already on the deal is left alone."
                   style={{
                     padding: '0.15rem 0.55rem', background: '#0F766E', border: '1px solid #0F766E',
                     borderRadius: 4, color: '#fff', fontSize: '0.72rem', fontWeight: 700,
@@ -2308,7 +2308,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
                 Their <strong>BFO opp name</strong> matches an opp carrying a saved Pricing Option, and the deal&apos;s
                 {' '}<strong>Setup</strong> / <strong>Recurring Revenue</strong> {oppYear1Fills.length === 1 ? 'is' : 'are'} still blank.
-                Blank cells only — anything already filled in is left alone. The bracketed figures in the grid are what would be written.
+                Blank cells only - anything already filled in is left alone. The bracketed figures in the grid are what would be written.
               </div>
               <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {oppYear1Fills.slice(0, 8).map((f) => (
@@ -2321,7 +2321,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
                       f.patch[DEAL_RECURRING_KEY] != null ? `Recurring ${fmtCurrency(f.patch[DEAL_RECURRING_KEY])}` : null,
                     ].filter(Boolean).join(' · ')}
                     {f.optionName ? <span style={{ color: '#0D9488' }}> (option &ldquo;{f.optionName}&rdquo;)</span> : null}
-                    {f.oppCount > 1 ? <span style={{ color: '#B45309' }}> — {f.oppCount} opps share this BFO name; using the first with an option</span> : null}
+                    {f.oppCount > 1 ? <span style={{ color: '#B45309' }}> - {f.oppCount} opps share this BFO name; using the first with an option</span> : null}
                   </li>
                 ))}
               </ul>
@@ -2356,7 +2356,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               aria-expanded={!soldCollapsed}
               title={soldCollapsed
                 ? 'Show the flagged opps'
-                : 'Fold this away — the count stays, and the opps come back when you open it'}
+                : 'Fold this away - the count stays, and the opps come back when you open it'}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0,
                 padding: 0, background: 'none', border: 'none', textAlign: 'left',

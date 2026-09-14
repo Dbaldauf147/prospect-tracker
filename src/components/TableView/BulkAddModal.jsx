@@ -369,7 +369,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
 
         <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', flex: 1, minHeight: 0, overflowY: 'auto' }}>
           <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
-            One company per line, or paste a whole table from Excel — columns are picked up and you say which Table View field each one lands in. Anything already in Table View is skipped, never overwritten.
+            One company per line, or paste a whole table from Excel - columns are picked up and you say which Table View field each one lands in. Anything already in Table View is skipped, never overwritten.
           </div>
 
           <textarea

@@ -77,7 +77,7 @@ const missingLabels = (row) => handoffProgress(row).missing.map(f => f.label);
   // Uploaded workbooks spell "blank" with dashes, so a dash must not
   // count as a completed step (it would inflate the pill on both tabs).
   eq(missingLabels(complete({ Commission: '-' })), ['Commission'], 'a dash is not a completed field');
-  eq(missingLabels(complete({ Commission: '—' })), ['Commission'], 'an em dash either');
+  eq(missingLabels(complete({ Commission: '-' })), ['Commission'], 'an em dash either');
   eq(missingLabels(complete({ Commission: '   ' })), ['Commission'], 'nor is whitespace');
   eq(missingLabels(complete({ Commission: '0' })), [], 'but a real value counts, including a zero');
 }

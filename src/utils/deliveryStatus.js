@@ -41,11 +41,11 @@ export const DELIVERY_LABEL = {
 };
 
 export const DELIVERY_TITLE = {
-  [DELIVERY.CONFIRMED]: 'It arrived — the message was fetched or a link in it was followed, which can only happen after delivery. The strongest delivery evidence there is.',
-  [DELIVERY.DELIVERED]: 'It went out and nothing bounced. No positive confirmation it was seen — plenty of clients never load the image — but no delivery failure either.',
-  [DELIVERY.FAILED]: 'A delivery failure came back for this address. Nobody saw the email, and every future send to it is wasted — fix or remove the address.',
+  [DELIVERY.CONFIRMED]: 'It arrived - the message was fetched or a link in it was followed, which can only happen after delivery. The strongest delivery evidence there is.',
+  [DELIVERY.DELIVERED]: 'It went out and nothing bounced. No positive confirmation it was seen - plenty of clients never load the image - but no delivery failure either.',
+  [DELIVERY.FAILED]: 'A delivery failure came back for this address. Nobody saw the email, and every future send to it is wasted - fix or remove the address.',
   [DELIVERY.NOT_SENT]: 'The tracked draft exists but the campaign has no record of it going out.',
-  [DELIVERY.UNKNOWN]: 'No saved campaign claims this send, so nothing was watching for a bounce. Not the same as delivered — we simply would not have been told.',
+  [DELIVERY.UNKNOWN]: 'No saved campaign claims this send, so nothing was watching for a bounce. Not the same as delivered - we simply would not have been told.',
 };
 
 /**

@@ -59,13 +59,13 @@ eq(pickSiteNameColumn([
   'Site ID', 'Parent Company', 'Operating Brand / Subsidiary', 'Site Name',
   'Property Type', 'Site Function', 'Address', 'City', 'State / Province',
   'Postal / ZIP Code', 'Country', 'Region', 'Tenure Category',
-]), 'Site Name', 'site name: Hornblower sheet — Site Name, not Site ID or Site Function');
+]), 'Site Name', 'site name: Hornblower sheet - Site Name, not Site ID or Site Function');
 
 // ---- pickZipColumn ------------------------------------------------------
 
 eq(pickZipColumn([]), '', 'zip: no headers');
 eq(pickZipColumn(['Site Name', 'City']), '',
-  'zip: a file with no zip column gets none — never a guess at column 0');
+  'zip: a file with no zip column gets none - never a guess at column 0');
 eq(pickZipColumn(['Site Name', 'Postal / ZIP Code']), 'Postal / ZIP Code', 'zip: Postal / ZIP Code');
 eq(pickZipColumn(['Zip Code', 'Postal Code']), 'Zip Code', 'zip: exact "Zip Code" leads');
 

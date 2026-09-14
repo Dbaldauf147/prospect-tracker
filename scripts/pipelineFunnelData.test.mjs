@@ -167,7 +167,7 @@ const closed = (stage, days, over = {}) => ({
   const stage5 = trend.rows.find(r => r.num === 5);
   eq(stage5.signal, 'a Quoted On date', 'a stage row carries the signal that defined it');
   eq(trend.rows.find(r => r.num === null).signal, null,
-    'and the all-closed row has none — it counts every closed opp');
+    'and the all-closed row has none - it counts every closed opp');
 
   // The current month's cell, and both aggregate columns: each is a tally
   // with the deals behind it, which is what the hover panel lists.

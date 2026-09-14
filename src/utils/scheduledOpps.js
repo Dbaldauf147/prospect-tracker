@@ -181,5 +181,5 @@ export function scheduledOppChipTitle(entry, item) {
   const when = formatScheduledOppWhen(entry);
   const company = String(entry?.company || '').trim();
   return `A new opp naming ${item} is scheduled${company ? ` for ${company}` : ''} on ${when}. `
-    + 'Nothing exists on the Opps table until then — manage it from Scheduled Opps in the Opps toolbar.';
+    + 'Nothing exists on the Opps table until then - manage it from Scheduled Opps in the Opps toolbar.';
 }

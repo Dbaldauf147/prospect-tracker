@@ -110,10 +110,10 @@ export function isAdminEmail(email) {
 // these says what happened but not what to do about it — "Quota
 // exceeded." reads like a bug in the route that reported it.
 const FIRESTORE_HINTS = {
-  4: 'Firestore took too long to answer. Usually transient — try again.',
+  4: 'Firestore took too long to answer. Usually transient - try again.',
   7: "Firestore refused the request. The server's service account is missing access to this data.",
-  8: 'The Firebase project is out of Firestore quota, so every read is being refused — this is project-wide, not specific to this feature. On the free (Spark) plan the daily allowance resets at midnight US Pacific; a project that keeps hitting it needs fewer reads or the Blaze plan.',
-  14: 'Firestore was unreachable. Usually transient — try again.',
+  8: 'The Firebase project is out of Firestore quota, so every read is being refused - this is project-wide, not specific to this feature. On the free (Spark) plan the daily allowance resets at midnight US Pacific; a project that keeps hitting it needs fewer reads or the Blaze plan.',
+  14: 'Firestore was unreachable. Usually transient - try again.',
 };
 
 /**

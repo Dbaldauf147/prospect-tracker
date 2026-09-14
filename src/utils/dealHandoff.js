@@ -39,7 +39,7 @@ export const HANDOFF_FIELDS = [
 // it — a date, a note, a "Yes", whatever. We treat empty strings and bare
 // dash placeholders ("-", "—", "–") as not filled so a workbook that uses
 // a dash for "blank" doesn't bump the X/N progress count.
-const DASH_PLACEHOLDERS = new Set(['-', '–', '—']);
+const DASH_PLACEHOLDERS = new Set(['-', '–', '—']); // em-dash-ok: reads pasted cells
 export function isFilled(v) {
   if (v == null) return false;
   const s = String(v).trim();

@@ -193,7 +193,7 @@ eq(
 );
 eq(
   describeOutlookCalendar({ connected: true, expired: true }),
-  'Your Outlook sign-in has expired. Use Reconnect Outlook to sign in again — it lasts about an hour.',
+  'Your Outlook sign-in has expired. Use Reconnect Outlook to sign in again - it lasts about an hour.',
   'an expired token is a sign-in, not an error',
 );
 eq(

@@ -83,7 +83,7 @@
 // per-unit one, the count it multiplies.
 export const BASIS_KINDS = [
   { kind: 'flat',    label: 'Flat fee',       hint: 'One figure, whatever the account looks like' },
-  { kind: 'unit',    label: 'Per unit',       hint: 'Rate × a count — sites, meters, invoices, anything you name' },
+  { kind: 'unit',    label: 'Per unit',       hint: 'Rate × a count - sites, meters, invoices, anything you name' },
   { kind: 'percent', label: '% of deal size', hint: 'A cut of the deal size typed into the estimator' },
 ];
 

@@ -70,7 +70,7 @@ export function describeGranolaCalendar({ supported = false, attempts = [], erro
       ? 'Granola rejected the API key when asked for your calendar. Generate a new key in Granola (Settings → API).'
       : 'That Granola key isn’t allowed to read a calendar. Granola’s API covers notes; the calendar sync behind its “Coming up” list isn’t exposed to API keys.';
   }
-  return 'Granola’s API doesn’t serve your calendar — only notes it has finished summarising, which means meetings that have already happened. Upcoming meetings can’t come from Granola.';
+  return 'Granola’s API doesn’t serve your calendar - only notes it has finished summarising, which means meetings that have already happened. Upcoming meetings can’t come from Granola.';
 }
 
 /**

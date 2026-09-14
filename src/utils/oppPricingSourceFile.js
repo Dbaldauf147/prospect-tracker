@@ -51,7 +51,7 @@ export async function saveOppSourceFile(oppId, bytes, fileName) {
   const userId = getDbUserId();
   if (!userId) return;
   if (blob.size > SOURCE_FILE_MAX_SYNC_BYTES) {
-    console.warn(`Opp ${oppId} source file is ${blob.size} bytes — too big to back up to Firestore; it stays on this device.`);
+    console.warn(`Opp ${oppId} source file is ${blob.size} bytes - too big to back up to Firestore; it stays on this device.`);
     return;
   }
   // Best-effort: a rules failure or an offline browser must not lose the

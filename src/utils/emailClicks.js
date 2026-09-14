@@ -208,7 +208,7 @@ export function describeExcludedClicks(summary, scanner = '') {
   const parts = [];
   if (summary.preSend) parts.push(`${summary.preSend} before the send (you following the link while proof-reading the draft)`);
   if (summary.machine) parts.push(`${summary.machine} followed by a security scanner${vendor}`);
-  if (summary.sweep) parts.push(`${summary.sweep} in an automated sweep — one client following several links at once`);
+  if (summary.sweep) parts.push(`${summary.sweep} in an automated sweep - one client following several links at once`);
   if (!parts.length) return '';
   const total = summary.preSend + summary.machine + summary.sweep;
   return `${total} of ${summary.raw} click${summary.raw === 1 ? '' : 's'} not counted: ${parts.join(', ')}.`;

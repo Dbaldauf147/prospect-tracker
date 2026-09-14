@@ -19,7 +19,7 @@ import { matchContacts, isAddressList } from '../../utils/contactSuggest';
 // happened to rank first.
 export function ContactSuggestInput({
   value, onChange, onSubmit, onPick, contacts, exclude, placeholder, style, disabled,
-  emptyHint = 'No contact matches — type the full address to add it anyway.',
+  emptyHint = 'No contact matches - type the full address to add it anyway.',
 }) {
   const [open, setOpen] = useState(false);
   // Which row is highlighted, or -1 for none. Typing puts it back to none, so
@@ -112,7 +112,7 @@ export function ContactSuggestInput({
               // click ever landed on it.
               onMouseDown={(e) => { e.preventDefault(); pick(c); }}
               onMouseEnter={() => setActive(i)}
-              title={`${c.name}${c.company ? ` — ${c.company}` : ''}\n${c.email}`}
+              title={`${c.name}${c.company ? ` - ${c.company}` : ''}\n${c.email}`}
               style={{
                 padding: '4px 6px', borderRadius: '4px', cursor: 'pointer', lineHeight: 1.25,
                 background: i === activeIdx ? 'var(--color-accent)' : 'transparent',

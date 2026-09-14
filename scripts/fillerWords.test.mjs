@@ -28,7 +28,7 @@ const count = text => fillersInText(text).hits.length;
     'hesitations and a sentence-opening "so" all count');
   eq(count('Ummm, uhh, errr, hmm'), 4, 'a drawn-out spelling is the same sound');
   eq(count('Uhm we can do that'), 1, '"uhm" is counted as the same hesitation as "um"');
-  eq(count('Mhm, that tracks'), 0, '"mhm" is agreement, not hesitation — it is not counted');
+  eq(count('Mhm, that tracks'), 0, '"mhm" is agreement, not hesitation - it is not counted');
 }
 
 // --- phrases beat their parts --------------------------------------------
@@ -72,7 +72,7 @@ const turn = (speaker, text, startSec, endSec) => ({
 {
   const use = fillerUsage([
     turn('You', 'Um, so, we can basically get that done, you know?', 0, 30),
-    turn('Dana Reid', 'Um, uh, you know, like, sure — I mean, basically, right?', 30, 90),
+    turn('Dana Reid', 'Um, uh, you know, like, sure - I mean, basically, right?', 30, 90),
     turn('You', 'Great. I will send the contract over today.', 90, 120),
   ]);
   eq(use.fillers, 4, 'only the user’s own turns are counted');
@@ -242,7 +242,7 @@ const turn = (speaker, text, startSec, endSec) => ({
 // --- how the numbers read -------------------------------------------------
 {
   eq(formatRate(4.24), '4.2', 'a small rate keeps one decimal');
-  eq(formatRate(12.4), '12', 'a big rate is a whole number — the decimal says nothing');
+  eq(formatRate(12.4), '12', 'a big rate is a whole number - the decimal says nothing');
   eq(formatRate(0), '0.0', 'zero is a rate, and prints as one');
   eq(formatRate(null), '', 'no rate prints as nothing');
 
@@ -250,7 +250,7 @@ const turn = (speaker, text, startSec, endSec) => ({
   eq(describeAgainstAverage(2, 4, 6), '50% below your average', 'a better call says how much better');
   eq(describeAgainstAverage(4.05, 4, 6), 'right on your average', 'a hair’s difference is no difference');
   eq(describeAgainstAverage(8, 4, 1), '',
-    'one measured call has no average to be compared with — itself is not a comparison');
+    'one measured call has no average to be compared with - itself is not a comparison');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

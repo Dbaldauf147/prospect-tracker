@@ -102,8 +102,8 @@ export function SavingsScopeToggle({ count, included, onChange }) {
       type="button"
       onClick={() => onChange(!included)}
       title={included
-        ? `The ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry indicative savings like any other site, and the exports say so. Click to leave them out — the default, since a leased building's supply contract is usually the landlord's to re-source.`
-        : `Indicative savings are projected on the rest of the portfolio: the ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry $0, because a leased building's supply contract is usually the landlord's to re-source. Click to include them — e.g. a triple-net portfolio that holds its own supply contracts.`}
+        ? `The ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry indicative savings like any other site, and the exports say so. Click to leave them out - the default, since a leased building's supply contract is usually the landlord's to re-source.`
+        : `Indicative savings are projected on the rest of the portfolio: the ${count.toLocaleString()} leased site${count === 1 ? '' : 's'} in this list carry $0, because a leased building's supply contract is usually the landlord's to re-source. Click to include them - e.g. a triple-net portfolio that holds its own supply contracts.`}
       style={{
         padding: '0.4rem 0.8rem',
         borderRadius: 6,
@@ -181,7 +181,7 @@ export function TenureWarningBanner({ coverage, mapped, onFixMapping, onDismiss 
               unplaceable ? `${unplaceable.toLocaleString()} with a status we couldn't place` : null,
             ].filter(Boolean).join(', ') || 'No site has a recognized status'}.
             {' '}A site with no tenure status is screened for compliance and keeps its projected
-            savings — the safer reading of a gap, but a leased building hiding in there inflates
+            savings - the safer reading of a gap, but a leased building hiding in there inflates
             both.
           </>
         )}

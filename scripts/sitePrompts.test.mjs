@@ -114,7 +114,7 @@ check('big site list names a header the upload detects',
 
 // ── A Suite row is sized on the premises, not the tower ───────────────────
 // The estimators halve a suite's load and drop its landlord accounts, but
-// they take the square footage on the row at face value — so a building's
+// they take the square footage on the row at face value - so a building's
 // area on a floor tenant's row overstates it however good the tenure is.
 for (const [name, body] of [['deep research', deepResearch], ['big site list', bigList]]) {
   check(`${name}: a Suite's square footage is the leased premises`,

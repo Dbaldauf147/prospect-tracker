@@ -87,7 +87,7 @@ eq(res('gas', { header: 'Gas Contract Price' }),
   'a header with no unit in it says nothing');
 eq(res('gas', { header: 'Gas Contract Price', cellValue: 'gallons' }),
   { unit: 'therm', source: 'default', canonical: true },
-  'an unreadable unit is not reported as a mismatch — that would be a claim we can\'t make');
+  'an unreadable unit is not reported as a mismatch - that would be a claim we can\'t make');
 eq(res('gas', { header: 'Gas Annual Consumption Dth' }),
   { unit: 'therm', source: 'default', canonical: true },
   'a unit naming the CONSUMPTION column, not a price, is ignored');
@@ -113,7 +113,7 @@ eq(summarizePriceUomFlags([site(null, null), site(null, null)]), null,
 eq(summarizePriceUomFlags([site({ cellValue: 'kWh' }, { cellValue: 'therm' })]), null,
   'prices already in the assumed units: no warning');
 eq(summarizePriceUomFlags([site(null, { cellValue: 'gallons' })]), null,
-  'an unreadable unit raises nothing — the page cannot claim it is wrong');
+  'an unreadable unit raises nothing - the page cannot claim it is wrong');
 
 eq(summarizePriceUomFlags([
   site(null, { cellValue: 'Dth' }),

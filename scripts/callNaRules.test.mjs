@@ -34,7 +34,7 @@ eq(normalizeMeetingName('  Weekly 1:1  '), 'weekly 1 1', 'surrounding space is n
 eq(normalizeMeetingName(''), '', 'nothing normalises to nothing');
 eq(normalizeMeetingName(null), '', 'null normalises to nothing');
 eq(
-  normalizeMeetingName('Simon — Weekly Check‑In'),
+  normalizeMeetingName('Simon - Weekly Check‑In'),
   normalizeMeetingName('Simon - Weekly Check-In'),
   'an em-dash title matches a rule typed with a hyphen',
 );
@@ -66,7 +66,7 @@ eq(ruleMatchesName('Prospecting Time', 'Prospecting Time'), true, 'an exact name
 eq(ruleMatchesName('prospecting time', 'PROSPECTING TIME'), true, 'case never matters');
 eq(ruleMatchesName('Office Hours', 'CM + RECA Monthly Office Hours'), true, 'a rule matches a name that contains it');
 eq(ruleMatchesName('Prospecting Time', 'Canceled: Prospecting Time'), true, 'a cancelled recurrence still matches');
-eq(ruleMatchesName('Prospecting Time', 'Prologis — quarterly review'), false, 'an unrelated call does not match');
+eq(ruleMatchesName('Prospecting Time', 'Prologis - quarterly review'), false, 'an unrelated call does not match');
 eq(ruleMatchesName('', 'anything at all'), false, 'an empty rule matches nothing');
 eq(ruleMatchesName('Office Hours', ''), false, 'a call with no name matches nothing');
 
@@ -85,8 +85,8 @@ const RULES = ['Prospecting Time', 'Office Hours'];
 const records = {
   a: { id: 'a', name: 'Prospecting Time' },
   b: { id: 'b', name: 'CM + RECA Monthly Office Hours' },
-  c: { id: 'c', name: 'Prologis — quarterly review' },
-  d: { id: 'd', name: 'Prospecting Time', oppId: 'opp_1', oppLabel: 'Prologis — Bill payment' },
+  c: { id: 'c', name: 'Prologis - quarterly review' },
+  d: { id: 'd', name: 'Prospecting Time', oppId: 'opp_1', oppLabel: 'Prologis - Bill payment' },
   e: { id: 'e', name: 'Prospecting Time', ...clearOppTagPatch() },
   f: { id: 'f', name: 'Office Hours', ...markOppNaPatch() },
 };
@@ -147,7 +147,7 @@ eq(
 
 // Tagging by hand afterwards beats the auto tag, and clears the trace of
 // it — otherwise the row would claim a rule put it where it now is.
-const afterManual = { ...fresh, ...tagOppPatch({ _id: 'opp_1', Account: 'Prologis' }, { label: 'Prologis — Bill payment' }) };
+const afterManual = { ...fresh, ...tagOppPatch({ _id: 'opp_1', Account: 'Prologis' }, { label: 'Prologis - Bill payment' }) };
 eq(oppTagStateOf(afterManual), 'tagged', 'a hand tag overrides an auto N/A');
 eq(afterManual.oppNaRule, '', 'and drops the rule that had claimed it');
 eq(afterManual.oppTagManual, true, 'and marks the call as the user’s to keep');
@@ -156,7 +156,7 @@ eq(afterManual.oppTagManual, true, 'and marks the call as the user’s to keep')
 
 eq(
   describeNaRules({ rules: [] }),
-  'No auto-N/A rules yet. Add the name of a recurring meeting — a weekly 1:1, office hours, a prospecting block — and calls with that name are marked N/A as they arrive.',
+  'No auto-N/A rules yet. Add the name of a recurring meeting - a weekly 1:1, office hours, a prospecting block - and calls with that name are marked N/A as they arrive.',
   'with no rules the panel says what a rule is for',
 );
 eq(

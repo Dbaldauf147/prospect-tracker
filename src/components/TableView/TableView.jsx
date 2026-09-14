@@ -761,16 +761,16 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
         onProgress: (msg) => setUploadStatus({ type: 'loading', message: msg }),
         confirm: (c) => window.confirm(
           `Import ${newProspects.length} rows?\n\n`
-          + `• ${c.updated} existing compan${c.updated === 1 ? 'y' : 'ies'} updated — their Target Account, division and HQ mappings are kept\n`
+          + `• ${c.updated} existing compan${c.updated === 1 ? 'y' : 'ies'} updated - their Target Account, division and HQ mappings are kept\n`
           + `• ${c.created} added\n`
-          + `• ${c.deleted} removed (not in the file) — anything mapped to them goes too\n`
+          + `• ${c.deleted} removed (not in the file) - anything mapped to them goes too\n`
           + (c.collapsed ? `• ${c.collapsed} row${c.collapsed === 1 ? '' : 's'} in the file were another spelling of a company already in it\n` : '')
           + (c.mappingsMoved ? `• ${c.mappingsMoved} mapping${c.mappingsMoved === 1 ? '' : 's'} moved off duplicate records\n` : ''),
         ),
       });
 
       if (result?.cancelled) {
-        setUploadStatus({ type: 'error', message: 'Import cancelled — nothing was changed.' });
+        setUploadStatus({ type: 'error', message: 'Import cancelled - nothing was changed.' });
         return;
       }
 

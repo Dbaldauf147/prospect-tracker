@@ -1160,7 +1160,7 @@ export function DataTable({
       </div>
       {/* Always render the table header + body shell so the column
           headers stay visible when a search / column filter zeros out
-          the rows — users need to see which columns exist (and clear
+          the rows - users need to see which columns exist (and clear
           their filter) instead of staring at a blank panel. */}
       <>
         <div className={styles.headerWrap} ref={headerRef}>

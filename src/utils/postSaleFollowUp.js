@@ -24,7 +24,7 @@ export const DEAL_IGNORED_KEY = '__progressIgnored';
 
 // Dashes are how the uploaded workbooks spell "blank", so they don't count
 // as the flag being set. Mirrors the isFilled() DealsView writes it with.
-const DASH_PLACEHOLDERS = new Set(['-', '\u2013', '\u2014']);
+const DASH_PLACEHOLDERS = new Set(['-', '\u2013', '\u2014']); // em-dash-ok: reads pasted cells
 
 export function isIgnoredDeal(row) {
   const v = row?.[DEAL_IGNORED_KEY];
@@ -45,7 +45,7 @@ export const POST_SALE_GOAL_DAYS = 60;
 export function isBlankFollowUp(row) {
   const v = String(row?.['Follow Up On Sale'] ?? '').trim();
   if (!v) return true;
-  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase());
+  return ['-', '\u2014', '#n/a'].includes(v.toLowerCase()); // em-dash-ok: reads pasted cells
 }
 
 // The date a deal closed/sold. Deals don't carry an explicit close date, so we

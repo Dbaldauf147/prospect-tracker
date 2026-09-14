@@ -51,7 +51,7 @@ function fakeSettings(initial = {}) {
 const s1 = fakeSettings();
 persistTablePrefs(keys, 'my-accounts', s1.settings, s1.updateSettings, { widths: { company: 240 } });
 eq(loadColWidths(keys), { company: 240 }, 'a width change lands locally straight away');
-eq(s1.calls.length, 0, 'but the settings write waits — a drag fires this per mousemove');
+eq(s1.calls.length, 0, 'but the settings write waits - a drag fires this per mousemove');
 flushTablePrefs();
 eq(s1.calls.length, 1, 'and goes out once the drag settles');
 eq(s1.calls[0].tablePrefs['my-accounts'].widths, { company: 240 }, 'carrying the layout');
@@ -90,7 +90,7 @@ persistTablePrefs(tablePrefsKeys('issues'), 'issues', s4.settings, s4.updateSett
 flushTablePrefs();
 eq(s4.calls.length, 1, 'two tables flush as a single settings write');
 eq(Object.keys(s4.calls[0].tablePrefs).sort(), ['issues', 'opps2', 'untouched'],
-  'holding both layouts — and leaving a third table alone');
+  'holding both layouts - and leaving a third table alone');
 
 // A table the user has never touched on this device keeps what the other one saved.
 const s5 = fakeSettings({ 'my-accounts': { widths: { company: 300 }, hidden: ['tier'] } });
@@ -125,7 +125,7 @@ persistTablePrefs(keys, 'my-accounts', null, null, { widths: { company: 111 } })
 eq(loadColWidths(keys), { company: 111 }, 'no settings: the local copy is still written');
 flushTablePrefs();
 eq(loadColOrder(keys), [], 'kinds never written read as empty');
-eq(loadColHidden(keys), null, 'except hidden, which reads as null — "never chosen"');
+eq(loadColHidden(keys), null, 'except hidden, which reads as null - "never chosen"');
 eq(loadColVisibleRaw(keys), null, 'and the legacy visible list, same reason');
 eq([...loadColRemoved(keys)], [], 'removed reads as an empty set');
 
@@ -154,7 +154,7 @@ eq(sameStoredValue('{"a":2}', { a: 1 }), false, 'a changed map is');
 eq(sameStoredValue('["x"]', new Set(['x']), SET_PREF.toRemote), true,
   'a Set holding the same keys is not news');
 eq(sameStoredValue('["x","y"]', new Set(['x']), SET_PREF.toRemote), false,
-  'a Set that gained a key IS news — the bug this pins made this read as equal');
+  'a Set that gained a key IS news - the bug this pins made this read as equal');
 eq(sameStoredValue('[]', new Set(['x']), SET_PREF.toRemote), false,
   'and so is one that lost its last key');
 eq(SET_PREF.fromRemote(['a', 'b']) instanceof Set, true, 'a stored list reads back as a Set');

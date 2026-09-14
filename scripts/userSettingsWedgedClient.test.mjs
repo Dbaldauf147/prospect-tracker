@@ -113,7 +113,7 @@ function fresh() {
   const mask = maskOf(restCalls[restCalls.length - 1]);
   ok(mask.length === 2, 'the patch names exactly the fields it writes');
   ok(mask.includes('utilityLookupCompanyName') && mask.includes('_lastWriteAt'),
-    'the mapped company and the write stamp — nothing else');
+    'the mapped company and the write stamp - nothing else');
   restore();
 }
 
@@ -213,7 +213,7 @@ function fresh() {
   const list = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
   ok(!!list, 'the company\'s list document is written over HTTPS');
   ok(list.method === 'PATCH' && maskOf(list).length === 0,
-    'as a whole-document write — the entry IS the document');
+    'as a whole-document write - the entry IS the document');
   ok(list.body.fields.rows.arrayValue.values[0].mapValue.fields.Site.stringValue === 'One',
     'carrying the rows');
   const stamp = restCalls.find((c) => c.method === 'PATCH' && /documents\/userSettings\/u1\?/.test(c.url));

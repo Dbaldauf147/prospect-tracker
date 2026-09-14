@@ -465,7 +465,7 @@ export function ScopeServicesModal({
         }}>
           {autoAdded.length > 0 && (
             <div
-              title="These services are listed as Auto-add Services on Dropdowns › Services. They are ordinary ticks now — remove any of them with its × above."
+              title="These services are listed as Auto-add Services on Dropdowns › Services. They are ordinary ticks now - remove any of them with its × above."
               style={{
                 marginBottom: '0.3rem', fontSize: '0.65rem', fontWeight: 600,
                 color: '#1E40AF',
@@ -476,7 +476,7 @@ export function ScopeServicesModal({
           )}
           {selected.length === 0 ? (
             <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-              Nothing in Scope yet — tick a service below to add it.
+              Nothing in Scope yet - tick a service below to add it.
             </div>
           ) : (
             // Wider gap between groups than within one (0.75 vs 0.25), so the
@@ -489,7 +489,7 @@ export function ScopeServicesModal({
                 <span key={group.category} style={{ display: 'flex', alignItems: 'baseline', gap: '0.25rem', flexWrap: 'wrap' }}>
                   <span
                     title={group.category === OFF_BOARD
-                      ? 'In Scope but not offered by the board — a hidden service, or text typed straight into the cell.'
+                      ? 'In Scope but not offered by the board - a hidden service, or text typed straight into the cell.'
                       : group.category}
                     style={{
                       fontSize: '0.58rem', fontWeight: 700, whiteSpace: 'nowrap',
@@ -651,7 +651,7 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
           {canEditStatus
-            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) — they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived — from another opp, or an N/A implied by something this account has already bought (Auto-N/A Services) — and “- (auto)” reverts to that.'
+            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) - they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived - from another opp, or an N/A implied by something this account has already bought (Auto-N/A Services) - and “- (auto)” reverts to that.'
             : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
       </div>

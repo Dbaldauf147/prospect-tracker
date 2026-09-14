@@ -56,7 +56,7 @@ const statusOf = (s) => STATUS[s] || STATUS.none;
 
 // The two trend series' fills. `strong` is the accent the tab already gives
 // that metric and marks the period this report covers; the history behind
-// it is the de-emphasis grey, not a paler tint of the same hue — one bar
+// it is the de-emphasis grey, not a paler tint of the same hue - one bar
 // carries the eye, the rest are context, and a second shade of the accent
 // would read as a second thing being measured. Both greys and both accents
 // clear 3:1 on white, so every bar is visible and no bar competes.
@@ -100,7 +100,7 @@ const gutter = (w = 12) => `<td class="gut" width="${w}" style="width:${w}px;fon
 // pixels and the rest holding the track open behind it.
 //
 // Pixels, not a percentage, because of Word. A table nested in a cell with
-// `width="61%"` is the one construct Word will not resolve — it falls back
+// `width="61%"` is the one construct Word will not resolve - it falls back
 // to the table's content width, and a bar whose only content is a spacer is
 // a few pixels wide. Five of those in a column, each still 14px tall, is
 // what turned this row of horizontal bars into a column chart in Outlook.
@@ -151,7 +151,7 @@ function chipHtml(text, status) {
   );
 }
 
-// One headline KPI — the tab's KpiTile: uppercase label, big number, the
+// One headline KPI - the tab's KpiTile: uppercase label, big number, the
 // status chip beside it, then the arithmetic behind the figure.
 function kpiCardHtml(card) {
   const c = statusOf(card.status);
@@ -186,14 +186,14 @@ function cardRow(cells) {
   return table(`width="100%" style="border-collapse:collapse"`, `<tr>${tds}</tr>`);
 }
 
-// A trend series, as a row of horizontal bars — one period per row, oldest
+// A trend series, as a row of horizontal bars - one period per row, oldest
 // at the top, each bar direct-labelled with its own number.
 //
 // Horizontal rather than columns because the period labels ("Aug 11",
 // "Sep") need room to sit beside their bar, and because a row of cells
 // with set heights is the layout Word is least reliable about. Every bar
 // carries its value in text next to it, so the series is legible even
-// where the fills do not render at all — which is also the relief a
+// where the fills do not render at all - which is also the relief a
 // low-contrast fill on white requires.
 //
 // Horizontal is also something the markup has to hold onto: see barHtml
@@ -209,7 +209,7 @@ function trendRowHtml(point, max, accent, isLast) {
   // of 20-30 emails against a 0-50 axis is five stubs that all look alike.
   const fillPx = max > 0 && known ? Math.max(4, Math.round((value / max) * TREND_TRACK)) : 0;
   // The current period is the one the reader is being told about, so it
-  // carries the full accent and the rest recede — emphasis, rather than
+  // carries the full accent and the rest recede - emphasis, rather than
   // five bars competing for the same attention.
   const fill = isLast ? accent.strong : accent.soft;
   const labelInk = isLast ? INK : MUTED;
@@ -223,12 +223,12 @@ function trendRowHtml(point, max, accent, isLast) {
   // the left instead of letting the table spread them across the card. It
   // carries `hpad` because a percentage cell beside fixed ones is what
   // forces a table wider than a phone's screen, and the media query drops
-  // it there — Word, which never reads the query, keeps it.
+  // it there - Word, which never reads the query, keeps it.
 
   return `<tr>
       <td width="58" valign="middle" style="width:58px;padding:3px 8px 3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${labelInk};white-space:nowrap">${esc(point.label)}</td>
       <td width="${TREND_TRACK}" valign="middle" style="width:${TREND_TRACK}px;padding:3px 0">${bar}</td>
-      <td width="42" valign="middle" style="width:42px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? esc(point.value) : '&mdash;'}</td>
+      <td width="42" valign="middle" style="width:42px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? esc(point.value) : '-'}</td>
       <td class="hpad" width="99%" style="width:99%"></td>
     </tr>`;
 }
@@ -244,13 +244,13 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
 
   const max = points.reduce((m, p) => (p.value != null && p.value > m ? p.value : m), 0);
   const rows = points.map((p, i) => trendRowHtml(p, max, accent, i === points.length - 1)).join('');
-  // Say once, under the series, what the two things a bar can't show mean —
+  // Say once, under the series, what the two things a bar can't show mean -
   // rather than a per-bar asterisk that has to be hunted for.
   const unknown = points.some(p => p.value == null);
   const recorded = points.some(p => p.recorded);
   const feet = [
     recorded ? 'Weeks the live feed no longer covers are the totals banked on the Activity tab.' : '',
-    unknown ? '\u2014 marks a week with no recording and no feed to count.' : '',
+    unknown ? '- marks a week with no recording and no feed to count.' : '',
   ].filter(Boolean).join(' ');
 
   return `${cardOpen({ left: accent.strong })}
@@ -266,7 +266,7 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
 
 // A group of changes, as the tab lists them: uppercase title, a count pill,
 // then the rows. The leading name is the bold part on screen, so the same
-// split is made here — everything up to the first "→" or "(" is the who.
+// split is made here - everything up to the first "→" or "(" is the who.
 function changeGroupHtml(title, items, { max = 25 } = {}) {
   if (!Array.isArray(items) || items.length === 0) return '';
   const rows = items.slice(0, max).map((raw) => {
@@ -303,20 +303,20 @@ const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color
 
 // The funnel.
 //
-// On the tab this is a drawn chart — band height for pipeline value,
+// On the tab this is a drawn chart - band height for pipeline value,
 // segment length for how long deals sit in a stage. An email can't carry
 // that: inline SVG doesn't render in Outlook at all, and a rasterised
 // chart would be blocked as a remote image. So each stage keeps its band
 // as a bar sized by pipeline value in the stage's own colour from the
 // chart's ramp, with the stage-by-stage figures beside it and the outcome
-// block that hangs off the funnel's exit arrow underneath — closed, plus
+// block that hangs off the funnel's exit arrow underneath - closed, plus
 // what the open pipeline weights to, and the projected total.
 export function funnelHtml(funnel, image = null) {
   const stages = Array.isArray(funnel?.stages) ? funnel.stages : [];
   if (!stages.length) return '';
 
   // The chart itself, when the tab managed to rasterise it. It is sized in
-  // a width attribute as well as CSS — Word reads the attribute — and the
+  // a width attribute as well as CSS - Word reads the attribute - and the
   // alt text is the chart's own screen-reader label, so a client that
   // hides pictures still says what the picture was. The stage rows below
   // it stay either way: they are the figures, and they are what a reader
@@ -326,8 +326,8 @@ export function funnelHtml(funnel, image = null) {
         <img src="${esc(image.src)}" width="${IMG_WIDTH}" alt="${esc(image.alt || 'Pipeline funnel')}" style="display:block;width:100%;max-width:${IMG_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none">
       </div>` : '';
 
-  // Bars are sized off the formatted amounts the tab already produced —
-  // "$1,095,000", "$545K" — because the snapshot carries text, not
+  // Bars are sized off the formatted amounts the tab already produced -
+  // "$1,095,000", "$545K" - because the snapshot carries text, not
   // figures. A row whose amount can't be read just gets no bar.
   const amountOf = (s) => {
     const m = String(s?.amount ?? '').replace(/[^0-9.KMB]/gi, '');
@@ -343,7 +343,7 @@ export function funnelHtml(funnel, image = null) {
   const th = (label, align = 'left', width = '', cls = '') =>
     `<th ${cls ? `class="${cls}" ` : ''}${width ? `width="${width}" ` : ''}style="padding:0 8px 5px 0;text-align:${align};font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER}">${esc(label)}</th>`;
   const td = (v, align = 'left', strong = false) =>
-    `<td style="padding:7px 8px 7px 0;text-align:${align};font-family:${FONT};font-size:13px;color:${strong ? INK : INK_SOFT};font-weight:${strong ? 600 : 400};border-bottom:1px solid ${SURFACE_ALT};white-space:nowrap">${esc(v ?? '—')}</td>`;
+    `<td style="padding:7px 8px 7px 0;text-align:${align};font-family:${FONT};font-size:13px;color:${strong ? INK : INK_SOFT};font-weight:${strong ? 600 : 400};border-bottom:1px solid ${SURFACE_ALT};white-space:nowrap">${esc(v ?? '-')}</td>`;
 
   // With the chart above them the rows are the figures, plainly; without
   // it they are also the picture, so each stage keeps a bar sized by
@@ -369,14 +369,14 @@ export function funnelHtml(funnel, image = null) {
   }).join('');
 
   // The outcome block stays in text even under the picture, which draws
-  // its own. It is the projected total — the figure the KPI row no longer
-  // carries — and a reader whose client hides the image would otherwise be
+  // its own. It is the projected total - the figure the KPI row no longer
+  // carries - and a reader whose client hides the image would otherwise be
   // left without it. In the picture it is six pixels tall; here it is
   // readable.
   const o = funnel.outcome;
   const outRow = (label, value, strong) => `<tr>
         <td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${strong ? INK : MUTED};font-weight:${strong ? 700 : 400}">${esc(label)}</td>
-        <td style="padding:3px 0;text-align:right;font-family:${FONT};font-size:${strong ? 15 : 13}px;color:${INK};font-weight:${strong ? 700 : 600}">${esc(value ?? '—')}</td>
+        <td style="padding:3px 0;text-align:right;font-family:${FONT};font-size:${strong ? 15 : 13}px;color:${INK};font-weight:${strong ? 700 : 600}">${esc(value ?? '-')}</td>
       </tr>`;
   const outcome = o ? `
       <div style="margin-top:12px">
@@ -400,20 +400,20 @@ export function funnelHtml(funnel, image = null) {
     ${CARD_CLOSE}`;
 }
 
-// The close rate trend — the funnel's close-rate column with the time axis
+// The close rate trend - the funnel's close-rate column with the time axis
 // put back, as it sits directly under the funnel on the tab.
 //
 // On screen this is a grid with a sparkline per row and a hover panel behind
 // every figure. Neither travels: no mail client renders an inline <svg>, and
-// there is nothing to hover in an inbox. So the Trend column is dropped —
-// the month columns ARE the trend, read left to right — and the figures keep
+// there is nothing to hover in an inbox. So the Trend column is dropped -
+// the month columns ARE the trend, read left to right - and the figures keep
 // what makes them weighable, the count under every rate. A rate here is
 // three or four deals as often as not, and "17%" with no denominator is a
 // number nobody can act on.
 //
 // The two right-hand columns are the point of the table: the months shown
 // added up, and the rolling year behind them. A six-month figure running
-// above the year is drawn as the tab draws it — the app's "good" green with
+// above the year is drawn as the tab draws it - the app's "good" green with
 // a ▲ beside it, so the cue never rests on hue alone for a reader whose
 // client has stripped the colour or who can't separate it from the ink.
 const TREND_GOOD = '#166534';
@@ -435,11 +435,11 @@ export function closeRateTrendHtml(trend) {
     `<th ${title ? `title="${esc(title)}" ` : ''}style="padding:0 6px 5px ${ruled ? 8 : 6}px;text-align:${left ? 'left' : 'right'};font-family:${FONT};font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER};${ruled ? `border-left:1px solid ${BORDER};` : ''}white-space:nowrap">${esc(label)}</th>`;
 
   // A rate with its count underneath, or the em dash that says this stage
-  // closed nothing in the month — blank, not 0%, because no evidence is not
+  // closed nothing in the month - blank, not 0%, because no evidence is not
   // a 0% close rate and a zero would put a cliff in the row that nothing in
   // the pipeline did.
   const figure = (cell, { strong = false, good = false } = {}) => {
-    if (!cell) return `<div style="font-family:${FONT};font-size:12px;color:${MUTED}">&mdash;</div>`;
+    if (!cell) return `<div style="font-family:${FONT};font-size:12px;color:${MUTED}">-</div>`;
     const ink = good ? TREND_GOOD : INK;
     const sub = good ? '#3F8B5C' : MUTED;
     const rate = `<div style="font-family:${FONT};font-size:${strong ? 13 : 12}px;font-weight:700;line-height:1.15;color:${ink};white-space:nowrap">${good ? '&#9650; ' : ''}${esc(cell.rate)}</div>`;
@@ -480,7 +480,7 @@ export function closeRateTrendHtml(trend) {
     + `Each month is the deals whose Close Date falls in it; a month a stage closed nothing is blank, not 0%. `
     + `${span} mo adds up the months shown; 12 mo is a rolling 365 days, the same window the funnel above `
     + `uses, so it reaches back past the first column. A ${span} mo figure in green with a ▲ is running `
-    + `above the rolling year — the recent months are better than the run rate behind them.`;
+    + `above the rolling year - the recent months are better than the run rate behind them.`;
 
   return `
     ${cardOpen()}
@@ -489,7 +489,7 @@ export function closeRateTrendHtml(trend) {
           ${head('Stage reached', { left: true })}
           ${months.map(m => head(m)).join('')}
           ${head(`${span} mo`, { title: `The ${span} months shown, added together.` })}
-          ${head('12 mo', { ruled: true, title: 'A rolling 365 days to today — the same window the pipeline funnel uses.' })}
+          ${head('12 mo', { ruled: true, title: 'A rolling 365 days to today - the same window the pipeline funnel uses.' })}
         </tr>
         ${body}
       `)}
@@ -498,8 +498,8 @@ export function closeRateTrendHtml(trend) {
 }
 
 // The narrative arrives as the Markdown Claude wrote for the on-screen
-// recap. Only the subset that recap uses is rendered — ##/# headings,
-// bullets, blank-line paragraphs and **bold** — and everything is escaped
+// recap. Only the subset that recap uses is rendered - ##/# headings,
+// bullets, blank-line paragraphs and **bold** - and everything is escaped
 // before any tag goes in, so nothing in the model's output can inject HTML.
 export function narrativeHtml(md) {
   const text = String(md || '').trim();
@@ -545,7 +545,7 @@ export function narrativeHtml(md) {
 //
 //   text      the original one-liner, kept for callers that want the whole
 //             story on a single line;
-//   stamp     just when it was taken — the line under the period label,
+//   stamp     just when it was taken - the line under the period label,
 //             with a banner carrying the rest by then;
 //   headline  what is wrong with these numbers, in one short sentence;
 //   detail    when they were taken, and how to get current ones.
@@ -559,7 +559,7 @@ const STALE_AGE_MS = 8 * DAY_MS;
 // enough to send unremarked: the cron runs hourly, so anything inside an
 // hour is as fresh as the schedule can deliver.
 const GRACE_MS = 60 * 60 * 1000;
-const REFRESH_HINT = 'Open Charts → Weekly Report — the numbers republish on every visit, and the next send will carry them.';
+const REFRESH_HINT = 'Open Charts → Weekly Report - the numbers republish on every visit, and the next send will carry them.';
 
 export function freshnessNote(snapshot, now = Date.now()) {
   const at = Number(snapshot?.capturedAt);
@@ -603,7 +603,7 @@ export function freshnessNote(snapshot, now = Date.now()) {
     : `These numbers are ${age}.`;
   return {
     text: early
-      ? `Captured ${when}, before this period ended — anything after that isn't counted. Open Charts → Weekly Report to refresh it.`
+      ? `Captured ${when}, before this period ended - anything after that isn't counted. Open Charts → Weekly Report to refresh it.`
       : stamp,
     stamp,
     stale: true,

@@ -478,8 +478,8 @@ export function buildDealTimeline({
         timing: rollout,
         dependsOn: '',
         description: rollout
-          ? `No timeline attached to this service — sized from its Rollout Time (${rollout}).`
-          : 'No timeline and no Rollout Time set for this service — shown as one month as a placeholder.',
+          ? `No timeline attached to this service - sized from its Rollout Time (${rollout}).`
+          : 'No timeline and no Rollout Time set for this service - shown as one month as a placeholder.',
         icon: 'number',
       });
     }

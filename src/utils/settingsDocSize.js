@@ -92,7 +92,7 @@ const kb = (n) => `${Math.round(n / 1024).toLocaleString()} KB`;
 export function overBudgetMessage(report) {
   const top = report.keys.slice(0, 5)
     .filter(k => k.bytes > 1024)
-    .map(k => `  • ${k.key} — ${kb(k.bytes)}`)
+    .map(k => `  • ${k.key} - ${kb(k.bytes)}`)
     .join('\n');
   return `This save can't be stored: your settings would come to ${kb(report.bytes)}, `
     + `over the ${kb(report.limit)} Firestore allows for one document.\n\n`

@@ -1844,7 +1844,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     onClick={() => chooseSentiment(opt.value)}
                     aria-pressed={on}
                     title={opt.value
-                      ? `Mark ${opt.label.toLowerCase()} — shows on the Divisions chart`
+                      ? `Mark ${opt.label.toLowerCase()} - shows on the Divisions chart`
                       : 'No mark on the Divisions chart'}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
@@ -2453,9 +2453,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 { key: 'yes',     label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' },
                   tip: (tag) => `${tag} is this person's area. Puts the tag on in HubSpot, unless a Not sold below is holding it off` },
                 { key: 'no',      label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
-                  tip: (tag) => `Record ${tag} as “No” — doesn't apply to this person. Kept here, not sent to HubSpot` },
+                  tip: (tag) => `Record ${tag} as “No” - doesn't apply to this person. Kept here, not sent to HubSpot` },
                 { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
-                  tip: (tag) => `Record ${tag} as “Not sure” — haven't worked it out yet. Kept here, not sent to HubSpot` },
+                  tip: (tag) => `Record ${tag} as “Not sure” - haven't worked it out yet. Kept here, not sent to HubSpot` },
               ];
               const STATUSES = [
                 { key: 'sold',    label: 'Sold',     on: { bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59' },
@@ -2472,13 +2472,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     fontSize: '0.68rem', fontWeight: 700,
                     color: done ? '#166534' : '#475569',
                   }}>
-                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded — they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold status on its own.`}>
+                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded - they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold status on its own.`}>
                       Tagged {pct}%
                       <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
                         {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
                       </span>
                     </span>
-                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot — “Not sold” holds it off</span>
+                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot - “Not sold” holds it off</span>
                   </div>
                   {/* Tall enough for the whole vocabulary at once — the point
                       of the table is reading a contact's answers in one look,
@@ -2531,7 +2531,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                                     in it. */}
                                 {TAG_SCORE_EXCLUDED.has(tag.toLowerCase()) && (
                                   <span
-                                    title="Housekeeping tag — answerable, but not counted in the Tagged %."
+                                    title="Housekeeping tag - answerable, but not counted in the Tagged %."
                                     style={{ marginLeft: 6, fontSize: '0.56rem', fontWeight: 600, color: '#94A3B8', background: '#F1F5F9', padding: '1px 5px', borderRadius: 999 }}
                                   >not scored</span>
                                 )}
@@ -2545,7 +2545,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                                     type="button"
                                     onClick={() => set(tag, c.key)}
                                     title={active
-                                      ? `${tag}: ${c.label} — click again to clear`
+                                      ? `${tag}: ${c.label} - click again to clear`
                                       : c.tip(tag)}
                                     style={{
                                       width: '100%', maxWidth: 50, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
@@ -3294,7 +3294,7 @@ function DivisionContactCard({ rect, contact, info, managers, gone, mark, openab
           maxHeight: 190, overflow: 'hidden',
         }}
       >
-        {note || (info ? 'No notes on this contact yet.' : 'Not in this company’s contact list — no notes to show.')}
+        {note || (info ? 'No notes on this contact yet.' : 'Not in this company’s contact list - no notes to show.')}
       </div>
       {openable && (
         <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginTop: '0.35rem' }}>
@@ -3376,7 +3376,7 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf
         </span>
         {mark && (
           <span
-            title={`${c.name} — ${mark.label}`}
+            title={`${c.name} - ${mark.label}`}
             aria-label={mark.label}
             style={{
               flex: 'none', fontSize: '0.72rem', lineHeight: 1, fontWeight: 700,
@@ -3487,8 +3487,8 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, pic
                 <div
                   className={`${styles.divTeamLabel}${group.team ? '' : ` ${styles.divTeamNone}`}`}
                   title={group.team
-                    ? `${group.team} — Team Name on ${group.contacts.length === 1 ? 'this contact' : 'these contacts'}`
-                    : 'No Team Name on these contacts yet — set one on the contact to bucket them'}
+                    ? `${group.team} - Team Name on ${group.contacts.length === 1 ? 'this contact' : 'these contacts'}`
+                    : 'No Team Name on these contacts yet - set one on the contact to bucket them'}
                 >
                   {group.team || 'No team'}
                 </div>
@@ -3764,7 +3764,7 @@ function DivisionParentBox({ parent, rootCompany, editing, editingId, adding, pi
                 `${parent.company} is the parent of ${rootCompany}: click to change it.`,
                 parent.missing ? 'No longer in the tracker.' : '',
                 others > 0
-                  ? `It has ${others} other division${others === 1 ? '' : 's'} — open its own popup to see them.`
+                  ? `It has ${others} other division${others === 1 ? '' : 's'} - open its own popup to see them.`
                   : '',
               ].filter(Boolean).join(' ')}
             >
@@ -4221,7 +4221,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
             parent by name, so spell it the way it appears on the site list.
           </p>
 
-          {/* The company can sit under one too — offered here rather than
+          {/* The company can sit under one too - offered here rather than
               inside the chart because the chart isn't drawn until there's
               something in it. */}
           {parents.length === 0 && !addingParent && (
@@ -4260,9 +4260,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
                 ⇄ / ⇅ switches that box's divisions between across and down · × removes it
                 {parents.length > 0 && ' · the top box is the parent: this company shows as one of its divisions, and its + adds another division alongside this one'}
               </p>
-              {/* Says where the buckets and the nesting come from — both
+              {/* Says where the buckets and the nesting come from - both
                   are read off the contacts themselves (their Team Name and
-                  their Reports To), never set here — and what the two chip
+                  their Reports To), never set here - and what the two chip
                   colours mean. */}
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Contacts bucket by their Team Name and sit under whoever they report to
@@ -4324,7 +4324,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return { ...EMPTY };
   });
 
-  // "Show hidden" toggle on the contacts panel below — declared
+  // "Show hidden" toggle on the contacts panel below - declared
   // BEFORE baseContacts because that memo references it inside its
   // filter callback (the callback fires during render, so the state
   // must be initialized first or we hit a temporal-dead-zone error).
@@ -4334,7 +4334,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // Indicative Savings analysis saved against this prospect from the
   // Utility Lookup page. Stored in a /analyses/main subcollection so
-  // the bulk prospects query stays lean — fetched only when the modal
+  // the bulk prospects query stays lean - fetched only when the modal
   // opens. null while loading or when no analysis has been saved.
   //
   // Only the metadata is subscribed to. The workbook itself is chunked
@@ -4380,7 +4380,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
   }
 
-  // Local contact state — updated optimistically after HubSpot saves
+  // Local contact state - updated optimistically after HubSpot saves
   const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
     // Collect this prospect's registered email domains so we can
@@ -4411,7 +4411,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const matched = hubspotContacts
       .filter(c => {
         // The "Show hidden" toggle on the contacts panel below
-        // flips this gate off so hide-tagged people resurface — the
+        // flips this gate off so hide-tagged people resurface - the
         // user can then click into them to clear the tag.
         if (!showHiddenContacts && contactIsHidden(c)) return false;
         if (companiesMatch(c.company, fields.company)) return true;
@@ -4420,7 +4420,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           // Domain match only fills in contacts whose own Company text
           // is blank. A shared parent domain (e.g. blackstone.com)
           // otherwise drags every portfolio company's people onto each
-          // entity's popup — a contact whose Company already reads
+          // entity's popup - a contact whose Company already reads
           // "Blackstone" shouldn't surface under "BRE Hotels & Resorts".
           // Contacts that genuinely belong here but carry a mismatched
           // Company text can still be pinned via "link" (companyContactLinks).
@@ -4430,7 +4430,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       });
     // Explicitly linked contacts: ids the user associated with this
     // company on the popup (stored in settings.companyContactLinks).
-    // They always appear — subject to the hidden toggle — even when the
+    // They always appear - subject to the hidden toggle - even when the
     // contact's HubSpot Company text / email domain doesn't match, so
     // linking an existing contact sticks without a HubSpot refresh.
     const key = String(fields.company).trim().toLowerCase();
@@ -4552,8 +4552,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }
 
   // Build lookups from the uploaded Target Accounts sheets keyed by account name:
-  //   repMap  — sales rep / owner
-  //   tierMap — Tier 1 / Tier 2 / etc. (normalized to "Tier N" when possible)
+  //   repMap  - sales rep / owner
+  //   tierMap - Tier 1 / Tier 2 / etc. (normalized to "Tier N" when possible)
   // Mirrors MyAccountsView's column-finding logic; prefers the first match per account.
   const [targetAccountRepMap, targetAccountTierMap] = useMemo(() => {
     const repMap = new Map();
@@ -4636,7 +4636,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   //
   // tagVocabulary collapses the spellings: this dataset carries "NAM only"
   // beside "NAM Only" and "Efficiency/Renewables" beside its spaced twin, and
-  // the plain Set this used to be offered each of them separately — which the
+  // the plain Set this used to be offered each of them separately - which the
   // popup's tag table then drew as two rows for the one tag.
   const allTagOptions = useMemo(() => {
     const fromContacts = [];
@@ -4649,7 +4649,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // CDM options for the searchable dropdown, driven by the "CDM"
   // Dropdowns-tab list (managed on the Dropdowns page) unioned with the
-  // names already in use — so the Dropdowns list is the source of truth.
+  // names already in use - so the Dropdowns list is the source of truth.
   // The current value is always kept so an unsaved typed CDM still shows.
   const cdmOptions = useMemo(() => {
     const base = buildCdmOptions(prospects, settings);
@@ -4669,7 +4669,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // already in use), so the pop-up offers exactly what Table View does.
   const assetTypeOptions = useMemo(() => buildAssetTypeOptions(prospects, settings), [prospects, settings]);
 
-  // Classification > Type, from the same Dropdowns-tab list — so a Type
+  // Classification > Type, from the same Dropdowns-tab list - so a Type
   // added or renamed there shows up here, and a company keeps whatever
   // Type it already carries even if that one has since left the list.
   const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
@@ -4707,9 +4707,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [prospects]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
-  // (showHiddenContacts state is declared earlier — above
-  // baseContacts — so its useMemo can reference it without a TDZ.)
-  // Number of hide-tagged contacts at this company / domain — drives
+  // (showHiddenContacts state is declared earlier - above
+  // baseContacts - so its useMemo can reference it without a TDZ.)
+  // Number of hide-tagged contacts at this company / domain - drives
   // the badge on the "Show hidden" toggle. Memoized so the full
   // hubspotContacts walk only runs when the inputs actually change
   // (was previously inline in the JSX which made the modal freeze on
@@ -4796,7 +4796,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [fields.company]);
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
-  // results — same shape as companySlug below; declared earlier here
+  // results - same shape as companySlug below; declared earlier here
   // so the sustainResearch state can read/write the saved blob.
   const sustainResearchSlug = useMemo(
     () => (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-'),
@@ -4855,7 +4855,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     num: 30, company: 180, status: 130, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   // Per-column visibility for the Portfolio Companies table. Independent
-  // from the export — the export header list is hard-coded so toggling
+  // from the export - the export header list is hard-coded so toggling
   // the on-screen view never drops columns from the downloaded sheet.
   const PORTFOLIO_COL_DEFS = useMemo(() => [
     { key: 'rank',             label: 'Opportunity Score' },
@@ -4886,7 +4886,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const saved = JSON.parse(localStorage.getItem('portfolio-cols-visible'));
       if (saved && typeof saved === 'object') return saved;
     } catch { /* noop */ }
-    // Default visibility — every column on except HQ City, which the
+    // Default visibility - every column on except HQ City, which the
     // user keeps hidden by default and reveals via the Columns ▾ menu
     // when they need it.
     return Object.fromEntries(['rank','company','status','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
@@ -4912,7 +4912,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // the user can see: a blank row scores 0, and under the default
   // Opportunity Score sort it would otherwise drop to the bottom of a
   // fifty-row list, well below the fold, looking like the click did nothing.
-  // The pin lasts only as long as the popup stays on this company — reopen
+  // The pin lasts only as long as the popup stays on this company - reopen
   // it and the row takes its real rank.
   const [portfolioNewStamps, setPortfolioNewStamps] = useState([]);
   const [portfolioFocusStamp, setPortfolioFocusStamp] = useState(null);
@@ -4933,7 +4933,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Re-pull every HubSpot contact and overwrite the local cache, mirroring
   // the Contacts page's "Refresh contacts" button. setHubspotCache dispatches
   // `hubspot-cache-updated`, which App re-reads from IndexedDB and pushes back
-  // down as the `hubspotContacts` prop — so this company's roster refreshes in
+  // down as the `hubspotContacts` prop - so this company's roster refreshes in
   // place without reopening the popup. Admin-only: the endpoint uses a single
   // server-side token tied to the admin portal.
   const refreshHubspotContacts = useCallback(async () => {
@@ -4994,7 +4994,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [peOwnerPickerOpen]);
-  // Site List — a per-company spreadsheet of physical sites/locations the
+  // Site List - a per-company spreadsheet of physical sites/locations the
   // user uploads. Stored under settings.companySiteLists[slug] (slug keyed
   // off the company name, same convention as companyOpportunities/Deals).
   // The Email Drafts page reads these back to build a combined Site List
@@ -5004,7 +5004,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [siteListPasteOpen, setSiteListPasteOpen] = useState(false);
   const siteListInputRef = useRef(null);
 
-  // Portfolio Companies upload preview — shows detected column mapping before applying
+  // Portfolio Companies upload preview - shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
   // Bumped after save / clear so the source-file metadata is refetched
@@ -5049,14 +5049,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // slugify in migrateCompanyData so renames carry the list along.
   const siteListSlug = (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
   const currentSiteList = (settings.companySiteLists || {})[siteListSlug] || null;
-  // Sq ft, divisions, property types and equipment across that list — the
+  // Sq ft, divisions, property types and equipment across that list - the
   // things a portfolio is read by, summarised above the table so they
   // don't have to be counted out of it by eye.
   const siteListFacts = useMemo(() => computeSiteListFacts(currentSiteList), [currentSiteList]);
 
   // Estimated annual value of a data deal for this company: its utility
-  // accounts at $5 each per month, for twelve months. Null — shown as a
-  // dash — until there is an account count to work from, since $0 would
+  // accounts at $5 each per month, for twelve months. Null - shown as a
+  // dash - until there is an account count to work from, since $0 would
   // read as a priced deal rather than an unanswered question.
   const estAnnualDataDeal = useMemo(() => {
     const accounts = Number(fields.numberOfAccounts);
@@ -5072,7 +5072,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // property type is corrected, an ordinance changes what a building owes.
   // Re-saving the whole Master Analysis to pick that up means loading the
   // portfolio back onto that page, so this reads the same figures off the
-  // saved list instead — the same rules the save itself counts by, so the
+  // saved list instead - the same rules the save itself counts by, so the
   // two can't come out different.
   //
   // The ordinance tables behind the screening are a few hundred kilobytes,
@@ -5253,7 +5253,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         subsectorScore: ['subsectorscore', 'subsectorfit', 'subsectorrating'],
         sectorScore: ['sectorscore', 'sectorfit', 'sectorrating', 'fitscore'],
         subsector: ['subsector'],
-        // Industry and Sector are merged — both map to the sector field.
+        // Industry and Sector are merged - both map to the sector field.
         sector: ['sector', 'industry'],
         hqCity: ['hqcity', 'city'],
         hqCountry: ['hqcountry', 'country'],
@@ -5311,7 +5311,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   useEffect(() => {
     if (isNew) return;
     (async () => {
-      // Opps 2 is the canonical opps store now — loadOppsFromIndexedDB
+      // Opps 2 is the canonical opps store now - loadOppsFromIndexedDB
       // already routes through the Opps 2 cache, so the legacy
       // localStorage fallback (which only ever held Opps tab data) is
       // gone.
@@ -5351,7 +5351,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [isNew, fields.company]);
 
   // The Client Manager is editable here as well as on the Clients page,
-  // and both write the same per-company entry — so a name typed in either
+  // and both write the same per-company entry - so a name typed in either
   // place is the name in the other. Held as a draft and committed on blur
   // or Enter (the Clients page cell behaves the same way) rather than
   // saving each keystroke, which would write a partial name to shared
@@ -5360,7 +5360,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   useEffect(() => { setCmDraft(clientManager || ''); }, [clientManager]);
 
   // Escape restores the draft and blurs, but blur() runs its handler
-  // before React has re-rendered — so a commit there still reads the
+  // before React has re-rendered - so a commit there still reads the
   // abandoned text and saves the very edit Escape just discarded. The
   // flag tells the blur that this one was cancelled.
   const cmCancelled = useRef(false);
@@ -5373,7 +5373,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     saveClientManager(fields.company, next);
     // Clearing removes the assignment rather than storing a blank, so the
     // company falls back to the CM on the imported clients list if it has
-    // one — the same "no override set" state it started in.
+    // one - the same "no override set" state it started in.
     setClientManager(next || null);
   }
 
@@ -5388,7 +5388,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // The opps themselves, for the list above the Notes section. Same Account
   // match the scope grid above uses, so the two can't disagree about which
-  // opps belong to this company — the card cannot show a service as Quoted
+  // opps belong to this company - the card cannot show a service as Quoted
   // off an opp the list below doesn't have.
   const companyOpps = useMemo(() => {
     if (isNew || !fields.company || !oppsCache) return [];
@@ -5416,7 +5416,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
   }, [oppsCache]);
 
-  // The Solutions list as Dropdowns › Services serves it — the seed catalog
+  // The Solutions list as Dropdowns › Services serves it - the seed catalog
   // plus anything the user added there, unioned with the board. This is the
   // company card's service vocabulary: the board below, the explored count,
   // the scope matcher and the @-tag pickers all read it, so a service added
@@ -5465,7 +5465,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return matched;
   }, [oppsRecords, serviceBoard]);
 
-  // Every service the board can show, in the user's own category layout —
+  // Every service the board can show, in the user's own category layout -
   // the universe the scheduled-opp match below runs against.
   const allServiceItems = useMemo(
     () => [...new Set(serviceBoard.flatMap(c => c.items || []))],
@@ -5476,8 +5476,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // already bought retires them: the Auto-N/A Services column on
   // Dropdowns › Services, keyed by service → the sold services that say so.
   //
-  // "Sold" is the reading this board itself shows — a manual status of Sold,
-  // or a closed-won opp naming the service — so the greying follows the same
+  // "Sold" is the reading this board itself shows - a manual status of Sold,
+  // or a closed-won opp naming the service - so the greying follows the same
   // truth the row above it does.
   //
   // Derived, never saved. The board lays it under both a manual status and a
@@ -5499,7 +5499,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);
 
-  // Services this company has an opp QUEUED for — a New Opp scheduled for
+  // Services this company has an opp QUEUED for - a New Opp scheduled for
   // a future date, which has no row on the Opps table yet and so matches
   // nothing above. Without this the board reads as untouched right up
   // until the opp fires, and the service looks free to book when someone
@@ -5536,7 +5536,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
   }, [fields.company, settings.companyContactExclusions]);
 
-  // Remove a contact from this company's roster only. Non-destructive —
+  // Remove a contact from this company's roster only. Non-destructive -
   // the contact stays in HubSpot and on every other company it matches.
   const excludeContactFromCompany = useCallback((contactId) => {
     const id = String(contactId || '');
@@ -5565,7 +5565,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const handleContactSaved = useCallback((updated, options = {}) => {
     const updatedId = String(updated.id || updated.vid || '');
     // A contact not already on this company's roster is a fresh
-    // association — remember it so it sticks without a HubSpot refresh.
+    // association - remember it so it sticks without a HubSpot refresh.
     const wasPresent = localContactsRef.current.some(c => String(c.id || c.vid) === updatedId);
     setLocalContacts(prev => {
       const existing = prev.find(c => String(c.id || c.vid) === updatedId);
@@ -5621,7 +5621,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [settings.contactTeamNames, updateSettings]);
 
   // "Met In Person" is stored locally (never in HubSpot). Persist the
-  // explicit answer so a contact set to No — or parked on Hold off — sticks
+  // explicit answer so a contact set to No - or parked on Hold off - sticks
   // instead of falling back to the legacy HubSpot tag.
   //
   // Normalized on the way in so the older callers that still hand this a
@@ -5790,7 +5790,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // "Company ↗" in the nested contact popup. Here the company popup is
   // already the thing underneath, so for a contact at THIS company arriving
   // is just closing the contact popup. A contact whose company is some other
-  // account — pinned there, or retyped — switches this popup over to it.
+  // account - pinned there, or retyped - switches this popup over to it.
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);
     if (!target) return;
@@ -5839,7 +5839,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [companyOppsData.opportunities, selectedOppId]
   );
 
-  // Other form-type notes for this company — used to power the "Import
+  // Other form-type notes for this company - used to power the "Import
   // … from another note" pickers (Key Issues, Call Context, etc.) in the
   // active note's OpportunityForm. We carry payloads for every supported
   // section here so the form can decide what to surface per picker.
@@ -6033,7 +6033,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setSelectedOppId(opp.id);
     setOpportunitiesOpen(true);
     // Immediately drop the user into the inline rename input on the
-    // freshly-created tab — saves them an extra click.
+    // freshly-created tab - saves them an extra click.
     setRenamingOppId(opp.id);
   }, [companyOppsData, writeCompanyOpps]);
 
@@ -6055,7 +6055,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, []);
 
   // Write the new title typed into the inline input. Skip the write
-  // when the title is unchanged or blank — that lets the user cancel a
+  // when the title is unchanged or blank - that lets the user cancel a
   // rename by clearing the field and pressing Enter without ending up
   // with an empty tab.
   const commitOppRename = useCallback((oppId, rawTitle) => {
@@ -6107,7 +6107,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const oppQuillRef = useRef(null);
 
   // Generate a follow-up email and download it as an .eml file (matches the Draft Emails
-  // section pattern — double-click the downloaded file to open as a draft in Outlook).
+  // section pattern - double-click the downloaded file to open as a draft in Outlook).
   const openOppFollowUpEmail = useCallback(() => {
     if (!selectedOpp) return;
     // Source follow-up items from the Form's "Action Items / Next Steps"
@@ -6126,7 +6126,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .map(r => ({ text: pickText(r), owner: pickOwner(r) }))
       .filter(i => i.text);
 
-    // Recipients: reply-all behavior — union of the opportunity's linked
+    // Recipients: reply-all behavior - union of the opportunity's linked
     // contacts and everyone on the imported meeting (organizer + ICS
     // attendees + manual additions), deduped by lowercased email.
     const linkedIds = new Set((selectedOpp.contactIds || []).map(String));
@@ -6156,7 +6156,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       ? (/^re:\s/i.test(meetingSubject) ? meetingSubject : `Re: ${meetingSubject}`)
       : `Follow-up: ${fields.company || 'our conversation'}${titleBit}`;
 
-    // Build the HTML body — bulleted list for the to-do items.
+    // Build the HTML body - bulleted list for the to-do items.
     const esc = s => String(s || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const introLine = `Thanks again for the conversation${fields.company ? ` about ${esc(fields.company)}` : ''}${selectedOpp.title ? ` (${esc(selectedOpp.title)})` : ''}. Below is a recap of the follow-up items:`;
@@ -6171,7 +6171,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Append the saved email signature (from the Draft Emails page /
     // settings.emailSignature). The bundled default is the admin's
     // personal signature, so only fall back to it for the admin
-    // account — other users get no signature until they save one.
+    // account - other users get no signature until they save one.
     const storedSig = String(settings?.emailSignature || '').trim();
     const signatureHtml = storedSig || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '');
     const sigBlock = signatureHtml ? `\n<br>\n<div>\n${signatureHtml}\n</div>` : '';
@@ -6194,7 +6194,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
     const toHeader = recipients.join(', ');
     // De-dash the whole message: strip literal em dashes (subject/body) and
-    // the &mdash; HTML entity so the exported .eml carries only hyphens.
+    // the - HTML entity so the exported .eml carries only hyphens.
     const eml = stripDashes([
       'MIME-Version: 1.0',
       `Subject: ${subject}`,
@@ -6204,7 +6204,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       'Content-Transfer-Encoding: 8bit',
       '',
       htmlContent,
-    ].filter(Boolean).join('\r\n')).replace(/&mdash;|&#8212;|&#x2014;/gi, '-');
+    ].filter(Boolean).join('\r\n')).replace(/&mdash;|&#8212;|&#x2014;/gi, '-'); // em-dash-ok: strips the entity from exported mail
 
     const safeName = (selectedOpp.title || fields.company || 'follow-up')
       .replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'follow-up';
@@ -6270,7 +6270,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
   }, [selectedOppId, oppNoteDraft, companySlug, settings.companyOpportunities, updateSettingsPath]);
 
-  // ── Opportunities tab — separate from Notes, simpler flat list per company.
+  // ── Opportunities tab - separate from Notes, simpler flat list per company.
   // Shape: settings.companyDeals[slug] = [{ id, title, stage, value, closeDate, description, createdAt, updatedAt }]
   const companyDeals = useMemo(() => (
     (settings.companyDeals || {})[companySlug] || []
@@ -6601,7 +6601,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!oldSlug || !newSlug) return;
     if (oldSlug === newSlug) {
       // Case- or punctuation-only edits land on the same slug, so none of
-      // the buckets need to move — but a site list also stores the company
+      // the buckets need to move - but a site list also stores the company
       // name as text, and that copy is what the Site List Overview and the
       // Utility Lookup picker render. Carry the new spelling onto it.
       const renamedSame = renameCompanySiteListEntry(
@@ -6634,7 +6634,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (oldResearch && !newResearch) patches[`companyResearch.${newSlug}`] = oldResearch;
 
     // The site list moves with the old name taken out of it: the entry is
-    // keyed by slug, but it also stores the company as text — as its own
+    // keyed by slug, but it also stores the company as text - as its own
     // label, which every page listing site lists renders (Draft Emails'
     // Site List Overview, the Utility Lookup company picker), and in the
     // uploaded rows' company column. Copying it verbatim left the old name
@@ -6647,7 +6647,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
 
     // Drop the old slug entries when no other prospect still maps to
-    // the old company name — otherwise leave them so the other record
+    // the old company name - otherwise leave them so the other record
     // keeps working.
     const stillReferenced = (prospects || []).some(p => {
       if (!p || p.id === prospect?.id) return false;
@@ -6682,7 +6682,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         try {
           const data = await loadOpps2Newest(uid);
           if (Array.isArray(data?.records)) oppsRecords = data.records;
-        } catch { /* opps not loaded — skip the opps leg, still migrate the rest */ }
+        } catch { /* opps not loaded - skip the opps leg, still migrate the rest */ }
       }
       const plan = buildCompanyRenamePlan({
         oldName, newName, prospects, currentProspectId: prospect?.id, settings, oppsRecords,
@@ -6720,7 +6720,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
       // The Google Sheet the additive import reads. Its row keeps the old
       // name unless we write through, and the importer treats a name it
-      // can't find on the site as a company to add — which is how a
+      // can't find on the site as a company to add - which is how a
       // renamed company comes back as a second account on the next pass.
       const sheetConfig = readSheetSync(settings);
       const sheetId = spreadsheetIdFromUrl(sheetConfig.sheetsUrl);
@@ -6770,7 +6770,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             body: JSON.stringify({
               spreadsheetId: sheetId, sheetName: sheetTab, mode: 'rename',
               // The sheet's own current text for that cell, which is what
-              // the server re-checks — not the app's old name, which on a
+              // the server re-checks - not the app's old name, which on a
               // key match is a different spelling.
               row: sheetRename.row, from: sheetRename.from, to: newName,
             }),
@@ -6780,7 +6780,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           // renaming the wrong row if the sheet moved under us.
           if (out.error) throw new Error(out.error);
           if (!out.renamed) {
-            console.warn(`Company rename: the Google Sheet row now reads "${out.found}" — left alone`);
+            console.warn(`Company rename: the Google Sheet row now reads "${out.found}" - left alone`);
           }
         } catch (err) { console.error('Company rename: Google Sheet update failed', err); }
       }
@@ -6920,7 +6920,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }
 
   // Swap this popup for another company's. Edits here autosave on a debounce,
-  // and the timer is cleared when this modal unmounts — so an edit made in the
+  // and the timer is cleared when this modal unmounts - so an edit made in the
   // last 600ms would be dropped by the navigation that replaces us. Write it
   // out first, then hand over.
   function openProspect(target) {
@@ -7181,7 +7181,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 type="button"
                 onClick={refreshAnalysisFigures}
                 disabled={analysisRefreshing}
-                title={'Re-read Sites, Accounts, Equipment and Sites w/ Mandate from this company\u2019s saved site list — the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
+                title={'Re-read Sites, Accounts, Equipment and Sites w/ Mandate from this company\u2019s saved site list - the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
                 style={{
                   padding: '0.4rem 0.9rem',
                   background: '#fff',
@@ -7611,7 +7611,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <span>
                   Track acquisition news
                   <span style={{ display: 'block', fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: 2, lineHeight: 1.3 }}>
-                    Include this company in the weekly acquisition-news email — deals it
+                    Include this company in the weekly acquisition-news email - deals it
                     makes, and for a PE firm its portfolio add-ons too.
                   </span>
                 </span>
@@ -7638,7 +7638,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label
                 className={styles.label}
-                title="How many of this company's sites owe a building-performance obligation — benchmarking, an energy audit or a performance standard. Filled in from the Utility Lookup page's Building Compliance screening when a Master Analysis is saved against the company, and typed over here if you know better."
+                title="How many of this company's sites owe a building-performance obligation - benchmarking, an energy audit or a performance standard. Filled in from the Utility Lookup page's Building Compliance screening when a Master Analysis is saved against the company, and typed over here if you know better."
               >Sites w/ Mandate</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.sitesWithMandate ?? ''} onCommit={v => set('sitesWithMandate', v)} />
             </div>
@@ -7656,7 +7656,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label
                 className={styles.label}
-                title="How many pieces of equipment — chillers, boilers, EV chargers — are in scope. Priced against by any per-equipment service. Filled in from the Utility Lookup page's per-site estimate when a Master Analysis is saved against the company, and typed over here if you know better."
+                title="How many pieces of equipment - chillers, boilers, EV chargers - are in scope. Priced against by any per-equipment service. Filled in from the Utility Lookup page's per-site estimate when a Master Analysis is saved against the company, and typed over here if you know better."
               >Equipment</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
             </div>
@@ -7764,7 +7764,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return (
                       <span
                         key={label}
-                        title={`${name} — ${reported ? 'reported' : 'not reported'}. Set on the Frameworks field above.`}
+                        title={`${name} - ${reported ? 'reported' : 'not reported'}. Set on the Frameworks field above.`}
                         style={{
                           fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem',
                           borderRadius: 4, whiteSpace: 'nowrap',
@@ -7855,7 +7855,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     // the difference between "none" and "not loaded" — the two
                     // look identical and mean opposite things.
                     <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
-                      Opps aren&rsquo;t loaded in this browser yet — open the Opps tab once and they&rsquo;ll show here.
+                      Opps aren&rsquo;t loaded in this browser yet - open the Opps tab once and they&rsquo;ll show here.
                     </div>
                   ) : companyOpps.length === 0 ? (
                     <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
@@ -7892,19 +7892,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       fontSize: '0.66rem', fontWeight: 700, whiteSpace: 'nowrap',
                                       background: colors.bg, color: colors.color,
                                     }}>{opp.stage}</span>
-                                  ) : <span style={{ color: '#CBD5E1' }}>&mdash;</span>}
+                                  ) : <span style={{ color: '#CBD5E1' }}>-</span>}
                                 </td>
-                                <td style={{ ...oppTd, color: '#475569' }}>{opp.scope || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
-                                <td style={{ ...oppTd, textAlign: 'right', color: '#475569', whiteSpace: 'nowrap' }}>{opp.amount || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
-                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.startDate || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
-                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.closeDate || <span style={{ color: '#CBD5E1' }}>&mdash;</span>}</td>
+                                <td style={{ ...oppTd, color: '#475569' }}>{opp.scope || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                                <td style={{ ...oppTd, textAlign: 'right', color: '#475569', whiteSpace: 'nowrap' }}>{opp.amount || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.startDate || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                                <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.closeDate || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                               </tr>
                             );
                           })}
                         </tbody>
                       </table>
                       <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.35rem' }}>
-                        Read-only — opps are worked on the Opps tab.
+                        Read-only - opps are worked on the Opps tab.
                       </div>
                     </div>
                   )}
@@ -8574,7 +8574,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // The user's boxes plus the "Other services" card for
                 // anything on Dropdowns › Services that no box claims.
                 const categories = serviceBoard;
-                // The stored layout — what the box edits below write back.
+                // The stored layout - what the box edits below write back.
                 // The "Other services" card is a view, never a box, so it
                 // must not reach saveCategories.
                 const storedCategories = getServiceCategories(settings);
@@ -8618,7 +8618,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }
                 // Filing rather than splicing: moveServiceToBucket pulls the
                 // service out of every box before placing it, and reads
-                // UNGROUPED_SERVICES as "out of all of them" — so dragging
+                // UNGROUPED_SERVICES as "out of all of them" - so dragging
                 // onto or off the "Other services" card does the right thing
                 // without that card ever being written to the layout.
                 function moveService(item, fromCat, toCat) {
@@ -8637,7 +8637,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {/* Fewer, wider boxes per row.
                       Each service row spends a fixed ~150px on its pencil,
                       SME chip and status control, so at the 200px columns
-                      this used to lay out in the name was left about 80px —
+                      this used to lay out in the name was left about 80px -
                       not enough to tell "Invoice recalculation - light" from
                       "Invoice recalculation", and 57 of the 143 names came
                       out ellipsized. A 320px minimum leaves the name ~170px,
@@ -8718,7 +8718,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const isManualOverride = manualStatus !== '-';
                             // A service that already carried a status and now
                             // has an opp naming it too: back in play. Purely
-                            // how the row is painted — the saved status below
+                            // how the row is painted - the saved status below
                             // is untouched.
                             const retry = isTryingAgain(manualStatus, oppStage);
                             const colors = serviceStatusColor(effectiveStatus);
@@ -8802,7 +8802,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <span style={{ flex: 1, minWidth: '3.5rem', fontSize: '0.68rem', color: retry ? TRYING_AGAIN_COLORS.color : (colors.color || 'var(--color-text)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                     {getDisplayName(item)}
                                   </span>
-                                  {/* SME — the Schneider contact who owns this
+                                  {/* SME - the Schneider contact who owns this
                                       service. The service boxes sit in a
                                       multi-column grid (~320px a row), so this
                                       is a compact chip rather than a text box;
@@ -8857,7 +8857,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     >↺</button>
                                   )}
                                   {/* Last in the row so it is the chip that
-                                      wraps when the box is narrow — the
+                                      wraps when the box is narrow - the
                                       status controls stay on line one. */}
                                   {retry && (
                                     <span
@@ -8976,7 +8976,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
-          {/* Divisions — other tracker companies that roll up under this
+          {/* Divisions - other tracker companies that roll up under this
               one. Shares settings.divisionsMap with the My Accounts
               Divisions column. Needs a saved record to key the mapping. */}
           {!isNew && prospect?.id && (
@@ -8991,7 +8991,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             />
           )}
 
-          {/* Site List — uploaded spreadsheet of this company's physical
+          {/* Site List - uploaded spreadsheet of this company's physical
               sites/locations. Surfaces on the Email Drafts page as part of
               the combined Site List Overview. */}
           {!isNew && (
@@ -9038,7 +9038,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     {currentSiteList.rows.length} {currentSiteList.rows.length === 1 ? 'site' : 'sites'}
                     {/* What the list adds up to, from the columns it
                         actually carries. Each part appears only when the
-                        list has that data — a portfolio nobody has sized
+                        list has that data - a portfolio nobody has sized
                         says nothing rather than "0 ft²". */}
                     {siteListFacts.sqft != null && (
                       <span
@@ -9063,7 +9063,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     {/* What is installed across the portfolio, estimated per
                         site from its property type (or read off the count the
                         Utility Lookup save wrote against each site). The unit
-                        an equipment-facing service is scoped in — a company
+                        an equipment-facing service is scoped in - a company
                         with 158 sites and one with 158 university campuses
                         are the same line without it. */}
                     {siteListFacts.equipment != null && (
@@ -9271,7 +9271,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }
                 function addRow() {
                   // `addedManuallyAt` is both a record of the hand-entry and
-                  // the row's identity for pinning — nudged forward on the
+                  // the row's identity for pinning - nudged forward on the
                   // rare same-millisecond collision so two quick adds stay
                   // tellable apart.
                   const used = new Set(rows.map(r => r.addedManuallyAt).filter(Boolean));
@@ -9416,7 +9416,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     ? rows.map((_, i) => i).sort((a, b) => scoreForSort(rowScores[b]) - scoreForSort(rowScores[a]))
                     : rows.map((_, i) => i);
                   const pinnedTier = ranked.filter(isPinnedRow);
-                  // A row can be both pinned and freshly added — the pin wins,
+                  // A row can be both pinned and freshly added - the pin wins,
                   // so it appears once, in the higher tier.
                   const addedTier = rows.map((_, i) => i).filter(i => isNewRow(i) && !isPinnedRow(i));
                   if (pinnedTier.length === 0 && addedTier.length === 0) return ranked;
@@ -9424,7 +9424,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return [...pinnedTier, ...addedTier, ...ranked.filter(i => !lifted.has(i))];
                 })();
 
-                // Target Accounts — full list of names from the uploaded sheet (same source as MyAccountsView)
+                // Target Accounts - full list of names from the uploaded sheet (same source as MyAccountsView)
                 const targetAccountNames = (() => {
                   const names = new Set();
                   const sheets = targetAccountsData?.sheets;
@@ -9454,7 +9454,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     for (const rec of sheet.records) {
                       const v = (rec[companyCol] || '').toString().trim();
                       // Skip names the user has blocked on the Target
-                      // Accounts page — keeps suggestions consistent
+                      // Accounts page - keeps suggestions consistent
                       // with the Lists subtabs' behavior.
                       if (v && !blockedTargetAccounts.has(v.toLowerCase())) names.add(v);
                     }
@@ -9480,7 +9480,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return scored.slice(0, 8).map(s => s.name);
                 }
 
-                // Portfolio-company suggestion dismissals — stored per company name, per suggestion type, synced via userSettings.
+                // Portfolio-company suggestion dismissals - stored per company name, per suggestion type, synced via userSettings.
                 const dismissedGuesses = settings.dismissedPortfolioGuesses || { ra: {}, target: {} };
                 function dismissKey(name) { return (name || '').toLowerCase().trim(); }
                 function isRaDismissed(company) { const k = dismissKey(company); return !!k && !!(dismissedGuesses.ra || {})[k]; }
@@ -9498,7 +9498,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   updateSettings({ dismissedPortfolioGuesses: next });
                 }
 
-                // RA Client matching helpers — read the effective list (user override or bundled default)
+                // RA Client matching helpers - read the effective list (user override or bundled default)
                 const raClientsData = loadEffectiveRaClients().data;
                 // Map lowercase name -> CM, for auto-filling Client Manager when an RA Client Match is set.
                 const raNameToCm = (() => {
@@ -9841,7 +9841,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               const suggestions = raDismissed ? [] : rawSuggestions;
                               const isMatched = !!r.raClientMatch;
                               const pickerOpen = raClientPickerOpen === i;
-                              // Reused-mapping detection — show a distinct
+                              // Reused-mapping detection - show a distinct
                               // treatment when the RA/Target value matches
                               // what the user previously saved for that
                               // company name.
@@ -9852,13 +9852,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               const justAdded = !isPinned && isNewRow(i);
                               // The pinned block runs from the top of the
                               // table, so its last row is the one that closes
-                              // it off — a heavier rule there says where the
+                              // it off - a heavier rule there says where the
                               // pins stop and the ranking resumes.
                               const lastPinned = isPinned && displayI === pinnedCount - 1;
                               return (
                               <tr
                                 key={i}
-                                title={justAdded ? 'Added by hand just now — it stays at the top of the table until you reopen this company, then it takes its own rank.' : undefined}
+                                title={justAdded ? 'Added by hand just now - it stays at the top of the table until you reopen this company, then it takes its own rank.' : undefined}
                                 style={{
                                   borderBottom: lastPinned ? '2px solid #FCD34D' : '1px solid #F1F5F9',
                                   background: isPinned ? '#FFFBEB' : (justAdded ? '#F0F9FF' : 'transparent'),
@@ -9869,7 +9869,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     type="button"
                                     onClick={() => togglePin(i)}
                                     title={isPinned
-                                      ? `Unpin "${r.companyName || 'this company'}" — it goes back to its own place in the sort.`
+                                      ? `Unpin "${r.companyName || 'this company'}" - it goes back to its own place in the sort.`
                                       : `Pin "${r.companyName || 'this company'}" to the top of the table.`}
                                     aria-label={isPinned ? `Unpin ${r.companyName || 'row'}` : `Pin ${r.companyName || 'row'}`}
                                     aria-pressed={isPinned}
@@ -9940,7 +9940,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                           <button
                                             type="button"
                                             onClick={() => openProspect(linked)}
-                                            title={`Open "${linked.company}" — this company is on Table View`}
+                                            title={`Open "${linked.company}" - this company is on Table View`}
                                             aria-label={`Open ${linked.company}`}
                                             style={{
                                               flex: '0 0 auto', padding: '0 3px', border: 'none', background: 'transparent',
@@ -9971,9 +9971,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         value={r.status || ''}
                                         onChange={e => updateRow(i, { status: e.target.value })}
                                         title={from
-                                          ? `${status} — inherited from the tracker record for "${from}". Pick a status here to give this row its own.`
+                                          ? `${status} - inherited from the tracker record for "${from}". Pick a status here to give this row its own.`
                                           : (outsideNa
-                                            ? `${status} by default — the HQ Country (${String(r.hqCountry || '').trim()}) is outside North America. Pick a status here to give this row its own.`
+                                            ? `${status} by default - the HQ Country (${String(r.hqCountry || '').trim()}) is outside North America. Pick a status here to give this row its own.`
                                             : (status
                                               ? `Status for "${r.companyName || 'this company'}"`
                                               : 'No status yet. Pick one here, or add this company to the tracker and its status shows up automatically.'))}
@@ -10860,7 +10860,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         const isDM = contactHasTag(c, 'decision maker');
-                        // Champion / detractor, set on the contact popup — the
+                        // Champion / detractor, set on the contact popup - the
                         // same mark the Divisions chart draws, so a row and a
                         // chip for one person read the same way.
                         const standing = sentimentMark(sentimentFor(settings.contactSentiment, c.id || c.vid));
@@ -11402,11 +11402,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (!fieldKey) continue;
                   const raw = String(r[header] ?? '').trim();
                   if (fieldKey === 'energyGwh') {
-                    // Accept values like "850 est.", "1,200", "520 est" — keep the number.
+                    // Accept values like "850 est.", "1,200", "520 est" - keep the number.
                     const m = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
                     out.energyGwh = m ? m[0] : '';
                   } else if (fieldKey === 'siteCount') {
-                    // Accept "45 (P)", "20 (E)", "5,200" — keep the number, preserve marker when present.
+                    // Accept "45 (P)", "20 (E)", "5,200" - keep the number, preserve marker when present.
                     const numMatch = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
                     const markerMatch = raw.match(/\((?:[PpEe])\)/);
                     if (numMatch) {
@@ -11415,7 +11415,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       out.siteCount = '';
                     }
                   } else if (fieldKey === 'opportunityScore' || fieldKey === 'sectorScore' || fieldKey === 'subsectorScore') {
-                    // Accept "85%", "85/100", "85 (est.)", "1,234" — keep the numeric portion
+                    // Accept "85%", "85/100", "85 (est.)", "1,234" - keep the numeric portion
                     // so the table shows the exact score from the uploaded file rather than
                     // silently falling back to the composite methodology. Preserve the raw
                     // cell when it has text without a number (e.g. "N/A" for credit
@@ -11441,8 +11441,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               return;
             }
             // Auto-fill RA Client Match / Target Account from two sources:
-            //   1. savedPortfolioMappings — explicit saves the user has made.
-            //   2. the existing portfolio rows being replaced — catches the
+            //   1. savedPortfolioMappings - explicit saves the user has made.
+            //   2. the existing portfolio rows being replaced - catches the
             //      case where the user had mapped companies BEFORE this
             //      feature rolled out, so nothing is in savedMappings yet.
             const savedMappings = settings.savedPortfolioMappings || {};
@@ -11518,7 +11518,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {!mappedFields.has('opportunityScore') && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', borderRadius: 6, fontSize: '0.75rem' }}>
                       No column is mapped to <strong>Opportunity Score</strong>. Rows without an uploaded score fall back to the composite methodology
-                      (0.30·Energy + 0.30·Sites + 0.25·Sector + 0.15·Year — site counts marked (E) count in full). Map the column below if you want to preserve the scores from the file verbatim.
+                      (0.30·Energy + 0.30·Sites + 0.25·Sector + 0.15·Year - site counts marked (E) count in full). Map the column below if you want to preserve the scores from the file verbatim.
                     </div>
                   )}
                 </div>
@@ -11647,7 +11647,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   .filter(p => p.id !== prospect.id && (p.company || '').trim())
                   .filter(p => !q || (p.company || '').toLowerCase().includes(q));
                 list.sort((a, b) => {
-                  // Boost matches on the current company name first — duplicates
+                  // Boost matches on the current company name first - duplicates
                   // usually share exact or near-exact names.
                   const targetNorm = (fields.company || '').toLowerCase().trim();
                   const aNear = (a.company || '').toLowerCase().trim() === targetNorm;

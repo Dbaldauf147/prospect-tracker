@@ -213,7 +213,7 @@ function readRecap(path) {
     throw new Error(`Could not read ${path} as JSON: ${err.message}`);
   }
   if (!String(recap?.noteId || '').trim()) {
-    throw new Error('The recap needs a "noteId" — the Granola note it came from. It is what keeps a re-push updating the same record instead of creating a second one.');
+    throw new Error('The recap needs a "noteId" - the Granola note it came from. It is what keeps a re-push updating the same record instead of creating a second one.');
   }
   if (!String(recap?.summary || '').trim()) {
     throw new Error('The recap needs a "summary". Nothing else is worth storing without it.');
@@ -380,7 +380,7 @@ async function push(args) {
 
   console.log(`${current ? 'Updated' : 'Created'} call record ${recordId} for ${args.email || uid}.`);
   if (!next.oppId) {
-    console.log('Not tagged to an opportunity — tag it on the Call Recordings page to link it to a deal.');
+    console.log('Not tagged to an opportunity - tag it on the Call Recordings page to link it to a deal.');
   } else {
     console.log(`Tagged to ${next.oppLabel || next.oppId}. Open the Call Recordings page and use Push to add this to the deal's Notes:\n`);
     console.log(notesBlock(recap));

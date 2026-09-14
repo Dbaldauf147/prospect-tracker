@@ -49,7 +49,7 @@ function eq(actual, expected, name) {
   eq(markImportedTier({ company: 'Ventas', tier: 'Tier 2' }), { company: 'Ventas', tier: 'Tier 2', tierSource: IMPORTED_TIER },
     'a row carrying a tier is marked');
   eq(markImportedTier({ company: 'Ventas' }), { company: 'Ventas' },
-    'a row with no tier has nothing to mark — and gains no stray field');
+    'a row with no tier has nothing to mark - and gains no stray field');
   eq(markImportedTier({ company: 'Ventas', tier: '' }), { company: 'Ventas', tier: '' },
     'nor does a blank one');
   eq(markImportedTier(null), null, 'and nothing at all does not throw');

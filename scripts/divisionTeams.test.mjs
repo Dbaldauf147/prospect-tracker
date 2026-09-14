@@ -47,7 +47,7 @@ eq(shape(groupDivisionContactsByTeam(
 
 eq(shape(groupDivisionContactsByTeam([c('x', 'X'), c('y', 'Y')], () => '')),
   [['', ['X', 'Y']]],
-  'nobody with a team gives one unlabelled bucket — the flat list the chart drew before');
+  'nobody with a team gives one unlabelled bucket - the flat list the chart drew before');
 
 eq(groupDivisionContactsByTeam([], teamOf), [], 'no contacts, no buckets');
 eq(groupDivisionContactsByTeam(null, teamOf), [], 'a missing list is not a crash');

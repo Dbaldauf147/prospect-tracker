@@ -56,7 +56,7 @@ check('an untagged contact does not',
   isDecisionMakerContact(contact('Acme', 'Key Contact')), false);
 check('nor does a hidden one',
   isDecisionMakerContact(contact('Acme', 'Decision Maker;Hide')), false);
-check('nor one who has left — the row would clear on somebody who is gone',
+check('nor one who has left - the row would clear on somebody who is gone',
   isDecisionMakerContact(contact('Acme', 'Decision Maker;Left')), false);
 check('nor a Schneider contact, who is off every other roster too',
   isDecisionMakerContact(contact('Schneider Electric', 'Decision Maker')), false);

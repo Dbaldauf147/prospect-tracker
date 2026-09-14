@@ -97,7 +97,7 @@ check('electric at exactly $1M is not small',
 check('gas below $30K is too low',
   savingsStatusFor(healthy({ spend: 12_000, savingsEligibleSpend: 12_000 }), 'gas'),
   SAVINGS_STATUS.LOW_GAS);
-check('gas at $200K is eligible — the $1M electric bar does not apply',
+check('gas at $200K is eligible - the $1M electric bar does not apply',
   savingsStatusFor(healthy({ spend: 200_000, savingsEligibleSpend: 200_000 }), 'gas'),
   SAVINGS_STATUS.ELIGIBLE);
 check('the same $200K of ELECTRIC spend is a small market',

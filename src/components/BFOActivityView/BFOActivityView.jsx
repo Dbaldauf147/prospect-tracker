@@ -124,7 +124,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
     const h = plan.blockedHidden.length;
     if (h) {
       notes.push(
-        `${h} skipped as hidden there (${summariseLeadNames(plan.blockedHidden)}) — ` +
+        `${h} skipped as hidden there (${summariseLeadNames(plan.blockedHidden)}) - ` +
         `unhide from "Show hidden" on Marketing Leads to bring ${h === 1 ? 'it' : 'them'} back.`
       );
     }
@@ -288,7 +288,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
       }
       return s;
     };
-    // Amount columns come in as "USD 15,000.00" — export just the dollar
+    // Amount columns come in as "USD 15,000.00" - export just the dollar
     // amount, dropping the leading ISO currency code so the cell is a plain
     // number.
     const isAmountHeader = (h) => /amount/i.test(h);

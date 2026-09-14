@@ -62,7 +62,7 @@ const CONTACT_COLUMNS = [
     label: 'Follow-up',
     sortKey: 'followUp',
     width: 120,
-    title: 'Whether a SECOND email has gone to this address under the campaign\u2019s subject lines \u2014 a chase, a re-send, a reply of your own on the thread. Hover a row to see each send with its subject line. "Sent Date" is the most recent of them; the tooltip has the first.',
+    title: 'Whether a SECOND email has gone to this address under the campaign\u2019s subject lines - a chase, a re-send, a reply of your own on the thread. Hover a row to see each send with its subject line. "Sent Date" is the most recent of them; the tooltip has the first.',
   },
   { key: 'delivery', label: 'Delivery', sortKey: 'delivery', width: 100 },
   { key: 'status', label: 'Status', sortKey: 'status', width: 110 },
@@ -71,7 +71,7 @@ const CONTACT_COLUMNS = [
     label: 'Outreach',
     sortKey: 'outreach',
     width: 120,
-    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history \u2014 they are just left out of "Add unsent to Draft".',
+    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history - they are just left out of "Add unsent to Draft".',
   },
   {
     key: 'tracking',
@@ -80,7 +80,7 @@ const CONTACT_COLUMNS = [
     // Only worth a column when something in this campaign was actually
     // sent with tracking on.
     needsTracking: true,
-    title: 'Links followed by a person. Clicks before the send (proof-reading the draft in Outlook, where the rewritten links already work), security-gateway scans and automated sweeps are excluded — hover a count to see what was dropped. The Email Tracking tab shows which link each person followed, and on what device.',
+    title: 'Links followed by a person. Clicks before the send (proof-reading the draft in Outlook, where the rewritten links already work), security-gateway scans and automated sweeps are excluded - hover a count to see what was dropped. The Email Tracking tab shows which link each person followed, and on what device.',
   },
   { key: 'repliedBy', label: 'Replied By', sortKey: 'repliedBy', width: 150 },
   { key: 'replyDate', label: 'Reply Date', sortKey: 'replyDate', width: 110 },
@@ -90,7 +90,7 @@ const CONTACT_COLUMNS = [
     label: 'Notes',
     sortKey: 'notes',
     width: 200,
-    title: 'Anything worth remembering about this contact on this campaign \u2014 why they are on hold, what they asked for, who is handling them. Click to type; it saves when you click away.',
+    title: 'Anything worth remembering about this contact on this campaign - why they are on hold, what they asked for, who is handling them. Click to type; it saves when you click away.',
   },
 ];
 const CONTACT_COLS_LOCKED = ['email'];
@@ -1606,7 +1606,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           <span
             style={{ color: source === 'domain' ? 'var(--color-text-muted)' : 'var(--color-text)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}
             title={source === 'domain'
-              ? 'No company on the HubSpot contact — this is the brand read off the email domain. Set the company in HubSpot Contacts and it shows here instead.'
+              ? 'No company on the HubSpot contact - this is the brand read off the email domain. Set the company in HubSpot Contacts and it shows here instead.'
               : name}
           >{name}</span>
         );
@@ -1616,23 +1616,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       case 'followUp': {
         const info = followUpInfo(c);
         if (!info.sent) {
-          return <span style={{ color: 'var(--color-text-muted)' }} title="Not emailed yet — there is no follow-up to look for.">-</span>;
+          return <span style={{ color: 'var(--color-text-muted)' }} title="Not emailed yet - there is no follow-up to look for.">-</span>;
         }
         if (!info.known) {
           // A campaign saved before follow-ups were counted. Opening it
           // refreshes in the background, so this fills itself in; saying "no"
           // meanwhile would be a guess, and the wrong one to act on.
-          return <span style={{ color: 'var(--color-text-muted)' }} title="Not counted in this saved snapshot yet — it fills in when the campaign refreshes.">?</span>;
+          return <span style={{ color: 'var(--color-text-muted)' }} title="Not counted in this saved snapshot yet - it fills in when the campaign refreshes.">?</span>;
         }
         const lines = [
           info.followUp
-            ? `${info.sendCount} emails have gone to this address under this campaign\u2019s subject lines \u2014 ${info.followUpCount} follow-up${info.followUpCount === 1 ? '' : 's'} after the first.`
+            ? `${info.sendCount} emails have gone to this address under this campaign\u2019s subject lines - ${info.followUpCount} follow-up${info.followUpCount === 1 ? '' : 's'} after the first.`
             : 'Only the first email has gone to this address under this campaign\u2019s subject lines.',
           `First sent ${fmtDate(info.firstSentDate)}.`,
           // Each send with the subject line it went out under — that is how
           // you tell a chase from the original at a glance.
           ...(info.history.length
-            ? ['', ...info.history.map((h, n) => `${info.sendCount - info.history.length + n + 1}. ${fmtDate(h.date)} \u2014 ${h.subject || '(no subject)'}`)]
+            ? ['', ...info.history.map((h, n) => `${info.sendCount - info.history.length + n + 1}. ${fmtDate(h.date)} - ${h.subject || '(no subject)'}`)]
             : []),
           ...(info.sendCount > info.history.length ? ['', `Only the last ${info.history.length} sends are listed.`] : []),
         ].join('\n');
@@ -1674,10 +1674,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           'Not Sent': { background: '#FEF3C7', color: '#92400E' },
         };
         const STATUS_TITLE = {
-          Bounced: 'The mail server rejected this address — nobody saw the email. Fix or remove it before the next send.',
+          Bounced: 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
           'Out of Office': c.oooSubject
-            ? `Auto-responder: "${c.oooSubject}". Not a no — worth a second send when they're back.`
-            : "Their auto-responder answered. Not a no — worth a second send when they're back.",
+            ? `Auto-responder: "${c.oooSubject}". Not a no - worth a second send when they're back.`
+            : "Their auto-responder answered. Not a no - worth a second send when they're back.",
           'Not Sent': 'In this campaign but not yet sent the email',
         };
         return (
@@ -1709,9 +1709,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               title={live === 'avoid'
                 ? 'Never contact: left out of every draft this campaign queues until you clear it.'
                 : live === 'hold'
-                  ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} — left out of "Add unsent to Draft". A dated hold lifts on its own.`
+                  ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} - left out of "Add unsent to Draft". A dated hold lifts on its own.`
                   : lapsed
-                    ? 'This hold has run out — the contact is back on the list. Pick a later date to hold them again.'
+                    ? 'This hold has run out - the contact is back on the list. Pick a later date to hold them again.'
                     : `Contact freely. "Hold off" parks them for ${CONTACT_HOLD_DAYS} days by default; "Avoid" keeps them off every send until you clear it.`}
               style={{ width: '100%', padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...TONE[live] }}
             >
@@ -1726,7 +1726,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 onChange={e => setContactHoldUntil(i, e.target.value)}
                 title={lapsed
                   ? 'The day this hold ran out. Pick a later one to hold them again.'
-                  : 'The last day this contact is held. It lifts on its own the morning after — clear the box to hold them until you say otherwise.'}
+                  : 'The last day this contact is held. It lifts on its own the morning after - clear the box to hold them until you say otherwise.'}
                 style={{
                   width: '100%', marginTop: '2px', padding: '1px 3px', borderRadius: '4px',
                   border: '1px solid var(--color-border)', background: 'var(--color-surface)',
@@ -1759,7 +1759,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             : 'No clicks by a person recorded.',
           t.firstClickAt ? `First click ${new Date(t.firstClickAt).toLocaleString()}.` : '',
           t.lastClickAt ? `Last click ${new Date(t.lastClickAt).toLocaleString()}.` : '',
-          t.clickPreSend ? `${t.clickPreSend} click${t.clickPreSend === 1 ? '' : 's'} before the send excluded — the rewritten links already work inside the Outlook draft, so that is you proof-reading it.` : '',
+          t.clickPreSend ? `${t.clickPreSend} click${t.clickPreSend === 1 ? '' : 's'} before the send excluded - the rewritten links already work inside the Outlook draft, so that is you proof-reading it.` : '',
           t.clickMachine ? `${t.clickMachine} link scan${t.clickMachine === 1 ? '' : 's'} by a security gateway${t.scanner ? ` (${t.scanner})` : ''} excluded.` : '',
           t.sends > 1 ? `${t.sends} tracked drafts were created for this address.` : '',
           'The Email Tracking tab shows which link they followed, and on what device.',
@@ -1961,7 +1961,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </button>
           </div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
-            The campaign starts empty — add the contacts it tracks with “Add an email to this campaign…”. The subject lines are only used to look up whether those addresses were sent or replied — one per row, and mail matching any of them counts.
+            The campaign starts empty - add the contacts it tracks with “Add an email to this campaign…”. The subject lines are only used to look up whether those addresses were sent or replied - one per row, and mail matching any of them counts.
           </div>
         </div>
       )}
@@ -2121,7 +2121,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                       }}
                     />
                     <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>
-                      One per row — mail matching any of them counts toward this campaign. ⌘/Ctrl+Enter to save.
+                      One per row - mail matching any of them counts toward this campaign. ⌘/Ctrl+Enter to save.
                     </span>
                   </span>
                   <button
@@ -2148,7 +2148,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                       glance that this campaign pools more than one send. */}
                   {displaySubjects.length > 1 ? 'Matching subjects: ' : 'Matching subject: '}
                   {displaySubjects.length === 0
-                    ? <strong>—</strong>
+                    ? <strong>-</strong>
                     : displaySubjects.map((sub, i) => (
                       <span key={sub}>
                         {i > 0 && <span style={{ color: 'var(--color-text-muted)' }}> · </span>}
@@ -2157,7 +2157,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     ))}
                   <button
                     onClick={startSubjectEdit}
-                    title="Edit this campaign's subject lines — a campaign can match on more than one"
+                    title="Edit this campaign's subject lines - a campaign can match on more than one"
                     style={{
                       marginLeft: '0.4rem', padding: '1px 6px', border: '1px solid var(--color-border)',
                       borderRadius: '4px', background: 'var(--color-surface)', color: 'var(--color-accent)',
@@ -2256,7 +2256,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                          stays text so it can be seen and corrected rather
                          than silently dropped. */
                       <span
-                        title="Not a web address this can open — edit it to an http(s) link"
+                        title="Not a web address this can open - edit it to an http(s) link"
                         style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}
                       >{eventLinkLabel(displayResults)}</span>
                     )}
@@ -2273,7 +2273,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 ) : (
                   <button
                     onClick={startEventEdit}
-                    title="Link this campaign to the event it invites people to — the registration page, the listing, the invite"
+                    title="Link this campaign to the event it invites people to - the registration page, the listing, the invite"
                     style={{
                       padding: '1px 6px', border: '1px dashed var(--color-border)',
                       borderRadius: '4px', background: 'transparent', color: 'var(--color-text-secondary)',
@@ -2381,7 +2381,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               placeholder={hubspotContacts.length
                 ? 'Add a contact by name, email or company…'
                 : 'Add an email to this campaign…'}
-              emptyHint="No contact on file matches — type the full address to add them anyway."
+              emptyHint="No contact on file matches - type the full address to add them anyway."
               style={{ padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit' }}
             />
             <button
@@ -2403,7 +2403,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 way back. */}
             {filtersOn > 0 && (
               <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
-                <span title={`${filtersOn} column filter${filtersOn === 1 ? '' : 's'} set. The rest of the campaign is still here — the filters only decide what the table shows.`}>
+                <span title={`${filtersOn} column filter${filtersOn === 1 ? '' : 's'} set. The rest of the campaign is still here - the filters only decide what the table shows.`}>
                   Showing <strong style={{ color: 'var(--color-text)' }}>{sortedContacts.length}</strong> of {(displayResults.contacts || []).length}
                 </span>
                 <button
@@ -2445,7 +2445,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               so say what to do next instead of showing a blank panel. */}
           {!(displayResults.contacts || []).length && (
             <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
-              No contacts in this campaign yet — add an email above to start tracking who it goes to.
+              No contacts in this campaign yet - add an email above to start tracking who it goes to.
             </div>
           )}
 
@@ -2571,8 +2571,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     return (
                     <tr
                       key={i}
-                      title={blocked === 'avoid' ? 'Marked Avoid — left out of every draft this campaign queues'
-                        : blocked === 'hold' ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ''} — left out of "Add unsent to Draft"`
+                      title={blocked === 'avoid' ? 'Marked Avoid - left out of every draft this campaign queues'
+                        : blocked === 'hold' ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ''} - left out of "Add unsent to Draft"`
                           : undefined}
                       style={{
                         borderBottom: '1px solid var(--color-border-light)',
@@ -2663,7 +2663,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               const paused = isCampaignPaused(c);
               const active = effectiveActive(c);
               const manualStatus = typeof c.manualActive === 'boolean';
-              const pauseNote = paused ? `Paused — resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})` : '';
+              const pauseNote = paused ? `Paused - resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})` : '';
               return (
               <tr
                 key={i}
@@ -2720,7 +2720,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                           style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text-secondary)', resize: 'vertical', lineHeight: 1.5 }}
                         />
                         <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-                          One per row — mail matching any of them counts toward this campaign.
+                          One per row - mail matching any of them counts toward this campaign.
                         </div>
                       </div>
                       <div>
@@ -2806,7 +2806,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                         {!paused && (
                           <button
                             onClick={e => pauseCampaign(i, e)}
-                            title={`Pause this campaign for ${CAMPAIGN_PAUSE_DAYS} days — it goes back to ${active ? 'Active' : 'Inactive'} on its own`}
+                            title={`Pause this campaign for ${CAMPAIGN_PAUSE_DAYS} days - it goes back to ${active ? 'Active' : 'Inactive'} on its own`}
                             aria-label={`Pause for ${CAMPAIGN_PAUSE_DAYS} days`}
                             style={{
                               padding: '2px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,

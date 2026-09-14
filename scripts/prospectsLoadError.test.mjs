@@ -29,7 +29,7 @@ function eq(actual, expected, name) {
   eq(explainProspectsLoadError('[code=unavailable]: The service is currently unavailable.'), L.OFFLINE,
     'an unavailable backend reads as a connection problem');
   eq(explainProspectsLoadError('TypeError: Failed to fetch'), L.OFFLINE,
-    'a blocked request — the extension case — reads as a connection problem');
+    'a blocked request - the extension case - reads as a connection problem');
 }
 
 // ── Everything else falls back rather than guessing ─────────────────────

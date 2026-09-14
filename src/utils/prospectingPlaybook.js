@@ -92,7 +92,7 @@ export const DEFAULT_STEPS = [
   {
     key: 'contact-mapping',
     title: 'Map and tag your contacts',
-    detail: 'Who your contacts are and what they care about — the tag questions each roster still owes an answer to.',
+    detail: 'Who your contacts are and what they care about - the tag questions each roster still owes an answer to.',
     view: 'contacts',
     viewLabel: 'Contacts',
     // Same reasoning as the step below: nothing counts it, so it goes red
@@ -105,7 +105,7 @@ export const DEFAULT_STEPS = [
     // Client and Key Prospect all at 100% leaves nothing to confirm — see
     // tagsAllMapped. Let one of them fall back below 100% (a new contact
     // arrives untagged) and it is asked for again.
-    clearTitle: 'Key, Client and Key Prospect are all fully tagged — no tag questions are left to answer',
+    clearTitle: 'Key, Client and Key Prospect are all fully tagged - no tag questions are left to answer',
   },
   {
     key: 'market-updates',
@@ -130,12 +130,12 @@ export const DEFAULT_STEPS = [
     // the page is showing them. See campaignsAllSent — the step clears
     // itself then, and this is what the Status pill says instead of the
     // undo hint a hand-marked step carries.
-    clearTitle: 'Every email campaign that isn\'t paused has finished sending — no market update is still going out',
+    clearTitle: 'Every email campaign that isn\'t paused has finished sending - no market update is still going out',
   },
   {
     key: 'renewals',
     title: 'Follow up with current client renewals',
-    detail: 'Contracts coming up on clients you already hold — the shortest path to the next conversation.',
+    detail: 'Contracts coming up on clients you already hold - the shortest path to the next conversation.',
     view: 'clients',
     viewLabel: 'Clients',
     workLabel: n => `${n} to work`,
@@ -157,14 +157,14 @@ export const DEFAULT_STEPS = [
   {
     key: 'pe-intros',
     title: 'Reach out to PE partners about intros for top PCs',
-    detail: 'PE relationships with nothing in flight — past Lead, not written off, and carrying no open opportunity.',
+    detail: 'PE relationships with nothing in flight - past Lead, not written off, and carrying no open opportunity.',
     view: 'pe',
     viewLabel: 'PE Portfolio',
     workLabel: n => `${n} to ask`,
     // The count is firms, not companies: the work item is a call to the
     // partner, and a firm with eleven portfolio companies and no opp is
     // one of those calls, not eleven.
-    workTitle: n => `${n} PE ${n === 1 ? 'firm has' : 'firms have'} a live relationship (Discovery, Piloting or Existing Partnership) and no OPEN opportunity on the firm or any of its portfolio companies — closed deals don't count as something in flight`,
+    workTitle: n => `${n} PE ${n === 1 ? 'firm has' : 'firms have'} a live relationship (Discovery, Piloting or Existing Partnership) and no OPEN opportunity on the firm or any of its portfolio companies - closed deals don't count as something in flight`,
     clearTitle: 'Every PE firm past Lead has an open opportunity on it, or has been marked Not Sold',
   },
   {

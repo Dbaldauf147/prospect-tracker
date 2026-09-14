@@ -168,8 +168,8 @@ const gas = commodityByKey('henryHub');
     && mail.html.includes('Henry Hub natural gas (front-month)'), true);
   check('the gas headline carries its unit', mail.html.includes('/MMBtu'), true);
   check('and each section names its own source',
-    mail.html.includes('Stooq — WTI front-month future (CL.F)')
-    && mail.html.includes('Stooq — Henry Hub front-month future (NG.F)'), true);
+    mail.html.includes('Stooq - WTI front-month future (CL.F)')
+    && mail.html.includes('Stooq - Henry Hub front-month future (NG.F)'), true);
   check('no failure banner when nothing failed',
     mail.html.includes("Not in this week's mail"), false);
 }

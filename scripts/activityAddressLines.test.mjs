@@ -74,7 +74,7 @@ eq(buildActivityAddressLines({
     emails: [{ bfoUrl: URL_B, company: 'Blackstone', nextStepsType: 'email' }],
   });
   eq(lines, ['BFO Address', `${URL_A}: Type meeting`, `${URL_B}: Type email`],
-    'two opportunities at one account are two records — both get logged');
+    'two opportunities at one account are two records - both get logged');
 }
 {
   const lines = buildActivityAddressLines({

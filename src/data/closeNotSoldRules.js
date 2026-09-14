@@ -30,7 +30,7 @@ export const CLOSE_NOT_SOLD_RULES = {
   // Competitive deals (with or without an RFP) close out as Lost.
   'competitive non rfp': LOST_RULES,
   'rfp': LOST_RULES,
-  // No competition — the deal was cancelled, never lost to anyone.
+  // No competition - the deal was cancelled, never lost to anyone.
   'only se': {
     'cancelled internally - no opp': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
     'cancelled internally - not in targets': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },

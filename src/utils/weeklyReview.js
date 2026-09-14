@@ -386,7 +386,7 @@ export function headlineKpis(snapshot) {
 // The lines that say *why* a figure is missing stay, on both cards. A blank
 // card is a claim about the cache, not about the pipeline, and an emailed
 // em dash with nothing under it can't be acted on.
-const emailDollars = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '—');
+const emailDollars = (n) => (Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : '-');
 
 export function emailKpiCards(kpis) {
   const p = kpis?.progressToTarget || {};
@@ -423,14 +423,14 @@ export function emailKpiCards(kpis) {
   return [
     {
       label: 'Progress to target',
-      value: p.soldYTD == null ? '—' : emailDollars(p.soldYTD),
+      value: p.soldYTD == null ? '-' : emailDollars(p.soldYTD),
       status: null,
       chip: null,
       lines: progressLines,
     },
     {
       label: 'Coverage ratio',
-      value: c.actual == null ? '—' : `${c.actual.toFixed(2)}×`,
+      value: c.actual == null ? '-' : `${c.actual.toFixed(2)}×`,
       status: null,
       chip: null,
       lines: coverageLines,

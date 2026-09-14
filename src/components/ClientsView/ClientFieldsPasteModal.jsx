@@ -77,7 +77,7 @@ export function ClientFieldsPasteModal({ companies = [], current = {}, onApply, 
               company name; the rest map to the Clients-tab fields on the next screen.
             </p>
             <p style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.5rem' }}>
-              A blank cell leaves that field as it is — this only fills values in, it never clears them.
+              A blank cell leaves that field as it is - this only fills values in, it never clears them.
               Checkbox columns read Yes/No, TRUE/FALSE, X, or 1/0.
             </p>
             <textarea
@@ -114,7 +114,7 @@ export function ClientFieldsPasteModal({ companies = [], current = {}, onApply, 
 
             {!companyCol && (
               <div style={{ padding: '0.5rem 0.7rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.74rem', color: '#991B1B' }}>
-                Pick which column holds the company name — rows are matched on it.
+                Pick which column holds the company name - rows are matched on it.
               </div>
             )}
 
@@ -133,7 +133,7 @@ export function ClientFieldsPasteModal({ companies = [], current = {}, onApply, 
 
                 {plan.unmatched.length > 0 && (
                   <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.7rem', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, color: '#92400E' }}>
-                    <div style={{ fontWeight: 600, marginBottom: 2 }}>No client by these names — fix the spelling and paste again if they should count:</div>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>No client by these names - fix the spelling and paste again if they should count:</div>
                     <div style={{ maxHeight: 90, overflowY: 'auto' }}>{plan.unmatched.slice(0, 40).join(', ')}{plan.unmatched.length > 40 ? ` … (+${plan.unmatched.length - 40})` : ''}</div>
                   </div>
                 )}
@@ -154,7 +154,7 @@ export function ClientFieldsPasteModal({ companies = [], current = {}, onApply, 
                           <tr key={row.company + c.field.key} style={{ borderTop: '1px solid #F1F5F9' }}>
                             <td style={{ padding: '4px 8px', color: '#64748B' }}>{i === 0 ? row.company : ''}</td>
                             <td style={{ padding: '4px 8px' }}>{c.field.label}</td>
-                            <td style={{ padding: '4px 8px', color: '#94A3B8' }}>{c.field.kind === 'bool' ? (c.was ? 'Yes' : 'No') : (c.was || '—')}</td>
+                            <td style={{ padding: '4px 8px', color: '#94A3B8' }}>{c.field.kind === 'bool' ? (c.was ? 'Yes' : 'No') : (c.was || '-')}</td>
                             <td style={{ padding: '4px 8px', fontWeight: 600 }}>{c.field.kind === 'bool' ? (c.value ? 'Yes' : 'No') : c.value}</td>
                           </tr>
                         )))}

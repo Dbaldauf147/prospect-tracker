@@ -26,7 +26,7 @@ function record(overrides = {}) {
   return {
     id: 'granola:not_1',
     source: 'granola',
-    name: 'Acme — quarterly review',
+    name: 'Acme - quarterly review',
     recordedAt: '2026-08-05T14:00:00.000Z',
     durationSeconds: 1800,
     granolaUrl: 'https://notes.granola.ai/d/not_1',
@@ -86,7 +86,7 @@ function record(overrides = {}) {
 // must not be given an end time nobody knows.
 {
   const adhoc = meetingFromRecord(record({ calendarEvent: null, durationSeconds: null }));
-  eq(adhoc._subject, 'Acme — quarterly review', 'with no event the note title is the subject');
+  eq(adhoc._subject, 'Acme - quarterly review', 'with no event the note title is the subject');
   eq(adhoc._meetingStart, '2026-08-05T14:00:00.000Z', 'with no event the record’s own time is used');
   eq(adhoc._meetingEnd, null, 'no event and no duration means no invented end');
   eq(adhoc._duration, null, 'no duration to report is null, not 0');
@@ -136,7 +136,7 @@ function record(overrides = {}) {
     'different titles at the same time stay two meetings');
 
   eq(isSameMeeting(outlook, { ...outlook }), false,
-    'two rows from the SAME source are never merged — a real double-booking survives');
+    'two rows from the SAME source are never merged - a real double-booking survives');
 
   eq(isSameMeeting(outlook, { ...granola, _subject: 'Sync' }), false,
     'a title too short to be distinctive does not match by containment');

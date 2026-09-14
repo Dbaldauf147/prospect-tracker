@@ -215,7 +215,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
                 value={setupRate}
                 percent={percent}
                 placeholder={percent ? '%' : '$'}
-                title={`What this service charges once, up front, on ${b.label.toLowerCase()} — billed in year one and never again`}
+                title={`What this service charges once, up front, on ${b.label.toLowerCase()} - billed in year one and never again`}
                 onCommit={(v) => onSaveSetupLine(b.key, { rate: v })}
               />
               <RateCell
@@ -225,7 +225,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
                 placeholder={hasSetup ? (percent ? '%' : '$') : ''}
                 title={hasSetup
                   ? 'Optional. Fill it in and this setup line prices to a range.'
-                  : 'Set the low setup rate first — a range needs both ends.'}
+                  : 'Set the low setup rate first - a range needs both ends.'}
                 onCommit={(v) => onSaveSetupLine(b.key, { rateHigh: v })}
               />
 
@@ -243,7 +243,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
                 placeholder={has ? (percent ? '%' : '$') : ''}
                 title={has
                   ? 'Optional. Fill it in and this line prices to a range.'
-                  : 'Set the low rate first — a range needs both ends.'}
+                  : 'Set the low rate first - a range needs both ends.'}
                 onCommit={(v) => onSaveLine(b.key, { rateHigh: v })}
               />
 
@@ -265,7 +265,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
       </div>
 
       <div className={styles.pricingModalHint}>
-        The four rate columns are what you charge — dollars per unit, or a percentage. Setup is
+        The four rate columns are what you charge - dollars per unit, or a percentage. Setup is
         billed once and lands in year one; the recurring columns bill again every year and run for
         the term. The Year 1 columns are the two added together under the estimate open on the Deal
         Pricing subtab. The Total row adds dollars, not rates.
@@ -307,7 +307,7 @@ export function ServicePricingModal({
       >
         <div className={styles.detailHeader}>
           <div className={styles.detailTitleWrap}>
-            <h3 className={styles.detailTitle}>Pricing — {row.name}</h3>
+            <h3 className={styles.detailTitle}>Pricing - {row.name}</h3>
             <div className={styles.detailBadges}>
               {row.serviceBucket && <span className={styles.detailBadgeMuted}>{row.serviceBucket}</span>}
               {row.serviceType && <span className={styles.detailBadgeMuted}>{row.serviceType}</span>}
@@ -365,7 +365,7 @@ export function ServicePricingModal({
           {onToggleNoFee && (
             <label
               className={styles.pricingModalScope}
-              title="This service is delivered at no charge. It prices to $0 instead of reading as unpriced — and marking it clears the rates below, which unmarking won't bring back."
+              title="This service is delivered at no charge. It prices to $0 instead of reading as unpriced - and marking it clears the rates below, which unmarking won't bring back."
             >
               <input type="checkbox" checked={!!row.noFee} onChange={onToggleNoFee} />
               No fee
@@ -395,7 +395,7 @@ function NotesField({ value, onCommit }) {
       className={styles.pricingModalNotes}
       value={draft}
       rows={3}
-      placeholder="What this price assumes — who quoted it, what it excludes, when it was last checked."
+      placeholder="What this price assumes - who quoted it, what it excludes, when it was last checked."
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => { const t = draft.trim(); if (t !== initial) onCommit(t); }}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setDraft(initial); e.currentTarget.blur(); } }}

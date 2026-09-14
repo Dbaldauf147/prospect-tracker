@@ -38,7 +38,7 @@ function ok(value, name) { eq(!!value, true, name); }
 {
   const note = {
     id: 'not_abc',
-    title: 'Acme — quarterly review',
+    title: 'Acme - quarterly review',
     created_at: '2026-08-01T10:00:00.000Z',
     updated_at: '2026-08-01T11:30:00.000Z',
     calendar_event: {
@@ -52,7 +52,7 @@ function ok(value, name) { eq(!!value, true, name); }
   const out = normalizeNote(note);
   eq(out.id, 'granola:not_abc', 'id carries the granola: prefix');
   eq(out.noteId, 'not_abc', 'raw note id is kept alongside');
-  eq(out.name, 'Acme — quarterly review', 'title is used as the name');
+  eq(out.name, 'Acme - quarterly review', 'title is used as the name');
   eq(out.recordedAt, '2026-08-01T10:00:00.000Z', 'recordedAt comes from the calendar event start');
   eq(out.durationSeconds, 2700, 'duration comes from the calendar event span');
   eq(out.attendees, [{ name: 'Dana Reid', email: 'dana@acme.com' }], 'attendee emails are lowercased');
@@ -403,7 +403,7 @@ function ok(value, name) { eq(!!value, true, name); }
 {
   const out = normalizeNote({
     id: 'not_cal',
-    title: 'Acme — quarterly review',
+    title: 'Acme - quarterly review',
     calendar_event: {
       title: 'Acme quarterly review',
       start_time: '2026-08-05T14:00:00Z',
@@ -413,7 +413,7 @@ function ok(value, name) { eq(!!value, true, name); }
   });
   eq(out.calendarEvent.title, 'Acme quarterly review', 'the event is on a list-only note');
   eq(out.calendarEvent.conferenceUrl, 'https://teams.example/join/1', 'the join link is kept');
-  eq(out.name, 'Acme — quarterly review', 'the note title still wins for the record name');
+  eq(out.name, 'Acme - quarterly review', 'the note title still wins for the record name');
   eq(normalizeNote({ id: 'not_plain', title: 'No meeting' }).calendarEvent, null, 'a note with no meeting carries no event');
 }
 

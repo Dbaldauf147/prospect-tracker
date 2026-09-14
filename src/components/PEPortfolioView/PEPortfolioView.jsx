@@ -1198,7 +1198,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen.</>
               : subtab === 'blueOwlServices'
-              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> — the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> — so the Services Sold, Services Not Sold and Services In Progress columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen. It carries the same three colours into the file, and gives every service column the same width.</>
+              ? <>The same <code>{peFirm || '-'}</code> companies as <strong>PE Overview</strong>, with every explored service broken out into one column per <strong>service bucket</strong> - the boxes the services board groups services into (a service's box is its <strong>Service Bucket</strong> on the Dropdowns › Services tab). Each bucket lists what sold in <span style={{ color: SOLD_TEXT, fontWeight: 700 }}>green</span>, what's still in progress in <span style={{ color: IN_PROGRESS_TEXT, fontWeight: 700 }}>yellow</span>, and what didn't sell in <span style={{ color: NOT_SOLD_TEXT, fontWeight: 700 }}>red</span> - so the Services Sold, Services Not Sold and Services In Progress columns aren't repeated here. Every other PE Overview column is, and this tab keeps its own column layout. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen. It carries the same three colours into the file, and gives every service column the same width.</>
               : subtab === 'stageDays'
               ? <>PE firms grouped by their <strong>PE Stage</strong>, each card showing how many days the firm has sat in that stage. The clock starts when a firm's PE Stage changes (set in its company popup); firms already in a stage started counting the day this shipped. Longest-waiting firms lead each column.</>
               : subtab === 'strategies'
@@ -1461,13 +1461,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
             { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'ratio',   label: 'PE Opps', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
-            { key: 'topPc', label: 'Top/Current PC', align: 'left', tip: `The portfolio company you are already working — one carrying a live opp — or, when there is none, the firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
+            { key: 'topPc', label: 'Top/Current PC', align: 'left', tip: `The portfolio company you are already working - one carrying a live opp - or, when there is none, the firm's highest Opportunity Score portfolio company (same score as the All PCs tab), limited to North America HQs and excluding ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}` },
             { key: 'topPcAnalysis', label: 'Top/Current PC Analysis', align: 'center', tip: 'Whether a Master Analysis has been saved against the Top/Current PC (the workbook the Utility Lookup page saves), and when. Sorts newest save first; PCs with nothing saved sort below those, and firms with no Top/Current PC below them.' },
-            { key: 'topPcStatus', label: 'Top/Current PC Status', align: 'center', tip: "The Top/Current PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither — the scored pick only excludes companies it can see are closed, and a company with a live opp is shown whatever its status." },
+            { key: 'topPcStatus', label: 'Top/Current PC Status', align: 'center', tip: "The Top/Current PC's status: the one set on this firm's Portfolio Companies list when it has one, otherwise the Table View status of the matching prospect. Blank when it has neither - the scored pick only excludes companies it can see are closed, and a company with a live opp is shown whatever its status." },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
-            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell — it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order. A firm with no stage stored reads as Lead.` },
+            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell - it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order. A firm with no stage stored reads as Lead.` },
             { key: 'newsFeed', label: 'News Feed', align: 'center', tip: 'Yes when "Track acquisition news" is ticked on this firm\'s company popup, which includes it in the weekly acquisition-news email. Sort to group the tracked firms together.' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
@@ -1718,7 +1718,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                               style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}
                               title={stats.pcMapped
                                 ? `No portfolio company on this firm has a live opp, and none is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
-                                : 'No portfolio companies mapped on this firm yet — fill in its Portfolio Companies tab.'}
+                                : 'No portfolio companies mapped on this firm yet - fill in its Portfolio Companies tab.'}
                             >-</div>
                           );
                         }
@@ -1734,7 +1734,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                             title={[
                               top.score == null
                                 ? `${top.companyName}`
-                                : `${top.companyName} — Opportunity Score ${top.score}`,
+                                : `${top.companyName} - Opportunity Score ${top.score}`,
                               top.hqLocation ? `HQ: ${top.hqLocation}` : '',
                               top.status
                                 ? `Status: ${top.status}${top.statusFromRow ? ' (set on this firm\'s Portfolio Companies list)' : (top.statusCompany ? ` (from "${top.statusCompany}")` : '')}`
@@ -1745,10 +1745,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                                 ? `Current: ${top.activeOppCount} live opp${top.activeOppCount === 1 ? '' : 's'}${top.currentStage ? ` (furthest along: ${top.currentStage})` : ''}. A company being worked is the firm's Top/Current PC, ahead of the scored pick.`
                                 : `Top of ${top.eligible} eligible of ${top.total} mapped portfolio ${top.total === 1 ? 'company' : 'companies'}.`,
                               top.isCurrent && top.currentOpps?.length
-                                ? top.currentOpps.slice(0, 4).map(o => `• ${o.title}${o.stage ? ` — ${o.stage}` : ''}`).join('\n')
+                                ? top.currentOpps.slice(0, 4).map(o => `• ${o.title}${o.stage ? ` - ${o.stage}` : ''}`).join('\n')
                                 : '',
                               top.isCurrent && !top.mapped
-                                ? 'Not on this firm\'s mapped Portfolio Companies list — matched through its PE Owner.'
+                                ? 'Not on this firm\'s mapped Portfolio Companies list - matched through its PE Owner.'
                                 : '',
                               !top.isCurrent && skipped.length ? `Excluded: ${skipped.join(', ')}.` : '',
                               match ? 'Click to open it in the Table View.' : '',
@@ -1816,7 +1816,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                               >✓ {formatAnalysisDate(meta.savedAt)}</span>
                             ) : (
                               <span
-                                title={`No Master Analysis saved against ${top.companyName} yet — run it on the Utility Lookup page and use "Save to ${top.companyName}".`}
+                                title={`No Master Analysis saved against ${top.companyName} yet - run it on the Utility Lookup page and use "Save to ${top.companyName}".`}
                                 style={{ color: '#94A3B8', fontStyle: 'italic' }}
                               >Not saved</span>
                             )}
@@ -3034,7 +3034,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
       // than quietly losing the unfiled ones.
       ...(isServicesVariant ? [{ key: 'svcBucketNone', label: UNGROUPED_SERVICES, defaultWidth: 200,
         renderHeader: (label) => (
-          <span title="Services that no box on the services board claims: sold in green, in progress in yellow, Not Sold in red — set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
+          <span title="Services that no box on the services board claims: sold in green, in progress in yellow, Not Sold in red - set a Service Bucket on the Dropdowns › Services tab to file one">{label}</span>
         ),
         getSortValue: (r) => r._noBucket.sold.length * 1e6
           + r._noBucket.inProgress.length * 1e3
@@ -3529,7 +3529,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
                 type="button"
                 onClick={() => setHqFilter(t.key)}
                 title={t.key === 'outside'
-                  ? 'Companies whose HQ Region is outside North America — including the ones with no HQ Region set yet'
+                  ? 'Companies whose HQ Region is outside North America - including the ones with no HQ Region set yet'
                   : t.key === 'nam'
                   ? 'Companies whose HQ Region is North America'
                   : 'Every company of this PE firm'}
@@ -3854,7 +3854,7 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
   );
 }
 
-// PE firms laid out by PE Stage — the same Kanban shape as the PE Stages
+// PE firms laid out by PE Stage - the same Kanban shape as the PE Stages
 // board, but each card carries a "days in stage" badge and the columns
 // sort longest-waiting firm first. Mirrors the Opps page's Days-in-Stage
 // board (day counts, longest-stalling on top) at the firm level. The day
@@ -3980,7 +3980,7 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
   );
 }
 
-// A firm's PE Stage as a coloured chip — a dropdown when the caller can
+// A firm's PE Stage as a coloured chip - a dropdown when the caller can
 // write (both the Portfolio table and PE Overview pass onUpdateProspect),
 // a plain chip when it can't. Setting it here rather than only in the
 // company popup is the point: moving a firm through Lead → Discovery →
@@ -4013,7 +4013,7 @@ function PeStageCell({ prospect, onUpdateProspect }) {
       value={meta.stage}
       onClick={e => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onUpdateProspect(prospect.id, { peStage: e.target.value }); }}
-      title={`${name} is at "${meta.stage}". Change it here — it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
+      title={`${name} is at "${meta.stage}". Change it here - it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
       style={{ ...chip, maxWidth: '100%', padding: '2px 4px', fontFamily: 'inherit', cursor: 'pointer' }}
     >
       {/* No blank option: every PE firm sits at a stage, and a firm with

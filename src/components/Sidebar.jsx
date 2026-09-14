@@ -321,7 +321,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           {prospectingTagDebt > 0 && (
             <span
               className={styles.navBadge}
-              title={`${prospectingTagDebt} contact ${prospectingTagDebt === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags. Open Prospecting to see which — Active isn't counted.`}
+              title={`${prospectingTagDebt} contact ${prospectingTagDebt === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags. Open Prospecting to see which - Active isn't counted.`}
             >{prospectingTagDebt > 99 ? '99+' : prospectingTagDebt}</span>
           )}
           {/* A step of the ladder is outstanding: everything above it is

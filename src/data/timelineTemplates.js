@@ -205,7 +205,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Schneider Electric',
         phase: 'Analysis',
         timing: 'Month 4 \u2013 Month 5',
-        description: 'Map which suppliers are competitive for the market, product, and load shape at hand \u2014 credit terms, pass-throughs, and service levels included \u2014 so the invitation list is built on fit rather than familiarity.',
+        description: 'Map which suppliers are competitive for the market, product, and load shape at hand - credit terms, pass-throughs, and service levels included - so the invitation list is built on fit rather than familiarity.',
         icon: 'people',
       },
       {
@@ -214,7 +214,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Schneider Electric',
         phase: 'Analysis',
         timing: 'Month 5',
-        description: 'Set the benchmark each bid is measured against and the structures suppliers are asked to quote \u2014 fixed, index, block-and-index, layered \u2014 so the offers arrive comparable.',
+        description: 'Set the benchmark each bid is measured against and the structures suppliers are asked to quote - fixed, index, block-and-index, layered - so the offers arrive comparable.',
         icon: 'dollar',
       },
       {
@@ -250,7 +250,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
         owner: 'Schneider Electric',
         phase: 'Execution',
         timing: 'Month 7 \u2013 Month 8',
-        description: 'Go back to the preferred supplier for a refreshed quote at the moment of execution \u2014 the market moves, and the offer signed has to be the one priced that day.',
+        description: 'Go back to the preferred supplier for a refreshed quote at the moment of execution - the market moves, and the offer signed has to be the one priced that day.',
         icon: 'handshake',
       },
       {

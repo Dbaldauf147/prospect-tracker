@@ -62,14 +62,14 @@ const tileLabel = { fontSize: '0.68rem', fontWeight: 600, color: '#64748B', text
 const panelReset = { display: 'block', width: '100%', maxWidth: '100%', whiteSpace: 'normal', overflow: 'visible' };
 const cellReset = { maxWidth: 'none', overflow: 'visible', textOverflow: 'clip' };
 
-const NO_UPSIDE = 'No open client prices above zero on this service — either nobody is open to it, or the clients who are have no count for it to multiply.';
+const NO_UPSIDE = 'No open client prices above zero on this service - either nobody is open to it, or the clients who are have no count for it to multiply.';
 
 // A money figure that may be a range. A service nothing prices on shows a
 // dash rather than $0: "no rate on the card" and "priced, worth nothing" are
 // different answers, and a zero would read as the second when it is the first.
 function Money({ low, high, muted, bold, title }) {
   if (!(low > 0 || high > 0)) {
-    return <span style={{ color: '#CBD5E1' }} title={title}>—</span>;
+    return <span style={{ color: '#CBD5E1' }} title={title}>-</span>;
   }
   return (
     <span style={{ fontWeight: bold ? 700 : 600, color: muted ? '#64748B' : '#0F172A', whiteSpace: 'nowrap' }}>
@@ -97,7 +97,7 @@ function ExploredCell({ statuses }) {
   const shown = ['sold', 'inProgress', 'notSold', 'na']
     .map(key => ({ key, n: statuses?.[key] || 0, meta: serviceBucket(key) }))
     .filter(b => b.n > 0);
-  if (!shown.length) return <span style={{ color: '#CBD5E1' }} title="No client's card says anything about this service.">—</span>;
+  if (!shown.length) return <span style={{ color: '#CBD5E1' }} title="No client's card says anything about this service.">-</span>;
   return (
     <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
       {shown.map(b => (
@@ -323,7 +323,7 @@ export function ServiceOpportunityView({
               )}
             </span>
           )
-          : <span style={{ color: '#CBD5E1' }}>—</span>
+          : <span style={{ color: '#CBD5E1' }}>-</span>
       ),
     },
     {
@@ -345,7 +345,7 @@ export function ServiceOpportunityView({
       key: 'recurringAnnual', label: 'Recurring / yr', defaultWidth: 230,
       getSortValue: (row) => row.recurringAnnual,
       exportValue: (row) => row.recurringAnnual,
-      render: (row) => <Money low={row.recurringAnnual} high={row.recurringAnnualHigh} title="Nothing recurring in this service's price — a project bills once." />,
+      render: (row) => <Money low={row.recurringAnnual} high={row.recurringAnnualHigh} title="Nothing recurring in this service's price - a project bills once." />,
     },
     {
       // How much of the book this figure is actually built on. "3 of 21 open"
@@ -418,7 +418,7 @@ export function ServiceOpportunityView({
     <div style={{ ...panelReset, padding: '0.5rem 0.75rem 0.85rem', background: '#F8FAFC' }}>
       <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.45rem' }}>
         Every client priced against <strong>{row.name}</strong>, biggest first. The ones with a
-        status are already ruled on — their money is in Whole Book and never in Est. Deal Value.
+        status are already ruled on - their money is in Whole Book and never in Est. Deal Value.
       </div>
       <table style={{ ...panelReset, borderCollapse: 'collapse', fontSize: '0.74rem' }}>
         <thead>
@@ -455,10 +455,10 @@ export function ServiceOpportunityView({
               <td style={{ ...cellReset, padding: '0.25rem 0.4rem', textAlign: 'right', color: c.open ? '#0F172A' : '#94A3B8', fontWeight: c.open ? 700 : 500 }}>
                 {c.contractValue > 0 || c.contractValueHigh > 0
                   ? formatMoneyRange(c.contractValue, c.contractValueHigh)
-                  : '—'}
+                  : '-'}
               </td>
               <td style={{ ...cellReset, padding: '0.25rem 0.4rem', textAlign: 'right', color: c.open ? '#475569' : '#94A3B8' }}>
-                {c.year1 > 0 || c.year1High > 0 ? formatMoneyRange(c.year1, c.year1High) : '—'}
+                {c.year1 > 0 || c.year1High > 0 ? formatMoneyRange(c.year1, c.year1High) : '-'}
               </td>
               <td style={{ ...cellReset, padding: '0.25rem 0.4rem', color: '#B45309' }}>
                 {c.missingUnits.length
@@ -467,7 +467,7 @@ export function ServiceOpportunityView({
                       {`No ${c.missingUnitLabels.join(' / ')} count`}
                     </span>
                   )
-                  : <span style={{ color: '#CBD5E1' }}>—</span>}
+                  : <span style={{ color: '#CBD5E1' }}>-</span>}
               </td>
             </tr>
           ))}
@@ -494,7 +494,7 @@ export function ServiceOpportunityView({
           </div>
           <div style={tileLabel}>Services with upside</div>
         </div>
-        <div style={tile} title="Every listed service's open clients across their contract terms, added up — a recurring fee multiplied by its years, a project once, setup once. Sizing the same client on two services counts both, because they are two deals.">
+        <div style={tile} title="Every listed service's open clients across their contract terms, added up - a recurring fee multiplied by its years, a project once, setup once. Sizing the same client on two services counts both, because they are two deals.">
           <div style={tileNum}>{formatMoneyRange(totals.contractValue, totals.contractValueHigh)}</div>
           <div style={tileLabel}>Est. deal value</div>
         </div>
@@ -506,12 +506,12 @@ export function ServiceOpportunityView({
           <div style={tileNum}>{formatMoneyRange(totals.recurringAnnual, totals.recurringAnnualHigh)}</div>
           <div style={tileLabel}>Recurring / yr</div>
         </div>
-        <div style={tile} title="Every client on every listed service, whatever the card says — what the book would be worth if nothing had been ruled on yet. Always at least the figure beside it; the gap is the work already sold, lost or in flight.">
+        <div style={tile} title="Every client on every listed service, whatever the card says - what the book would be worth if nothing had been ruled on yet. Always at least the figure beside it; the gap is the work already sold, lost or in flight.">
           <div style={{ ...tileNum, color: '#475569' }}>{formatMoneyRange(totals.bookValue, totals.bookValueHigh)}</div>
           <div style={tileLabel}>Whole book</div>
         </div>
         {totals.unpriced > 0 && (
-          <div style={{ ...tile, borderColor: '#FDE68A', background: '#FFFBEB' }} title="Listed services with no rate on Dropdowns › Services Pricing. They contribute nothing to these totals — price them and the figures go up.">
+          <div style={{ ...tile, borderColor: '#FDE68A', background: '#FFFBEB' }} title="Listed services with no rate on Dropdowns › Services Pricing. They contribute nothing to these totals - price them and the figures go up.">
             <div style={{ ...tileNum, color: '#92400E' }}>{totals.unpriced}</div>
             <div style={{ ...tileLabel, color: '#92400E' }}>Services with no rate</div>
           </div>
@@ -527,14 +527,14 @@ export function ServiceOpportunityView({
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.76rem', color: '#475569' }}>
           <input type="checkbox" checked={onlyUpside} onChange={e => setOnlyUpside(e.target.checked)} />
-          <span title="Hide the services that price to nothing — no rate on the card, no open client, or no count to multiply.">
+          <span title="Hide the services that price to nothing - no rate on the card, no open client, or no count to multiply.">
             Only services with upside
           </span>
         </label>
         {untrackedCount > 0 && (
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.76rem', color: '#475569' }}>
             <input type="checkbox" checked={showUntracked} onChange={e => setShowUntracked(e.target.checked)} />
-            <span title={`${untrackedCount} client${untrackedCount === 1 ? ' is' : 's are'} ticked Don't Track on the Clients tab. They are left out of these figures — tick this to price them anyway.`}>
+            <span title={`${untrackedCount} client${untrackedCount === 1 ? ' is' : 's are'} ticked Don't Track on the Clients tab. They are left out of these figures - tick this to price them anyway.`}>
               Show Don&rsquo;t Track clients <span style={{ color: '#94A3B8' }}>({untrackedCount})</span>
             </span>
           </label>
@@ -556,7 +556,7 @@ export function ServiceOpportunityView({
           WOULD be worth, not what it will be. */}
       <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginBottom: '0.6rem', maxWidth: 860 }}>
         A sizing exercise, not a forecast: nothing here knows whether a client wants the service.
-        Est. Deal Value counts only clients whose card says nothing about it — the ones already
+        Est. Deal Value counts only clients whose card says nothing about it - the ones already
         sold, lost, in flight or marked N/A are in Whole Book instead. Expand a service to see
         which is which.
       </div>

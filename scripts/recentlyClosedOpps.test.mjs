@@ -52,7 +52,7 @@ const names = (rows) => rows.map(r => r.Account);
 // --- what counts as closed ----------------------------------------------
 check('Sold is closed', isClosedStage('Sold'), true);
 check('so is Not Sold', isClosedStage('Not Sold'), true);
-check('paperwork stages are not — the deal is still in flight',
+check('paperwork stages are not - the deal is still in flight',
   ['Contracting', 'Agreement Sent', 'Quoting', 'Lead', ''].map(isClosedStage),
   [false, false, false, false, false]);
 check('whitespace and blanks read as they look',
@@ -100,7 +100,7 @@ check('whitespace and blanks read as they look',
   check('a day is a day whatever the hour the page is opened',
     [daysSinceClose(r, justAfterMidnight), daysSinceClose(r, lateEvening)], [3, 3]);
   check('today is nought days ago', daysSinceClose(opp('A', 'Sold', iso(9)), NOW), 0);
-  check('a future close is negative, not null — a different thing from undated',
+  check('a future close is negative, not null - a different thing from undated',
     daysSinceClose(opp('A', 'Sold', iso(11)), NOW), -2);
   check('no date is null', daysSinceClose(opp('A', 'Sold', ''), NOW), null);
   check('a bare ISO date is not dragged back a day by the timezone',
@@ -163,7 +163,7 @@ check('the age label reads like a person would say it',
     opp('Just undated', 'Sold', ''),
     opp('Fine', 'Sold', iso(8)),
   ], { nowMs: NOW });
-  check('an unnamed, undated opp counts once — as unnamed', unnamed, 1);
+  check('an unnamed, undated opp counts once - as unnamed', unnamed, 1);
   check('and the Close Date nag counts only the opp that belongs here', undated, 1);
   check('the named, dated opp is the row', names(rows), ['Fine']);
 }

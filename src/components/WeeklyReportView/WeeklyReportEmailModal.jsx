@@ -190,9 +190,9 @@ export function WeeklyReportEmailModal({ open, onClose, uid, defaultRecipient = 
               caches, so it mails the snapshot this tab last published.
               Saying so here means a stale email is never a surprise. */}
           <div style={{ fontSize: '0.72rem', color: '#475569', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.45rem 0.6rem', marginBottom: '0.75rem' }}>
-            Sends the report as this tab last showed it{age ? <> — saved <strong>{age}</strong></> : ''}.
+            Sends the report as this tab last showed it{age ? <> - saved <strong>{age}</strong></> : ''}.
             The numbers come from caches in your browser, so the scheduled email is only as current as your last visit to this tab.
-            {!snapshotAt && <> <strong>Nothing saved yet</strong> — it saves as soon as this tab has data to show.</>}
+            {!snapshotAt && <> <strong>Nothing saved yet</strong> - it saves as soon as this tab has data to show.</>}
           </div>
 
           {!editing && (

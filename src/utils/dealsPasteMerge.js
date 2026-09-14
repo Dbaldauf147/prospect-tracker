@@ -87,7 +87,7 @@ export function planDealPaste(existingRows, incomingRows, { overwriteConflicts =
     const { client, agreement } = dealIdentity(record);
     if (!client) {
       summary.skipped++;
-      results.push({ rowNumber, status: 'skipped', reason: 'No Client Name — nothing to match the deal on' });
+      results.push({ rowNumber, status: 'skipped', reason: 'No Client Name - nothing to match the deal on' });
       return;
     }
 

@@ -60,7 +60,7 @@ for (const prop of nullable) {
   const bare = calls.filter(m => !/\?\s*$/.test(cells.slice(Math.max(0, m.index - 40), m.index).replace(new RegExp(`${prop}\\s*$`), '')));
   ok(bare.length === 0,
     `${prop} is never called bare inside the row cells`,
-    bare.length ? `${bare.length} unguarded call(s) — the pages that pass no ${prop} would throw` : '');
+    bare.length ? `${bare.length} unguarded call(s) - the pages that pass no ${prop} would throw` : '');
 }
 
 // The guard the fix put in, named so a refactor that drops it fails here

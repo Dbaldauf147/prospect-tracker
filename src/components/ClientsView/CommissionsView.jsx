@@ -1457,7 +1457,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <button
             type="button"
             onClick={() => setShowPaste(true)}
-            title="Paste tab-separated rows copied from Excel — or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each commission field. New projects are added and projects already on file fill in their blank cells; figures already recorded are left alone."
+            title="Paste tab-separated rows copied from Excel - or just hit Cmd/Ctrl+V anywhere on this page. The next step lets you confirm which pasted column maps to each commission field. New projects are added and projects already on file fill in their blank cells; figures already recorded are left alone."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid #16A34A', background: '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >Paste from Excel</button>
           {rows.length > 0 && (
@@ -1671,7 +1671,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No commissions yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>Paste from Excel</strong> — or just hit Cmd/Ctrl+V on this page — to drop in copied commission rows. The popup will map each pasted column (Name, Account Name, BFO Name, Project Name, monthly revenue, monthly commission…) onto its destination.
+              Click <strong>Paste from Excel</strong> - or just hit Cmd/Ctrl+V on this page - to drop in copied commission rows. The popup will map each pasted column (Name, Account Name, BFO Name, Project Name, monthly revenue, monthly commission…) onto its destination.
             </div>
           </div>
         ) : (

@@ -343,7 +343,7 @@ function renderScheduledOppCell(key, row, onManage) {
           {entry.company || '(no company)'}
         </span>
         <span
-          title={`This opp hasn’t been created yet — it is queued for ${when || 'a scheduled time'}. Manage it under Scheduled Opps.`}
+          title={`This opp hasn’t been created yet - it is queued for ${when || 'a scheduled time'}. Manage it under Scheduled Opps.`}
           style={{
             flex: '0 0 auto', padding: '1px 7px', borderRadius: 999, fontSize: '0.62rem',
             fontWeight: 700, whiteSpace: 'nowrap', fontStyle: 'normal',
@@ -692,7 +692,7 @@ function needsUsdFlag(row) {
   const usd = String(row['USD?'] ?? '')
     .replace(ZERO_WIDTH_RE, '')
     .replace(/[\s$,]/g, '')
-    .replace(/[-\u2013\u2014\u2212]/g, '');
+    .replace(/[-\u2013\u2014\u2212]/g, ''); // em-dash-ok: reads pasted cells
   return usd === '';
 }
 
@@ -722,7 +722,7 @@ function hasCompetitionValue(value) {
   return String(value ?? '')
     .replace(ZERO_WIDTH_RE, '')
     .replace(/\s/g, '')
-    .replace(/[-\u2013\u2014\u2212]/g, '') !== '';
+    .replace(/[-\u2013\u2014\u2212]/g, '') !== ''; // em-dash-ok: reads pasted cells
 }
 
 // The stage at which the COA exceptions have to be settled. An agreement is
@@ -771,7 +771,7 @@ function needsBudgetTimelineFlag(row) {
   if (!/\bbudgets?\b/.test(scope)) return false;
   const timeline = String(rowValueByHeader(row, 'timeline?') ?? '')
     .replace(ZERO_WIDTH_RE, '')
-    .replace(/[-\s\u2013\u2014\u2212]/g, '');
+    .replace(/[-\s\u2013\u2014\u2212]/g, ''); // em-dash-ok: reads pasted cells
   return timeline === '';
 }
 
@@ -1671,7 +1671,7 @@ function PullThroughToggle({ on, onChange, variant = 'box', title }) {
 function pullThroughHint(on, source) {
   if (!on) {
     return 'Counts as a real opportunity. Click to mark it a pull-through '
-      + '\u2014 it then stays out of every close rate, the % not quoted table '
+      + '- it then stays out of every close rate, the % not quoted table '
       + 'and the Days-in-Stage board.';
   }
   const why = source === 'scope'
@@ -2033,7 +2033,7 @@ function DealCountChips({ chips, companyName, account }) {
             key={chip.unit}
             title={known
               ? `${chip.label}: ${chip.value.toLocaleString()}, from ${chip.from}. Every fee charged per ${chip.label.toLowerCase()} below is worked against it.`
-              : `No ${chip.label.toLowerCase()} count is recorded for this account, on the opp or on the company card — which is why a service charged per ${chip.label.toLowerCase()} prices at nothing below.`}
+              : `No ${chip.label.toLowerCase()} count is recorded for this account, on the opp or on the company card - which is why a service charged per ${chip.label.toLowerCase()} prices at nothing below.`}
             style={{
               display: 'inline-flex', alignItems: 'baseline', gap: 4,
               padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', whiteSpace: 'nowrap',
@@ -2127,7 +2127,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
         {picking ? (
           <span
             style={{ color: '#94A3B8', fontWeight: 400 }}
-            title="A service left unticked still shows what it is worth — it just stops counting towards the total, so you can see what the deal is without it."
+            title="A service left unticked still shows what it is worth - it just stops counting towards the total, so you can see what the deal is without it."
           >
             {' '}&middot; untick to exclude
           </span>
@@ -2185,14 +2185,14 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
                     title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
                   >
                     <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
-                      {line.feeHigh > line.fee ? money(line.feeHigh) : '—'}
+                      {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
                     </strong>
                   </td>
                 </>
               ) : (
                 <>
-                  <td style={{ ...num, color: '#94A3B8' }} title="No price on the Services Pricing tab yet">—</td>
-                  <td style={{ ...num, color: '#94A3B8' }}>—</td>
+                  <td style={{ ...num, color: '#94A3B8' }} title="No price on the Services Pricing tab yet">-</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>-</td>
                 </>
               )}
             </tr>
@@ -2232,7 +2232,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
               title={sums.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
             >
               <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
-                {sums.ranged ? money(sums.year1TotalHigh) : '—'}
+                {sums.ranged ? money(sums.year1TotalHigh) : '-'}
               </strong>
               {onUse && sums.ranged ? (
                 <div>
@@ -2250,7 +2250,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
       </table>
       {sums.unpriced.length > 0 && (
         <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
-          No price yet: {sums.unpriced.join(', ')} — set one on Dropdowns › Services Pricing.
+          No price yet: {sums.unpriced.join(', ')} - set one on Dropdowns › Services Pricing.
         </div>
       )}
     </div>
@@ -4058,7 +4058,7 @@ function NewOppModal({
             New Opp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Set the Company, Source, Type, PE Owner, Services and Notes for the new row. All are optional and editable later. Schedule it below to have the row created on a future date instead of now — its services show on the company card as scheduled in the meantime.
+            Set the Company, Source, Type, PE Owner, Services and Notes for the new row. All are optional and editable later. Schedule it below to have the row created on a future date instead of now - its services show on the company card as scheduled in the meantime.
           </div>
         </div>
 
@@ -4289,7 +4289,7 @@ function NewOppModal({
               />
               <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
                 {pullThrough
-                  ? <>Rides along with a parent sale{pullThroughEdit == null ? <> (the services picked above say so)</> : null} — this opp is left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
+                  ? <>Rides along with a parent sale{pullThroughEdit == null ? <> (the services picked above say so)</> : null} - this opp is left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
                   : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
               </div>
             </div>
@@ -4347,7 +4347,7 @@ function NewOppModal({
                 <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.4 }}>
                   {needsScheduleDate
                     ? 'Pick a date for the opp to be created on.'
-                    : <>Nothing is created now. The opp{willAddCompany ? ' (and the new Table View company)' : ''} lands on <strong style={{ color: 'var(--color-text)' }}>{formatScheduledOppWhen({ dueDate: scheduleDate, dueTime: scheduleTime }) || '—'}</strong>, the first time the Opps tab is open at or after that. Manage it from <strong style={{ color: 'var(--color-text)' }}>Scheduled Opps</strong> in the toolbar.</>}
+                    : <>Nothing is created now. The opp{willAddCompany ? ' (and the new Table View company)' : ''} lands on <strong style={{ color: 'var(--color-text)' }}>{formatScheduledOppWhen({ dueDate: scheduleDate, dueTime: scheduleTime }) || '-'}</strong>, the first time the Opps tab is open at or after that. Manage it from <strong style={{ color: 'var(--color-text)' }}>Scheduled Opps</strong> in the toolbar.</>}
                 </div>
               </div>
             )}
@@ -4478,7 +4478,7 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
             Scheduled Opps
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Opps queued to be created later. Each one is added the first time this tab is open at or after its date and time (Eastern) — nothing exists on the Opps table until then.
+            Opps queued to be created later. Each one is added the first time this tab is open at or after its date and time (Eastern) - nothing exists on the Opps table until then.
           </div>
         </div>
 
@@ -4635,7 +4635,7 @@ function TrackedMarginHint({ opp, current, onUse }) {
         {optionName ? <> on <em>{optionName}</em></> : null} over the term
       </span>
       {matches ? (
-        <span style={{ color: '#15803D', fontWeight: 600 }}>— in the box</span>
+        <span style={{ color: '#15803D', fontWeight: 600 }}>- in the box</span>
       ) : (
         <button
           type="button"
@@ -5281,7 +5281,7 @@ function LeadQuotedAmountModal({
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {String(opp?.['Scope'] ?? '').trim()
                 ? 'None of the services in this opp’s Scope match a service on the rate card, so there is nothing to price it from.'
-                : 'Nothing is in this opp’s Scope yet — fill it in and this prompt prices the services out for you.'}
+                : 'Nothing is in this opp’s Scope yet - fill it in and this prompt prices the services out for you.'}
             </div>
           )}
         </div>
@@ -6187,7 +6187,7 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                   value={row.requested || ''}
                   onChange={(e) => updateRow(idx, 'requested', e.target.value)}
                   disabled={!!row.na}
-                  title={row.na ? 'Marked N/A — un-mark it to record dates.' : 'The date the COA exception was sent for approval.'}
+                  title={row.na ? 'Marked N/A - un-mark it to record dates.' : 'The date the COA exception was sent for approval.'}
                   style={{ ...cellInput, width: 'auto', ...(row.na ? naCell : null) }}
                 />
               </td>
@@ -6197,7 +6197,7 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                   value={row.approved || ''}
                   onChange={(e) => updateRow(idx, 'approved', e.target.value)}
                   disabled={!!row.na}
-                  title={row.na ? 'Marked N/A — un-mark it to record dates.' : 'The date it came back approved. Leave blank until it does.'}
+                  title={row.na ? 'Marked N/A - un-mark it to record dates.' : 'The date it came back approved. Leave blank until it does.'}
                   style={{ ...cellInput, width: 'auto', ...(row.na ? naCell : null) }}
                 />
               </td>
@@ -6209,7 +6209,7 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                     onClick={() => updateRow(idx, 'na', !row.na)}
                     title={row.na
                       ? 'This item is marked N/A for this deal. Click to put it back in play.'
-                      : "Mark this item N/A — it doesn't apply to this deal, so nobody is waiting on it."}
+                      : "Mark this item N/A - it doesn't apply to this deal, so nobody is waiting on it."}
                     aria-pressed={!!row.na}
                     style={{
                       fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit', lineHeight: 1,
@@ -6765,11 +6765,11 @@ const OPP_DETAIL_TABS = [
   // has the close-out set, the rest are waiting for theirs — so they're in
   // ALWAYS_ON_TABS below: a tab that only appears once something has been
   // moved onto it is a tab nobody can move anything onto.
-  { key: 'stage3', label: 'Stage 3', hint: 'Stage 3 — Qualify Opportunity' },
-  { key: 'stage4', label: 'Stage 4', hint: 'Stage 4 — Influence and Develop' },
-  { key: 'stage5', label: 'Stage 5', hint: 'Stage 5 — Prepare & Bid' },
-  { key: 'stage6', label: 'Stage 6', hint: 'Stage 6 — Negotiate to Win' },
-  { key: 'stage7', label: 'Stage 7', hint: 'Stage 7 — closing the deal out' },
+  { key: 'stage3', label: 'Stage 3', hint: 'Stage 3 - Qualify Opportunity' },
+  { key: 'stage4', label: 'Stage 4', hint: 'Stage 4 - Influence and Develop' },
+  { key: 'stage5', label: 'Stage 5', hint: 'Stage 5 - Prepare & Bid' },
+  { key: 'stage6', label: 'Stage 6', hint: 'Stage 6 - Negotiate to Win' },
+  { key: 'stage7', label: 'Stage 7', hint: 'Stage 7 - closing the deal out' },
   // No "Close" tab: its fields have moved onto the two stages that do that
   // work — Verbal and Target Signature Date to Stage 6, the close-out set
   // to Stage 7 — so nothing routes to it any more and it could never show.
@@ -7404,7 +7404,7 @@ export function OppInfoModal({
           />
           <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
             {on
-              ? <>Rides along with a parent sale{source === 'scope' ? <> (read from the Scope text)</> : null} — left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
+              ? <>Rides along with a parent sale{source === 'scope' ? <> (read from the Scope text)</> : null} - left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
               : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
           </span>
         </div>
@@ -7586,7 +7586,7 @@ export function OppInfoModal({
                         const anchor = e.currentTarget.getBoundingClientRect();
                         setMoveMenu(cur => (cur?.field === h ? null : { field: h, label, anchor }));
                       }}
-                      title={`"${label}" is on ${oppDetailPlacementLabel(placementOf(h).tab, placementOf(h).step)} — click to move it`}
+                      title={`"${label}" is on ${oppDetailPlacementLabel(placementOf(h).tab, placementOf(h).step)} - click to move it`}
                       style={{
                         padding: 0, border: 'none', background: 'none',
                         textAlign: 'left', font: 'inherit',
@@ -7811,7 +7811,7 @@ export function OppInfoModal({
                 <strong>Missing Competition.</strong> This opp is closed at{' '}
                 <strong>{String(opp['Stage'] || '').trim() || 'a closed stage'}</strong> but the{' '}
                 <strong>Competition</strong> field is blank or “-”. It's required to close an opp
-                out — pick who this was competed against to clear the flag.
+                out - pick who this was competed against to clear the flag.
               </span>
             </div>
           )}
@@ -7858,7 +7858,7 @@ export function OppInfoModal({
               <span style={{ flex: 1, minWidth: 0 }}>
                 <strong>Move to Qualifying?</strong> This opp is still at the{' '}
                 <strong>Lead</strong> stage but its Status says{' '}
-                <strong>Meeting scheduled</strong> — consider moving it to{' '}
+                <strong>Meeting scheduled</strong> - consider moving it to{' '}
                 <strong>Qualifying</strong> with the meeting scheduled.
               </span>
               <button
@@ -7884,7 +7884,7 @@ export function OppInfoModal({
               display: 'flex', alignItems: 'center', gap: 8,
             }}>
               <span style={{ flex: 1, minWidth: 0 }}>
-                “Move to Qualifying?” snoozed — back{' '}
+                “Move to Qualifying?” snoozed - back{' '}
                 {snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(opp))}.
               </span>
               <button
@@ -7917,7 +7917,7 @@ export function OppInfoModal({
               <span>
                 <strong>Margin approval missing.</strong> The margin request went in on{' '}
                 <strong>{formatDateDisplay(opp['Margin Email Date - Sales Leader Review Date'])}</strong> but{' '}
-                <strong>{headerLabel('Margin Approval Date')}</strong> is still blank — chase
+                <strong>{headerLabel('Margin Approval Date')}</strong> is still blank - chase
                 the approval, then fill the date in to clear the flag.
               </span>
             </div>
@@ -7939,7 +7939,7 @@ export function OppInfoModal({
               <span>
                 <strong>Credit approval missing.</strong> The credit review went in on{' '}
                 <strong>{formatDateDisplay(opp['Credit approval'])}</strong> but{' '}
-                <strong>{headerLabel('Credit Approval Date')}</strong> is still blank — chase
+                <strong>{headerLabel('Credit Approval Date')}</strong> is still blank - chase
                 the approval, then fill the date in to clear the flag.
               </span>
             </div>
@@ -9287,7 +9287,7 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings, 
   return (
     <>
       <label
-        title="Target date the agreement is signed. Saved on the opp, and the date the rollout timeline plans from — every band moves with it. Blank plans from today."
+        title="Target date the agreement is signed. Saved on the opp, and the date the rollout timeline plans from - every band moves with it. Blank plans from today."
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 6,
           fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap',
@@ -9309,7 +9309,7 @@ function DealTimelineButton({ opp, solutionOptions, serviceOverrides, settings, 
         type="button"
         onClick={() => setOpen(true)}
         title={services.length
-          ? `Rollout timeline for ${services.join(', ')} — with the services they depend on, from ${signDate ? 'the target signature date' : 'today'}`
+          ? `Rollout timeline for ${services.join(', ')} - with the services they depend on, from ${signDate ? 'the target signature date' : 'today'}`
           : 'Rollout timeline for this deal’s services. Nothing in Scope yet, so there’s nothing to plan.'}
         // Same pill the activity marks in the Notes header use, so the
         // header reads as one row of controls rather than two styles.
@@ -9368,7 +9368,7 @@ function KtmMappingButton({ opp, solutionOptions, serviceOverrides }) {
         type="button"
         onClick={() => setOpen(true)}
         title={inScope.length
-          ? `KTM mapping — ${mappedCount} of this deal's ${inScope.length} service${inScope.length === 1 ? '' : 's'} ${mappedCount === 1 ? 'has' : 'have'} a KTM named on Dropdowns › Services`
+          ? `KTM mapping - ${mappedCount} of this deal's ${inScope.length} service${inScope.length === 1 ? '' : 's'} ${mappedCount === 1 ? 'has' : 'have'} a KTM named on Dropdowns › Services`
           : 'KTM mapping for this deal\u2019s services. Nothing in Scope yet, so there\u2019s nothing to map.'}
         // Same pill as Timelines / Called / Meeting so the header reads as
         // one row of controls.
@@ -9454,7 +9454,7 @@ function buildKtmCopy(groups) {
 function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
   const [copied, setCopied] = useState(false);
   const listRef = useRef(null);
-  // One row per service in Scope, in Scope order — the order the user put
+  // One row per service in Scope, in Scope order - the order the user put
   // them in, which is the order they think about them in.
   const rows = useMemo(
     () => (inScope || []).map(name => ({ name, ktm: ktmFor(name, serviceOverrides) })),
@@ -9531,7 +9531,7 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
               This deal’s services grouped under the KTM they’re named against in the KTM column of
-              Dropdowns › Services. Read-only — the KTM belongs to the service, not to this deal.
+              Dropdowns › Services. Read-only - the KTM belongs to the service, not to this deal.
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -9539,7 +9539,7 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
               <button
                 type="button"
                 onClick={copy}
-                title="Copy the list as bullets under each owner’s name — pastes into Outlook as a real bulleted list"
+                title="Copy the list as bullets under each owner’s name - pastes into Outlook as a real bulleted list"
                 style={{
                   padding: '0.3rem 0.7rem', borderRadius: 4, cursor: 'pointer',
                   fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
@@ -9565,7 +9565,7 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
         <div style={{ padding: '0.85rem 1rem', overflow: 'auto' }}>
           {rows.length === 0 ? (
             <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-              Nothing in Scope yet — pick the deal’s services and their KTMs show up here.
+              Nothing in Scope yet - pick the deal’s services and their KTMs show up here.
             </div>
           ) : (
             <>
@@ -9610,7 +9610,7 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
 // deal.
 //
 // An RFP arrives as a spreadsheet to fill in and comes back revised more
-// than once, so the useful place for it is the deal — not a mail thread
+// than once, so the useful place for it is the deal - not a mail thread
 // somebody has to search. The bytes live in oppRfpTemplate.js (IndexedDB
 // locally, mirrored to Firestore so the file follows you to another
 // machine); what's kept on the opp itself is only the summary line, so the
@@ -9634,11 +9634,11 @@ function RfpTemplateButton({ opp, updateOppField }) {
         type="button"
         onClick={() => setOpen(true)}
         title={attached
-          ? `RFP for this deal: ${meta.fileName}${rfpSizeLabel(meta.sizeBytes) ? ` (${rfpSizeLabel(meta.sizeBytes)})` : ''}${meta.savedAt ? `, added ${formatDateDisplay(toISODate(meta.savedAt))}` : ''} — open to download, replace or remove it`
+          ? `RFP for this deal: ${meta.fileName}${rfpSizeLabel(meta.sizeBytes) ? ` (${rfpSizeLabel(meta.sizeBytes)})` : ''}${meta.savedAt ? `, added ${formatDateDisplay(toISODate(meta.savedAt))}` : ''} - open to download, replace or remove it`
           : 'Download the standard RFP template, or attach one for this deal'}
         // Same pill as Timelines / KTM Mapping / Called / Meeting, and the
         // same green "it's set" treatment the activity marks use. Green
-        // means this deal has its OWN file — the standard template is on
+        // means this deal has its OWN file - the standard template is on
         // every opp, so colouring for it would just light every pill up.
         style={{
           display: 'inline-block', padding: '3px 10px', borderRadius: 999,
@@ -9924,7 +9924,7 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
               RFP Template{account ? <>: {account}</> : null}
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-              The standard template is on every opp — set it once, download it wherever you need it.
+              The standard template is on every opp - set it once, download it wherever you need it.
               A client that sends its own RFP gets one attached to that deal instead.
             </div>
           </div>
@@ -9958,7 +9958,7 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
             label="Standard template"
             note="on every opp"
             emptyTitle="Set the standard RFP template"
-            emptyHint="Drop the workbook here, or click to pick one — it loads on every opp"
+            emptyHint="Drop the workbook here, or click to pick one - it loads on every opp"
             loading={stdLoading}
             fileMeta={stdMeta}
             blobReady={!!stdRec?.blob}
@@ -9976,7 +9976,7 @@ function RfpTemplateModal({ account, oppId, meta, canSave, onChangeMeta, onClose
             label="This deal"
             note={account ? `${account} only` : 'this opp only'}
             emptyTitle="Attach the client’s own RFP"
-            emptyHint="Only if this client sent its own workbook — drop it here, or click to pick one"
+            emptyHint="Only if this client sent its own workbook - drop it here, or click to pick one"
             loading={loading}
             fileMeta={meta}
             blobReady={!!rec?.blob}
@@ -10144,7 +10144,7 @@ function RfpSlot({
               padding: '0.5rem 0.6rem', borderRadius: 4,
               background: '#FEF3C7', border: '1px solid #FCD34D',
             }}>
-              This file is recorded but isn’t on this device — a workbook too big to back up stays on
+              This file is recorded but isn’t on this device - a workbook too big to back up stays on
               the machine it was attached from, and a backup that never went through can’t come back.
               Use Replace to upload it again here.
             </div>
@@ -10336,7 +10336,7 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
         placeholder="e.g. 6 weeks"
         title={rollout
           ? `How long delivery takes once this timeline kicks off. ${row.type} is `
-            + `${rollout} on Dropdowns › Services — type over it for a lead time just for this deal.`
+            + `${rollout} on Dropdowns › Services - type over it for a lead time just for this deal.`
           : 'How long delivery takes once this timeline kicks off'}
         style={{ ...cellInput, width: 130 }}
       />
@@ -13547,7 +13547,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             {qualifyingFlag === 'snoozed' && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span
-                  title={`"Move to Qualifying?" snoozed — back ${snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(row))} (${row._snoozeQualifyingFlagUntil}).`}
+                  title={`"Move to Qualifying?" snoozed - back ${snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(row))} (${row._snoozeQualifyingFlagUntil}).`}
                   style={{ ...chipBase, fontWeight: 600, background: '#F1F5F9', color: '#94A3B8', border: '1px solid #E2E8F0' }}
                 >Qualifying flag snoozed</span>
                 <button
@@ -13582,7 +13582,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             )}
             {awaitingMargin && (
               <span
-                title={`${headerLabel('Margin Email Date - Sales Leader Review Date')} is filled but ${headerLabel('Margin Approval Date')} is still blank: the margin request went in and hasn't come back — chase it.`}
+                title={`${headerLabel('Margin Email Date - Sales Leader Review Date')} is filled but ${headerLabel('Margin Approval Date')} is still blank: the margin request went in and hasn't come back - chase it.`}
                 style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
               >⚠ Awaiting Margin Approval</span>
             )}
@@ -13594,7 +13594,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             )}
             {awaitingCredit && (
               <span
-                title={`${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn't come back — chase it.`}
+                title={`${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn't come back - chase it.`}
                 style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
               >⚠ Awaiting Credit Approval</span>
             )}
@@ -14399,7 +14399,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         <div
           style={{ textAlign: 'right' }}
           title={row.avgWon == null
-            ? 'No Sold opp with a Quoted Amount in this range — widen the Show filter to include closed opps.'
+            ? 'No Sold opp with a Quoted Amount in this range - widen the Show filter to include closed opps.'
             : `Average Quoted Amount across ${row.wonCount} Sold opp${row.wonCount === 1 ? '' : 's'}.`}
         >
           {row.avgWon == null ? '-' : fmtMoneyWhole(Math.round(row.avgWon))}
@@ -14453,7 +14453,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             Other devices may show older data, and these edits will be lost if
             you clear this browser.{' '}
             {clientWedged
-              ? 'This tab fell back to a direct connection because the live one crashed, and that was refused too — reload the page, then retry.'
+              ? 'This tab fell back to a direct connection because the live one crashed, and that was refused too - reload the page, then retry.'
               : 'Check your connection and Firestore access, then retry.'}
             {syncErrorDetail && (
               <><br /><span className={styles.syncBannerDetail}>Reason: {syncErrorDetail}</span></>
@@ -14486,7 +14486,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onCommit={(name) => setPendingNewOpp({ account: name })}
           />
           {/* Mass Edit lives up here with the rest of the page actions.
-              Still Opportunities-only — the other tabs have no row
+              Still Opportunities-only - the other tabs have no row
               selection to drive it. */}
           {activeTab === 'opps' && (
             <button
@@ -14527,7 +14527,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             }}
             title="Bind columns to Dropdowns-tab lists"
           >Link columns</button>
-          {/* The two import entry points are hidden — the one-time
+          {/* The two import entry points are hidden - the one-time
               Opps - Old copy is done and Bulk import isn't in routine use.
               Flip SHOW_IMPORT_BUTTONS to bring them back; the import
               handlers and modals are all still wired up. */}
@@ -14599,7 +14599,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               color: pendingScheduledOpps.length ? '#2563EB' : 'var(--color-text)', cursor: 'pointer',
             }}
             title={pendingScheduledOpps.length
-              ? `${pendingScheduledOpps.length} opp${pendingScheduledOpps.length === 1 ? '' : 's'} queued to be created later — next on ${formatScheduledOppWhen(nextScheduledOpp)}. Click to review, reschedule, or cancel.`
+              ? `${pendingScheduledOpps.length} opp${pendingScheduledOpps.length === 1 ? '' : 's'} queued to be created later - next on ${formatScheduledOppWhen(nextScheduledOpp)}. Click to review, reschedule, or cancel.`
               : 'No opps are queued for later. Tick “Schedule this opp for later” in + New Opp to queue one.'}
           >Scheduled Opps{pendingScheduledOpps.length ? ` (${pendingScheduledOpps.length})` : ''}</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
@@ -15407,7 +15407,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     a gap in the record worth seeing. */}
                 {recentlyClosed.undated > 0 && (
                   <span className={styles.resultCount} style={{ marginLeft: '0.5rem', color: '#92400E' }}>
-                    {recentlyClosed.undated} closed opp{recentlyClosed.undated === 1 ? '' : 's'} not counted — no Close Date
+                    {recentlyClosed.undated} closed opp{recentlyClosed.undated === 1 ? '' : 's'} not counted - no Close Date
                   </span>
                 )}
                 {/* Left out by the rule rather than by a gap in the data, so
@@ -15420,7 +15420,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     style={{ marginLeft: '0.5rem' }}
                     title={`Closed opps with no BFO Opportunity Name are left out, the same way the New Opps table above leaves them out: a row that doesn't exist in BFO isn't a deal that closed.`}
                   >
-                    {recentlyClosed.unnamed} left out — no BFO Opportunity Name
+                    {recentlyClosed.unnamed} left out - no BFO Opportunity Name
                   </span>
                 )}
               </div>

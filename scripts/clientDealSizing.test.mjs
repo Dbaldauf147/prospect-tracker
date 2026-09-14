@@ -251,7 +251,7 @@ check('needs: a per-meter service with no meter count is asked for',
   missingCounts(estimateClient({
     client: PROLOGIS, scope: { services: ['Meter audit'] }, serviceRows, pricing,
   })).map(m => m.unit), ['meters']);
-check('needs: a per-site service is not asked for — the record answered it',
+check('needs: a per-site service is not asked for - the record answered it',
   missingCounts(estimateClient({
     client: PROLOGIS, scope: { services: ['Bill pay'] }, serviceRows, pricing,
   })), []);
@@ -303,7 +303,7 @@ check('warn: and it goes quiet once a deal size is typed',
   warn({ services: ['Levy'], dealSize: '500000' }), []);
 check('warn: a service with no rate is reported as unpriced',
   warn({ services: ['Unpriced'] }).map(w => [w.chip, w.detail]),
-  [['1 unpriced', 'No rate set on Unpriced — price it on Dropdowns › Services Pricing.']]);
+  [['1 unpriced', 'No rate set on Unpriced - price it on Dropdowns › Services Pricing.']]);
 check('warn: a service that has left the catalog is reported too',
   warn({ services: ['Gone away'] }).map(w => w.key), ['catalog']);
 // A count typed against the one service does not need the shared one, so the

@@ -119,7 +119,7 @@ async function repairUploadedLists(userId, email) {
       try {
         if (!(await cloudCopyMissing(doc(firestore, 'listBackups', storageKey)))) continue;
         await saveListBackup(userId, storageKey, data);
-        console.info(`Backed up "${storageKey}" (${data.length} rows) — it had no cloud copy.`);
+        console.info(`Backed up "${storageKey}" (${data.length} rows) - it had no cloud copy.`);
         fixed++;
       } catch (err) {
         console.warn('List backup repair failed', storageKey, err);
@@ -148,7 +148,7 @@ async function repairRfpTemplates(userId) {
     try {
       if (!(await cloudCopyMissing(doc(firestore, 'oppRfpTemplates', String(userId), 'items', String(key))))) continue;
       await saveOppRfpTemplate(key, value.blob, value.fileName);
-      console.info(`Backed up the RFP workbook on opp ${key} — it had no cloud copy.`);
+      console.info(`Backed up the RFP workbook on opp ${key} - it had no cloud copy.`);
       fixed++;
     } catch (err) {
       console.warn('RFP template backup repair failed', key, err);

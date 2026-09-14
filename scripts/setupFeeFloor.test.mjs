@@ -49,7 +49,7 @@ check('type: blank', isSetupFeeType(''), false);
   check('basic: status', r.status, 'ok');
   check('basic: current cash flow', r.currentCashFlow, 20000);
   check('basic: cut is the whole headroom, bar rounding', round2(r.maxReduction), 19999);
-  check('basic: proportional — both rows keep 2/3', r.rows.map(x => x.floorFee), [333.34, 66.67]);
+  check('basic: proportional - both rows keep 2/3', r.rows.map(x => x.floorFee), [333.34, 66.67]);
   ok('basic: year 1 still clears', r.resultingCashFlow >= 0);
 }
 

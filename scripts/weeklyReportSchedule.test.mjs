@@ -252,11 +252,11 @@ check('a months-old snapshot reads stale',
 // The subject tag. A banner only works on a report someone opens; a weekly
 // mail that arrives every Monday is mostly read from the message list.
 check('a stale send is tagged in the subject',
-  staleSubject('Weekly Report — Week of Sep 7', { stale: true }),
-  '[Stale] Weekly Report — Week of Sep 7');
+  staleSubject('Weekly Report - Week of Sep 7', { stale: true }),
+  '[Stale] Weekly Report - Week of Sep 7');
 check('a current send is not',
-  staleSubject('Weekly Report — Week of Sep 7', { stale: false }),
-  'Weekly Report — Week of Sep 7');
+  staleSubject('Weekly Report - Week of Sep 7', { stale: false }),
+  'Weekly Report - Week of Sep 7');
 check('the tag cannot push the subject past the header limit',
   staleSubject('x'.repeat(300), { stale: true }).length, 300);
 
@@ -502,7 +502,7 @@ check('includes the narrative', html.includes('Two new opps landed.'), true);
 check('draws the funnel stages', html.includes('Stage 4: Influence and Develop'), true);
 check('carries the projected total', html.includes('$833K'), true);
 check('carries the share of target', html.includes('63% of $1.3M target'), true);
-check('a stage with no life or close rate reads as a dash', html.includes('>—<'), true);
+check('a stage with no life or close rate reads as a dash', html.includes('>-<'), true);
 // A goal's priority is drawn as the same dark pill the tab uses, so the
 // text arrives split around it.
 check('lists the goals', html.includes('Close Berkshire'), true);
@@ -542,7 +542,7 @@ const trendOnly = renderWeeklyReportHtml({
   closeRateTrend: { months: ['Jun'], rows: [{ label: 'All closed opps', stage: null, cells: [{ rate: '13%', count: '2/15' }], overall: { rate: '13%', count: '2/15', ahead: null }, rolling12: null }] },
 });
 check('a trend with no funnel still renders', trendOnly.includes('Close rate trend'), true);
-check('and a missing rolling year reads as a dash', trendOnly.includes('&mdash;'), true);
+check('and a missing rolling year reads as a plain hyphen', trendOnly.includes('>-</div>'), true);
 
 // A snapshot with nothing cached must still produce a sendable email rather
 // than throwing — the cron has no user to fall back to.

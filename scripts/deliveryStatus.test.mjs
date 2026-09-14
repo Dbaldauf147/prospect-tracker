@@ -32,9 +32,9 @@ const watched = (over = {}) => ({ bounced: false, replied: false, ...over });
 
 check('a bounce is a delivery failure',
   deliveryStatus(watched({ bounced: true }), { sentAt: SENT }), DELIVERY.FAILED);
-check('an image load or a click confirms arrival — both happen after delivery',
+check('an image load or a click confirms arrival - both happen after delivery',
   deliveryStatus(watched(), { hasActivity: true, sentAt: SENT }), DELIVERY.CONFIRMED);
-check('sent, watched, nothing bounced, nothing loaded — delivered',
+check('sent, watched, nothing bounced, nothing loaded - delivered',
   deliveryStatus(watched(), { sentAt: SENT }), DELIVERY.DELIVERED);
 
 // A bounce outranks activity. The pre-send draft previews are already excluded
@@ -68,7 +68,7 @@ check('not-sent is not counted as arrived', isDelivered(DELIVERY.NOT_SENT), fals
 check('the rate is measured over the three states we have evidence for',
   [DELIVERY.CONFIRMED, DELIVERY.DELIVERED, DELIVERY.FAILED].map(isDeliveryKnown),
   [true, true, true]);
-check('and excludes the two we do not — neither numerator nor denominator',
+check('and excludes the two we do not - neither numerator nor denominator',
   [DELIVERY.UNKNOWN, DELIVERY.NOT_SENT].map(isDeliveryKnown), [false, false]);
 
 console.log(failures === 0 ? '\nAll delivery-status tests passed.' : `\n${failures} test(s) failed.`);

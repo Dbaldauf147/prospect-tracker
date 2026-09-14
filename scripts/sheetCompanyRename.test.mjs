@@ -33,7 +33,7 @@ const sheet = (...companies) => companies.map((company, i) => ({ row: i + 2, com
   eq(planSheetCompanyRename(names, '  Ventas  ', 'Ventas REIT'), { row: 3, reason: 'exact', from: 'Ventas' },
     'and surrounding space');
   eq(planSheetCompanyRename(names, 'Prologis', 'PROLOGIS'), { row: 2, reason: 'exact', from: 'Prologis' },
-    'a capitalisation-only rename is still written — the cell stores what is displayed');
+    'a capitalisation-only rename is still written - the cell stores what is displayed');
 }
 
 {

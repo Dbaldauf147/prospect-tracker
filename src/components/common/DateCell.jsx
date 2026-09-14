@@ -186,7 +186,7 @@ function CalendarPopup({ anchorRect, selectedIso, onPick, onClear, onClose }) {
         type="text"
         value={draft}
         autoComplete="off"
-        placeholder="M/D/YYYY — or pick below"
+        placeholder="M/D/YYYY - or pick below"
         aria-label="Type a date"
         aria-invalid={typedInvalid || undefined}
         title="Type a date and press Enter. A two-digit year and a missing year both fill in; Esc closes without changing the cell."

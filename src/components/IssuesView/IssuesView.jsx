@@ -130,7 +130,7 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
             {droppedReason && (
               <div style={{ fontSize: '0.7rem', color: '#92400E', marginBottom: 4 }}>
                 Currently <strong>{droppedReason}</strong>, which has no close-out rule under
-                {' '}<strong>{storedCompetition || 'a blank Competition'}</strong> — pick a valid pair below.
+                {' '}<strong>{storedCompetition || 'a blank Competition'}</strong> - pick a valid pair below.
               </div>
             )}
             <select
@@ -158,7 +158,7 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
               ? <>Saving clears this issue.</>
               : competitionHasRules
                 ? <>Each reason listed maps to a pair and clears this issue.</>
-                : <>The opp stays on this list until the pair maps — choose a different Competition, or extend the mapping table.</>}
+                : <>The opp stays on this list until the pair maps - choose a different Competition, or extend the mapping table.</>}
           />
           {error && (
             <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>
@@ -175,7 +175,7 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
             <span style={{ marginRight: 'auto', fontSize: '0.7rem', color: '#64748B' }}>
               {!competition || !reason
                 ? 'Pick a Competition and a Reason Not Sold to enable Save.'
-                : 'Nothing changed yet — pick a different Competition or Reason.'}
+                : 'Nothing changed yet - pick a different Competition or Reason.'}
             </span>
           )}
           <button
@@ -508,7 +508,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             });
           }}
           title={row.snoozed
-            ? `Snoozed, so it isn't counted on the menu — ${formatSnoozeRemaining(row.snoozeUntil)}. Click to change how long, or un-snooze.`
+            ? `Snoozed, so it isn't counted on the menu - ${formatSnoozeRemaining(row.snoozeUntil)}. Click to change how long, or un-snooze.`
             : 'Snooze this issue so it stops counting on the menu. Click to choose how long.'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,

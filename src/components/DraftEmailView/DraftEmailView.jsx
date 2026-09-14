@@ -491,8 +491,8 @@ function CoverageWarning({ gaps, affected, total }) {
         </p>
         <p className={styles.coverageAlertText}>
           {affected} of {total} recipient{total === 1 ? '' : 's'} will get at least one blank where a
-          variable should be. Fill the gaps in under Variable Coverage below — most red <strong>-</strong> cells
-          are editable in place — or drop those recipients before sending.
+          variable should be. Fill the gaps in under Variable Coverage below - most red <strong>-</strong> cells
+          are editable in place - or drop those recipients before sending.
         </p>
         <div className={styles.coverageAlertList}>
           {gaps.map(g => (
@@ -579,7 +579,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
         Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / Key Prospect), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
       <div style={{
-        // Grow with the viewport — leaves enough room for the page
+        // Grow with the viewport - leaves enough room for the page
         // chrome / header / Saved Drafts above, but uses the rest of
         // the screen so a 50-row campaign doesn't need a tiny inner
         // scroll. Sticky header keeps the column labels visible as
@@ -595,7 +595,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
             <tr>
               <th style={headStyle}>Recipient</th>
               {categorize && (
-                <th style={headStyle} title="Which contact rosters this recipient is on — the same Key / Active / Client / Key Prospect gates the Contacts pages run">
+                <th style={headStyle} title="Which contact rosters this recipient is on - the same Key / Active / Client / Key Prospect gates the Contacts pages run">
                   Category
                 </th>
               )}
@@ -1274,7 +1274,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
   // Load HubSpot contacts from cache. We keep BOTH the flattened list the
   // composer works with (allContacts) and the raw HubSpot records
-  // (rawContacts) — the contact popup (ContactEditModal) edits raw HubSpot
+  // (rawContacts) - the contact popup (ContactEditModal) edits raw HubSpot
   // fields (firstname / lastname / jobtitle / tags…), so clicking a
   // recipient name resolves back to its raw record here.
   const [allContacts, setAllContacts] = useState([]);
@@ -1306,7 +1306,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   }, []);
 
   // Contact popup (same ContactEditModal used on the Contacts pages),
-  // opened by clicking a recipient's name. Holds the RAW HubSpot record —
+  // opened by clicking a recipient's name. Holds the RAW HubSpot record -
   // the modal edits raw fields (firstname / lastname / jobtitle / tags…),
   // not the flattened { name, title } shape the composer carries.
   const [editingContact, setEditingContact] = useState(null);
@@ -1950,7 +1950,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   function personalizeForContact(text, c) {
     const toAlsoMap = settings?.toAlsoMap || {};
     const hasToAlso = (toAlsoMap[c.email] || []).length > 0;
-    // {custom} pulls from settings.customField — a per-contact value
+    // {custom} pulls from settings.customField - a per-contact value
     // typed manually in the "Custom" column on the Contacts page,
     // keyed by HubSpot contact id.
     const customField = (settings?.customField || {})[c.id] || '';
@@ -1976,7 +1976,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     const personalBodyHtml = personalizeForContact(body, c);
     const styledHtml = buildStyledBodyHtml(personalBodyHtml, { banner: activeBanner });
     // The deeplink and the clipboard's text/plain flavour can't carry a
-    // coloured bar, so the banner goes in as an upper-cased heading line —
+    // coloured bar, so the banner goes in as an upper-cased heading line -
     // the message still says which category it is wherever it lands.
     const personalBodyPlain = bannerPlainText(activeBanner) + htmlToPlainText(personalBodyHtml);
     const personalSubject = personalizeForContact(subject, c);
@@ -2055,7 +2055,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
     const ccMap = settings?.ccMap || {};
     const toAlsoMap = settings?.toAlsoMap || {};
-    // Optionally limit to just the first selected contact — useful
+    // Optionally limit to just the first selected contact - useful
     // when you want to spot-check a single .eml before unleashing
     // drafts for the whole list.
     const contactsToProcess = onlyFirst ? selectedContacts.slice(0, 1) : selectedContacts;
@@ -2082,7 +2082,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     // When tracking is on, hand each body to the server to inject the
     // open pixel + rewrite links and register the tracking docs. The
     // returned HTML replaces the plain body. A failure here is
-    // non-fatal — we fall back to the untracked body so the send still
+    // non-fatal - we fall back to the untracked body so the send still
     // goes out.
     if (trackEmails) {
       try {
@@ -2116,7 +2116,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     // The body's section is whatever the content needs: a plain text/html
     // part, or a multipart/related carrying the HTML plus every inline image
     // as its own part with a Content-ID. This runs AFTER the tracking pass
-    // above on purpose — the open pixel is an <img> with an http src, which
+    // above on purpose - the open pixel is an <img> with an http src, which
     // stays a real URL; only `data:` sources become cid: references.
     const built = prepared.map(({ c, pSubject, toHeader, ccHeader, htmlContent }) => {
       const { lines: htmlLines } = htmlSectionLines(htmlContent);
@@ -2163,7 +2163,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       return { fileName: `draft_${safeName}.eml`, eml };
     });
 
-    // Always download each draft as its own .eml — no .zip wrapping.
+    // Always download each draft as its own .eml - no .zip wrapping.
     // Filenames are deduped so two contacts whose names normalise the
     // same don't clobber each other in the Downloads folder.
     const seen = new Map();
@@ -2190,8 +2190,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
   // Duplicate detection for the To section. An address that would actually be
   // delivered more than once from THIS section is a double-send, so we tally
-  // every address the section sends to — each primary recipient plus each
-  // contact's folded-in "To Also" and "CC" extras — and flag any address whose
+  // every address the section sends to - each primary recipient plus each
+  // contact's folded-in "To Also" and "CC" extras - and flag any address whose
   // total count is 2+. Only real duplicates within this section are flagged: a
   // contact's own address isn't counted against itself, and the separate
   // draft-level CC field is intentionally left out of the tally.
@@ -2413,14 +2413,14 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             />
           </div>
 
-          {/* Category banner — the coloured bar the email opens with, above
+          {/* Category banner - the coloured bar the email opens with, above
               the greeting. Sits here in the composer for the same reason it
               sits there in the email: it's the first thing the reader sees. */}
           <div className={styles.field}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem', gap: 8, flexWrap: 'wrap' }}>
               <label className={styles.label} style={{ marginBottom: 0 }}>
                 Banner
-                <span className={styles.labelHint}>a coloured bar above the greeting — one colour per category</span>
+                <span className={styles.labelHint}>a coloured bar above the greeting - one colour per category</span>
               </label>
               <button
                 type="button"
@@ -2444,7 +2444,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                     onClick={() => setBannerId(on ? '' : b.id)}
                     className={on ? `${styles.bannerChip} ${styles.bannerChipOn}` : styles.bannerChip}
                     style={on ? { background: b.color, color: bannerTextColor(b.color) } : undefined}
-                    title={on ? `${b.label} — click to remove the banner` : `Put a ${b.label} banner on this email`}
+                    title={on ? `${b.label} - click to remove the banner` : `Put a ${b.label} banner on this email`}
                   >
                     {!on && <span className={styles.bannerDot} style={{ background: b.color }} />}
                     {b.label}
@@ -2466,7 +2466,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             {showBannerEditor && (
               <div className={styles.bannerEditor}>
                 <p className={styles.bannerEditHint}>
-                  Name each category and give it a colour — the swatches are the Schneider
+                  Name each category and give it a colour - the swatches are the Schneider
                   palette. The text colour is picked for you (black or white, whichever
                   reads against the band), and every banner carries the Life Is On green
                   rule underneath.
@@ -2590,7 +2590,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 fontSize: '0.74rem', color: '#92400E', lineHeight: 1.4,
               }}>
                 <strong>This draft is too big to auto-save.</strong> Usually a large pasted
-                image. The draft is still fine to send — but it won't be restored if you
+                image. The draft is still fine to send - but it won't be restored if you
                 close the tab, so download it before you navigate away (or remove the image).
               </div>
             )}
