@@ -3358,3 +3358,143 @@
   font-style: italic;
   color: var(--color-text-muted);
 }
+
+/* ---- what comes with a service ---------------------------------------- */
+
+/* The arrow that opens a bundle. Its own click, because the row's click
+   ticks the scope and the two would cancel each other out. */
+.bundleToggle {
+  background: none;
+  border: none;
+  padding: 0 0.25rem 0 0;
+  margin: 0;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.bundleToggle:hover { color: var(--color-accent); }
+
+/* "+3" beside the name: the row's figure is bigger than the service, and
+   that has to be visible before anybody opens anything. */
+.bundleChip {
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: 8px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--color-accent);
+  background: var(--color-surface-alt, #eef2f6);
+}
+
+.bundlePanel {
+  padding: 0.5rem 0.75rem 0.6rem 2.2rem;
+  background: var(--color-surface-alt, #f8fafc);
+}
+
+.bundleTitle {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 0.3rem;
+}
+
+.bundleTable {
+  border-collapse: collapse;
+  min-width: 420px;
+}
+
+.bundleTable td {
+  padding: 0.15rem 0.6rem 0.15rem 0;
+  font-size: 0.76rem;
+  color: var(--color-text);
+  vertical-align: top;
+}
+
+.bundleBullet {
+  color: var(--color-accent);
+  margin-right: 0.4rem;
+}
+
+.bundleLeadRow td { font-weight: 600; }
+
+.bundleLeadMark {
+  margin-left: 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.bundleCellName { min-width: 230px; }
+
+.bundleCellMoney {
+  text-align: right;
+  min-width: 140px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bundleCellShare {
+  text-align: right;
+  min-width: 46px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The line the ones above it add up to, so the figure in the row can be
+   checked rather than taken. */
+.bundleTotalRow td {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: 0.25rem;
+  font-weight: 700;
+}
+
+.bundleFoot {
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+/* DataTable clips every cell to one ellipsised line (.table td sets
+   max-width: 0 and .table td > * makes the content an inline-block capped
+   at 100%). Both cascade into this panel, which lives inside one of those
+   cells - which is how "$88,000 - $113,600" came out as "$88,000 - $113,6...".
+   Undone here rather than there: the clipping is right for a data row and
+   wrong for a panel, and the selectors are deliberately deeper so this
+   wins wherever the two stylesheets land in the bundle. */
+.bundlePanel,
+.bundlePanel * {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.bundlePanel {
+  display: block;
+  white-space: normal;
+}
+
+.bundlePanel .bundleTable td {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  border-bottom: none;
+  vertical-align: top;
+}
+
+.bundlePanel .bundleTable td > * {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  display: inline;
+}
+
+.bundlePanel .bundleFoot,
+.bundlePanel .bundleTitle {
+  white-space: normal;
+}
