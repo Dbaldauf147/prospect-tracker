@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_HOLD } from '../../utils/metInPerson';
+import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 
@@ -106,6 +107,8 @@ import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList
 import {
   subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis, deleteIndicativeAnalysis,
 } from '../../utils/firestoreSync';
+import { buildCompanyOnePagerHtml, onePagerFileName } from '../../utils/companyOnePager';
+import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
@@ -5540,6 +5543,62 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);
 
+  const [onePagerBusy, setOnePagerBusy] = useState(false);
+
+  // The one-pager: who we know, what they already buy, who owns the
+  // account. Built from the figures already on screen rather than
+  // recomputed - "sold" in particular is the board's own reading (a manual
+  // Sold, or a closed-won opp naming the service), so the sheet and the
+  // Services tab cannot disagree about what is in scope.
+  const downloadCompanyOnePager = useCallback(async () => {
+    if (onePagerBusy) return;
+    setOnePagerBusy(true);
+    try {
+      const svc = fields.servicesExplored || {};
+      const sold = allServiceItems.filter((item) => {
+        const manual = svc[item];
+        if (manual && manual !== '-') return isSoldStatus(manual);
+        return isSoldStatus(scopeMatchedServices.get(item));
+      });
+      const metMap = settings.contactMetInPerson || {};
+      const contacts = (companyContacts || []).map((c) => ({
+        name: contactDisplayName(c),
+        title: c.jobtitle || '',
+        email: c.email || '',
+        phone: c.phone || c.mobilephone || '',
+        decisionMaker: isDecisionMakerContact(c),
+        metInPerson: metInPersonState(c, metMap) === MET_YES,
+      }));
+      const html = buildCompanyOnePagerHtml({
+        company: fields.company,
+        cdm: fields.cdm,
+        clientManager: clientManager,
+        services: sold,
+        contacts,
+      });
+      const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
+      const result = await htmlToDocxBlob(html);
+      const blob = result instanceof Blob
+        ? result
+        : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = onePagerFileName(fields.company);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error('One-pager export failed:', err);
+      alert('Failed to build the one-pager: ' + (err?.message || err));
+    } finally {
+      setOnePagerBusy(false);
+    }
+  }, [onePagerBusy, fields.servicesExplored, fields.company, fields.cdm, allServiceItems,
+    scopeMatchedServices, companyContacts, settings.contactMetInPerson, clientManager]);
+
+
   // Services this company has an opp QUEUED for - a New Opp scheduled for
   // a future date, which has no row on the Opps table yet and so matches
   // nothing above. Without this the board reads as untouched right up
@@ -7096,6 +7155,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 title="Scan every uploaded list for rows matching this company name and accept or reject the mapping"
                 style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, background: listsMatchOpen ? '#EFF6FF' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
               >Search lists…</button>
+            )}
+            {/* The account on one branded page: contacts, what is sold, who
+                owns it. In the header rather than on a tab because the
+                moment it is wanted is the moment the popup opens - five
+                minutes before a meeting, or handing the account over. */}
+            {!isNew && fields.company && (
+              <button
+                type="button"
+                onClick={downloadCompanyOnePager}
+                disabled={onePagerBusy}
+                title="Download a one-page Schneider Electric summary of this account: key contacts, the services sold today, the CDM and the Client Manager."
+                style={{
+                  padding: '0.25rem 0.6rem', border: `1px solid ${onePagerBusy ? '#CBD5E1' : '#009530'}`,
+                  borderRadius: 6, background: onePagerBusy ? '#F1F5F9' : '#fff',
+                  fontSize: '0.72rem', fontWeight: 600,
+                  color: onePagerBusy ? '#94A3B8' : '#009530',
+                  cursor: onePagerBusy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                }}
+              >{onePagerBusy ? 'Building…' : 'One-pager'}</button>
             )}
             {!isNew && onDeleteProspect && onUpdateProspect && (
               <button
