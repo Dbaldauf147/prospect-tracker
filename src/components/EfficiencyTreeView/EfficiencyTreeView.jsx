@@ -9,6 +9,10 @@ import {
 } from '../../utils/decisionTree';
 import { edgePath, layoutTree } from '../../utils/treeLayout';
 import { pricedServiceRows } from '../../utils/serviceRows';
+import {
+  LEGACY_KEY, LIBRARY_KEY, activeEntry, addTree, blankTree, duplicateTree, getTreeLibrary,
+  hasSavedTrees, putTree, removeTree, renameTree, setActiveTree,
+} from '../../utils/treeLibrary';
 
 // The page for the C&I efficiency decision tree: walk it to make a call on a
 // measure, or open the map and edit the flow itself.
@@ -23,7 +27,6 @@ import { pricedServiceRows } from '../../utils/serviceRows';
 // devices. Until they edit it they're looking at the template in
 // src/data/efficiencyDecisionTree.js and nothing is written at all.
 
-const SETTINGS_KEY = 'efficiencyDecisionTree';
 const SAVE_DELAY_MS = 800;
 // How much of the catalog the picker lists at once. The Solutions list runs
 // to a hundred and fifty services, and a dropdown that long is scrolled
@@ -392,8 +395,11 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
 }
 
 export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, updateSettings }) {
-  const saved = settings[SETTINGS_KEY];
-  const [tree, setTree] = useState(() => normalizeTree(saved || DEFAULT_EFFICIENCY_TREE));
+  // Every tree the user keeps, and which subtab is open. The shipped C&I
+  // flow is one of them; so is anything they build from nothing.
+  const [library, setLibrary] = useState(() => getTreeLibrary(settings));
+  const entry = activeEntry(library);
+  const tree = entry.tree;
   const [mode, setMode] = useState('diagram');
   const [editing, setEditing] = useState(false);
   const [trail, setTrail] = useState([]);           // node ids answered through, root first
@@ -401,6 +407,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [status, setStatus] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
+  const [importName, setImportName] = useState('');
   const [importError, setImportError] = useState('');
   const [zoom, setZoom] = useState(0.8);
   const [popupId, setPopupId] = useState(null);   // the box whose detail is open
@@ -413,8 +420,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // typed after it.
   const pendingRef = useRef(false);
   const timerRef = useRef(null);
-  const treeRef = useRef(tree);
-  treeRef.current = tree;
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
 
   const save = useCallback((next) => {
     if (!updateSettings) return;
@@ -422,7 +429,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     setStatus('Saving…');
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      Promise.resolve(updateSettings({ [SETTINGS_KEY]: next }))
+      Promise.resolve(updateSettings({ [LIBRARY_KEY]: next }))
         .then(() => setStatus('Saved'))
         .catch(() => setStatus('Save failed'))
         .finally(() => { pendingRef.current = false; });
@@ -433,21 +440,35 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
   // Every edit goes through here: local state first so typing stays instant,
-  // then the debounced write.
-  const applyTree = useCallback((next) => {
-    setTree(next);
+  // then the debounced write. The whole library is written, not the open
+  // tree on its own — it is one field in one settings document, and a
+  // partial write of it would be a lost subtab.
+  const applyLibrary = useCallback((next) => {
+    setLibrary(next);
     save(next);
   }, [save]);
 
-  // Adopt a tree saved elsewhere (another device, another tab). Skipped while
-  // we owe a save, and skipped when it matches what's already on screen —
-  // which is what our own write comes back as.
-  const savedJson = useMemo(() => (saved ? JSON.stringify(saved) : ''), [saved]);
+  // The same thing for an edit to the tree in front of you, which is what
+  // every editor on the page makes.
+  const applyTree = useCallback((next) => {
+    applyLibrary(putTree(libraryRef.current, libraryRef.current.activeId, next));
+  }, [applyLibrary]);
+
+  // Adopt trees saved elsewhere (another device, another tab), and the ones
+  // that arrive when this page opened before the settings document did.
+  // Both sides are normalized, so a tree stored under the old single-tree
+  // key compares equal to the library it migrates into rather than looking
+  // like a change on every render. Skipped while we owe a save: our own
+  // write echoing back mid-sentence would eat the keystrokes after it.
+  const storedJson = useMemo(
+    () => JSON.stringify(getTreeLibrary(settings)),
+    [settings?.[LIBRARY_KEY], settings?.[LEGACY_KEY]], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   useEffect(() => {
-    if (!settingsLoaded || pendingRef.current || !savedJson) return;
-    if (savedJson === JSON.stringify(treeRef.current)) return;
-    setTree(normalizeTree(JSON.parse(savedJson)));
-  }, [savedJson, settingsLoaded]);
+    if (!settingsLoaded || pendingRef.current) return;
+    if (storedJson === JSON.stringify(libraryRef.current)) return;
+    setLibrary(JSON.parse(storedJson));
+  }, [storedJson, settingsLoaded]);
 
   // The service vocabulary to tag from: the same rows the Services Pricing
   // card prices, minus the retired ones — a service nobody can put in a deal
@@ -518,33 +539,101 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   }
 
   function resetToTemplate() {
-    if (!window.confirm('Replace your decision tree with the built-in C&I efficiency template? Your edits will be lost.')) return;
+    if (!window.confirm(`Replace "${entry.name}" with the built-in C&I efficiency template? Your edits to this tree will be lost.\n\nYour other trees are untouched.`)) return;
     const next = normalizeTree(DEFAULT_EFFICIENCY_TREE);
     setTrail([]);
     setSelectedId(null);
+    setPopupId(null);
     applyTree(next);
+  }
+
+  // ── the subtabs ───────────────────────────────────────────────────────
+  //
+  // Switching trees puts down everything that was about the last one: the
+  // route being walked, the step being inspected, the popup. They are ids,
+  // and an id from another tree means nothing here.
+  function switchTree(id) {
+    if (id === library.activeId) return;
+    setTrail([]);
+    setSelectedId(null);
+    setPopupId(null);
+    setStatus('');
+    applyLibrary(setActiveTree(library, id));
+  }
+
+  // A tree built from nothing: one step, and the page set up to add the
+  // next one — Map & edit with the editor open, on the step you start from.
+  // Landing on a diagram of a single box with the editor off would be a
+  // page that looks broken rather than empty.
+  function newTree() {
+    const label = (window.prompt('Name for the new decision tree:', 'New tree') || '').trim();
+    if (!label) return;
+    const { library: next, id } = addTree(library, { name: label, tree: blankTree() });
+    if (!id) { setStatus(`That is as many trees as this page holds (${library.trees.length}).`); return; }
+    setTrail([]);
+    setPopupId(null);
+    setSelectedId(blankTree().rootId);
+    setMode('map');
+    setEditing(true);
+    setStatus(`Added "${label}" — add steps from the editor on the right.`);
+    applyLibrary(setActiveTree(next, id));
+  }
+
+  // A copy to change, for a flow that is mostly right for the next job.
+  function copyTree() {
+    const { library: next, id } = duplicateTree(library, entry.id);
+    if (!id) { setStatus(`That is as many trees as this page holds (${library.trees.length}).`); return; }
+    setTrail([]);
+    setSelectedId(null);
+    setPopupId(null);
+    applyLibrary(setActiveTree(next, id));
+  }
+
+  function renameActiveTree() {
+    const label = (window.prompt('Rename this decision tree:', entry.name) || '').trim();
+    if (!label || label === entry.name) return;
+    applyLibrary(renameTree(library, entry.id, label));
+  }
+
+  function deleteActiveTree() {
+    if (library.trees.length <= 1) {
+      setStatus('This is the only tree — the page needs one. Add another first.');
+      return;
+    }
+    if (!window.confirm(`Delete "${entry.name}" and its ${stats.nodes} step${stats.nodes === 1 ? '' : 's'}? This can't be undone.`)) return;
+    setTrail([]);
+    setSelectedId(null);
+    setPopupId(null);
+    applyLibrary(removeTree(library, entry.id));
   }
 
   async function copyJson() {
     const json = JSON.stringify(tree, null, 2);
     try {
       await navigator.clipboard.writeText(json);
-      setStatus('Copied the tree as JSON');
+      setStatus(`Copied "${entry.name}" as JSON`);
     } catch {
       setStatus('Clipboard blocked — paste from the import box instead');
     }
   }
 
+  // Paste a tree in as a subtab of its own rather than over the one you are
+  // looking at: an import that replaced the open tree was safe when the page
+  // held one, and is a tree thrown away now that it holds several.
   function runImport() {
     try {
       const parsed = JSON.parse(importText);
-      const next = normalizeTree(parsed);
-      if (Object.keys(next.nodes).length === 0) throw new Error('no steps found');
+      const imported = normalizeTree(parsed);
+      if (Object.keys(imported.nodes).length === 0) throw new Error('no steps found');
+      const { library: next, id } = addTree(library, { name: importName.trim() || 'Imported tree', tree: imported });
+      if (!id) throw new Error(`that is as many trees as this page holds (${library.trees.length})`);
       setTrail([]);
       setSelectedId(null);
-      applyTree(next);
+      setPopupId(null);
+      applyLibrary(setActiveTree(next, id));
       setImportOpen(false);
       setImportText('');
+      setImportName('');
       setImportError('');
     } catch (err) {
       setImportError(err?.message || 'That isn\'t a decision tree');
@@ -587,8 +676,54 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           </label>
           <button type="button" className={styles.smallBtn} onClick={copyJson} title="Copy the whole tree as JSON">Copy JSON</button>
           <button type="button" className={styles.smallBtn} onClick={() => setImportOpen(v => !v)}>Import</button>
-          <button type="button" className={styles.smallBtn} onClick={resetToTemplate}>Reset to template</button>
+          <button type="button" className={styles.smallBtn} onClick={resetToTemplate}
+            title={`Replace "${entry.name}" with the built-in C&I efficiency template`}>Reset to template</button>
         </div>
+      </div>
+
+      {/* The subtabs: one per tree the user keeps. The shipped C&I flow is
+          one of them and carries no privileges — it can be renamed, copied,
+          rebuilt or deleted like any other, as long as one tree is left for
+          the page to open on. */}
+      <div className={styles.treeTabs} role="tablist" aria-label="Decision trees">
+        {library.trees.map(t => {
+          const count = Object.keys(t.tree.nodes).length;
+          const open = t.id === entry.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={open}
+              className={open ? styles.treeTabActive : styles.treeTab}
+              onClick={() => switchTree(t.id)}
+              title={`${t.name} — ${count} step${count === 1 ? '' : 's'}`}
+            >
+              {t.name}
+              <span className={styles.treeTabCount}>{count}</span>
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          className={styles.treeTabAdd}
+          onClick={newTree}
+          title="Start a tree from nothing: one step, then add the rest"
+        >+ New tree</button>
+
+        <span className={styles.treeTabsSpacer} />
+
+        {/* Acting on the tree that's open, which is the one named to the
+            left of them. Deleting asks; renaming and copying don't need to. */}
+        <button type="button" className={styles.smallBtn} onClick={renameActiveTree}
+          title={`Rename "${entry.name}"`}>Rename</button>
+        <button type="button" className={styles.smallBtn} onClick={copyTree}
+          title={`Copy "${entry.name}" into a tree of its own`}>Duplicate</button>
+        <button type="button" className={styles.smallBtn} onClick={deleteActiveTree}
+          disabled={library.trees.length <= 1}
+          title={library.trees.length <= 1
+            ? 'The page needs one tree — add another before deleting this one'
+            : `Delete "${entry.name}"`}>Delete</button>
       </div>
 
       <div className={styles.statusBar}>
@@ -603,20 +738,36 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         )}
         {stats.unlinked > 0 && <span className={styles.warn}>{stats.unlinked} branch{stats.unlinked === 1 ? '' : 'es'} not pointed anywhere</span>}
         {orphans.length > 0 && <span className={styles.warn}>{orphans.length} step{orphans.length === 1 ? '' : 's'} nothing reaches</span>}
-        {!settingsLoaded && <span className={styles.muted}>Loading your saved tree…</span>}
-        {settingsLoaded && !saved && <span className={styles.muted}>Showing the built-in template — your first edit saves a copy of your own.</span>}
+        {!settingsLoaded && <span className={styles.muted}>Loading your saved trees…</span>}
+        {settingsLoaded && !hasSavedTrees(settings) && <span className={styles.muted}>Showing the built-in template — your first edit saves a copy of your own.</span>}
+        {/* A tree you just made is one box and no branches, which reads as a
+            broken page unless it says what it is waiting for. */}
+        {stats.nodes <= 1 && (
+          <span className={styles.muted}>
+            {editing
+              ? 'Empty tree — write this step, then “+ Add branch and a new step” to grow it.'
+              : 'Empty tree — turn on Edit to build it.'}
+          </span>
+        )}
         {mode === 'diagram' && <span className={styles.muted}>Click a box for the detail · drag to pan</span>}
         {status && <span className={styles.muted}>{status}</span>}
       </div>
 
       {importOpen && (
         <div className={styles.importPanel}>
-          <div className={styles.fieldLabel}>Paste a tree exported with Copy JSON</div>
+          <div className={styles.fieldLabel}>Paste a tree exported with Copy JSON — it comes in as a new tree of its own</div>
+          <input
+            className={styles.input}
+            type="text"
+            value={importName}
+            placeholder="Name for the imported tree"
+            onChange={e => setImportName(e.target.value)}
+          />
           <textarea className={styles.textarea} rows={5} value={importText}
             onChange={e => { setImportText(e.target.value); setImportError(''); }} />
           {importError && <div className={styles.warn}>Couldn&apos;t read that: {importError}</div>}
           <div className={styles.branchActions}>
-            <button type="button" className={styles.primaryBtn} onClick={runImport} disabled={!importText.trim()}>Replace my tree</button>
+            <button type="button" className={styles.primaryBtn} onClick={runImport} disabled={!importText.trim()}>Add it as a tree</button>
             <button type="button" className={styles.smallBtn} onClick={() => { setImportOpen(false); setImportError(''); }}>Cancel</button>
           </div>
         </div>

@@ -23,7 +23,7 @@ import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
-import { normalizeTree, renameServiceInTree } from '../../utils/decisionTree';
+import { LIBRARY_KEY, getTreeLibrary, hasSavedTrees, renameServiceInLibrary } from '../../utils/treeLibrary';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
@@ -1576,13 +1576,13 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
         if (repriced) updates.servicePricing = repriced;
         // Same story for the steps of the Efficiency Decision Tree tagged
         // with the service: the tag is the name, so without this a rename
-        // leaves every step pointing at a service nothing lists. Only
-        // written when a step actually carried the old name.
-        if (settings?.efficiencyDecisionTree) {
-          const retagged = renameServiceInTree(
-            normalizeTree(settings.efficiencyDecisionTree), edit.renamedFrom, edit.renamedTo,
-          );
-          if (retagged) updates.efficiencyDecisionTree = retagged;
+        // leaves every step pointing at a service nothing lists. Every tree
+        // on that page, not just the open one — a subtab nobody has looked
+        // at this month is exactly where a stale tag would sit unnoticed.
+        // Only written when a step somewhere actually carried the old name.
+        if (hasSavedTrees(settings)) {
+          const retagged = renameServiceInLibrary(getTreeLibrary(settings), edit.renamedFrom, edit.renamedTo);
+          if (retagged) updates[LIBRARY_KEY] = retagged;
         }
       }
     }
