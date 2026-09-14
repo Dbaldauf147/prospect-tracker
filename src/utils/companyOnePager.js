@@ -133,6 +133,29 @@ function byRank(a, b) {
 const nameKey = (v) => clean(v).toLowerCase();
 
 /**
+ * A contact's LinkedIn profile as a URL worth putting behind their name.
+ *
+ * HubSpot stores either a full URL or a bare handle, and the popup's own
+ * "View on LinkedIn" link reads both the same way - so this does too,
+ * rather than inventing a second reading of the same field.
+ *
+ * Anything that is not http(s) comes back empty. It is the one value on
+ * this page that a reader CLICKS, and a document that carries somebody
+ * else's javascript: or file: URL into a meeting is a different kind of
+ * object from a sheet of contact details.
+ */
+export function linkedinUrl(value) {
+  const raw = clean(value);
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  // A scheme we did not allow - mailto:, javascript:, data: - is not a
+  // handle either, so it is nothing.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return '';
+  const handle = raw.replace(/^(www\.)?linkedin\.com\/(in\/)?/i, '').replace(/^\/+/, '');
+  return handle ? `https://www.linkedin.com/in/${handle}` : '';
+}
+
+/**
  * The contacts as the sheet lists them: the reporting line, flattened.
  *
  * Who answers to whom is the thing a reader of this page is trying to
@@ -160,6 +183,13 @@ export function orderContacts(contacts) {
     name: clean(c?.name),
     title: clean(c?.title),
     email: clean(c?.email),
+    // What they are actually called, from the Goes By field on their card.
+    // Printed beside the name rather than instead of it: the sheet has to
+    // match the name on an email and the name in the room, and on plenty
+    // of accounts those are different words.
+    nickname: clean(c?.nickname),
+    // Their LinkedIn profile, for the link behind the name.
+    linkedin: linkedinUrl(c?.linkedin),
     // The team the person is on, as set on their contact card. It replaced
     // the phone column: a phone number on a page like this is nearly
     // always blank or the switchboard, and which team somebody sits on is
