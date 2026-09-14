@@ -13,7 +13,7 @@ import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { computePortfolioFitScore, siteCountNumber, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
-import { pickTopPortfolioCompany, pickCurrentPortfolioCompany, buildStatusIndex, topPcCompanyKeys, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
+import { pickTopPortfolioCompany, pickCurrentPortfolioCompany, buildStatusIndex, buildProspectPcIndex, lookupProspectByPc, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { activeStageRank } from '../../utils/oppStages';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
@@ -933,24 +933,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   // it in the Table View when the company is tracked. Indexed under every
   // alternate name too, so the link follows the same join the status does
   // — otherwise a company could show a status and still not be clickable.
-  const prospectByPcKey = useMemo(() => {
-    const m = new Map();
-    for (const p of prospects) {
-      for (const k of topPcCompanyKeys(p?.company)) {
-        if (!m.has(k)) m.set(k, p);
-      }
-    }
-    return m;
-  }, [prospects]);
+  const prospectByPcKey = useMemo(() => buildProspectPcIndex(prospects), [prospects]);
 
   // The record a Top PC links to, under the same alternate-name rules.
-  const prospectForPc = useCallback((name) => {
-    for (const k of topPcCompanyKeys(name)) {
-      const hit = prospectByPcKey.get(k);
-      if (hit) return hit;
-    }
-    return null;
-  }, [prospectByPcKey]);
+  const prospectForPc = useCallback(
+    (name) => lookupProspectByPc(prospectByPcKey, name),
+    [prospectByPcKey],
+  );
 
   const stageStatsByFirm = useMemo(() => {
     const out = new Map();
