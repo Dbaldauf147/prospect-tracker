@@ -23,8 +23,14 @@
 // "Has an open opp" is read through peFirmOpps, which is what the PE
 // Portfolio table's PE Opps column counts — that column prints open/total,
 // so a firm reading 0/anything there is exactly a firm listed here.
+//
+// And the list is the user's own book: firms whose CDM is this user, with
+// the ones already written off ("Lost - Not Sold") left out. The step is a
+// call for this user to make, so a firm somebody else owns has no business
+// on it — see ladderOwnership.js, which the visit step below shares.
 
 import { PE_STAGES } from '../data/enums.js';
+import { isOwnedAccount } from './ladderOwnership.js';
 import { isOppActive, peFirmAccountNames, peFirmOppRows, peFirmPortfolio } from './peFirmOpps.js';
 
 // The Type that marks a prospect as a PE firm — same filter the PE
@@ -71,12 +77,22 @@ export function isWorkablePeStage(stage) {
  * Ordered by how far the relationship has got, furthest first: an Existing
  * Partnership with nothing in flight is a louder silence than a firm still
  * in Discovery. Ties by name, so the list is stable between renders.
+ *
+ * `cdmName` scopes the list to the user's own firms, and drops any whose
+ * Status is "Lost - Not Sold". The step is a call for this user to make, so
+ * a firm another CDM owns is not on it however silent the relationship has
+ * gone, and one already written off has answered — see ladderOwnership.js.
+ * Note that a firm's PE Stage "Not Sold" and its Status "Lost - Not Sold"
+ * are two different fields saying the same thing in two places; SKIPPED_PE_STAGES
+ * covers the first and this covers the second, and a firm only has to fail
+ * one of them to be off the list.
  */
-export function collectPeFirmsToWork(prospects, oppsRecords) {
+export function collectPeFirmsToWork(prospects, oppsRecords, cdmName = '') {
   if (!Array.isArray(prospects) || !Array.isArray(oppsRecords)) return null;
   const out = [];
   for (const p of prospects) {
     if (String(p?.type || '').trim() !== PE_FIRM_TYPE) continue;
+    if (!isOwnedAccount(p, cdmName)) continue;
     const stage = peFirmStage(p?.peStage);
     if (!isWorkablePeStage(stage)) continue;
     const firm = String(p?.company || '').trim();

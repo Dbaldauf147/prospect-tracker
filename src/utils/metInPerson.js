@@ -134,11 +134,20 @@ function locationOf(contact) {
  * already out on - the thing that turns a second identical invitation into
  * a follow-up.
  *
+ * `isOwnedContact` is the other gate, and it runs before any of the Met In
+ * Person reading: the Key roster is "tagged Dan Key Target" and nothing
+ * else, so without it the list plans trips to accounts another CDM owns and
+ * to ones already written off. Pass the predicate makeOwnedContactGate
+ * builds (see ladderOwnership.js) and those names are off the list, the
+ * counts beside it included — a contact left out this way is not somebody
+ * on hold, it is somebody else's. Omit it and the roster is listed whole,
+ * which is what a caller with no book to check against can honestly say.
+ *
  * Returns { total, accounts, groups, onHold, asked } — or null while the
  * coverage hasn't landed, so a caller shows nothing rather than an empty
  * list that would read as "you have met everybody".
  */
-export function keyContactsNotMet(coverage, metMap = null) {
+export function keyContactsNotMet(coverage, metMap = null, isOwnedContact = null) {
   const people = coverage?.key?.people;
   if (!Array.isArray(people)) return null;
   const groups = new Map();
@@ -147,12 +156,20 @@ export function keyContactsNotMet(coverage, metMap = null) {
   let asked = 0;
   for (const person of people) {
     const contact = person?.contact || { id: person?.id };
+    const company = String(person?.company || contact?.company || '').trim();
+    // Before anything else: is this account even the user's to visit? The
+    // gate reads the company name and the email, so it is handed whichever
+    // of the two the coverage row and the record between them carry.
+    if (isOwnedContact && !isOwnedContact({
+      ...contact,
+      company,
+      email: String(person?.email || contact?.email || '').trim(),
+    })) continue;
     const state = metInPersonState(contact, metMap);
     if (state === MET_YES) continue;
     if (state === MET_HOLD) { onHold += 1; continue; }
     total += 1;
     if (state === MET_ASKED) asked += 1;
-    const company = String(person?.company || contact?.company || '').trim();
     // Everyone with no company on the record shares one group at the
     // bottom: there is no account to visit, but they are still Key contacts
     // nobody has sat down with, and dropping them would leave the count on
