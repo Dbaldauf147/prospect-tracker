@@ -3309,23 +3309,6 @@
   font-weight: 600;
 }
 
-/* Services the rate card cannot price. Its own line under the bar rather
-   than a tooltip: the total above is short by whatever these turn out to be
-   worth, and that is not a detail. */
-.potentialGap {
-  margin: 0 1.25rem 0.5rem;
-  padding: 0.35rem 0.6rem;
-  font-size: 0.72rem;
-  color: var(--color-text-muted);
-  background: var(--color-surface);
-  border: 1px dashed var(--color-border-light);
-  border-radius: var(--radius-md);
-}
-
-.potentialGapNames {
-  color: var(--color-text);
-}
-
 /* Tabular so the ranks read as a column of numbers rather than drifting
    with the digit count. */
 .pricingRank {
