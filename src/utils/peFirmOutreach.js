@@ -12,8 +12,7 @@
 // had ever been opened here. But the step is about what is in flight, and
 // a firm whose every deal has landed or died has nothing in flight: that
 // is precisely the relationship worth ringing for the next intro, and the
-// old rule buried it forever behind deals that closed years ago. Each row
-// carries `closedCount` so a firm that shows up with history says so.
+// old rule buried it forever behind deals that closed years ago.
 //
 // It used to list each firm's Top PC that wasn't at Qualifying, which
 // ranked companies by Opportunity Score and said nothing about whether the
@@ -67,12 +66,12 @@ export function isWorkablePeStage(stage) {
  * "no firms to chase" from "don't know yet" — an empty list would otherwise
  * clear the step before the opps have even arrived.
  *
- * Each row: { firm, firmId, stage, pcCount, closedCount }. `pcCount` is how
- * many portfolio companies the firm has — those that name it as their PE
- * Owner plus those mapped on its own list — the material for the
- * conversation, and a zero there is its own kind of gap.
- * `closedCount` is how many opps the firm has that are all done with, which
- * is why a firm with a long history can still be sitting here silent.
+ * Each row: { firm, firmId, stage }. It used to carry a `pcCount` and a
+ * `closedCount` as well, for two cells the step printed beside the firm.
+ * The step drops them now — neither was a thing to do, and both took the
+ * width the firm's name and its Top PC needed — so the row is the three
+ * fields the list actually renders. The portfolio is still gathered here,
+ * because finding the firm's opps is what it is gathered for.
  *
  * Ordered by how far the relationship has got, furthest first: an Existing
  * Partnership with nothing in flight is a louder silence than a firm still
@@ -114,12 +113,6 @@ export function collectPeFirmsToWork(prospects, oppsRecords, cdmName = '') {
       firm: firm || '-',
       firmId: p?.id || null,
       stage,
-      // Counted over both halves, the same way the account names are
-      // gathered, so a company on both lists counts once.
-      pcCount: accountNames.length - 1,
-      // Every row here failed the `some(isOppActive)` test above, so all of
-      // this firm's opps are closed — the count is the whole history.
-      closedCount: oppRows.length,
     });
   }
   const rank = (s) => PE_STAGES.indexOf(s);

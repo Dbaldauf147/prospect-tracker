@@ -523,11 +523,18 @@ const PE_STAGE_TINT = {
   'Existing Partnership': { bg: '#ECFDF5', border: '#A7F3D0', ink: '#059669' },
 };
 
+// The lane the stage pill sits in, wide enough for the longest of the three
+// ("Existing Partnership", 102px). The pill itself stays its own width - a
+// stretched "Piloting" would read as a different kind of chip - but the lane
+// is fixed, so the firm name and the Top PC beside it start at the same x on
+// every row instead of stepping left and right with the stage.
+const PE_STAGE_COL = 110;
+
 // The firm's Top PC, the same pick - and the same click-through - the PE
 // Portfolio table's Top PC column shows: the highest-scoring portfolio
 // company that is North America-based and hasn't already been settled.
-// A firm name and a count say who to ring; this says who to ask for an
-// intro INTO, which is the sentence the call actually opens with.
+// A firm name says who to ring; this says who to ask for an intro INTO,
+// which is the sentence the call actually opens with.
 //
 // The PE Portfolio column also marks a company with live work LIVE. No row
 // here can carry one: an open opp anywhere across a firm's portfolio is
@@ -535,25 +542,28 @@ const PE_STAGE_TINT = {
 function PeFirmTopPc({ entry, onSelectProspect }) {
   const top = entry?.top || null;
   const match = entry?.prospect || null;
-  // A firm with no portfolio mapped has nothing to say here, and the row's
-  // own "No PCs mapped" pill has already said it - so the line is dropped
-  // rather than printed as a dash. A firm that HAS a portfolio and still
-  // has no pick keeps the dash: there the emptiness is a fact about the
-  // companies (all abroad, all settled) rather than about the mapping, and
-  // the tooltip is the only place that says so.
-  if (!top && !entry?.mapped) return null;
-  // Its own line under the firm rather than a cell beside it. The list is
-  // a narrow column inside the step, and a company name sharing one line
-  // with the stage pill, the firm and two counts left every name but the
-  // shortest clipped to an initial.
+  // The right-hand half of the firm's own line. It sat on a second line
+  // while two count pills shared the first one and left every name but the
+  // shortest clipped to an initial; with those gone (and the step column
+  // widened) the two names fit side by side, which is how the call reads:
+  // ring this firm, ask about this company.
+  //
+  // A fixed share of the line rather than however much the firm name
+  // leaves, so the TOP PC label sits in the same place down the list
+  // instead of stepping in and out with the length of the name beside it.
   const cell = {
-    marginTop: 2, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: '0.3rem',
+    flex: '1 1 45%', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: '0.3rem',
   };
   const label = (
     <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
       TOP PC
     </span>
   );
+  // No pick is still a cell rather than a blank: a firm with nothing mapped
+  // used to be told by the row's "No PCs mapped" pill, and that pill is
+  // gone, so the dash is where that fact lives now. The tooltip separates
+  // the two ways of coming up empty - nothing mapped at all, or a portfolio
+  // where nothing survives the filters.
   if (!top) {
     return (
       <div style={cell}>
@@ -562,8 +572,16 @@ function PeFirmTopPc({ entry, onSelectProspect }) {
           title={entry?.mapped
             ? `No portfolio company on this firm is North America-based, scored, and clear of ${TOP_PC_EXCLUDED_STATUSES.join(' / ')}.`
             : 'No portfolio companies mapped on this firm yet - open the firm and fill in its Portfolio Companies tab.'}
-          style={{ color: '#CBD5E1', fontSize: '0.7rem' }}
-        >-</span>
+          style={entry?.mapped
+            // A portfolio that came up empty under the filters is a fact
+            // about those companies, and only the tooltip can say which
+            // filter did it - so the cell is just a dash.
+            ? { color: '#CBD5E1', fontSize: '0.7rem' }
+            // Nothing mapped at all is a different gap, and one the user can
+            // close. Said in words, in the muted italic the pill that used
+            // to carry it wore.
+            : { color: '#94A3B8', fontSize: '0.66rem', fontStyle: 'italic' }}
+        >{entry?.mapped ? '-' : 'None mapped'}</span>
       </div>
     );
   }
@@ -609,9 +627,17 @@ function PeFirmTopPc({ entry, onSelectProspect }) {
   );
 }
 
-// One PE firm with a live relationship and nothing on it: the firm, the
-// stage it has reached, and how many portfolio companies it brings to the
-// conversation. The name clicks through to the firm's record.
+// One PE firm with a live relationship and nothing on it: the stage it has
+// reached, the firm, and the portfolio company to ask for an intro into.
+// Both names click through to their own record.
+//
+// It used to carry two more cells - how many portfolio companies the firm
+// has, and how many closed opps sit behind it. Neither was a thing to do:
+// the call is the same call at 3 PCs or 30, and the closed count answered
+// a question ("why is a firm with history sitting here?") that the list
+// only raises if you go looking. They took the width the two names needed,
+// so the Top PC was pushed onto a line of its own. Gone, both names fit on
+// one line and the row reads as the sentence the call opens with.
 function PeFirmRow({ row, onSelectProspect, byId, topPc, last }) {
   const tint = PE_STAGE_TINT[row.stage] || { bg: '#F8FAFC', border: '#E2E8F0', ink: '#64748B' };
   const nameStyle = {
@@ -625,51 +651,28 @@ function PeFirmRow({ row, onSelectProspect, byId, topPc, last }) {
   return (
     <div style={{ padding: '4px 0', borderBottom: last ? 'none' : '1px dashed #EEF0FA', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
-        <span
-          title={`PE Stage: ${row.stage}. Lead firms and Not Sold ones are left off this list - one hasn’t been opened, the other has answered.`}
-          style={{
-            flexShrink: 0, padding: '1px 6px', borderRadius: 999,
-            background: tint.bg, border: `1px solid ${tint.border}`, color: tint.ink,
-            fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap',
-          }}
-        >{row.stage}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ flexShrink: 0, width: PE_STAGE_COL }}>
+          <span
+            title={`PE Stage: ${row.stage}. Lead firms and Not Sold ones are left off this list - one hasn’t been opened, the other has answered.`}
+            style={{
+              display: 'inline-block', padding: '1px 6px', borderRadius: 999,
+              background: tint.bg, border: `1px solid ${tint.border}`, color: tint.ink,
+              fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap',
+            }}
+          >{row.stage}</span>
+        </span>
+        {/* The firm takes the larger share of the two: its name carries
+            the suffixes and parentheticals a PE house is registered under
+            ("Clayton, Dubilier & Rice (CDR)"), where a portfolio company
+            is usually just a company. */}
+        <div style={{ flex: '1 1 55%', minWidth: 0 }}>
           {row.firmId && onSelectProspect
             ? <button type="button" style={nameStyle} onClick={open} title={`Open ${row.firm}`}>{row.firm}</button>
             : <span style={{ ...flatStyle, color: '#1E293B', fontWeight: 700 }}>{row.firm}</span>}
         </div>
-        {/* What there is to talk about. A firm with no mapped portfolio
-            companies is its own kind of gap — the call is the same one,
-            but there is nothing yet to ask for an intro INTO. */}
-        <span
-          title={row.pcCount
-            ? `${row.pcCount} portfolio ${row.pcCount === 1 ? 'company names' : 'companies name'} this firm as their PE Owner`
-            : 'No portfolio companies mapped to this firm yet'}
-          style={{
-            flexShrink: 0, padding: '0 6px', borderRadius: 999,
-            border: '1px solid #E2E8F0', background: '#fff',
-            fontSize: '0.62rem', fontWeight: 700,
-            color: row.pcCount ? '#334155' : '#94A3B8',
-            fontStyle: row.pcCount ? 'normal' : 'italic',
-          }}
-        >{row.pcCount ? `${row.pcCount} PC${row.pcCount === 1 ? '' : 's'}` : 'No PCs mapped'}</span>
-        {/* Why a firm with a history is nonetheless sitting here: every one
-            of its deals is done with. Without this the row reads as a firm
-            nobody has ever opened, and the user goes looking for the opps
-            the PE Portfolio table is showing them. */}
-        {row.closedCount > 0 && (
-          <span
-            title={`${row.closedCount} closed opportunit${row.closedCount === 1 ? 'y' : 'ies'} on this firm or its portfolio companies and nothing open - the PE Opps column reads 0/${row.closedCount}. Closed deals aren't something in flight, so the firm still belongs on this list.`}
-            style={{
-              flexShrink: 0, padding: '0 6px', borderRadius: 999,
-              border: '1px solid #E2E8F0', background: '#F8FAFC',
-              fontSize: '0.62rem', fontWeight: 700, color: '#64748B',
-            }}
-          >{row.closedCount} closed</span>
-        )}
+        {/* And who to ask for, once the partner picks up. */}
+        <PeFirmTopPc entry={topPc} onSelectProspect={onSelectProspect} />
       </div>
-      {/* And who to ask for, once the partner picks up. */}
-      <PeFirmTopPc entry={topPc} onSelectProspect={onSelectProspect} />
     </div>
   );
 }
