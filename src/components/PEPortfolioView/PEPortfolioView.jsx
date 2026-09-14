@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
+import { matchesCdm } from '../../utils/cdmMatch';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
 import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
 import { PE_STAGE_META, PE_DEFAULT_STAGE, peStageOf, peStageMeta } from '../../utils/peStages';
@@ -313,7 +314,13 @@ function useOppsRecords(userId) {
   return [records, setRecords, read];
 }
 
-export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings }) {
+// The three picks that aren't a CDM's name. Sentinels rather than '' so a
+// CDM literally called "All" could never collide with one.
+const ALL_CDMS = '__all__';
+const MY_CDM = '__mine__';
+const NO_CDM = '__none__';
+
+export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
   // Acquisition-news digest: covers every company ticked "Track acquisition
@@ -354,9 +361,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
+  const ALL_COL_KEYS = ['company', 'cdm', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -413,6 +420,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-top-pc-status')) {
           next.add('topPcStatus');
           try { localStorage.setItem('pe-portfolio:cols-top-pc-status', '1'); } catch {}
+        }
+        // One-time migration: reveal the CDM column for users whose saved
+        // set predates it. A column somebody asked for that arrives hidden
+        // behind the Columns menu is a column they will report as missing.
+        if (!localStorage.getItem('pe-portfolio:cols-cdm')) {
+          next.add('cdm');
+          try { localStorage.setItem('pe-portfolio:cols-cdm', '1'); } catch {}
         }
         // One-time migration: reveal the Top PC Analysis column for users
         // whose saved set predates it.
@@ -583,6 +597,45 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       .filter(p => p.type === 'Private Equity')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
+
+  // ── Whose firms ───────────────────────────────────────────────────────
+  //
+  // The roster runs to a couple of hundred PE firms and a CDM works a
+  // handful of them, so the page opens on the signed-in CDM's own book
+  // rather than on everybody's. Not a hidden filter: the picker beside the
+  // search box says whose firms these are and switches to any other CDM,
+  // or to all of them.
+  //
+  // Matched with matchesCdm rather than on the string, because the CDM on a
+  // prospect record is whatever was typed there - "Dan Baldauf", "D.
+  // Baldauf", "Baldauf, Dan" - and all three are the same person's book.
+  const myCdm = String(cdmName || settings?.cdmName || '').trim();
+  const [cdmFilter, setCdmFilter] = useState(() => (myCdm ? MY_CDM : ALL_CDMS));
+  // Every CDM the roster names, with how many firms each carries. Built off
+  // the unfiltered list so choosing one doesn't collapse the picker to the
+  // choice just made.
+  const cdmOptions = useMemo(() => {
+    const counts = new Map();
+    let unassigned = 0;
+    for (const pe of peFirms) {
+      const name = String(pe.cdm || '').trim();
+      if (!name) { unassigned += 1; continue; }
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    return {
+      names: [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+      unassigned,
+      mine: myCdm ? peFirms.filter(pe => matchesCdm(pe.cdm, myCdm)).length : 0,
+    };
+  }, [peFirms, myCdm]);
+
+  // The firms every board, table and count on this page is about.
+  const visibleFirms = useMemo(() => {
+    if (cdmFilter === ALL_CDMS) return peFirms;
+    if (cdmFilter === MY_CDM) return myCdm ? peFirms.filter(pe => matchesCdm(pe.cdm, myCdm)) : peFirms;
+    if (cdmFilter === NO_CDM) return peFirms.filter(pe => !String(pe.cdm || '').trim());
+    return peFirms.filter(pe => String(pe.cdm || '').trim() === cdmFilter);
+  }, [peFirms, cdmFilter, myCdm]);
 
   // Two one-time passes over the firms, both writing the field the boards
   // read rather than papering over a blank at render time.
@@ -1058,7 +1111,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   }, [prospectForPc, topPcAnalyses]);
 
   const sortedPeFirms = useMemo(() => {
-    const arr = [...peFirms];
+    const arr = [...visibleFirms];
     arr.sort((a, b) => {
       const sa = stageStatsByFirm.get(a.id) || {};
       const sb = stageStatsByFirm.get(b.id) || {};
@@ -1072,6 +1125,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           break;
         case 'geography':
           cmp = (a.geography || '').localeCompare(b.geography || '');
+          break;
+        case 'cdm':
+          cmp = (a.cdm || '').localeCompare(b.cdm || '');
           break;
         case 'dm':
           cmp = ((sa.decisionMakerNames || []).length) - ((sb.decisionMakerNames || []).length);
@@ -1167,7 +1223,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       return cmp;
     });
     return arr;
-  }, [peFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc]);
+  }, [visibleFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc]);
 
   const q = query.trim().toLowerCase();
   const filteredFirms = q
@@ -1308,13 +1364,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         />
       ) : subtab === 'stages' ? (
         <PEStagesTab
-          firms={peFirms}
+          firms={visibleFirms}
           portfolioByPe={portfolioByPe}
           onSelectProspect={onSelectProspect}
         />
       ) : subtab === 'companies' ? (
         <PEAllCompaniesTab
-          firms={peFirms}
+          firms={visibleFirms}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
           settings={settings}
@@ -1365,7 +1421,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         />
       ) : subtab === 'stageDays' ? (
         <PEStageDaysTab
-          firms={peFirms}
+          firms={visibleFirms}
           portfolioByPe={portfolioByPe}
           onSelectProspect={onSelectProspect}
         />
@@ -1386,9 +1442,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={`Search ${peFirms.length} PE firm${peFirms.length === 1 ? '' : 's'}…`}
+          placeholder={`Search ${visibleFirms.length} PE firm${visibleFirms.length === 1 ? '' : 's'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        {/* Whose firms the page is showing. It opens on your own book, so
+            this is also what says that it did - a page quietly showing a
+            third of the roster with nothing naming the filter is a page
+            that looks like it lost data. */}
+        <select
+          value={cdmFilter}
+          onChange={e => setCdmFilter(e.target.value)}
+          title="Show the PE firms one CDM carries. The page opens on yours."
+          style={{ padding: '0.4rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: 6, background: cdmFilter === ALL_CDMS ? '#fff' : '#EFF6FF', fontSize: '0.74rem', fontWeight: 600, color: '#334155', fontFamily: 'inherit', maxWidth: 220 }}
+        >
+          {myCdm && <option value={MY_CDM}>{`My firms - ${myCdm} (${cdmOptions.mine})`}</option>}
+          <option value={ALL_CDMS}>{`All CDMs (${peFirms.length})`}</option>
+          {cdmOptions.names.map(([name, count]) => (
+            <option key={name} value={name}>{`${name} (${count})`}</option>
+          ))}
+          {cdmOptions.unassigned > 0 && <option value={NO_CDM}>{`No CDM set (${cdmOptions.unassigned})`}</option>}
+        </select>
         <div ref={colMenuRef} style={{ position: 'relative' }}>
           <button
             type="button"
@@ -1443,17 +1516,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         {filteredFirms.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-              {peFirms.length === 0 ? 'No PE firms found' : `No firms match "${query}"`}
+              {peFirms.length === 0
+                ? 'No PE firms found'
+                : visibleFirms.length === 0
+                  ? 'No PE firms under this CDM'
+                  : `No firms match "${query}"`}
             </div>
             <div style={{ fontSize: '0.78rem' }}>
               {peFirms.length === 0
                 ? <>Scanned {prospects.length} prospect{prospects.length === 1 ? '' : 's'}. Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</>
-                : `${peFirms.length} total PE firms loaded: adjust your search.`}
+                : visibleFirms.length === 0
+                  ? <>None of the {peFirms.length} PE firms carries this CDM. Switch the picker to <strong>All CDMs</strong>, or set the CDM on a firm&rsquo;s company popup.</>
+                  : `${visibleFirms.length} PE firm${visibleFirms.length === 1 ? '' : 's'} under this CDM: adjust your search.`}
             </div>
           </div>
         ) : (() => {
           const ALL_HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
+            { key: 'cdm', label: 'CDM', align: 'left', tip: 'The CDM on the PE firm\'s prospect record. Sort to group a book together; the picker above filters the page to one CDM.' },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
@@ -1558,6 +1638,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         title={pe.peAum ? `PE AUM from Table View: $${pe.peAum}B` : 'No PE AUM set on this prospect record'}
                       >
                         {formatAum(pe.peAum)}
+                      </div>
+                      )}
+
+                      {visibleCols.has('cdm') && (
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.cdm ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={pe.cdm || 'No CDM on this prospect record. Set one on the firm\'s company popup.'}
+                      >
+                        {pe.cdm || '-'}
                       </div>
                       )}
 
