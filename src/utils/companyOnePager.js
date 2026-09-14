@@ -50,6 +50,66 @@ export const MAX_OPPS = 4;
 // getting cut. See cappedServices.
 export const MAX_SERVICE_LINES = 12;
 
+// ---- how much room the services actually get ------------------------------
+//
+// The budget above is a floor now, not the answer. It was measured as a
+// fixed twelve on a page that was full, and that page has changed four
+// times since: the green band moved into the page header, the opportunity
+// rows lost their second line, two section headings lost their counts, and
+// the footer came off. Each time the constant stayed put while the room
+// under it grew - until a book of fifteen services printed twelve and
+// counted three with five and a half inches of white page underneath.
+//
+// So the budget is no longer a number anybody has to re-measure by hand. It
+// is whatever the rest of the page did not use: everything above the
+// services is counted in lines and the services get the remainder. A page
+// with two contacts and one opp gives them more room than a page with five
+// and four, which is what "it fits on one page" has always actually meant.
+//
+// The unit is the same budget line the rest of this file counts in, and it
+// has never been a literal printed line: a comma line carries four services
+// and a bulleted one carries a name that may itself wrap onto two. So the
+// number below is not arithmetic on the page height - it is calibrated, by
+// building the real .docx at maximum load (a book of 160 services, seven
+// contacts, six opps and a note) and rendering it to find where the page
+// actually fills.
+//
+// That point is around 132. This sits well under it on purpose: the
+// rendering used to calibrate is a faithful read of the WordprocessingML
+// but not Word itself, and Word's table cell margins are the larger of the
+// two. 96 leaves about an inch and a half of slack on a page that extreme,
+// and a normal account never approaches it.
+export const BODY_LINE_BUDGET = 96;
+
+// Notes run the full width of the page rather than one of two columns, so
+// a line of them holds about twice what a service line does.
+export const NOTES_CHARS_PER_LINE = 92;
+
+/**
+ * Lines of services this page has room for, given everything above them.
+ *
+ * Costs are in whole lines, rounded UP where a thing sits between two.
+ * Over-charging leaves white space at the bottom of the page and
+ * under-charging spills onto a second one, and those two mistakes are not
+ * the same size.
+ *
+ * Doubled at the end because the services print in TWO columns: a line of
+ * page buys two lines of budget.
+ */
+export function serviceLineBudget({ contacts = 0, reportingLines = 0, opps = 0, notes = '' } = {}) {
+  const text = clean(notes);
+  const spent = 3                        // the CDM / Client Manager / Client since band
+    + 2 + 2 + contacts + reportingLines  // Key contacts: heading, column heads, a row each,
+                                         // and the spelled-out manager where one is needed
+    + 2 + 2 + opps                       // Open opportunities: heading, column heads, rows
+    + 2                                  // the Current services heading itself
+    + (text ? 2 + Math.ceil(text.length / NOTES_CHARS_PER_LINE) : 0)
+    + 1;                                 // the "+ N more" line, if it comes to that
+  // Never below the old fixed budget. A page with a long note and a full
+  // contact list should print fewer services, not stop printing them.
+  return Math.max(MAX_SERVICE_LINES, (BODY_LINE_BUDGET - spent) * 2);
+}
+
 // How a contact ranks when nothing structural separates them: the
 // day-to-day contact leads, then whoever signs, then anyone already met,
 // then by name. Stable beyond that, so two runs of the same account
@@ -297,8 +357,26 @@ export function clientSince(dates) {
 // budgeted away, and the cost of under-estimating is a little white space.
 export const CHARS_PER_LINE = 46;
 
+// A bulleted service sits further in than a comma run does - the bullet
+// glyph and a deeper hanging indent - so its line holds a little less.
+export const BULLET_CHARS_PER_LINE = 44;
+
 /** How many lines a bucket's services take when run together with commas. */
 const commaLines = (items) => Math.max(1, Math.ceil(items.join(', ').length / CHARS_PER_LINE));
+
+/**
+ * How many lines a bucket's services take as bullets, one per service.
+ *
+ * One per service is the FLOOR, not the answer: "Invoice recalculation -
+ * light" is wider than half a page column at this size and Word wraps it
+ * onto a second line. Charging every service one line regardless is what
+ * let a budget of a hundred lines print a section fifty rows tall and run
+ * the page over - the names on a real book are long, and about a third of
+ * them wrap.
+ */
+const bulletLines = (items) => items.reduce(
+  (n, item) => n + Math.max(1, Math.ceil(String(item).length / BULLET_CHARS_PER_LINE)), 0,
+);
 
 /** How many of `items` fit in `lines` lines of comma-separated text. */
 function itemsWithin(items, lines) {
@@ -337,27 +415,31 @@ function itemsWithin(items, lines) {
  * which is a different and wrong claim - and anything past the budget is
  * counted rather than silently dropped.
  */
-export function cappedServices(sold, bucketOf) {
+export function cappedServices(sold, bucketOf, budget = MAX_SERVICE_LINES) {
+  const max = Math.max(MAX_SERVICE_LINES, Math.floor(budget) || 0);
   const all = groupServices(sold, bucketOf);
   // Each group carries the lines it costs, so the renderer splits the two
   // columns on the same measure this budgeted with. Two opinions about how
   // tall a bucket is would put six lines in one column and two in the other.
-  const bulleted = all.map(g => ({ ...g, lines: g.items.length + 1 }));
+  const bulleted = all.map(g => ({ ...g, lines: bulletLines(g.items) + 1 }));
   const spend = (groups) => groups.reduce((n, g) => n + g.lines, 0);
   const done = (groups, mode) => {
     const shown = groups.flatMap(g => g.items);
-    return { mode, groups, shown, total: sold.length, hidden: Math.max(0, sold.length - shown.length) };
+    // The budget travels with the result. It is worked out from the rest of
+    // the page now rather than fixed, so anything checking that the section
+    // fits has to be able to see the number it was fitted to.
+    return { mode, groups, shown, budget: max, total: sold.length, hidden: Math.max(0, sold.length - shown.length) };
   };
 
-  if (spend(bulleted) <= MAX_SERVICE_LINES) return done(bulleted, 'bullets');
+  if (spend(bulleted) <= max) return done(bulleted, 'bullets');
 
   const groups = [];
   let lines = 0;
   for (const g of all) {
     // A heading with nothing under it is not worth a line.
-    if (lines + 2 > MAX_SERVICE_LINES) break;
+    if (lines + 2 > max) break;
     lines += 1;
-    const room = MAX_SERVICE_LINES - lines;
+    const room = max - lines;
     const want = commaLines(g.items);
     if (want <= room) {
       groups.push({ ...g, lines: want + 1 });
@@ -621,6 +703,10 @@ export function onePagerModel({
     total: list.length,
     hidden: Math.max(0, list.length - max),
   });
+  // Resolved before the services, because how many contacts and opps print
+  // is what decides how much room is left for them.
+  const shownContacts = capped(people, MAX_CONTACTS);
+  const shownOpps = capped(open, MAX_OPPS);
   return {
     company: clean(company),
     generatedAt: stamped,
@@ -634,9 +720,19 @@ export function onePagerModel({
         ? { date: d, label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) }
         : null;
     })(),
-    contacts: capped(people, MAX_CONTACTS),
-    services: cappedServices(sold, bucketOf),
-    opps: capped(open, MAX_OPPS),
+    contacts: shownContacts,
+    // Budgeted against what the contacts and opps above them actually cost,
+    // so the services fill the page rather than a number measured on a page
+    // that no longer exists.
+    services: cappedServices(sold, bucketOf, serviceLineBudget({
+      contacts: shownContacts.shown.length,
+      // A row that spells its manager out in words costs a second line; one
+      // drawn under them by the indent does not.
+      reportingLines: shownContacts.shown.filter(c => c.reportsTo.length && !c.managerShown).length,
+      opps: shownOpps.shown.length,
+      notes,
+    })),
+    opps: shownOpps,
     // Null rather than an empty chart when there is nothing structural to
     // draw, so the renderer has one thing to test and the document goes
     // back to being one page on the accounts that only ever needed one.
