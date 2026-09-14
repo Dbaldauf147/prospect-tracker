@@ -87,5 +87,49 @@ eq(mergeTagEdit({ base: 'B', intended: 'B;C', current: 'A;B' }),
 eq(mergeTagEdit({ base: 'A;B', intended: 'B;A', current: 'A;B' }), { action: 'unchanged' },
   'reordering the editor changes nothing');
 
+// --- what `base` is allowed to be ---------------------------------------
+//
+// The second incident, same shape as the first. `base` is read as "what the
+// editor last showed", so a tag in `base` and not in `intended` is deleted.
+// Feeding the merge's OWN RESULT back as the next `base` breaks that: the
+// result carries tags rescued off `current` that the editor never showed and
+// therefore cannot have un-ticked, and the next click in the burst deletes
+// exactly the tags the previous one rescued.
+{
+  // Click one: a stale editor ticks Procurement, and the merge rescues Dan
+  // Key Target off the live record.
+  const first = mergeTagEdit({ base: 'ESG', intended: 'ESG;Procurement', current: 'ESG;Dan Key Target' });
+  eq(first, { action: 'write', tags: 'ESG;Dan Key Target;Procurement' }, 'base: the rescue happens');
+
+  // Click two, with the result fed back as base - the bug.
+  eq(mergeTagEdit({ base: first.tags, intended: 'ESG;Procurement;Real Estate', current: first.tags }),
+    { action: 'write', tags: 'ESG;Procurement;Real Estate' },
+    'base: the result fed back as base deletes what the last click rescued');
+
+  // Click two, with the sent list fed back as base - the fix. The editor
+  // still shows no Dan Key Target, and that is fine: a tag it never showed
+  // is a tag it cannot have turned off.
+  eq(mergeTagEdit({ base: 'ESG;Procurement', intended: 'ESG;Procurement;Real Estate', current: first.tags }),
+    { action: 'write', tags: 'ESG;Dan Key Target;Procurement;Real Estate' },
+    'base: the list the editor sent keeps the rescued tag through the next click');
+}
+
+// A value the editor deliberately never puts in its list - the contact
+// popup does this with the legacy "Met In Person" tag, which HubSpot has
+// dropped from the dans_tags enumeration - must be kept out of `base` too.
+// Left in, it reads as un-ticked on the very first click.
+eq(mergeTagEdit({
+  base: 'ESG;Met in Person',
+  intended: 'ESG;Procurement',
+  current: 'ESG;Met in Person',
+}), { action: 'write', tags: 'ESG;Procurement' },
+  'base: a value the editor cannot show reads as un-ticked when left in base');
+eq(mergeTagEdit({
+  base: 'ESG',
+  intended: 'ESG;Procurement',
+  current: 'ESG;Met in Person',
+}), { action: 'write', tags: 'ESG;Met in Person;Procurement' },
+  'base: kept out of base, the merge leaves it alone');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

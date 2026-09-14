@@ -777,8 +777,13 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   const tagsDropdownRef = useRef(null);
   const [tagsSaveStatus, setTagsSaveStatus] = useState('');
 
-  // The tag string this editor last believed HubSpot held, so a save can tell
-  // what the user CHANGED from what it merely happened to be showing.
+  // The tag string this editor last SHOWED, so a save can tell what the user
+  // CHANGED from what it merely happened to be displaying.
+  //
+  // What it showed, not what HubSpot came back with: a merge can rescue tags
+  // off the live record that this editor's own field has never carried, and
+  // feeding those back here would have the next click in the burst delete
+  // them as though the user had un-ticked them. See mergeTagEdit.
   const savedTagsRef = useRef(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '');
 
   // A merge, not an overwrite. dans_tags is one string, and this editor is
@@ -833,7 +838,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
         const json = await res.json();
         if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       }
-      savedTagsRef.current = next;
+      savedTagsRef.current = tagsStr;
       try {
         await updateHubspotCache(draft => {
           const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
