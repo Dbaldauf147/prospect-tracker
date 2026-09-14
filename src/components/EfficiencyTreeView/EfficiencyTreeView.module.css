@@ -1101,3 +1101,94 @@
   color: #0F766E;
   white-space: nowrap;
 }
+
+/* ── the tree subtabs ────────────────────────────────────────────────── */
+
+.treeTabs {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 1rem 0;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.treeTab,
+.treeTabActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  cursor: pointer;
+  /* The strip's own bottom border is the line these sit on; the open tab
+     covers its piece of it, which is what makes it read as the front one. */
+  margin-bottom: -1px;
+  background: none;
+  color: var(--color-text-secondary);
+}
+
+.treeTab:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+/* The open tab runs into the status bar below the strip, which is the
+   surface-alt band — so it is that colour and paints over the line between
+   them. */
+.treeTabActive {
+  background: var(--color-surface-alt);
+  border-color: var(--color-border);
+  border-bottom: 1px solid var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+/* How many steps the tree has — the difference between a flow and a stub,
+   without opening it. */
+.treeTabCount {
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.02rem 0.3rem;
+  border-radius: 999px;
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+
+.treeTabActive .treeTabCount {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.treeTabAdd {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-accent);
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 0.3rem;
+  cursor: pointer;
+}
+
+.treeTabAdd:hover {
+  background: var(--color-surface-alt);
+}
+
+/* Pushes the actions for the open tree to the right, away from the tabs
+   themselves — they act on one tree, not on the strip. */
+.treeTabsSpacer {
+  flex: 1;
+  min-width: 1rem;
+}
+
+.treeTabs .smallBtn {
+  margin-bottom: 0.3rem;
+}
