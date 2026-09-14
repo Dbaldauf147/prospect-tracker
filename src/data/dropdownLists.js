@@ -538,7 +538,7 @@ export const SOLUTIONS_CATALOG = [
   'Remote assessments',
   'REOA',
   'Reporting gap assessment',
-  'Risk managment',
+  'Risk management',
   'Rollout',
   'SASB',
   'SBT AV',

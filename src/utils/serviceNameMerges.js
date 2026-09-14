@@ -10,11 +10,13 @@
 // spelling alive.
 //
 // So the seed fix ships with a pass that rewrites the name everywhere it has
-// been stored: the board layout, the Solutions list, per-service metadata and
-// renames, the hidden set, the Contract Services ignore list, and every
-// prospect's Services Explored / notes / SME maps. The pass is planned as
-// pure data here — App.jsx runs it and writes the result — so what it
-// touches can be tested without a Firestore.
+// been stored: the board layout, the Solutions list, per-service metadata,
+// every settings map keyed by service name (renames, pricing, links,
+// presentation links, question lists, Opps SMEs), the hidden set, the
+// Contract Services ignore list, and every prospect's Services Explored /
+// notes / SME maps. The pass is planned as pure data here — App.jsx runs it
+// and writes the result — so what it touches can be tested without a
+// Firestore.
 //
 // Where both names carry a value, the surviving name's own value wins and
 // the retired one only fills a blank. A merge should never overwrite what
@@ -50,11 +52,37 @@ export const SERVICE_MERGES = [
     from: 'EaaS',
     to: 'EaaS - pull through',
   },
+  // A plain misspelling in the seed, the same shape as the Rebasline one
+  // above: the service has always been Risk management, and the catalogue
+  // had it a letter short. Nothing about the service changes, only how it
+  // is written.
+  {
+    flag: 'service-merge-risk-management-2026-09',
+    from: 'Risk managment',
+    to: 'Risk management',
+  },
 ];
 
 // The prospect fields keyed by service name. Each is a plain
 // { [serviceName]: value } map on the record.
 export const SERVICE_KEYED_PROSPECT_FIELDS = ['servicesExplored', 'serviceNotes', 'serviceSMEs'];
+
+// The settings keyed by service name, same { [serviceName]: value } shape and
+// all merged by the same rule. Everything the user fills in per service lives
+// in one of these, so a name left out here is a fee basis, a link or a
+// question list quietly orphaned the moment the service is renamed.
+//
+// serviceOverrides is NOT in the list: per-service metadata merges field by
+// field rather than whole (see mergeOverrides), so it is planned separately.
+export const SERVICE_KEYED_SETTINGS = [
+  'serviceRenames',
+  'servicePricing',
+  'serviceLinks',
+  'servicePresentationLinks',
+  'serviceQuestions',
+  'serviceTheirQuestions',
+  'oppsServiceSMEs',
+];
 
 const norm = s => String(s ?? '').trim().toLowerCase();
 
@@ -163,8 +191,10 @@ export function planServiceMerge({ from, to }, settings = {}, prospects = []) {
   const overrides = mergeOverrides(settings?.serviceOverrides, from, to);
   if (overrides) settingsPatch.serviceOverrides = overrides;
 
-  const renames = mergeNameMap(settings?.serviceRenames, from, to);
-  if (renames) settingsPatch.serviceRenames = renames;
+  for (const key of SERVICE_KEYED_SETTINGS) {
+    const next = mergeNameMap(settings?.[key], from, to);
+    if (next) settingsPatch[key] = next;
+  }
 
   // The hidden set is the one place the retired name's state is dropped
   // rather than carried: a service retired under one spelling but kept under

@@ -40,11 +40,15 @@ const MERGE = { from: 'Rebasline project', to: 'Rebaseline project' };
 // name it just retired.
 // Merges that can't keep old Scope text resolving, and why. A misspelling
 // is the one retired name no matching rule can tie back: "Rebasline" shares
-// no word with "Rebaseline project", so a Scope cell still carrying the typo
-// names nothing and needs a hand edit. Every other merge retires a wording
-// variant, which word-run matching does carry across — that is what the
-// assertion below holds them to.
-const SCOPE_MATCH_EXEMPT = new Set(['service-merge-rebaseline-2026-08']);
+// no word with "Rebaseline project", and "managment" shares none with
+// "management", so a Scope cell still carrying either typo names nothing and
+// needs a hand edit. Every other merge retires a wording variant, which
+// word-run matching does carry across — that is what the assertion below
+// holds them to.
+const SCOPE_MATCH_EXEMPT = new Set([
+  'service-merge-rebaseline-2026-08',
+  'service-merge-risk-management-2026-09',
+]);
 
 const boardNames = SERVICE_CATEGORIES.flatMap(c => c.items);
 const seedNames = [...boardNames, ...SERVICE_CATALOG.map(s => s.name)];
@@ -103,6 +107,12 @@ check('the shipped merge matches the names under test',
     dropdownLists: { solutions: ['Audits', 'Rebasline project', 'REOA'], stage: ['3'] },
     serviceOverrides: { 'Rebasline project': { bfoTag: '#SUECO', sme: 'Pat' } },
     serviceRenames: { 'Rebasline project': 'Rebaseline' },
+    servicePricing: { 'Rebasline project': { lines: [{ basis: 'flat', amount: 9000 }] } },
+    serviceLinks: { 'Rebasline project': 'https://example.com/rebaseline' },
+    servicePresentationLinks: { 'Rebasline project': 'https://example.com/deck' },
+    serviceQuestions: { 'Rebasline project': ['When was the baseline set?'] },
+    serviceTheirQuestions: { 'Rebasline project': ['What does it cost?'] },
+    oppsServiceSMEs: { 'Rebasline project': 'Sam' },
     hiddenServices: ['Rebasline project'],
     contractServicesIgnored: ['k:Rebasline project', 'n:tax matrix'],
   }, [
@@ -129,6 +139,21 @@ check('the shipped merge matches the names under test',
     settingsPatch.serviceOverrides, { 'Rebaseline project': { bfoTag: '#SUECO', sme: 'Pat' } });
   eq('rename in place: rename carried',
     settingsPatch.serviceRenames, { 'Rebaseline project': 'Rebaseline' });
+  // Everything the user fills in per service moves with the name. Each of
+  // these is its own settings map, and one left out of the merge is a fee,
+  // a link or a question list orphaned under a name nothing reads any more.
+  eq('rename in place: pricing carried',
+    settingsPatch.servicePricing, { 'Rebaseline project': { lines: [{ basis: 'flat', amount: 9000 }] } });
+  eq('rename in place: service link carried',
+    settingsPatch.serviceLinks, { 'Rebaseline project': 'https://example.com/rebaseline' });
+  eq('rename in place: presentation link carried',
+    settingsPatch.servicePresentationLinks, { 'Rebaseline project': 'https://example.com/deck' });
+  eq('rename in place: our questions carried',
+    settingsPatch.serviceQuestions, { 'Rebaseline project': ['When was the baseline set?'] });
+  eq('rename in place: their questions carried',
+    settingsPatch.serviceTheirQuestions, { 'Rebaseline project': ['What does it cost?'] });
+  eq('rename in place: Opps SME carried',
+    settingsPatch.oppsServiceSMEs, { 'Rebaseline project': 'Sam' });
   eq('rename in place: hidden set drops the old name', settingsPatch.hiddenServices, []);
   eq('rename in place: ignore key rewritten',
     settingsPatch.contractServicesIgnored, ['k:Rebaseline project', 'n:tax matrix']);

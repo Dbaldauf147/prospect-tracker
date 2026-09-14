@@ -179,7 +179,7 @@ export const SERVICE_CATEGORIES = [
     items: [
       'Strategic sourcing', 'Professional sourcing', 'Insight sourcing',
       'Budgets', 'Deposit recovery', 'Open/Close', 'Rate optimization',
-      'Risk managment', 'Risk - progressional', 'Risk - commodity insight',
+      'Risk management', 'Risk - progressional', 'Risk - commodity insight',
       'Demand response', 'Procurement contract review', 'Water Cost Recovery',
       'Peak Alerts', 'Renewable natural gas', 'Tax Matrix - pull through',
       'Education calls',

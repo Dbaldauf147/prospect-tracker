@@ -60,7 +60,8 @@ eq(matchKey('Strategic Sourcing'), 'Strategic sourcing', 'exact catalogue names 
 // Alias table: wording that shares no tokens with the catalogue entry.
 eq(matchKey('EcoStruxure Resource Advisor'), 'RA dashboards & reporting', 'Resource Advisor resolves through the alias table');
 eq(matchKey('EED Services'), 'E.E.D.', 'a short alias matches as a whole phrase');
-eq(matchKey('Risk Managed Portfolio Services'), 'Risk managment', 'an alias reaches the catalogue’s misspelled key');
+eq(matchKey('Risk Managed Portfolio Services'), 'Risk management', 'an alias reaches a catalogue key that shares no tokens with it');
+eq(matchKey('Risk Managment'), 'Risk management', 'contract text carrying the old typo still lands on the service');
 eq(matchKey('Greenhouse Gas Inventory'), 'GHG', 'an acronym-only catalogue entry is reachable by its long form');
 eq(matchKey('Virtual Power Purchase Agreement'), 'PPA/VPPA', 'VPPA long form resolves');
 
