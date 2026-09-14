@@ -599,6 +599,35 @@ const full = {
     onePagerFileName(''), 'Company - Account summary.docx');
 }
 
+// ---- what is bold, and what is not ----------------------------------------
+//
+// Bold is how this page says "start reading here". Spent on every value it
+// says nothing, which is what a row of three bold names and a column of
+// bold amounts had turned it into.
+{
+  const xml = onePagerDocumentXml(onePagerModel({ ...full, contractDates: ['2021-04-01'] }));
+  const runOf = (text) => {
+    const at = xml.indexOf(`>${text}<`);
+    if (at === -1) return '(not on the page)';
+    const from = xml.lastIndexOf('<w:rPr>', at);
+    return xml.slice(from, at);
+  };
+  check('the CDM value is not bold', runOf('Dan Baldauf').includes('<w:b/>'), false);
+  check('nor the client manager', runOf('Alex Moreau').includes('<w:b/>'), false);
+  check('nor the client since date', runOf('Apr 2021').includes('<w:b/>'), false);
+  // The labels above them still are: they are the questions, and the
+  // questions are what a reader scans for.
+  check('their labels still are', runOf('CDM').includes('<w:b/>'), true);
+
+  check('the opportunity scope is not bold', runOf('Scope 3 estimates').includes('<w:b/>'), false);
+  check('nor the amount', runOf('$250,000').includes('<w:b/>'), false);
+  // A contact's name is the exception: it is what the row is ABOUT, and
+  // the table is scanned down that column.
+  check('a contact name still is', runOf('Ben Carter').includes('<w:b/>'), true);
+
+  check('the contacts heading names who they are', xml.includes('KEY CLIENT CONTACTS'), true);
+}
+
 // ---- the note somebody wrote for this meeting -----------------------------
 //
 // The one part of the page that is not a record the app already held, so
@@ -633,7 +662,7 @@ const full = {
   // rather than looks: two of them with a note, one without.
   check('under its own heading', (xml.match(/NOTES/g) || []).length, 2);
   // Above the contacts, which is the whole point of where it sits.
-  check('and above Key contacts', xml.indexOf('Chiller RFP lands in Q1') < xml.indexOf('KEY CONTACTS'), true);
+  check('and above Key client contacts', xml.indexOf('Chiller RFP lands in Q1') < xml.indexOf('KEY CLIENT CONTACTS'), true);
   check('a page with no note draws no heading of its own',
     (onePagerDocumentXml(onePagerModel({ ...full, notes: '' })).match(/NOTES/g) || []).length, 1);
 }
@@ -714,7 +743,7 @@ const full = {
   check('it ends in a paragraph', /<\/w:p>\s*<\/w:hdr>/.test(hdr), true);
 
   check('the body no longer draws it', doc.includes('ACCOUNT SUMMARY'), false);
-  check('the body starts with the owners', doc.indexOf('CDM') < doc.indexOf('KEY CONTACTS'), true);
+  check('the body starts with the owners', doc.indexOf('CDM') < doc.indexOf('KEY CLIENT CONTACTS'), true);
 
   // 1. the section points at a header, 2. by an id the document's own
   // relationships define, 3. as a part the package declares, 4. in a
