@@ -25,8 +25,7 @@
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
   MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
-  cappedServices, linkedinUrl, NOTE_MAX_CHARS, contactRowLines,
-} from '../src/utils/companyOnePager.js';
+  cappedServices, linkedinUrl, NOTE_MAX_CHARS, contactRowLines, noteBlocks, MAX_NOTE_LINES } from '../src/utils/companyOnePager.js';
 import {
   onePagerDocumentXml, onePagerHeaderXml, onePagerParts, buildOnePagerDocx, xmlEsc,
   CONTENT_TYPES_XML, DOCUMENT_RELS_XML,
@@ -600,6 +599,45 @@ const full = {
     onePagerFileName(''), 'Company - Account summary.docx');
 }
 
+// ---- the note somebody wrote for this meeting -----------------------------
+//
+// The one part of the page that is not a record the app already held, so
+// it prints ABOVE the contacts: the sentence that says what happens next
+// is what the reader needs before any of the rest of it.
+{
+  const { blocks } = noteBlocks('Met the team in NYC.\n\n- Chiller RFP lands in Q1\n* Landlord owns supply at 3 sites\n\u2022 Wants sub-metering\n\nFollow up after the board.');
+  check('prose is a paragraph', JSON.stringify(blocks[0]), JSON.stringify({ type: 'p', text: 'Met the team in NYC.' }));
+  check('a dash, a star and a bullet all start one list',
+    blocks[1].items.join(' | '), 'Chiller RFP lands in Q1 | Landlord owns supply at 3 sites | Wants sub-metering');
+  check('and prose after it is a paragraph again', blocks[2].text, 'Follow up after the board.');
+  check('nothing typed is nothing drawn', noteBlocks('').blocks.length, 0);
+  check('and neither is whitespace', noteBlocks('   \n  \n').blocks.length, 0);
+  check('an empty bullet is not a bullet', noteBlocks('- ').blocks.length, 0);
+  // Two lines of prose in a row are one paragraph: a textarea wraps where
+  // the typist hit Enter, which is not where a paragraph ends.
+  check('consecutive prose lines join up',
+    JSON.stringify(noteBlocks('One line\nand its continuation').blocks),
+    JSON.stringify([{ type: 'p', text: 'One line and its continuation' }]));
+
+  // It is the one field on this page somebody can paste a transcript into.
+  const long = noteBlocks(Array.from({ length: MAX_NOTE_LINES + 5 }, (_, i) => `- line ${i}`).join('\n'));
+  check('the note is capped', long.blocks[0].items.length, MAX_NOTE_LINES);
+  check('and says what it left', long.hidden, 5);
+
+  const xml = onePagerDocumentXml(onePagerModel({
+    ...full,
+    notes: '- Chiller RFP lands in Q1\n- Wants sub-metering',
+  }));
+  check('the note is on the page', xml.includes('Chiller RFP lands in Q1'), true);
+  // NOTES is also the contacts table's third column head, so this counts
+  // rather than looks: two of them with a note, one without.
+  check('under its own heading', (xml.match(/NOTES/g) || []).length, 2);
+  // Above the contacts, which is the whole point of where it sits.
+  check('and above Key contacts', xml.indexOf('Chiller RFP lands in Q1') < xml.indexOf('KEY CONTACTS'), true);
+  check('a page with no note draws no heading of its own',
+    (onePagerDocumentXml(onePagerModel({ ...full, notes: '' })).match(/NOTES/g) || []).length, 1);
+}
+
 // ---- the name is a link to the person -------------------------------------
 //
 // A link in Word is a relationship id in the paragraph and the URL in the
@@ -630,6 +668,10 @@ const full = {
   const { documentXml, relsXml } = onePagerParts(model);
 
   check('the linked name is a hyperlink', /<w:hyperlink r:id="rId\d+">/.test(documentXml), true);
+  // Blue and underlined: on a page of green headings, a green link reads
+  // as a heading rather than as something to click.
+  check('and is set in hyperlink blue', documentXml.includes('<w:color w:val="0563C1"/>'), true);
+  check('with an underline', documentXml.includes('<w:u w:val="single"/>'), true);
   check('pointing at the profile', relsXml.includes('Target="https://www.linkedin.com/in/herb-tracy"'), true);
   check('as an external target', relsXml.includes('TargetMode="External"'), true);
   // Two people linked to the same profile is one relationship, not two.

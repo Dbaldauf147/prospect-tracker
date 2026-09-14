@@ -49,6 +49,11 @@ export const xmlEsc = (s) => String(s ?? '')
 
 const CONTENT_WIDTH = 9360;
 const FONT = 'Segoe UI';
+// The blue Word's own Hyperlink style uses. Not a brand colour, which is
+// why it is here rather than in schneiderBrand: a link has to look like
+// the thing every reader already knows is clickable, and on a page of
+// green headings a green link is read as a heading.
+const LINK_BLUE = '0563C1';
 
 /** One run of text: the inline bits Word styles as a unit. */
 export function run(text, { bold = false, color = SE_GRAPHITE, size = 20, italic = false, underline = false } = {}) {
@@ -236,11 +241,10 @@ function contactsTable({ shown, hidden }, linkId) {
     const nameRun = run(c.name, {
       bold: true,
       size: 18,
-      // Underlined and in the brand green rather than Word's blue: it has
-      // to read as a link without becoming the loudest thing in a column
-      // of names, and there is no styles part here to carry the built-in
-      // Hyperlink style.
-      ...(linked ? { color: SE_GREEN_DARK, underline: true } : {}),
+      // Underlined and in Word's own hyperlink blue. There is no styles
+      // part here to carry the built-in Hyperlink style, so the run says
+      // it itself - and it says the same thing that style would.
+      ...(linked ? { color: LINK_BLUE, underline: true } : {}),
     });
     const nameLines = [
       para([
@@ -279,6 +283,30 @@ function contactsTable({ shown, hidden }, linkId) {
     ? para([run(`+ ${hidden} more on the company record.`, { color: SE_MUTED, size: 14 })], { spaceBefore: 40 })
     : '';
   return table(widths, [head, ...rows]) + more;
+}
+
+/**
+ * The free-typed note, as bullets and prose.
+ *
+ * Above Key contacts because it is the only part of this page somebody
+ * wrote FOR this meeting: everything under it is a record the app already
+ * held, and the sentence that says "the chiller RFP lands in Q1" is what
+ * the reader needs before any of it.
+ */
+function notesBlock({ blocks = [], hidden = 0 } = {}) {
+  if (!blocks.length) return '';
+  const drawn = blocks.map(b => (b.type === 'ul'
+    // Same glyph and hanging indent the services use, so the two lists on
+    // the page are one list style rather than two.
+    ? b.items.map(item => para([
+      run('\u2022   ', { color: SE_GREEN_DARK, size: 18, bold: true }),
+      run(item, { color: SE_SLATE, size: 18 }),
+    ], { spaceAfter: 0, indent: { left: 340, hanging: 180 } })).join('')
+    : para([run(b.text, { color: SE_SLATE, size: 18 })], { spaceAfter: 40 }))).join('');
+  const more = hidden
+    ? para([run(`+ ${hidden} more line${hidden === 1 ? '' : 's'} of notes.`, { color: SE_MUTED, size: 14 })], { spaceBefore: 40 })
+    : '';
+  return drawn + more;
 }
 
 // Open opportunities. A table rather than chips: what is being sold, what
@@ -421,14 +449,14 @@ export function onePagerHeaderXml(model) {
 export function onePagerDocumentXml(model, linkId = null) {
   const body = [
     ownersBand(model.owners, model.clientSince),
+    model.notes?.blocks?.length ? heading('Notes') : '',
+    notesBlock(model.notes),
     heading('Key contacts'),
     contactsTable(model.contacts, linkId),
     heading('Open opportunities'),
     oppsTable(model.opps),
     heading('Current services'),
     servicesBullets(model.services),
-    model.notes ? heading('Notes') : '',
-    model.notes ? para([run(model.notes, { color: SE_SLATE, size: 18 })]) : '',
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
     //

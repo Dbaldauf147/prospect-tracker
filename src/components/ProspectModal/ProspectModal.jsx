@@ -553,7 +553,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
   numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null, rank: '', tier: 'Tier 3',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', onePagerNotes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -5679,6 +5679,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
       const model = onePagerModel({
         company: fields.company,
+        notes: fields.onePagerNotes || '',
         cdm: fields.cdm,
         clientManager,
         services: sold,
@@ -8000,6 +8001,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
               <CommitOnBlurInput multiline autoGrow className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
+            </div>
+
+            {/* What goes on the one-pager, kept apart from Company Notes on
+                purpose: the notes above are the running record of an
+                account and include plenty nobody would hand to a customer,
+                and a sheet that printed them would be a sheet nobody could
+                take into a room. */}
+            <div className={styles.fieldFull}>
+              <label className={styles.label}>
+                One-pager Notes
+                <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>
+                  {' '}- printed above Key Contacts on the one-pager. Type &quot;- &quot; to start a bullet.
+                </span>
+              </label>
+              {/* smartBullets rather than bulletList: this is free-form,
+                  and a field that bulleted every line would fight anyone
+                  typing a sentence. Typing "- " starts a list, Enter
+                  continues it, and an empty bullet ends it. */}
+              <CommitOnBlurInput
+                multiline
+                autoGrow
+                smartBullets
+                className={styles.textarea}
+                value={fields.onePagerNotes}
+                onCommit={v => set('onePagerNotes', v)}
+                rows={3}
+                placeholder={'- Chiller RFP lands in Q1\n- Wants sub-metering on the top 12 sites'}
+              />
             </div>
 
             <div className={styles.fieldFull}>

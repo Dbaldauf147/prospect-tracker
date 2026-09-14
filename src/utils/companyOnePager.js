@@ -164,6 +164,61 @@ export function serviceLineBudget({ contacts = 0, reportingLines = 0, contactNot
   return Math.max(MAX_SERVICE_LINES, (BODY_LINE_BUDGET - spent) * 2);
 }
 
+// The most lines of notes this page will print. Past it the note is cut
+// and the page says how many lines it left, the same way every other
+// section on this sheet owns up to a cap. A note is the one field here
+// somebody can paste a meeting transcript into.
+export const MAX_NOTE_LINES = 8;
+
+/**
+ * Free-typed notes as the blocks the page draws.
+ *
+ * Two conventions, the same ones the decision tree's detail field honours,
+ * because they are the two things people already do in a textarea without
+ * being told: a line opening with -, * or a bullet is a bullet, and
+ * everything else is a line of prose. A blank line is a gap between
+ * blocks rather than an empty bullet.
+ *
+ * Returns { blocks, hidden } - blocks of { type: 'ul', items } and
+ * { type: 'p', text }, and how many lines the cap took off the end.
+ */
+export function noteBlocks(notes, { max = MAX_NOTE_LINES } = {}) {
+  const lines = String(notes ?? '').split('\n').map(l => l.trim());
+  const kept = [];
+  let hidden = 0;
+  for (const line of lines) {
+    if (!line) { kept.push(''); continue; }
+    if (kept.filter(Boolean).length >= max) { hidden += 1; continue; }
+    kept.push(line);
+  }
+  const blocks = [];
+  let bullets = [];
+  let prose = [];
+  const flushBullets = () => { if (bullets.length) blocks.push({ type: 'ul', items: bullets }); bullets = []; };
+  const flushProse = () => { if (prose.length) blocks.push({ type: 'p', text: prose.join(' ') }); prose = []; };
+  for (const line of kept) {
+    // A marker with nothing after it - the empty bullet left behind when
+    // somebody presses Enter twice - is not a line of anything. Matched
+    // with the text optional so it lands here rather than in prose, where
+    // it would print as a lone dash.
+    const bullet = /^[-*\u2022](?:\s+(.*))?$/.exec(line);
+    if (bullet) {
+      flushProse();
+      const text = (bullet[1] || '').trim();
+      if (text) bullets.push(text);
+    } else if (!line) {
+      flushBullets();
+      flushProse();
+    } else {
+      flushBullets();
+      prose.push(line);
+    }
+  }
+  flushBullets();
+  flushProse();
+  return { blocks, hidden };
+}
+
 // How a contact ranks when nothing structural separates them: the
 // day-to-day contact leads, then whoever signs, then anyone already met,
 // then by name. Stable beyond that, so two runs of the same account
@@ -582,7 +637,9 @@ export function onePagerModel({
       notes,
     })),
     opps: shownOpps,
-    notes: clean(notes),
+    // The free-typed note, as the blocks the page draws and whatever the
+    // cap took off the end.
+    notes: noteBlocks(notes),
   };
 }
 
