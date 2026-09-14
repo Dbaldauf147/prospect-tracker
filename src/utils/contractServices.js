@@ -90,7 +90,7 @@ export const SERVICE_ALIASES = [
   { canonical: 'ESPM to RA', aliases: ['espm to resource advisor', 'portfolio manager to resource advisor'] },
   { canonical: 'ESPM link', aliases: ['energy star portfolio manager', 'espm', 'portfolio manager link'] },
   { canonical: 'RA dashboards & reporting', aliases: ['resource advisor', 'ecostruxure resource advisor', 'resource advisor platform', 'resource advisor subscription', 'ra platform', 'sustainability data platform', 'platform subscription'] },
-  { canonical: 'Risk managment', aliases: ['risk management', 'risk management services', 'risk managed portfolio services', 'risk managed portfolio'] },
+  { canonical: 'Risk management', aliases: ['risk managment', 'risk management services', 'risk managed portfolio services', 'risk managed portfolio'] },
   { canonical: 'E.E.D.', aliases: ['eed', 'eed services', 'energy efficiency directive'] },
   { canonical: 'Invoice recalculation', aliases: ['bill audit', 'invoice audit', 'bill recalculation', 'invoice verification'] },
   { canonical: 'Invoice collection', aliases: ['bill collection', 'invoice acquisition', 'bill acquisition', 'data collection services'] },
