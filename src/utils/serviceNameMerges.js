@@ -61,6 +61,21 @@ export const SERVICE_MERGES = [
     from: 'Risk managment',
     to: 'Risk management',
   },
+  // Another seed misspelling, in the tier below it. The three risk services
+  // mirror the three sourcing ones filed just above them on the same board
+  // — Strategic / Professional / Insight sourcing against Risk management /
+  // Risk - professional / Risk - commodity insight — which is what names the
+  // middle one. "Progressional" is not a word the business uses.
+  //
+  // This one is board-only: it has never been in the Solutions catalogue or
+  // carried seed metadata, and reaches the Solutions list through the board
+  // union (mergeBoardServices) instead. The merge does not change that, it
+  // only corrects the spelling wherever the name has been stored.
+  {
+    flag: 'service-merge-risk-professional-2026-09',
+    from: 'Risk - progressional',
+    to: 'Risk - professional',
+  },
 ];
 
 // The prospect fields keyed by service name. Each is a plain
