@@ -42,7 +42,7 @@ const pcRow = (companyName, over = {}) => ({
   siteCount: 5,
   ...over,
 });
-const firmRow = (firm, firmId) => ({ firm, firmId, stage: 'Discovery', pcCount: 0, closedCount: 0 });
+const firmRow = (firm, firmId) => ({ firm, firmId, stage: 'Discovery' });
 const topFor = (map, row) => map.get(peFirmTopPcKey(row))?.top?.companyName ?? null;
 
 // --- the pick ------------------------------------------------------------

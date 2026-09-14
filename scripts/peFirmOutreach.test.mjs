@@ -17,7 +17,9 @@
 //      list of silent ones. Closed ones are the mirror image: a firm whose
 //      every deal has landed or died has nothing in flight, and dropping it
 //      for deals that closed years ago hides exactly the relationship this
-//      step exists to ring.
+//      step exists to ring. The row used to report how many of each it had
+//      found; the step stopped printing those cells, so what is pinned now
+//      is which firms come back, not the counts behind them.
 //   3. Whose firm it is. The step is a call for THIS user to make, so a
 //      firm another CDM owns is not on their list however quiet it has
 //      gone, and one already written off on Status ("Lost - Not Sold") has
@@ -26,7 +28,7 @@
 //      list before the opps arrive would clear the step (and the sidebar's
 //      dot) on work that hasn't been looked at.
 import { collectPeFirmsToWork, isWorkablePeStage, peFirmStage } from '../src/utils/peFirmOutreach.js';
-import { accountMatchesCompany, peFirmOppRows, peOwnerMatchesFirm } from '../src/utils/peFirmOpps.js';
+import { accountMatchesCompany, peFirmAccountNames, peFirmOppRows, peOwnerMatchesFirm } from '../src/utils/peFirmOpps.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -112,11 +114,10 @@ check('Lead and Not Sold are not',
       opp('Ironworks Mfg', 'Sold'), opp('Ironworks Mfg', 'Qualifying'),
     ])),
     ['Cedar Point Equity', 'Birchwood Partners']);
-  // The row says why a firm with a history is nonetheless silent.
-  check('the row counts the closed deals behind it',
-    collect(prospects, [opp('Ironworks Mfg', 'Sold'), opp('Dunmore Holdings', 'Lost')])
-      .map(r => [r.firm, r.closedCount]),
-    [['Dunmore Holdings', 2], ['Cedar Point Equity', 0], ['Birchwood Partners', 0]]);
+  // A firm can have history on both halves at once and still be silent.
+  check('closed deals on the firm AND on a PC still leave it listed',
+    names(collect(prospects, [opp('Ironworks Mfg', 'Sold'), opp('Dunmore Holdings', 'Lost')])),
+    ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
   // Spreadsheet debris is not an opportunity.
   check('an invalid stage is not an opp',
     names(collect(prospects, [opp('Birchwood Partners', '#N/A')])),
@@ -126,9 +127,6 @@ check('Lead and Not Sold are not',
     names(collect(prospects, [opp('Harbor Bank')])),
     ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
 
-  check('the row counts the portfolio companies it can talk about',
-    collect(prospects, []).map(r => [r.firm, r.pcCount]),
-    [['Dunmore Holdings', 1], ['Cedar Point Equity', 1], ['Birchwood Partners', 0]]);
 }
 
 // --- the reported case ---------------------------------------------------
@@ -144,7 +142,6 @@ check('Lead and Not Sold are not',
   const closed = ['Sold', 'Not Sold', 'Lost', 'Closed', 'Sold', 'Lost', 'Not Sold'];
   const rows = collect(prospects, pcs.map((c, i) => opp(c, closed[i])));
   check('a firm reading 0/7 is listed', names(rows), ['Northgate Private Capital']);
-  check('and says how much history it has', rows.map(r => [r.pcCount, r.closedCount]), [[7, 7]]);
 }
 
 // --- the two names a firm goes by ---------------------------------------
@@ -175,14 +172,16 @@ check('Lead and Not Sold are not',
   mappedOnly.portfolioCompanies = [{ companyName: 'Pursuit Aerospace' }];
   check('a mapped company counts even with no PE Owner anywhere',
     names(collect([mappedOnly], live)), []);
-  check('and it counts toward what there is to talk about',
-    collect([mappedOnly], [])[0].pcCount, 1);
-  // A company on both lists is one company, not two.
+  check('and with nothing open on it the firm is listed',
+    names(collect([mappedOnly], [])), [CDR]);
+  // A closed opp on a mapped company is not something in flight either.
+  check('a closed opp on a mapped company leaves the firm listed',
+    names(collect([mappedOnly], [opp('Pursuit Aerospace', 'Not Sold')])), [CDR]);
+  // A company on both lists is one company, not two. Pinned on the
+  // function that gathers the names, since the row no longer counts them.
   check('the two halves are de-duplicated',
-    collect([mappedOnly, pc('Pursuit Aerospace', CDR)], [])[0].pcCount, 1);
-  // The closed-history count still reads over both halves.
-  check('a closed opp on a mapped company still counts as history',
-    collect([mappedOnly], [opp('Pursuit Aerospace', 'Not Sold')])[0].closedCount, 1);
+    peFirmAccountNames(CDR, [pc('Pursuit Aerospace', CDR)], [{ companyName: 'Pursuit Aerospace' }]),
+    [CDR, 'Pursuit Aerospace']);
 }
 
 // --- whose firm it is ----------------------------------------------------
