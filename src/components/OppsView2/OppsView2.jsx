@@ -52,6 +52,7 @@ import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreCl
 import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
+import { COMMODITY_COLUMN, COMMODITY_LIST_KEY, formatCommodities } from '../../utils/commodities';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { loadOppSourceFile } from '../../utils/oppPricingSourceFile';
 import {
@@ -645,7 +646,10 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
   'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN, QUOTED_VARIANCE_COLUMN,
-  'Margin Approval Date', 'Credit Approval Date'];
+  'Margin Approval Date', 'Credit Approval Date',
+  // Ticked in the Scope picker, never sent by BFO, so it only exists if it
+  // is ensured here.
+  COMMODITY_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -1138,6 +1142,10 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride, peOwnerOverr
   // scope that doesn't name a "… - pull through" service — and set
   // unconditionally, so it sticks when the column is hidden.
   if (seeds?.pullThrough) row[PULL_THROUGH_COLUMN] = 'Yes';
+  // The Scope picker's commodity row. Set unconditionally for the same
+  // reason as Pull Through: a hidden column must not lose the answer.
+  const seededCommodities = formatCommodities(seeds?.commodities);
+  if (seededCommodities) row[COMMODITY_COLUMN] = seededCommodities;
   // Seed the Next Steps column with the prompt the user always types
   // first. Set unconditionally — even if a column was hidden via the
   // columns toggle the value sticks around for when it's unhidden later.
@@ -3825,6 +3833,9 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
 // (including an explicit `none`) win over these defaults.
 const DEFAULT_COLUMN_LINKS = {
   Scope:  { listKey: 'solutions',    mode: 'multi'  },
+  // Same vocabulary the Scope picker's commodity row ticks, so the column
+  // and the picker can't offer different answers.
+  [COMMODITY_COLUMN]: { listKey: COMMODITY_LIST_KEY, mode: 'multi' },
   Source: { listKey: 'source',       mode: 'single' },
   Stage:  { listKey: 'status',       mode: 'single' },
   Status: { listKey: 'whoIsWaiting', mode: 'single' },
@@ -3852,7 +3863,8 @@ function resolveColumnLink(columnName, userLinks) {
 // Company combobox.
 function NewOppModal({
   account: initialAccount, sourceOptions = [], companySuggestions = [], peOwnerSuggestions = [],
-  prospects = [], scopeOptions = [], settings, oppRows = [], updateProspect, onCreate, onCancel,
+  prospects = [], scopeOptions = [], settings, oppRows = [], updateProspect, updateSettings,
+  onCreate, onCancel,
 }) {
   const [company, setCompany] = useState(initialAccount || '');
   const [source, setSource] = useState('');
@@ -3874,6 +3886,7 @@ function NewOppModal({
   // committing is a copy rather than a translation. Scope is picked from
   // the services board the Scope cell opens.
   const [scope, setScope] = useState('');
+  const [commodities, setCommodities] = useState([]);
   const [notes, setNotes] = useState('');
   const [scopeOpen, setScopeOpen] = useState(false);
   const scopeServices = useMemo(() => parseMulti(scope), [scope]);
@@ -4005,6 +4018,7 @@ function NewOppModal({
       peOwner: joinPeOwners(owners),
       type: type.trim(),
       scope,
+      commodities,
       notes: notes.trim(),
       pullThrough,
       frameworks,
@@ -4398,6 +4412,9 @@ function NewOppModal({
       <ScopeServicesModal
         value={scope}
         onChange={setScope}
+        commodities={commodities}
+        onCommoditiesChange={setCommodities}
+        updateSettings={updateSettings}
         onClose={() => setScopeOpen(false)}
         options={scopeOptions}
         account={trimmedCompany}
@@ -14690,6 +14707,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           settings={settings}
           oppRows={records}
           updateProspect={updateProspect}
+          updateSettings={updateSettings}
           onCreate={(payload) => {
             // A scheduled payload is parked whole and replayed at its due
             // time — the Table View company and any Type / framework
@@ -14856,6 +14874,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           <ScopeServicesModal
             value={opp['Scope']}
             onChange={(v) => updateOppField(opp._id, 'Scope', v)}
+            commodities={opp[COMMODITY_COLUMN]}
+            onCommoditiesChange={(next) => updateOppField(opp._id, COMMODITY_COLUMN, formatCommodities(next))}
+            updateSettings={updateSettings}
             onClose={closeAndContinue}
             options={listRegistry.get('solutions')?.options || []}
             account={opp['Account']}

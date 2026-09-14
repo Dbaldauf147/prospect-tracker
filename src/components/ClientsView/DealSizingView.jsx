@@ -1984,6 +1984,12 @@ export function DealSizingView({
             // step here rather than left showing the selection it opened on.
             setPicking(prev => (prev ? { ...prev, scope: { ...prev.scope, services: parseMulti(next) } } : prev));
           }}
+          commodities={picking.scope.commodities}
+          onCommoditiesChange={(next) => {
+            saveScope(picking.company, { ...picking.scope, commodities: next });
+            setPicking(prev => (prev ? { ...prev, scope: { ...prev.scope, commodities: next } } : prev));
+          }}
+          updateSettings={updateSettings}
           onClose={() => setPicking(null)}
           note={`Sizing a deal for ${picking.company || 'this client'}. Picking here doesn't change the company's Services Explored - it only sets what this estimate prices.`}
         />
