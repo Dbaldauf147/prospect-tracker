@@ -9,7 +9,7 @@ import { OppImportModal } from './OppImportModal';
 import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
-import { clientCounts } from '../../utils/clientDealSizing';
+import { clientCounts, needsDealSize } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
 import {
@@ -450,6 +450,28 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
   // that already has a number keeps its box even after the service that
   // wanted it is un-ticked — otherwise a typed figure would vanish.
+  // Deal size is a count box like any other, and it now behaves like one:
+  // shown when something on the page is priced as a cut of it, hidden when
+  // nothing is. It used to be the one box always on the bar, which on a
+  // book where no service is priced that way is a permanent, prominent
+  // field asking for a number that changes nothing - and worse, a number
+  // somebody had typed sat there reading like an input to the totals
+  // beside it when it was an input to nothing.
+  //
+  // Every service on the page, not just the ticked ones: the Est. columns
+  // price the unticked rows too, so a percentage service nobody has ticked
+  // yet still has a fee that needs this to be right.
+  //
+  // Purely on need, with no "but something is typed in it" escape. A figure
+  // left in the box by an earlier deal is the exact thing worth hiding: it
+  // is the one nobody meant, and it can only be consumed by a percentage
+  // line, which is the case that puts the box back on screen with that
+  // figure still in it.
+  const showDealSize = useMemo(
+    () => needsDealSize({ services: openRows.map(r => r.name), pricing, bases }),
+    [openRows, pricing, bases],
+  );
+
   const visibleUnits = useMemo(() => units.filter(u =>
     totals.unitsUsed.has(u.unit)
     || potential.estimate.unitsUsed.has(u.unit)
@@ -772,6 +794,27 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           )}
         </div>
         <div className={styles.pricingTotals}>
+          {/* The biggest single thing left to sell them. First among the
+              tiles because it is the one line of this page anybody reads
+              out loud - "the biggest thing open at BRE is Rate analysis,
+              two and a quarter million" - and a total alone never answers
+              the question that follows it, which is "of what?". */}
+          <div className={styles.potentialTop} title={potential.top
+            ? `${potential.top.name} is the biggest untapped service on this account, at ${formatMoneyRange(potential.top.value, potential.top.valueHigh)} over its term`
+            : 'Nothing here can be priced from the rate card yet'}
+          >
+            <span className={styles.pricingTotalLabel}>Biggest deal</span>
+            {potential.top ? (
+              <>
+                <span className={styles.pricingTotalValue}>
+                  {formatMoneyRange(potential.top.value, potential.top.valueHigh)}
+                </span>
+                <span className={styles.potentialTopName}>{potential.top.name}</span>
+              </>
+            ) : (
+              <span className={styles.potentialTopNone}>Nothing priced yet</span>
+            )}
+          </div>
           <div className={styles.pricingTotal}>
             <span className={styles.pricingTotalLabel}>Untapped services</span>
             <span className={styles.pricingTotalValue}>{openRows.length}</span>
@@ -844,13 +887,15 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           {/* Seven digits in a bare number box are easy to misread by a
               factor of ten, and every percentage-based fee is a cut of this
               one figure — so the label reads it back formatted. */}
-          <CountInput
-            label={dealSize === '' || dealSize == null ? 'Deal size ($)' : `Deal size · ${formatMoney(dealSize)}`}
-            wide
-            placeholder="for % fees"
-            value={dealSize}
-            onCommit={(v) => setScenario(s => ({ ...s, dealSize: v }))}
-          />
+          {showDealSize && (
+            <CountInput
+              label={dealSize === '' || dealSize == null ? 'Deal size ($)' : `Deal size · ${formatMoney(dealSize)}`}
+              wide
+              placeholder="for % fees"
+              value={dealSize}
+              onCommit={(v) => setScenario(s => ({ ...s, dealSize: v }))}
+            />
+          )}
           {oppImport?.id && inScope.size > 0 && (
             <button
               type="button"

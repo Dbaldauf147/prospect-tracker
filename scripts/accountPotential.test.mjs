@@ -82,6 +82,10 @@ const run = (client, oppStages = null) => accountPotential({
   check('rather than being ranked at zero', p.rank.get('Tariff review'), null);
   check('the rank is a position, not an index', p.rank.get('GHG reporting'), 1);
   check('and it follows the money, not the catalogue', p.rank.get('Bill payment'), 2);
+  // The one line worth reading out in a pipeline review, stated rather
+  // than left as "whatever is at the top of the list".
+  check('the biggest single deal is named', p.top.name, 'GHG reporting');
+  check('with what it is worth', p.top.value, 150000);
   check('the whole prize is the contract value', p.estimate.contractValue,
     (100 * 100 * 3) + 50000 * 3 + (1000 * 5 * 3) + (100 * 10 * 3));
 }
@@ -165,6 +169,31 @@ const run = (client, oppStages = null) => accountPotential({
   ]);
   check('and the name settles it, so two runs rank the same',
     sameBoth.map(l => l.name).join(','), 'Alpha,Zeta');
+}
+
+// ---- nothing the card can price ------------------------------------------
+// The unpriced sort to the bottom, so the top of the list on a book with
+// no rates at all is still an unpriced service. Naming that as the biggest
+// deal on the account would be a claim nothing supports.
+{
+  const p = accountPotential({
+    client: { company: 'Acme', servicesExplored: {} },
+    serviceRows: [row('Tariff review'), row('Bespoke consulting')],
+    pricing: {}, bases, counts: COUNTS,
+  });
+  check('with nothing priced there is no biggest deal', p.top, null);
+  check('though the services are still listed', p.open.length, 2);
+}
+
+// ---- nothing left at all -------------------------------------------------
+{
+  const p = accountPotential({
+    client: { company: 'Acme', servicesExplored: { 'Bill payment': 'Sold' } },
+    serviceRows: [row('Bill payment')],
+    pricing: PRICING, bases, counts: COUNTS,
+  });
+  check('an account with nothing open has no biggest deal', p.top, null);
+  check('and nothing to list', p.open.length, 0);
 }
 
 // ---- no company picked ---------------------------------------------------

@@ -140,7 +140,18 @@ export function accountPotential({
   });
   const ranked = rankByPotential(estimate.lines);
   const rank = new Map(ranked.map((l, i) => [l.name, l.priced ? i + 1 : null]));
+  // The single biggest thing left to sell them, named. The ranking already
+  // puts it first, but first-in-a-list is something a reader has to look
+  // for, and this is the one line of the page worth reading out in a
+  // pipeline review - so it is stated rather than implied.
+  //
+  // Only ever a PRICED service: the unpriced ones sort to the bottom, so
+  // ranked[0] on a book with no rates at all would name a service worth an
+  // unknown amount as the biggest deal on the account, which is a claim
+  // nothing supports.
+  const top = ranked.length && ranked[0].priced ? ranked[0] : null;
   return {
+    top,
     open,
     decided,
     decidedCounts: decidedCounts(decided),

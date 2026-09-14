@@ -18,7 +18,11 @@
 //      every deal has landed or died has nothing in flight, and dropping it
 //      for deals that closed years ago hides exactly the relationship this
 //      step exists to ring.
-//   3. Not knowing yet. Prospects and opps load separately, and an empty
+//   3. Whose firm it is. The step is a call for THIS user to make, so a
+//      firm another CDM owns is not on their list however quiet it has
+//      gone, and one already written off on Status ("Lost - Not Sold") has
+//      answered just as surely as a PE Stage of Not Sold.
+//   4. Not knowing yet. Prospects and opps load separately, and an empty
 //      list before the opps arrive would clear the step (and the sidebar's
 //      dot) on work that hasn't been looked at.
 import { collectPeFirmsToWork, isWorkablePeStage, peFirmStage } from '../src/utils/peFirmOutreach.js';
@@ -33,9 +37,15 @@ function check(label, actual, expected) {
   console.log(`FAIL ${label}\n  expected ${e}\n  actual   ${a}`);
 }
 
+// The user the list is being built for. Every firm below is theirs unless
+// the case is about ownership, so the rules the rest of this file pins are
+// read without a CDM column in the way.
+const ME = 'Dan Baldauf';
 const firm = (company, peStage, over = {}) => ({
-  id: company.toLowerCase().replace(/\s+/g, '-'), company, type: 'Private Equity', peStage, ...over,
+  id: company.toLowerCase().replace(/\s+/g, '-'), company, type: 'Private Equity', peStage, cdm: ME, ...over,
 });
+const collect = (prospects, oppsRecords, cdmName = ME) =>
+  collectPeFirmsToWork(prospects, oppsRecords, cdmName);
 const pc = (company, peOwner, over = {}) => ({
   id: company.toLowerCase().replace(/\s+/g, '-'), company, type: 'Prospect', peOwner, ...over,
 });
@@ -61,7 +71,7 @@ check('Lead and Not Sold are not',
     firm('Fernbank Group', ''),
     { id: 'not-pe', company: 'Granite Foods', type: 'Prospect', peStage: 'Discovery' },
   ];
-  const rows = collectPeFirmsToWork(prospects, []);
+  const rows = collect(prospects, []);
   // Furthest along first: an Existing Partnership with nothing on it is a
   // louder silence than a firm still in Discovery.
   check('only live relationships, most advanced first',
@@ -81,43 +91,43 @@ check('Lead and Not Sold are not',
   ];
   // An opp on the firm's own account.
   check('an opp on the firm takes it off the list',
-    names(collectPeFirmsToWork(prospects, [opp('Birchwood Partners')])),
+    names(collect(prospects, [opp('Birchwood Partners')])),
     ['Dunmore Holdings', 'Cedar Point Equity']);
   // An opp on one of its portfolio companies is the relationship working.
   check('so does one on a portfolio company',
-    names(collectPeFirmsToWork(prospects, [opp('Harbor Foods')])),
+    names(collect(prospects, [opp('Harbor Foods')])),
     ['Dunmore Holdings', 'Birchwood Partners']);
   // Closed deals are not something in flight — the firm stays listed.
   check('a closed opp on a PC leaves the firm on the list',
-    names(collectPeFirmsToWork(prospects, [opp('Ironworks Mfg', 'Not Sold')])),
+    names(collect(prospects, [opp('Ironworks Mfg', 'Not Sold')])),
     ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
   check('every closed stage reads the same way',
     ['Sold', 'Not Sold', 'Closed', 'Lost'].map(st =>
-      names(collectPeFirmsToWork(prospects, [opp('Birchwood Partners', st)])).includes('Birchwood Partners')),
+      names(collect(prospects, [opp('Birchwood Partners', st)])).includes('Birchwood Partners')),
     [true, true, true, true]);
   // ...but one open deal anywhere still takes the firm off it, however many
   // closed ones sit beside it.
   check('an open opp alongside closed ones still disqualifies',
-    names(collectPeFirmsToWork(prospects, [
+    names(collect(prospects, [
       opp('Ironworks Mfg', 'Sold'), opp('Ironworks Mfg', 'Qualifying'),
     ])),
     ['Cedar Point Equity', 'Birchwood Partners']);
   // The row says why a firm with a history is nonetheless silent.
   check('the row counts the closed deals behind it',
-    collectPeFirmsToWork(prospects, [opp('Ironworks Mfg', 'Sold'), opp('Dunmore Holdings', 'Lost')])
+    collect(prospects, [opp('Ironworks Mfg', 'Sold'), opp('Dunmore Holdings', 'Lost')])
       .map(r => [r.firm, r.closedCount]),
     [['Dunmore Holdings', 2], ['Cedar Point Equity', 0], ['Birchwood Partners', 0]]);
   // Spreadsheet debris is not an opportunity.
   check('an invalid stage is not an opp',
-    names(collectPeFirmsToWork(prospects, [opp('Birchwood Partners', '#N/A')])),
+    names(collect(prospects, [opp('Birchwood Partners', '#N/A')])),
     ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
   // A different company that merely shares a word is not this firm's opp.
   check('a one-word overlap is not a match',
-    names(collectPeFirmsToWork(prospects, [opp('Harbor Bank')])),
+    names(collect(prospects, [opp('Harbor Bank')])),
     ['Dunmore Holdings', 'Cedar Point Equity', 'Birchwood Partners']);
 
   check('the row counts the portfolio companies it can talk about',
-    collectPeFirmsToWork(prospects, []).map(r => [r.firm, r.pcCount]),
+    collect(prospects, []).map(r => [r.firm, r.pcCount]),
     [['Dunmore Holdings', 1], ['Cedar Point Equity', 1], ['Birchwood Partners', 0]]);
 }
 
@@ -132,7 +142,7 @@ check('Lead and Not Sold are not',
     ...pcs.map(c => pc(c, 'Northgate Private Capital')),
   ];
   const closed = ['Sold', 'Not Sold', 'Lost', 'Closed', 'Sold', 'Lost', 'Not Sold'];
-  const rows = collectPeFirmsToWork(prospects, pcs.map((c, i) => opp(c, closed[i])));
+  const rows = collect(prospects, pcs.map((c, i) => opp(c, closed[i])));
   check('a firm reading 0/7 is listed', names(rows), ['Northgate Private Capital']);
   check('and says how much history it has', rows.map(r => [r.pcCount, r.closedCount]), [[7, 7]]);
 }
@@ -155,30 +165,61 @@ check('Lead and Not Sold are not',
   const pursuit = pc('Pursuit Aerospace (a Clayton, Dubilier & Rice co.)', 'Clayton, Dubilier & Rice');
   const live = [opp('Pursuit Aerospace', 'Qualifying')];
   check('an open opp on a portfolio company keeps the firm off the list',
-    names(collectPeFirmsToWork([firm(CDR, 'Discovery'), pursuit], live)), []);
+    names(collect([firm(CDR, 'Discovery'), pursuit], live)), []);
   check('and with nothing open the firm is on it',
-    names(collectPeFirmsToWork([firm(CDR, 'Discovery'), pursuit], [])), [CDR]);
+    names(collect([firm(CDR, 'Discovery'), pursuit], [])), [CDR]);
 
   // The other half of a portfolio: a company mapped on the firm's own
   // Portfolio Companies list that nobody has given a PE Owner.
   const mappedOnly = firm(CDR, 'Discovery');
   mappedOnly.portfolioCompanies = [{ companyName: 'Pursuit Aerospace' }];
   check('a mapped company counts even with no PE Owner anywhere',
-    names(collectPeFirmsToWork([mappedOnly], live)), []);
+    names(collect([mappedOnly], live)), []);
   check('and it counts toward what there is to talk about',
-    collectPeFirmsToWork([mappedOnly], [])[0].pcCount, 1);
+    collect([mappedOnly], [])[0].pcCount, 1);
   // A company on both lists is one company, not two.
   check('the two halves are de-duplicated',
-    collectPeFirmsToWork([mappedOnly, pc('Pursuit Aerospace', CDR)], [])[0].pcCount, 1);
+    collect([mappedOnly, pc('Pursuit Aerospace', CDR)], [])[0].pcCount, 1);
   // The closed-history count still reads over both halves.
   check('a closed opp on a mapped company still counts as history',
-    collectPeFirmsToWork([mappedOnly], [opp('Pursuit Aerospace', 'Not Sold')])[0].closedCount, 1);
+    collect([mappedOnly], [opp('Pursuit Aerospace', 'Not Sold')])[0].closedCount, 1);
+}
+
+// --- whose firm it is ----------------------------------------------------
+//
+// The Table View book holds every CDM's accounts, so without this the step
+// listed silent relationships that were never this user's to ring. And a
+// firm's Status carries the same "they answered" that PE Stage: Not Sold
+// does, in the other field.
+{
+  const prospects = [
+    firm('Birchwood Partners', 'Discovery'),
+    firm('Cedar Point Equity', 'Piloting', { cdm: 'Alex Moreno' }),
+    firm('Dunmore Holdings', 'Existing Partnership', { status: 'Lost - Not Sold' }),
+    firm('Fernbank Group', 'Existing Partnership', { cdm: 'D. Baldauf', status: 'Qualifying' }),
+  ];
+  check('another CDM\'s firm, and a written-off one, are both off the list',
+    names(collect(prospects, [])), ['Fernbank Group', 'Birchwood Partners']);
+  // The same match the rest of the app runs, so the abbreviated spellings
+  // the sheet is full of still read as this user.
+  check('an abbreviated CDM still reads as the user',
+    names(collect([firm('Fernbank Group', 'Discovery', { cdm: 'Baldauf, Dan' })], [])),
+    ['Fernbank Group']);
+  check('a blank CDM is nobody\'s', names(collect([firm('Orchard Lane', 'Discovery', { cdm: '' })], [])), []);
+  // Every other Status is somewhere the relationship can still go.
+  check('the other statuses stay on the list',
+    ['Client', 'Qualifying', 'Hold Off', 'Old Client', ''].map(status =>
+      names(collect([firm('Orchard Lane', 'Discovery', { status })], [])).length),
+    [1, 1, 1, 1, 1]);
+  // The count under the step is this list's length, so the two move
+  // together: a firm filtered out here is not counted there either.
+  check('the list the step counts is the filtered one', collect(prospects, []).length, 2);
 }
 
 // --- not knowing yet -----------------------------------------------------
-check('no prospects yet is null, not an empty list', collectPeFirmsToWork(null, []), null);
-check('no opps yet is null too', collectPeFirmsToWork([], null), null);
-check('both loaded and nothing to chase is an empty list', collectPeFirmsToWork([], []), []);
+check('no prospects yet is null, not an empty list', collect(null, []), null);
+check('no opps yet is null too', collect([], null), null);
+check('both loaded and nothing to chase is an empty list', collect([], []), []);
 
 // --- the matcher this all rests on --------------------------------------
 // Shared with the PE Portfolio table's PE Opps column, which prints
