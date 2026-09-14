@@ -26,7 +26,6 @@
 import {
   SE_GREEN, SE_GREEN_DARK, SE_GRAPHITE, SE_SLATE, SE_MUTED, SE_SURFACE, SE_BORDER,
 } from './schneiderBrand.js';
-import { MAX_ORG_INDENT } from './companyOnePager.js';
 
 const hex = (c) => String(c || '').replace('#', '').toUpperCase();
 
@@ -147,9 +146,8 @@ export function table(widths, rows) {
 // ---- the page ----------------------------------------------------------
 
 const NO_BORDER = { top: '', left: '', bottom: '', right: '' };
-const heading = (label, note) => para([
+const heading = (label) => para([
   run(label.toUpperCase(), { bold: true, color: SE_GREEN_DARK, size: 20 }),
-  note ? run(`   ${note}`, { color: SE_MUTED, size: 16 }) : '',
 ], { rule: SE_GREEN, spaceBefore: 110, spaceAfter: 60 });
 
 const emptyNote = (text) => para([run(text, { color: SE_MUTED, size: 18, italic: true })]);
@@ -389,108 +387,10 @@ function servicesBullets({ groups, hidden, mode }) {
   return grid + more;
 }
 
-// ---- page two: the org chart ----------------------------------------------
-
-// A page break. Word has no "start a new page" property on a paragraph
-// worth using here - w:pageBreakBefore hangs off the NEXT paragraph and
-// moves with it when anything above is reordered. An explicit break run is
-// a thing in the document at the point the break happens, which is what
-// makes the second page survive an edit to the first.
-const pageBreak = () => '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
-
 const footerRule = () => para(
   [run('Schneider Electric - generated from Prospect Tracker. Internal use.', { color: SE_MUTED, size: 13 })],
   { spaceBefore: 110, rule: SE_BORDER },
 );
-
-// How far one level of nesting moves right, in twips. 200 is about 0.14",
-// which is enough to read as a step without walking a six-deep chart off
-// the page - and MAX_ORG_INDENT stops it stepping past that anyway.
-const ORG_STEP = 200;
-
-// The chart, as a column of indented lines.
-//
-// Indentation rather than boxes and connectors. Word can draw the boxes -
-// a nested table per level - but a table cannot break across a page the
-// way a column of paragraphs does, and a chart that needs one more row
-// than the page holds would silently lose its last division rather than
-// its last person. A line per person also means the cap can count what it
-// is capping.
-function orgChartPage(chart) {
-  if (!chart) return '';
-  const indent = (depth) => ({ left: Math.min(depth, MAX_ORG_INDENT) * ORG_STEP, hanging: 0 });
-
-  const line = (row) => {
-    if (row.kind === 'division') {
-      // The root is the company itself and is already named in the band at
-      // the top of page one, so it is set as a plain heading; a division
-      // under it carries the guide rule that says it hangs off something.
-      const label = row.root
-        ? [run(row.name, { bold: true, color: SE_GRAPHITE, size: 22 })]
-        : [
-          run('── ', { color: SE_BORDER, size: 18 }),
-          run(row.name, { bold: true, color: SE_GREEN_DARK, size: 19 }),
-          // A company the tracker no longer carries still belongs on the
-          // chart - it is where these people sit - but the reader has to
-          // know the record behind it is gone.
-          row.missing ? run('   (no record)', { color: SE_MUTED, size: 14, italic: true }) : '',
-        ];
-      return para(label, {
-        spaceBefore: row.root ? 0 : 100, spaceAfter: 30, indent: indent(row.depth),
-      });
-    }
-    if (row.kind === 'team') {
-      return para([run(row.name.toUpperCase(), { bold: true, color: SE_MUTED, size: 14 })], {
-        spaceBefore: 50, spaceAfter: 20, indent: indent(row.depth),
-      });
-    }
-    // Somebody. Nesting is the reporting line, so the row says only what
-    // nesting cannot: who they are, what they do, and the two standings
-    // page one marks as well. A leaver is greyed rather than dropped.
-    const tone = row.left ? SE_MUTED : SE_GRAPHITE;
-    return para([
-      // An elbow only where there is a reporting line to draw: the person
-      // at the top of a box is indented because the box is, not because
-      // they answer to the heading above them.
-      run(row.reportsUnder ? '└ ' : '• ', { color: row.left ? SE_BORDER : SE_GREEN_DARK, size: 16 }),
-      run(row.name, { bold: true, color: tone, size: 18 }),
-      row.title ? run(`  ${row.title}`, { color: row.left ? SE_MUTED : SE_SLATE, size: 17 }) : '',
-      row.dayToDay ? run('  DAY TO DAY', { bold: true, color: SE_GREEN_DARK, size: 13 }) : '',
-      row.decisionMaker ? run('  DM', { bold: true, color: SE_GREEN_DARK, size: 13 }) : '',
-      row.left ? run('  LEFT', { bold: true, color: SE_MUTED, size: 13 }) : '',
-      // A manager the chart could not draw above them: on another box, or
-      // in another team. Without this the reporting line the user mapped
-      // would simply be missing from the page.
-      row.managers.length
-        ? run(`   ↑ ${row.managers.join(', ')}`, { color: SE_MUTED, size: 14, italic: true })
-        : '',
-    ], { spaceAfter: 0, indent: indent(row.depth) });
-  };
-
-  const parents = chart.parents.length
-    ? para([
-      run('Part of  ', { color: SE_MUTED, size: 15 }),
-      run(chart.parents.join(', '), { bold: true, color: SE_SLATE, size: 17 }),
-    ], { spaceAfter: 80 })
-    : '';
-  const more = chart.hidden
-    ? para([run(`+ ${chart.hidden} more on the company record.`, { color: SE_MUTED, size: 14 })],
-      { spaceBefore: 100 })
-    : '';
-  const note = [
-    chart.divisions ? plural(chart.divisions, 'division') : '',
-    'nesting = reports to',
-  ].filter(Boolean).join('    ');
-  return [
-    pageBreak(),
-    heading('Org chart', note),
-    parents,
-    chart.rows.map(line).join(''),
-    more,
-  ].join('');
-}
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * The running head: the green band, as its own document part.
@@ -531,16 +431,9 @@ export function onePagerDocumentXml(model, linkId = null) {
     servicesBullets(model.services),
     model.notes ? heading('Notes') : '',
     model.notes ? para([run(model.notes, { color: SE_SLATE, size: 18 })]) : '',
-    // Page one closes with its own footer rule whether or not a second
-    // page follows, so page one is the same document it was before the
-    // chart existed. The chart then starts a page and closes with the same
-    // line: unlike the green band above, this is a plain paragraph rather
-    // than a real Word part, so a page that does not carry one has none,
-    // and an internal sheet that loses its "internal use" marker halfway
-    // through is worse than one line repeated.
+    // The footer rule is a plain paragraph rather than a real Word footer
+    // part, so it sits at the end of the body and closes the page there.
     footerRule(),
-    orgChartPage(model.orgChart),
-    model.orgChart ? footerRule() : '',
     // Letter, one-inch margins. The section properties close the body and
     // are what make the widths above mean what they say.
     //
