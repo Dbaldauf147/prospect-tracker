@@ -27,6 +27,9 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
+  emailsByWeek, newOppsByMonth, TREND_WEEKS, TREND_MONTHS,
+} from '../../utils/weeklyReportTrends';
+import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../utils/pipelineFunnelData';
 import { bfoStageMetrics } from '../../utils/bfoStageMetrics';
@@ -616,6 +619,19 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  // The two history series the email carries in place of the tab's tiles.
+  // Both are recomputed from the same caches the tiles read, over windows
+  // the current period sits at the end of, so the last bar in each is the
+  // period this report covers.
+  const trendSeries = useMemo(() => ({
+    emailsByWeek: emailsByWeek({
+      cache, log: activityLog, senderEmail, refMs: bounds.start, weeks: TREND_WEEKS,
+    }),
+    newOppsByMonth: newOppsByMonth({
+      records: oppsRecords, refMs: bounds.start, months: TREND_MONTHS,
+    }),
+  }), [cache, activityLog, senderEmail, oppsRecords, bounds]);
+
   // What the scheduled email will send. The report's numbers come from
   // caches that only exist in this browser, so rather than have the server
   // recompute them (a second copy of the same arithmetic, free to drift)
@@ -646,16 +662,13 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       // feed no longer covers, the Activity tab's recording is the only
       // thing that can answer, and the tile on screen reads off it. Mailing
       // the live count instead is what made a week of sent mail arrive as 0.
-      tiles: [
-        {
-          label: 'Emails sent',
-          value: emailsSent.count,
-          goal: weeklyTargets.emails ?? null,
-          accent: 'blue',
-          sub: emailsSent.recorded ? `recorded ${fmtRecordedAt(emailsSent.at)}` : null,
-        },
-        { label: 'New opps', value: oppChanges.newOpps.length, goal: weeklyTargets.newOpps ?? null, accent: 'green' },
-      ],
+      // History, not tiles. A tile said how this week went against its
+      // target; the email is read by someone who wants to know which way
+      // the line is going, and "27 emails, /50" cannot answer that. Each
+      // metric gets the cadence it actually moves at — mail is a weekly
+      // habit, opps arrive in ones and twos and only make a shape over
+      // months. The tab keeps its tiles; this is the email's version.
+      trends: trendSeries,
       oppChanges: {
         closed: list(oppChanges.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),
         newOpps: list(oppChanges.newOpps, x => `${who(x)}${x.stage ? ` (${x.stage})` : ''}`),
@@ -678,7 +691,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       narrative: narrativeStale ? '' : narrative,
     };
   }, [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
-    emailsSent, oppChanges, goalsProg, weeklyTargets, narrative, narrativeStale]);
+    trendSeries, oppChanges, goalsProg, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

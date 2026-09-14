@@ -57,6 +57,32 @@ function funnelDoc(f) {
   };
 }
 
+// One trend series. A point's `value` may be null and that is load-bearing:
+// for the emails series it means "no record of that week" — no recording
+// from the Activity tab and a feed that cannot speak for it — which is a
+// different fact from a week with no sends, and the email draws the two
+// differently. clampInt would turn the first into the second.
+function seriesDoc(points, max) {
+  if (!Array.isArray(points)) return [];
+  return points.slice(0, max).map(p => ({
+    key: str(p?.key, 10),
+    label: str(p?.label, 16),
+    value: p?.value == null ? null : clampInt(p.value, 0, 1e9, 0),
+    // Whether the number came from the Activity tab's banked recording
+    // rather than the live feed, the way the tile's "recorded Sep 3" note
+    // used to say.
+    recorded: p?.recorded === true,
+  })).filter(p => p.label);
+}
+
+function trendsDoc(t) {
+  if (!t || typeof t !== 'object') return null;
+  const emailsByWeek = seriesDoc(t.emailsByWeek, 12);
+  const newOppsByMonth = seriesDoc(t.newOppsByMonth, 12);
+  if (!emailsByWeek.length && !newOppsByMonth.length) return null;
+  return { emailsByWeek, newOppsByMonth };
+}
+
 // The close-rate trend, as text the tab already formatted — same reason the
 // funnel travels that way: the email can't draw the grid's sparklines, and
 // re-deriving "17%  1/6" server-side is a second copy of arithmetic free to
@@ -160,15 +186,10 @@ export function buildSnapshotDoc(input, auth) {
     // email, but on its own footing: the trend reads the Opps cache alone,
     // so it can be there on a visit where no stage volumes were.
     closeRateTrend: closeRateTrendDoc(s.closeRateTrend),
-    tiles: (Array.isArray(s.tiles) ? s.tiles : []).slice(0, 8).map(t => ({
-      label: str(t?.label, 60),
-      value: clampInt(t?.value, 0, 1e9, 0),
-      goal: Number.isFinite(Number(t?.goal)) && Number(t.goal) > 0 ? clampInt(t.goal, 1, 1e9, 0) : null,
-      // "recorded Sep 3" — where a number came from when it isn't the live
-      // feed. The tile says so on screen, so it says so in the email.
-      sub: strOrNull(t?.sub, 60),
-      accent: t?.accent === 'green' ? 'green' : 'blue',
-    })),
+    // The two history series that replaced the "Emails sent" and "New opps"
+    // tiles: emails by week, new opps by month. Stored as points rather
+    // than as a rendered chart, so the email can draw its own bars.
+    trends: trendsDoc(s.trends),
     oppChanges: {
       closed: trimList(oc.closed),
       newOpps: trimList(oc.newOpps),
