@@ -15,6 +15,7 @@
 // Pure: one stored list in, plain numbers and counts out.
 
 import { propertyTypeEquipment, propertyTypeAccountTotal } from '../data/propertyTypeEstimates.js';
+import { isActiveSiteStatus, inactiveSiteNote, pickSiteStatusColumn } from './siteStatus.js';
 
 function findHeader(headers, patterns) {
   for (const pattern of patterns) {
@@ -65,10 +66,24 @@ function toCount(value) {
  */
 export function siteListFacts(entry) {
   const headers = (entry?.headers || []).filter(h => typeof h === 'string');
-  const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  const listed = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  // Sites the company actually has: a closed store, a sold building and an
+  // empty shell are rows on the list and are not sites anybody is counting
+  // when they read "412 sites" off a company card. A list saved before the
+  // status column existed has no status column, so nothing is dropped and
+  // the count is what it always was.
+  //
+  // Every total below rides on the same filter, because they are totals OF
+  // these sites: the square footage of an estate that includes the store
+  // that shut is not the estate's square footage.
+  const statusCol = pickSiteStatusColumn(headers);
+  const rows = statusCol ? listed.filter(r => isActiveSiteStatus(r[statusCol])) : listed;
+  const inactiveSites = listed.length - rows.length;
+  const inactiveNote = statusCol ? inactiveSiteNote(listed, r => r[statusCol]) : '';
   if (!rows.length) {
     return {
-      sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
+      sites: 0, listedSites: listed.length, inactiveSites, inactiveNote,
+      sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
       accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
     };
   }
@@ -137,6 +152,11 @@ export function siteListFacts(entry) {
 
   return {
     sites: rows.length,
+    // What the list holds, and what was left out of every figure here, so
+    // a card showing a smaller number than the list has rows can say why.
+    listedSites: listed.length,
+    inactiveSites,
+    inactiveNote,
     sqft: sqftSites > 0 ? Math.round(sqft) : null,
     sqftSites,
     // Null, not 0, when nothing could be counted — same reasoning as sqft.
@@ -165,7 +185,12 @@ export function siteListFacts(entry) {
  */
 export function siteListScreeningRows(entry) {
   const headers = (entry?.headers || []).filter(h => typeof h === 'string');
-  const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  const listed = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  // Same scope as the facts above: a mandate on a building the company has
+  // closed or sold is not a mandate the company has to meet, and the count
+  // this feeds is written onto the company as Sites w/ Mandate.
+  const statusCol = pickSiteStatusColumn(headers);
+  const rows = statusCol ? listed.filter(r => isActiveSiteStatus(r[statusCol])) : listed;
   if (!rows.length) return [];
 
   const cityCol = findHeader(headers, [/^city\s*\(analysis/i, /^city$/i, /\bcity\b/i, /^town$/i, /municipality/i]);
@@ -203,4 +228,21 @@ export function formatSqft(value) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M ft²`;
   if (value >= 100_000) return `${Math.round(value / 1000)}K ft²`;
   return `${Math.round(value).toLocaleString()} ft²`;
+}
+
+/**
+ * How many sites a saved list holds, counting only the active ones - the
+ * number every company-facing site count shows.
+ *
+ * The cheap version of siteListFacts for a caller that wants the count and
+ * none of the totals behind it.
+ */
+export function activeSiteListCount(entry) {
+  const headers = (entry?.headers || []).filter(h => typeof h === 'string');
+  const rows = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  const statusCol = pickSiteStatusColumn(headers);
+  if (!statusCol) return rows.length;
+  let n = 0;
+  for (const row of rows) if (isActiveSiteStatus(row[statusCol])) n += 1;
+  return n;
 }

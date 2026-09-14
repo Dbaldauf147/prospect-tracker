@@ -17,6 +17,7 @@
 import {
   SITE_STATUS_OPTIONS, SITE_STATUS_HEADER,
   pickSiteStatusColumn, normalizeSiteStatus, siteStatusCounts,
+  isActiveSiteStatus, activeSites, activeSiteCount, inactiveSiteBreakdown, inactiveSiteNote,
 } from '../src/utils/siteStatus.js';
 import {
   SITE_EDIT_FIELDS, SITE_CELL_EDIT_FIELDS, siteEditableColumns, applySiteColumnEdit, coerceSiteValue,
@@ -112,6 +113,40 @@ function ok(value, name) { eq(!!value, true, name); }
     ['Trading', 'Shut'],
     'and rewritten by an edit there, like every other list',
   );
+}
+
+// ── which sites the counts count ─────────────────────────────────────────
+//
+// The company popup and the Master Analysis count active sites, so this is
+// the rule behind every site number a reader sees. Two calls in it are
+// deliberate and easy to get backwards.
+{
+  eq(isActiveSiteStatus(''), true, 'no status counts as active');
+  eq(isActiveSiteStatus(null), true, 'and so does nothing at all');
+  eq(isActiveSiteStatus('Open'), true, 'open is trading');
+  eq([isActiveSiteStatus('Closed'), isActiveSiteStatus('Sold')], [false, false], 'closed and sold are not');
+  eq([isActiveSiteStatus('Vacant'), isActiveSiteStatus('Under construction')], [false, false],
+    'an empty shell and a building site are not trading either');
+
+  // A rewritten vocabulary keeps working: the test is on the opening word.
+  eq([isActiveSiteStatus('Operating'), isActiveSiteStatus('Active'), isActiveSiteStatus('Trading'), isActiveSiteStatus('In service')],
+    [true, true, true, true], 'the other words for trading are read as trading');
+  eq(isActiveSiteStatus('Not operating'), false, 'and the test is anchored, so a negation is not read as one');
+  eq(isActiveSiteStatus('Mothballed'), false,
+    'a word off the vocabulary is not active: somebody typed it about this site, and it is never good news');
+
+  const rows = [
+    { __siteStatus__: null }, { __siteStatus__: 'Open' }, { __siteStatus__: 'open' },
+    { __siteStatus__: 'Closed' }, { __siteStatus__: 'Closed' }, { __siteStatus__: 'Sold' },
+    { __siteStatus__: 'Mothballed' },
+  ];
+  eq(activeSiteCount(rows), 3, 'the count is the trading ones plus the ones nobody has said');
+  eq(activeSites(rows).length, 3, 'and the list agrees with the count');
+  eq(activeSiteCount([]), 0, 'no sites, no count');
+  eq([...inactiveSiteBreakdown(rows)], [['Closed', 2], ['Mothballed', 1], ['Sold', 1]],
+    'what was left out, commonest first, so a shrunken count can say why');
+  eq(inactiveSiteNote(rows), '4 sites not counted: 2 Closed, 1 Mothballed, 1 Sold.', 'as one sentence');
+  eq(inactiveSiteNote([{ __siteStatus__: 'Open' }]), '', 'and nothing at all when nothing was left out');
 }
 
 console.log(`${passed} passed, ${failed} failed`);

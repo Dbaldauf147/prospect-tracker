@@ -56,7 +56,7 @@ import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization, sitesWithMand
 // The same reading of a saved site list the company popup renders under
 // "Site List", so the equipment total stamped on the prospect below and the
 // figure printed there are one number rather than two implementations of it.
-import { siteListFacts } from '../../utils/siteListFacts';
+import { activeSiteListCount, siteListFacts } from '../../utils/siteListFacts';
 import {
   JURISDICTION_QUESTIONS, REGULATIONS_BY_JURISDICTION,
   deriveRegulationVerdict, parseRevenueUsd, pickThresholdRevenue,
@@ -71,7 +71,8 @@ import { exportComplianceReportXlsx, buildCorporateComplianceSheet, buildComplia
 import { detectColumn, pickZipColumn, pickSiteNameColumn } from '../../utils/siteColumns';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import {
-  SITE_STATUS_HEADER, SITE_STATUS_OPTIONS, normalizeSiteStatus, pickSiteStatusColumn, siteStatusCounts,
+  SITE_STATUS_HEADER, SITE_STATUS_OPTIONS, activeSites, inactiveSiteNote,
+  normalizeSiteStatus, pickSiteStatusColumn, siteStatusCounts,
 } from '../../utils/siteStatus';
 import { fillHeaderFor, describeColumnFill, FILL_HEADERS } from '../../utils/siteColumnFill';
 import { bulkMapDraft, bulkMapSummary } from '../../utils/propertyTypeBulkMap';
@@ -1208,6 +1209,23 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
     };
   }, [picked, bySlug, prospectBySlug]);
 
+  // How many sites that saved list is actually for. Counted here rather
+  // than off `rows.length` because a list carries the closed and sold ones
+  // too: they were on the file, they are part of the company's history,
+  // and they are not part of "N sites".
+  const savedSiteCount = useMemo(() => {
+    const entry = result?.entry;
+    if (!entry) return { active: 0, listed: 0, note: '' };
+    const facts = siteListFacts(entry);
+    return {
+      active: facts.sites,
+      listed: facts.listedSites,
+      note: facts.inactiveNote
+        ? `${facts.listedSites} rows on the saved list. ${facts.inactiveNote}`
+        : '',
+    };
+  }, [result]);
+
   // The prospect-record marker is only stamped on saves made after it was
   // introduced, so analyses saved before that would read "Not saved". Fall
   // back to a metadata-only read of the picked company's analyses doc — one
@@ -1395,8 +1413,16 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
               <span style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}>
                 ✓ Saved
                 <span style={{ color: '#15803D', fontWeight: 400 }}>
+                  {/* The sites the company still has. A closed or sold one
+                      is a row on the saved list and not a site anybody is
+                      counting here, so the list says how many it holds in
+                      the tooltip and the count says how many are left. */}
                   {result.entry
-                    ? ` · ${result.entry.rows.length} site${result.entry.rows.length === 1 ? '' : 's'}`
+                    ? (
+                      <span title={savedSiteCount.note || undefined}>
+                        {` · ${savedSiteCount.active} site${savedSiteCount.active === 1 ? '' : 's'}`}
+                      </span>
+                    )
                     : ''}
                   {analysisMeta?.savedAt
                     ? ` · ${new Date(analysisMeta.savedAt).toLocaleDateString()}`
@@ -3039,6 +3065,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     [allRows, divisionFilter],
   );
 
+  // The sites this portfolio actually has: the rows above minus the ones a
+  // status marks as gone (closed, sold, vacant, still being built).
+  //
+  // The table itself keeps showing all of them - the status column is only
+  // worth setting if you can still see the row you set it on - but anything
+  // that COUNTS sites for an audience outside this page reads this instead:
+  // the Master Analysis workbook and the numbers stamped on a company. A
+  // reader of "412 sites" does not expect the stores that shut to be in it,
+  // and neither do the dollars projected beside them.
+  const activeRows = useMemo(() => activeSites(rows), [rows]);
+  // What was left out, as a sentence, for the places that show the count.
+  const inactiveRowsNote = useMemo(() => inactiveSiteNote(rows), [rows]);
+
   // Every division present in the upload, with its site count. Built from
   // allRows rather than `rows` so choosing one doesn't collapse the list
   // to the choice just made.
@@ -3316,6 +3355,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // provided" when it wasn't. A raw value still isn't === 'Leased', so
       // it screens like any other unknown status.
       ownership: r.__ownership__ || r.__ownershipRaw__ || null,
+      // Carried so the Master Analysis can screen the sites the company
+      // still has. The subtabs on this page screen the lot: a closed
+      // building's mandate history is still worth reading there.
+      __siteStatus__: r.__siteStatus__ || null,
       // The utility mapping behind the whole-building-data cards: the zip the
       // lookup resolved from, and the three serving utilities it resolved to.
       zip: String(r.__zipNorm__ || '').trim(),
@@ -3333,10 +3376,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // upload, not a reason to leave a building out of its own compliance
   // report. Inert (and the toggle disabled) when nothing is leased.
   const [complianceExcludeLeased, setComplianceExcludeLeased] = useState(true);
-  const complianceScopedSites = useMemo(
+  // Named `outer…` because the Master Analysis shadows it with the active
+  // sites; on this page's own subtabs it stays the full list.
+  const outerComplianceScopedSites = useMemo(
     () => scopeSitesByOwnership(complianceSites, complianceExcludeLeased),
     [complianceSites, complianceExcludeLeased],
   );
+  const complianceScopedSites = outerComplianceScopedSites;
 
   // The savings side of the same question, and the export toolbar's toggle.
   // Indicative savings are a motion on the supply contract behind the meter,
@@ -6104,7 +6150,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         note: existingRows.length
           ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many to store for one company, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
           : ' Site list not updated: too many sites to store for one company.',
-        total: existingRows.length,
+        total: activeSiteListCount({ headers: existingHeaders, rows: existingRows }),
         accounts: siteListFacts({ headers: existingHeaders, rows: existingRows }).accounts || 0,
         equipment: siteListFacts({ headers: existingHeaders, rows: existingRows }).equipment || 0,
       };
@@ -6130,9 +6176,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const kept = merged.protected
         ? ` ${merged.protected.toLocaleString()} actual figure${merged.protected === 1 ? '' : 's'} already on the list were kept over the indicative ones.`
         : '';
+      // What the list HOLDS is every row; what the company HAS is the
+      // active ones, and that is the number the card shows. Both are said,
+      // because a list of 431 rows reporting 412 sites without explaining
+      // the 19 reads as a save that lost something.
+      const activeTotal = activeSiteListCount(merged);
+      const goneNote = activeTotal < merged.rows.length
+        ? ` ${(merged.rows.length - activeTotal).toLocaleString()} are not active and are left out of the counts.`
+        : '';
       return {
-        note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${kept}`,
-        total: merged.rows.length,
+        note: ` Site list now holds ${merged.rows.length.toLocaleString()} site${merged.rows.length === 1 ? '' : 's'} (${detail}with the analysis columns).${goneNote}${kept}`,
+        total: activeTotal,
         accounts: siteListFacts(merged).accounts || 0,
         // Read off the merged list, not the loaded page: a company whose
         // sites arrived as three uploads owns all of them.
@@ -6292,7 +6346,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // than this upload: the page holds one file at a time, and a company
       // whose 158 sites arrived as three uploads has 158 sites, not
       // however many were on screen for the last save.
-      const siteCount = Math.max(cleanSitesData.length, siteList.total || 0);
+      // Active sites only, on both sides of the max: a company's Number of
+      // Sites is the estate it has, not the rows that have ever been on a
+      // file for it. Counted over every loaded row rather than the division
+      // in front of you, which is what this has always done.
+      const siteCount = Math.max(activeSites(allRows).length, siteList.total || 0);
       // Number of Accounts rides along on the same reasoning: the utility
       // accounts (bills) behind those sites, estimated from each site's
       // property type. It feeds the popup's estimated annual data deal
@@ -6315,7 +6373,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Screened over the subtab's ownership scope for the same reason the
       // tile is: leased buildings are the owner's obligation, and a figure
       // that counted them would be a different number from the one on screen.
-      const mandateSites = sitesWithMandate(screenSites(complianceScopedSites, { ordinances }));
+      // Active sites only, like every other figure written onto the
+      // company: a mandate on a building it has closed or sold is not a
+      // mandate it has to meet.
+      const mandateSites = sitesWithMandate(screenSites(activeSites(complianceScopedSites), { ordinances }));
       // What is installed across those sites — chillers, boilers, EV
       // chargers — estimated per site from its property type, the same
       // figure this page prints as "Est. equipment". It had nowhere to go
@@ -6864,6 +6925,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }
 
   async function exportIndicativeSavings({ returnBuffer = false, companyName = null, targetWb = null } = {}) {
+    // Inside this export, "the sites" means the ones the company still
+    // has: every count, every roll-up and every dollar below reads this
+    // name, so scoping it once here is what keeps the workbook internally
+    // consistent. A Total Sites of 412 beside savings projected over 431
+    // would be two different portfolios in one sheet.
+    const rows = activeRows;
+    // The compliance tiles on the Executive Summary ride the same scope, so
+    // "sites screened" is the same number as Total Sites two rows above it.
+    const complianceScopedSites = activeSites(outerComplianceScopedSites);
+
     // The button is gated on sitesData.length, but the export reads
     // from `rows` - which strips entries without a Site Name when a
     // mapping is set. If every uploaded row is blank at the site-
@@ -7403,6 +7474,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // Owned / Leased / blank, straight off the upload. Shown on
           // the ledger so a row sitting at $0 every month says why.
           ownership: r.__ownership__ || '',
+          // The ledger has a Site Status column and had nothing to put in
+          // it. Every row here is an active site now, so what it carries is
+          // "Open" or a blank rather than the reason a site is missing.
+          siteStatus: r.__siteStatus__ || '',
           annualSpend: Math.round(spend),
           // A leased location has no savings band applied, so the band
           // reads blank here rather than showing a rate that produced
@@ -14319,7 +14394,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return null;
   }
 
+  //
+  // Over the active sites: this feeds the Divisions sheet of the Master
+  // Analysis, whose headline is a site count and whose columns are the
+  // spend behind it.
   function collectDivisionSiteFacts(complianceResults, mappingSiteRows) {
+    const rows = activeRows;
     const mappingById = new Map();
     for (const m of (mappingSiteRows || [])) {
       if (m?.siteId != null) mappingById.set(m.siteId, m);
@@ -14555,6 +14635,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // done. Naming the stage is what makes "it stopped on the utility
   // mapping" something anyone can say.
   async function exportMasterAnalysis({ returnBuffer = false, companyName = null, onStep = null } = {}) {
+    // Inside this export, "the sites" means the ones the company still
+    // has: every count, every roll-up and every dollar below reads this
+    // name, so scoping it once here is what keeps the workbook internally
+    // consistent. A Total Sites of 412 beside savings projected over 431
+    // would be two different portfolios in one sheet.
+    const rows = activeRows;
+    // The compliance screen rides the same scope: a mandate on a building
+    // the company has sold is not this company's mandate.
+    const complianceScopedSites = activeSites(outerComplianceScopedSites);
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
@@ -14748,6 +14837,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // print, because "no utility list is loaded" told a user whose list was
   // sitting in the database the whole time to go and load it again.
   async function exportUtilityMappingAnalysis(nameMapList, { targetWb = null, sheetNames = {}, nameMapUnavailable = false } = {}) {
+    // Inside this export, "the sites" means the ones the company still
+    // has: every count, every roll-up and every dollar below reads this
+    // name, so scoping it once here is what keeps the workbook internally
+    // consistent. A Total Sites of 412 beside savings projected over 431
+    // would be two different portfolios in one sheet.
+    const rows = activeRows;
+
     if (!rows.length) {
       throw new Error('No sites available to export: re-check the uploaded file or the Site Name column mapping.');
     }
@@ -15986,7 +16082,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                   alert(`Master Analysis export failed:\n\n${err?.message || err}`);
                 }
               }}
-              title="Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab."
+              title={`Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab.\n\nCounts and totals cover the sites the company still has.${inactiveRowsNote ? ` ${inactiveRowsNote}` : ''}`}
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Master Analysis

@@ -6,7 +6,7 @@
 // Lookup save, the paste-and-map modal, and a raw spreadsheet upload —
 // and only the first two control their own column names. So the header
 // matching is what these tests are mostly about.
-import { siteListFacts, siteListScreeningRows, formatSqft, toSqft } from '../src/utils/siteListFacts.js';
+import { siteListFacts, siteListScreeningRows, activeSiteListCount, formatSqft, toSqft } from '../src/utils/siteListFacts.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -93,11 +93,55 @@ function eq(actual, expected, name) {
   eq(facts.propertyTypes, ['Warehouse (Non-refrigerated)'], 'the resolved column is preferred over the raw one');
 }
 
+// --- the sites the company still has ------------------------------------
+//
+// Every figure here is a figure ABOUT the estate, so a closed or sold site
+// is out of all of them, not just out of the count: the square footage of
+// an estate that includes the store that shut is not the estate's.
+{
+  const entry = {
+    headers: ['Site Name', 'Site Status', 'Size (ft²)'],
+    rows: [
+      { 'Site Name': 'Open one', 'Site Status': 'Open', 'Size (ft²)': 1000 },
+      { 'Site Name': 'Shut one', 'Site Status': 'Closed', 'Size (ft²)': 400 },
+      { 'Site Name': 'Sold one', 'Site Status': 'Sold', 'Size (ft²)': 600 },
+      { 'Site Name': 'Nobody said', 'Size (ft²)': 250 },
+    ],
+  };
+  const facts = siteListFacts(entry);
+  eq(facts.sites, 2, 'the count is the active sites, and a site with no status is one');
+  eq(facts.listedSites, 4, 'the list still holds every row it held');
+  eq(facts.inactiveSites, 2, 'and says how many it left out');
+  eq(facts.inactiveNote, '2 sites not counted: 1 Closed, 1 Sold.', 'naming them, for the tooltip behind the count');
+  eq(facts.sqft, 1250, 'the square footage is of the active sites only');
+  eq(facts.sqftSites, 2, 'as is the count behind it');
+  eq(activeSiteListCount(entry), 2, 'the cheap count agrees with the facts');
+
+  // A list saved before the column existed must not lose a single site.
+  const old = { headers: ['Site Name', 'Size (ft²)'], rows: [{ 'Site Name': 'A', 'Size (ft²)': 100 }, { 'Site Name': 'B', 'Size (ft²)': 100 }] };
+  eq(siteListFacts(old).sites, 2, 'a list with no status column counts everything, as it always did');
+  eq(siteListFacts(old).inactiveNote, '', 'and claims nothing was left out');
+  eq(activeSiteListCount(old), 2, 'the cheap count says the same');
+
+  // Compliance screening rides the same scope: a mandate on a building the
+  // company has sold is not the company's mandate.
+  const screening = siteListScreeningRows({
+    headers: ['Site Name', 'Site Status', 'City', 'State'],
+    rows: [
+      { 'Site Name': 'Open one', 'Site Status': 'Open', City: 'Austin', State: 'TX' },
+      { 'Site Name': 'Sold one', 'Site Status': 'Sold', City: 'Dallas', State: 'TX' },
+    ],
+  });
+  eq(screening.length, 1, 'only the active sites are screened');
+  eq(screening[0].siteName, 'Open one', 'and it is the one still open');
+}
+
 // --- nothing in, nothing claimed ----------------------------------------
 {
   eq(siteListFacts(null),
     {
-      sites: 0, sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
+      sites: 0, listedSites: 0, inactiveSites: 0, inactiveNote: '',
+      sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
       accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
     },
     'no list is no facts');
