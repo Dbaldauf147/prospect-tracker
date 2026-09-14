@@ -11,10 +11,9 @@
 // that silently dropped the rest would be worse than no cap: the reader
 // would have no way to know the account has nine more contacts.
 //
-// Page two, the org chart, is the one thing exempt from the first rule -
-// and it earns that by only existing when it has something page one cannot
-// say. An account with a flat contact list and no divisions still gets the
-// one page it always got; the assertions below hold it to that.
+// Nothing is exempt from that: the document is one page, and the
+// assertions below hold it to that by checking no page break reaches the
+// file at all.
 //
 // The second is that it is a REAL Word file. It used to go out through
 // html-docx-js, which does not build one - it wraps the HTML in an
@@ -25,8 +24,7 @@
 // exactly the places a leave-behind gets opened.
 import {
   onePagerModel, onePagerFileName, orderContacts, orderOpps, groupServices, clientSince,
-  orgChartRows,
-  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, MAX_ORG_ROWS, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
+  MAX_CONTACTS, MAX_OPPS, MAX_SERVICE_LINES, CHARS_PER_LINE, BULLET_CHARS_PER_LINE,
   cappedServices, linkedinUrl,
 } from '../src/utils/companyOnePager.js';
 import {
@@ -502,191 +500,32 @@ const full = {
     widths.every(w => Math.abs(w - 9360) <= 2), true);
 }
 
-// ---- page two: the org chart ---------------------------------------------
-// The mapping the chart is drawn from, in the shape the popup's Divisions
-// section hands it over: a tree of boxes from buildDivisionTree, the people
-// assigned to each, and settings.contactReportsTo.
-const TREE = {
-  id: 'p1', company: 'BRE Hotels & Resorts', missing: false,
-  children: [
-    {
-      id: 'd1', company: 'Hilton Select', missing: false,
-      children: [{ id: 'd3', company: 'Northeast', missing: true, children: [] }],
-    },
-    { id: 'd2', company: 'Resorts Group', missing: false, children: [] },
-  ],
-};
-const BOXES = {
-  p1: [{ id: '1', name: 'Ben Carter', jobtitle: 'CFO' }, { id: '2', name: 'Mia Lopez' }],
-  d1: [{ id: '4', name: 'Ray Osei' }, { id: '5', name: 'Nina Patel' }],
-  d2: [{ id: '6', name: 'Tom Reed' }],
-  d3: [{ id: '7', name: 'Sam Vale' }],
-};
-// 2 under 1, 5 under 4, and 7 under someone on ANOTHER box.
-const REPORTS = { 2: ['1'], 5: ['4'], 7: ['4'] };
-const DETAIL = { 1: { decisionMaker: true }, 2: { dayToDay: true }, 6: { left: true } };
-const orgInput = (over = {}) => ({
-  tree: TREE,
-  contactsOf: (id) => BOXES[id] || [],
-  companyContacts: [{ id: '8', name: 'Priya Raman' }, { id: '1', name: 'Ben Carter' }],
-  reportsTo: REPORTS,
-  nameById: new Map(Object.values(BOXES).flat().map(c => [c.id, c.name])),
-  detailOf: (c) => ({ title: c.jobtitle || '', ...(DETAIL[c.id] || {}) }),
-  ...over,
-});
-const FLAT = { id: 'p1', company: 'Acme', missing: false, children: [] };
-const at = (chart, name) => chart.rows.find(r => r.kind === 'person' && r.name === name);
-
-{
-  const chart = orgChartRows(orgInput({ company: 'BRE Hotels & Resorts', parents: ['Blackstone'] }));
-
-  check('the company is the root box', chart.rows[0].kind, 'division');
-  check('and it is marked as the root', chart.rows[0].root, true);
-  check('divisions under it are counted', chart.divisions, 3);
-  check('what it rolls up into is carried', chart.parents.join(), 'Blackstone');
-
-  // Nesting IS the reporting line - that is the whole point of the page.
-  check('a report sits one level under their manager',
-    at(chart, 'Mia Lopez').depth - at(chart, 'Ben Carter').depth, 1);
-  check('a division sits under the company', chart.rows.find(r => r.name === 'Hilton Select').depth, 1);
-  check('and a sub-division under the division',
-    chart.rows.find(r => r.name === 'Northeast').depth, 2);
-  check('a company the tracker has lost is still drawn, flagged',
-    chart.rows.find(r => r.name === 'Northeast').missing, true);
-
-  // A manager the chart cannot draw above somebody is the one case where
-  // nesting has nothing to say, so the row has to say it instead.
-  check('a manager on another box is named on the row',
-    at(chart, 'Sam Vale').managers.join(), 'Ray Osei');
-  check('a manager drawn directly above is NOT repeated on the row',
-    at(chart, 'Mia Lopez').managers.length, 0);
-  // The elbow on the page means "reports to the line above". Somebody at
-  // the top of a box is indented because the box is, and marking them as a
-  // report would have them answering to the heading above them.
-  check('somebody drawn under their manager is marked as a report',
-    at(chart, 'Mia Lopez').reportsUnder, true);
-  check('and the top of a box is not', at(chart, 'Ben Carter').reportsUnder, false);
-  check('nor is the first person on a division',
-    at(chart, 'Ray Osei').reportsUnder, false);
-
-  // Everyone appears once. Ben Carter is both assigned to the root box and
-  // on the company's contact list, which is the ordinary case.
-  check('somebody on a box and on the contact list is drawn once',
-    chart.rows.filter(r => r.kind === 'person' && r.name === 'Ben Carter').length, 1);
-  check('a contact no division claimed still reaches the page',
-    !!at(chart, 'Priya Raman'), true);
-  check('everybody is accounted for', chart.people, 7);
-
-  check('the standings page one marks are carried', at(chart, 'Ben Carter').decisionMaker, true);
-  check('and so is the day-to-day', at(chart, 'Mia Lopez').dayToDay, true);
-  // A leaver is part of the structure: the seat existed and the reader is
-  // about to ask for them by name.
-  check('somebody who has left is kept, marked', at(chart, 'Tom Reed').left, true);
-}
-
-// Teams are the coarser grouping, with reporting lines drawn inside one -
-// the same order the popup buckets by.
-{
-  const chart = orgChartRows({
-    company: 'T', tree: FLAT, contactsOf: () => [],
-    companyContacts: [{ id: '1', name: 'Fin' }, { id: '2', name: 'Ops' }],
-    teamOf: (c) => (c.id === '1' ? 'Finance' : 'Operations'),
-  });
-  check('a team gets a heading', chart.rows.filter(r => r.kind === 'team').map(r => r.name).join(), 'Finance,Operations');
-  check('and the people sit under it', at(chart, 'Fin').depth > chart.rows.find(r => r.kind === 'team').depth, true);
-}
-{
-  const chart = orgChartRows({
-    company: 'T', tree: FLAT, contactsOf: () => [],
-    companyContacts: [{ id: '1', name: 'Fin' }, { id: '2', name: 'Ops' }],
-  });
-  check('a box where nobody carries a team gets no headings',
-    chart.rows.some(r => r.kind === 'team'), false);
-}
-
-// ---- page two only exists when it says something --------------------------
-{
-  const bare = { tree: FLAT, contactsOf: () => [], companyContacts: [{ id: '1', name: 'A' }, { id: '2', name: 'B' }] };
-  check('a flat list with no lines and no divisions is not a chart',
-    orgChartRows(bare).hasStructure, false);
-  check('one reporting line makes it one',
-    orgChartRows({ ...bare, reportsTo: { 2: ['1'] } }).hasStructure, true);
-  check('so does a division', orgChartRows({ ...bare, tree: TREE }).hasStructure, true);
-  check('so does a parent above it', orgChartRows({ ...bare, parents: ['Blackstone'] }).hasStructure, true);
-
-  check('and the model drops a chart that says nothing',
-    onePagerModel({ company: 'Acme', orgChart: bare }).orgChart, null);
-  check('a caller that passes none is unchanged',
-    onePagerModel({ company: 'Acme' }).orgChart, null);
-}
-
-// ---- the cap -------------------------------------------------------------
-// Page two is one page too. Capped on printed ROWS rather than on people,
-// because a heading costs a line whatever sits under it.
-{
-  const wide = {
-    id: 'p1', company: 'Big', missing: false,
-    children: Array.from({ length: 20 }, (_, i) => ({ id: `d${i}`, company: `Division ${i}`, missing: false, children: [] })),
-  };
-  const boxes = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [
-    `d${i}`, [{ id: `${i}a`, name: `P${i}a` }, { id: `${i}b`, name: `P${i}b` }],
-  ]));
-  const chart = orgChartRows({ company: 'Big', tree: wide, contactsOf: (id) => boxes[id] || [], companyContacts: [] });
-  check('the chart stops at the cap', chart.rows.length <= MAX_ORG_ROWS, true);
-  check('it printed fewer people than it found', chart.shown < chart.people, true);
-  check('and owns up to every one it left out', chart.shown + chart.hidden, chart.people);
-  // A cut landing just after a heading would leave a division with nobody
-  // under it, which reads as a division nobody covers.
-  check('no heading is left stranded at the bottom',
-    chart.rows[chart.rows.length - 1].kind, 'person');
-  check('the count under the heading describes what actually printed',
-    chart.divisions, chart.rows.filter(r => r.kind === 'division' && !r.root).length);
-}
-
-// A reporting map that says two people manage each other must not drop
-// them both - the same guard buildDivisionContactTree carries.
-{
-  const chart = orgChartRows({
-    company: 'C', tree: FLAT, contactsOf: () => [],
-    companyContacts: [{ id: '1', name: 'X' }, { id: '2', name: 'Y' }],
-    reportsTo: { 1: ['2'], 2: ['1'] },
-  });
-  check('mutual managers keep both people', chart.people, 2);
-}
-
-// ---- page two in the document --------------------------------------------
+// ---- one page, and one page only ------------------------------------------
+// The document used to carry an org chart on a second page. It does not
+// any more: what the popup's Divisions section draws stays on screen, and
+// the sheet somebody carries into a meeting is the single page it says it
+// is on the tin.
 {
   const one = onePagerDocumentXml(onePagerModel(full));
-  check('an account with no chart gets no page break',
+  check('nothing starts a second page',
     (one.match(/w:br w:type="page"/g) || []).length, 0);
   // The generated-by line came off the page entirely: it said nothing about
   // the account, and on a sheet handed to somebody it was a footer about
   // the tool rather than about the client.
   check('and no generated-by footer anywhere',
     (one.match(/Internal use|Prospect Tracker/g) || []).length, 0);
-
-  const two = onePagerDocumentXml(onePagerModel({ ...full, orgChart: orgInput() }));
-  check('a chart starts a new page', (two.match(/w:br w:type="page"/g) || []).length, 1);
-  check('and the chart page carries no footer either',
-    (two.match(/Internal use|Prospect Tracker/g) || []).length, 0);
-  check('the chart names the divisions', two.includes('Hilton Select'), true);
-  check('and the people on them', two.includes('Nina Patel'), true);
-  check('a manager on another box is named', two.includes('Ray Osei'), true);
-  check('page one is untouched by page two',
-    two.startsWith(one.slice(0, one.indexOf('<w:sectPr>'))), true);
-  // Indentation is what draws the hierarchy, so it has to be in the file.
-  check('the chart is indented', /<w:ind w:left="[1-9]/.test(two), true);
 }
-// The paragraph-ordering sweep below has to see page two's paragraphs too:
-// they are the only ones in the document that carry w:ind.
+// Paragraph children have to come in the order the schema names, or Word
+// calls the file unreadable. The indented ones - the contact table's
+// reporting lines and the service bullets - are what exercise w:ind.
 {
-  const xml = onePagerDocumentXml(onePagerModel({ ...full, notes: 'x', orgChart: orgInput() }));
+  const xml = onePagerDocumentXml(onePagerModel({ ...full, notes: 'x' }));
   const order = (block, names) => {
     const idx = names.map(n => block.indexOf(`<w:${n}`));
     return idx.filter(i => i >= 0).every((v, i, a) => i === 0 || a[i - 1] < v);
   };
   const pPrs = [...xml.matchAll(/<w:pPr>([\s\S]*?)<\/w:pPr>/g)].map(m => m[1]);
-  check('page two keeps its paragraph children in schema order',
+  check('every paragraph keeps its children in schema order',
     pPrs.every(b => order(b, ['pBdr', 'shd', 'spacing', 'ind', 'jc'])), true);
   check('and the indented ones are exercised',
     pPrs.some(b => b.includes('<w:ind')), true);

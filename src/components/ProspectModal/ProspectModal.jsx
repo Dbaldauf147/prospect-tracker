@@ -5620,14 +5620,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const nameById = new Map((companyContacts || []).map(c => [
         String(c.id || c.vid || ''), contactDisplayName(c),
       ]));
-      // What page two needs about each person, filled as page one's rows
-      // are built rather than worked out again afterwards: the two tag
-      // readings below are fiddly enough that a second copy of them would
-      // be a second answer to "is this the decision maker".
-      const orgDetail = new Map();
-      // Team Names, as set on each contact card. Page one's contact table
-      // shows them where the phone column used to be, and page two's chart
-      // groups by them - one reading of the field for both.
+      // Team Names, as set on each contact card. The contact table shows
+      // them where the phone column used to be.
       const contactTeams = settings.contactTeamNames || {};
       // What each person is actually called, from the Goes By field on
       // their card. Stored per contact like the team name is.
@@ -5644,17 +5638,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').flatMap(t => t.split(',')),
           'Primary Point of Contact',
         );
-        if (id) {
-          orgDetail.set(id, {
-            title: c.jobtitle || '',
-            decisionMaker,
-            dayToDay,
-            // Somebody tagged Left stays on the chart, greyed. The seat
-            // they held is part of the structure, and a chart that drops
-            // them is how a reader walks in asking for them by name.
-            left: contactHasTag(c, 'left'),
-          });
-        }
         return {
           name: contactDisplayName(c),
           title: c.jobtitle || '',
@@ -5687,53 +5670,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
       const categories = getServiceCategories(settings);
 
-      // Page two: the org chart. Drawn from the SAME mapping the popup's
-      // Divisions section draws - the division tree, who is assigned to
-      // each box, and settings.contactReportsTo - so the sheet somebody
-      // carries into a meeting and the chart on screen cannot disagree
-      // about who sits where.
-      //
-      // A manager can be someone this company's contact list no longer
-      // carries; the names stored on the boxes themselves fill those gaps,
-      // the same way the chart's own contactBook does.
-      const orgNames = new Map(nameById);
-      for (const list of Object.values(settings.divisionContacts || {})) {
-        for (const c of (list || [])) {
-          const id = String(c?.id || '');
-          if (id && c.name && !orgNames.has(id)) orgNames.set(id, c.name);
-        }
-      }
-      // A person assigned to a box carries only the snapshot taken when
-      // they were put on it, so their title and standing are looked back
-      // up here - by id, and by name for one typed straight onto a box.
-      const liveById = new Map();
-      const liveByName = new Map();
-      for (const c of (companyContacts || [])) {
-        const id = String(c.id || c.vid || '');
-        if (id) liveById.set(id, c);
-        const key = nameKey(contactDisplayName(c));
-        if (key && !liveByName.has(key)) liveByName.set(key, c);
-      }
-      const liveId = (c) => {
-        const id = String(c?.id || '');
-        if (id && liveById.has(id)) return id;
-        const hit = liveByName.get(nameKey(c?.name));
-        return hit ? String(hit.id || hit.vid || '') : '';
-      };
-      const teamNames = contactTeams;
-      const orgChart = {
-        parents: divisionParentsFor(settings, prospect?.id, orgNames).map(x => x.company),
-        tree: buildDivisionTree(settings, prospect?.id, fields.company, orgNames),
-        contactsOf: (id) => divisionContactsFor(settings, id),
-        companyContacts: (companyContacts || []).map(c => ({
-          id: String(c.id || c.vid || ''), name: contactDisplayName(c), jobtitle: c.jobtitle || '',
-        })),
-        reportsTo: reportsToMap,
-        nameById: orgNames,
-        teamOf: (c) => String(teamNames[liveId(c)] || '').trim(),
-        detailOf: (c) => ({ title: c?.jobtitle || '', ...(orgDetail.get(liveId(c)) || {}) }),
-      };
-
       const model = onePagerModel({
         company: fields.company,
         cdm: fields.cdm,
@@ -5743,7 +5679,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         contacts,
         opps: companyOpps,
         contractDates,
-        orgChart,
       });
       const built = await buildOnePagerDocx(model);
       const file = built instanceof Blob
@@ -5764,7 +5699,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       setOnePagerBusy(false);
     }
   }, [onePagerBusy, fields.servicesExplored, fields.company, fields.cdm, allServiceItems,
-    scopeMatchedServices, companyContacts, companyOpps, settings, clientManager, prospect?.id]);
+    scopeMatchedServices, companyContacts, companyOpps, settings, clientManager]);
 
 
   // Services this company has an opp QUEUED for - a New Opp scheduled for
