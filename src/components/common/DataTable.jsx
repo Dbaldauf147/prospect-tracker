@@ -12,6 +12,7 @@ import {
   loadColOrder as readColOrder, loadColRemoved as readColRemoved,
   loadColHidden as readColHidden, loadColStarred as readColStarred,
   loadColVisibleRaw as readColVisibleRaw,
+  loadColChosen as readColChosen, saveColChosen as writeColChosen,
 } from '../../utils/tablePrefsSync';
 
 // The shared persistence (utils/tablePrefsSync) is keyed by explicit
@@ -26,6 +27,8 @@ const loadColRemoved = (tableId) => readColRemoved(tablePrefsKeys(tableId));
 const loadColHidden = (tableId) => readColHidden(tablePrefsKeys(tableId));
 const loadColStarred = (tableId) => readColStarred(tablePrefsKeys(tableId));
 const loadColVisibleRaw = (tableId) => readColVisibleRaw(tablePrefsKeys(tableId));
+const loadColChosen = (tableId) => readColChosen(tablePrefsKeys(tableId));
+const saveColChosen = (tableId, chosen) => writeColChosen(tablePrefsKeys(tableId), chosen);
 import { resolveSortSignal } from '../../utils/tableSortSignal';
 
 // The saved key order applied (see utils/tableColumnPrefs), plus one rule
@@ -323,6 +326,10 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
  *   onSort       - (key) => void, optional
  *   sortConfig   - { key, direction }, optional
  *   alwaysVisible - array of column keys that can't be hidden
+ *   defaultHidden - array of column keys the table ships switched off: in
+ *                   the Columns menu, but not on screen until the user asks
+ *                   for them. A default, not a rule — switching one on (or
+ *                   off) is remembered from then on.
  *   onRowClick   - (row) => void, optional
  *   emptyMessage - string
  */
@@ -339,6 +346,7 @@ export function DataTable({
   // without owning sort state. Ignored when an external sort is wired.
   sortSignal,
   alwaysVisible = [],
+  defaultHidden = [],
   onRowClick,
   rowClassName,
   rowStyle,
@@ -436,6 +444,10 @@ export function DataTable({
   const [starredCols, setStarredCols] = useState(() => (
     Array.isArray(remotePrefs?.starred) ? new Set(remotePrefs.starred) : loadColStarred(tableId)
   ));
+  // Which of the table's switched-off columns this user has decided about.
+  // Until a key is in here the table's default wins; after, the hidden list
+  // does. See loadColChosen for why it stays on the machine.
+  const [chosenCols, setChosenCols] = useState(() => loadColChosen(tableId));
   const [colNames, setColNames] = useState(() => remotePrefs?.names || loadColNames(tableId));
   const [colOrder, setColOrder] = useState(() => (
     Array.isArray(remotePrefs?.order) ? remotePrefs.order : loadColOrder(tableId)
@@ -474,8 +486,10 @@ export function DataTable({
       hidden: hiddenPref,
       legacyVisible,
       columnKeys: orderedColumns.map(c => c.key),
+      defaultHidden,
+      chosen: chosenCols,
     }),
-    [hiddenPref, legacyVisible, orderedColumns],
+    [hiddenPref, legacyVisible, orderedColumns, defaultHidden, chosenCols],
   );
   const visibleCols = useMemo(
     () => new Set(orderedColumns
@@ -584,6 +598,13 @@ export function DataTable({
       starred: starredCols,
       alwaysVisible,
     });
+    // Reset means the table as it ships, which includes the columns it
+    // ships switched off — so the decisions made about those are dropped
+    // too, rather than surviving a reset of everything around them.
+    if (chosenCols.size > 0) {
+      setChosenCols(new Set());
+      saveColChosen(tableId, new Set());
+    }
     setHiddenPref([...hidden]);
     setLegacyVisible(null);
     setRemovedCols(removed);
@@ -955,6 +976,14 @@ export function DataTable({
 
   function toggleCol(key) {
     if (alwaysVisible.includes(key)) return;
+    // Ticking one of the table's switched-off columns is the user deciding
+    // about it: from here on their own list says whether it shows, so
+    // turning it on sticks rather than being overruled on the next load.
+    if (defaultHidden.includes(key) && !chosenCols.has(key)) {
+      const chosen = new Set(chosenCols).add(key);
+      setChosenCols(chosen);
+      saveColChosen(tableId, chosen);
+    }
     const next = new Set(hiddenColsSet);
     if (next.has(key)) next.delete(key); else next.add(key);
     // Un-hiding a column that was deleted has to un-delete it too, or the

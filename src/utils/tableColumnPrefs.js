@@ -18,13 +18,29 @@
 // stays as they left it. An empty legacy array is the "no columns visible"
 // state the old loader already refused to honour — it renders a blank
 // table — so it reads as "nothing hidden" here too.
-export function resolveHiddenKeys({ hidden, legacyVisible, columnKeys }) {
-  if (Array.isArray(hidden)) return new Set(hidden);
+// `defaultHidden` is a column the table ships switched off: a second way of
+// saying something the table already says, kept a click away in the Columns
+// menu rather than in everyone's face. It is a DEFAULT, not a rule — the
+// moment the user decides about that column either way its key lands in
+// `chosen` and their own hidden list governs it like any other.
+//
+// Applied over the stored list rather than written into it, so a table that
+// stops shipping a column switched off stops hiding it, without anything
+// having to be un-written from the user's prefs.
+export function resolveHiddenKeys({
+  hidden, legacyVisible, columnKeys, defaultHidden, chosen,
+}) {
+  const decided = chosen instanceof Set ? chosen : new Set(chosen || []);
+  const withDefaults = (set) => {
+    for (const key of defaultHidden || []) if (!decided.has(key)) set.add(key);
+    return set;
+  };
+  if (Array.isArray(hidden)) return withDefaults(new Set(hidden));
   if (Array.isArray(legacyVisible) && legacyVisible.length > 0) {
     const visible = new Set(legacyVisible);
-    return new Set((columnKeys || []).filter(k => !visible.has(k)));
+    return withDefaults(new Set((columnKeys || []).filter(k => !visible.has(k))));
   }
-  return new Set();
+  return withDefaults(new Set());
 }
 
 // Whether a column shows, given the user's hidden / deleted sets.
