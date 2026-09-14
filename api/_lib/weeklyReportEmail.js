@@ -16,10 +16,10 @@
 // sends rather than a lookalike.
 
 import { sendEmail } from './mailer.js';
-import { renderWeeklyReportHtml } from './weeklyReportEmailHtml.js';
+import { renderWeeklyReportHtml, freshnessNote } from './weeklyReportEmailHtml.js';
 
 export {
-  renderWeeklyReportHtml, narrativeHtml, freshnessNote,
+  renderWeeklyReportHtml, narrativeHtml, freshnessNote, staleBannerHtml,
 } from './weeklyReportEmailHtml.js';
 
 // The funnel picture travels as an attachment the message carries, not as
@@ -46,6 +46,14 @@ export function funnelAttachment(snapshot) {
   };
 }
 
+// A stale send is marked in the subject as well as in the banner. The
+// banner only works on a report someone opens; the tag is what says "these
+// are old numbers" from the message list, which is where a weekly report
+// that arrives every Monday is mostly read.
+export const staleSubject = (subject, fresh) => (
+  `${fresh?.stale ? '[Stale] ' : ''}${subject}`.slice(0, 300)
+);
+
 export async function sendWeeklyReportEmail({ to, subject, message, snapshot, replyTo }) {
   const attachment = funnelAttachment(snapshot);
   const html = renderWeeklyReportHtml(snapshot, {
@@ -55,7 +63,7 @@ export async function sendWeeklyReportEmail({ to, subject, message, snapshot, re
   const label = snapshot?.periodLabel ? ` — ${snapshot.periodLabel}` : '';
   return sendEmail({
     to,
-    subject: String(subject || `Weekly Report${label}`).slice(0, 300),
+    subject: staleSubject(String(subject || `Weekly Report${label}`), freshnessNote(snapshot)),
     html,
     attachments: attachment ? [attachment] : undefined,
     replyTo,

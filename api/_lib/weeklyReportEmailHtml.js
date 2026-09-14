@@ -447,20 +447,80 @@ export function narrativeHtml(md) {
 // "as of" line. A snapshot captured before the period it covers had ended
 // is called out rather than quietly presented as complete, since the tab
 // simply wasn't open for the rest of it.
+//
+// Four fields, because a stale report has to say two different things in
+// two different places:
+//
+//   text      the original one-liner, kept for callers that want the whole
+//             story on a single line;
+//   stamp     just when it was taken — the line under the period label,
+//             with a banner carrying the rest by then;
+//   headline  what is wrong with these numbers, in one short sentence;
+//   detail    when they were taken, and how to get current ones.
+//
+// The last two feed the banner at the top of the email. They exist because
+// the warning used to be 12px grey text under the heading, which is where
+// an eleven-day-old report went out looking exactly like a fresh one.
+const DAY_MS = 24 * 3600 * 1000;
+const STALE_AGE_MS = 8 * DAY_MS;
+const REFRESH_HINT = 'Open Charts → Weekly Report — the numbers republish on every visit, and the next send will carry them.';
+
 export function freshnessNote(snapshot, now = Date.now()) {
   const at = Number(snapshot?.capturedAt);
-  if (!Number.isFinite(at)) return { text: 'Captured at an unknown time.', stale: true };
-  const when = new Date(at).toUTCString().replace(' GMT', ' UTC');
-  const end = Number(snapshot?.periodEnd);
-  const stale = Number.isFinite(end) && at < end;
-  if (stale) {
+  if (!Number.isFinite(at)) {
+    const text = 'Captured at an unknown time.';
     return {
-      text: `Captured ${when}, before this period ended — anything after that isn't counted. Open Charts → Weekly Report to refresh it.`,
+      text,
+      stamp: text,
       stale: true,
+      headline: 'These numbers have no capture time.',
+      detail: `Nothing recorded when this report was taken, so there is no telling what it covers. ${REFRESH_HINT}`,
     };
   }
-  const age = now - at;
-  return { text: `Captured ${when}.`, stale: age > 8 * 24 * 3600 * 1000 };
+  const when = new Date(at).toUTCString().replace(' GMT', ' UTC');
+  const stamp = `Captured ${when}.`;
+  const end = Number(snapshot?.periodEnd);
+  // Taken before the period it reports had finished: the rest of that
+  // period is missing, however recently the snapshot was made.
+  const early = Number.isFinite(end) && at < end;
+  // Rounded, not floored: a snapshot 10 days and 20 hours old is eleven
+  // days old to the person reading it, and the age only ever appears once
+  // it is past a week anyway.
+  const days = Math.round((now - at) / DAY_MS);
+  const old = (now - at) > STALE_AGE_MS;
+  if (!early && !old) return { text: stamp, stamp, stale: false, headline: '', detail: '' };
+
+  const periodWord = snapshot?.scope === 'day' ? 'day' : 'week';
+  const age = `${days} day${days === 1 ? '' : 's'} old`;
+  const headline = early
+    ? (old
+      ? `These numbers are ${age} and were captured before the ${periodWord} ended.`
+      : `These numbers were captured before the ${periodWord} ended.`)
+    : `These numbers are ${age}.`;
+  return {
+    text: early
+      ? `Captured ${when}, before this period ended — anything after that isn't counted. Open Charts → Weekly Report to refresh it.`
+      : stamp,
+    stamp,
+    stale: true,
+    headline,
+    detail: `Captured ${when}. Nothing that happened after that is counted here. ${REFRESH_HINT}`,
+  };
+}
+
+// The banner a stale report leads with: full width, above the heading, in
+// the same amber the cards use for a figure that is off its mark. The
+// first thing read is then that the figures below are not current, rather
+// than the figures.
+export function staleBannerHtml(fresh) {
+  if (!fresh?.stale || !fresh.headline) return '';
+  const c = STATUS.behind;
+  return `${table(`width="100%" bgcolor="${c.chipBg}" style="border-collapse:separate;background-color:${c.chipBg};border:1px solid ${c.rule};border-radius:6px"`, `<tr>
+      <td style="padding:11px 14px;font-family:${FONT}">
+        <div style="font-size:14px;font-weight:700;line-height:1.35;color:${c.chip}">${esc(fresh.headline)}</div>
+        <div style="margin-top:4px;font-size:12px;line-height:1.45;color:${c.chip}">${esc(fresh.detail)}</div>
+      </td>
+    </tr>`)}${spacer(14)}`;
 }
 
 /**
@@ -568,13 +628,14 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
   <!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${WIDTH}"><tr><td><![endif]-->
   <div style="max-width:${WIDTH}px;margin:0 auto;text-align:left">
 
+    ${staleBannerHtml(fresh)}
     ${table(`width="100%" style="border-collapse:collapse"`, `<tr><td style="font-family:${FONT}">
       ${table(`width="100%" style="border-collapse:collapse"`, `<tr>
         <td valign="bottom" style="font-family:${FONT};font-size:22px;font-weight:700;color:${INK};line-height:1.25;white-space:nowrap">Weekly Report</td>
         ${s.periodLabel ? `<td class="hnote" valign="bottom" style="padding:0 0 3px 10px;font-family:${FONT};font-size:13px;color:${MUTED};line-height:1.3;white-space:nowrap">${esc(s.periodLabel)}</td>` : ''}
         <td class="hpad" width="99%" style="width:99%"></td>
       </tr>`)}
-      <div style="margin-top:5px;font-size:12px;line-height:1.4;color:${fresh.stale ? '#B45309' : MUTED}">${esc(fresh.text)}</div>
+      <div style="margin-top:5px;font-size:12px;line-height:1.4;color:${fresh.stale ? STATUS.behind.chip : MUTED}">${esc(fresh.stamp)}</div>
     </td></tr>`)}
 
     ${spacer(16)}

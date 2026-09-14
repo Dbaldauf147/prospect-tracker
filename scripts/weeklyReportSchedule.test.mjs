@@ -27,7 +27,7 @@ import {
 } from '../src/utils/weeklyReportSchedule.js';
 import { computeNextRun } from '../api/_lib/peOppsSchedule.js';
 import { computeNextRunZoned } from '../api/_lib/weeklyReportSchedule.js';
-import { freshnessNote, narrativeHtml, renderWeeklyReportHtml } from '../api/_lib/weeklyReportEmail.js';
+import { freshnessNote, narrativeHtml, renderWeeklyReportHtml, staleSubject } from '../api/_lib/weeklyReportEmail.js';
 import { buildSnapshotDoc } from '../api/_lib/weeklyReportSnapshot.js';
 
 let failures = 0;
@@ -192,6 +192,56 @@ check('a snapshot with no timestamp reads stale', freshnessNote({}).stale, true)
 check('a months-old snapshot reads stale',
   freshnessNote({ capturedAt: Date.parse('2026-07-01T00:00:00Z'), periodEnd: null },
     Date.parse('2026-09-07T00:00:00Z')).stale, true);
+
+// What a stale report leads with. The warning used to be 12px grey under
+// the heading, which is how an eleven-day-old snapshot went out looking
+// exactly like a fresh one: same layout, same figures, nothing to catch
+// the eye. The headline is the sentence that has to do that catching, so
+// it says what is wrong in the reader's terms EM how old, and whether the
+// period it claims to cover had even finished.
+{
+  const sent = Date.parse('2026-09-14T12:00:00Z');
+  const mid = freshnessNote({ capturedAt: Date.parse('2026-09-03T16:00:00Z'), periodEnd, scope: 'week' }, sent);
+  check('an eleven-day-old mid-week snapshot leads with both faults',
+    mid.headline, 'These numbers are 11 days old and were captured before the week ended.');
+  check('and the detail says when, and what to open',
+    mid.detail.startsWith('Captured Thu, 03 Sep 2026 16:00:00 UTC.'), true);
+  check('the detail names the tab that republishes them',
+    mid.detail.includes('Charts → Weekly Report'), true);
+  // Recent but incomplete: the age is not the story, the missing days are.
+  const early = freshnessNote({ capturedAt: Date.parse('2026-09-04T22:12:00Z'), periodEnd, scope: 'week' },
+    Date.parse('2026-09-07T05:00:00Z'));
+  check('a fresh mid-week snapshot leads with the missing days, not an age',
+    early.headline, 'These numbers were captured before the week ended.');
+  // Complete but stale: the reverse.
+  const aged = freshnessNote({ capturedAt: Date.parse('2026-08-24T05:00:00Z'), periodEnd: Date.parse('2026-08-23T23:59:59Z') },
+    Date.parse('2026-09-07T05:00:00Z'));
+  check('a complete but long-past snapshot leads with its age',
+    aged.headline, 'These numbers are 14 days old.');
+  check('a day-scoped report says day, not week',
+    freshnessNote({ capturedAt: Date.parse('2026-09-04T09:00:00Z'), periodEnd, scope: 'day' },
+      Date.parse('2026-09-04T18:00:00Z')).headline,
+    'These numbers were captured before the day ended.');
+  check('a snapshot with no timestamp says so as its headline',
+    freshnessNote({}).headline, 'These numbers have no capture time.');
+  // A current report has no banner to show and nothing to apologise for.
+  const ok = freshnessNote({ capturedAt: Date.parse('2026-09-07T05:00:00Z'), periodEnd },
+    Date.parse('2026-09-07T11:00:00Z'));
+  check('a current snapshot has no headline', ok.headline, '');
+  check('and its line is the bare capture stamp',
+    ok.stamp, 'Captured Mon, 07 Sep 2026 05:00:00 UTC.');
+}
+
+// The subject tag. A banner only works on a report someone opens; a weekly
+// mail that arrives every Monday is mostly read from the message list.
+check('a stale send is tagged in the subject',
+  staleSubject('Weekly Report — Week of Sep 7', { stale: true }),
+  '[Stale] Weekly Report — Week of Sep 7');
+check('a current send is not',
+  staleSubject('Weekly Report — Week of Sep 7', { stale: false }),
+  'Weekly Report — Week of Sep 7');
+check('the tag cannot push the subject past the header limit',
+  staleSubject('x'.repeat(300), { stale: true }).length, 300);
 
 // ---- escaping ------------------------------------------------------------
 

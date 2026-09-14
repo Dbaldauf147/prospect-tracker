@@ -15,7 +15,7 @@
 // `?secret=` query param is also accepted for manual triggering.
 
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { sendWeeklyReportEmail } from './_lib/weeklyReportEmail.js';
+import { sendWeeklyReportEmail, freshnessNote } from './_lib/weeklyReportEmail.js';
 import { computeNextRunZoned as computeNextRun } from './_lib/weeklyReportSchedule.js';
 
 export default async function handler(req, res) {
@@ -66,6 +66,13 @@ export default async function handler(req, res) {
         continue;
       }
       const snapshot = shot.data();
+      // A snapshot older than the period it reports still goes out: the
+      // report is a standing Monday habit, and silence would read as "no
+      // news" rather than as "the tab hasn't been open in a fortnight".
+      // It goes out labelled, though — a banner at the top of the mail, a
+      // tag on the subject, and this status, so the schedule list shows it
+      // too rather than a run of ordinary "sent".
+      const fresh = freshnessNote(snapshot, now);
       await sendWeeklyReportEmail({
         to: s.recipients,
         subject: s.subject,
@@ -73,15 +80,17 @@ export default async function handler(req, res) {
         snapshot,
         replyTo: s.ownerEmail,
       });
+      const status = fresh.stale ? 'sent-stale' : 'sent';
       await docSnap.ref.update({
         lastSentAt: now,
-        lastStatus: 'sent',
-        lastError: null,
+        lastStatus: status,
+        lastError: fresh.stale ? fresh.headline : null,
         lastSnapshotAt: snapshot.capturedAt || null,
+        lastSnapshotStale: !!fresh.stale,
         lastRecipientCount: s.recipients.length,
         nextRunAt: computeNextRun(s, now),
       });
-      results.push({ id: s.id, status: 'sent', snapshotAt: snapshot.capturedAt || null });
+      results.push({ id: s.id, status, snapshotAt: snapshot.capturedAt || null });
     } catch (err) {
       await docSnap.ref.update({
         lastStatus: 'error',
