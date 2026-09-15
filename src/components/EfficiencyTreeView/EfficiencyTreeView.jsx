@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import styles from './EfficiencyTreeView.module.css';
 import { DEFAULT_EFFICIENCY_TREE } from '../../data/efficiencyDecisionTree';
 import {
-  addBranch, addNextStep, addNode, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
+  addBranch, addNextStep, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
@@ -184,7 +184,12 @@ function NodeDetail({ detail }) {
 // Shown in both modes — in WALK it sits under the step you're standing on, so
 // a gate can be corrected at the moment you notice it's wrong, without
 // leaving the route you were walking.
-function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
+//
+// `onAddStep(fromId, branchId?)` opens the page's add-step dialog rather than
+// making a step here. Every button on the page that adds one goes through
+// that dialog, so the choice between a decision point and a plain step is
+// offered wherever a step is added rather than only on the diagram.
+function NodeEditor({ tree, nodeId, catalog, onChange, onAddStep }) {
   // Every node is a possible branch target, named for the dropdown. A branch
   // may point at any of them — including one already used above, which is how
   // the five tiers all continue at the economics gate. Built before the
@@ -266,12 +271,8 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
               <button
                 type="button"
                 className={styles.iconBtn}
-                title="Create a new step and point this branch at it"
-                onClick={() => {
-                  const { tree: next, id } = addNode(tree, { parentId: nodeId, branchId: b.id, title: '' });
-                  onChange(next);
-                  if (id) onSelect?.(id);
-                }}
+                title="Create the step this branch goes to"
+                onClick={() => onAddStep?.(nodeId, b.id)}
               >+ step</button>
               <button type="button" className={styles.iconBtn} title="Move this branch up" disabled={i === 0}
                 onClick={() => onChange(moveBranch(tree, nodeId, b.id, -1))}>↑</button>
@@ -285,12 +286,9 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
         <div className={styles.branchActions}>
           <button type="button" className={styles.smallBtn}
             onClick={() => onChange(addBranch(tree, nodeId, { label: '' }))}>+ Add branch</button>
-          <button type="button" className={styles.smallBtn}
-            onClick={() => {
-              const { tree: next, id } = addNode(tree, { parentId: nodeId, title: '' });
-              onChange(next);
-              if (id) onSelect?.(id);
-            }}>+ Add branch and a new step</button>
+          <button type="button" className={styles.primaryBtn}
+            title="A decision point that branches, or a step that just says what happens"
+            onClick={() => onAddStep?.(nodeId)}>+ Add the next step</button>
         </div>
       </div>
     </div>
@@ -302,7 +300,7 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onSelect }) {
 // when you click one: what leads here, and where does it go next. Both lists
 // are clickable, so the popup doubles as a way to move around the flow
 // without hunting for the next box on the canvas.
-function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClose, onGoTo, onWalkFrom, onChange }) {
+function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClose, onGoTo, onWalkFrom, onChange, onAddStep }) {
   const node = getNode(tree, nodeId);
 
   useEffect(() => {
@@ -381,7 +379,7 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
             })}
           </div>
 
-          {editing && <NodeEditor tree={tree} nodeId={node.id} catalog={catalog} onChange={onChange} onSelect={onGoTo} />}
+          {editing && <NodeEditor tree={tree} nodeId={node.id} catalog={catalog} onChange={onChange} onAddStep={onAddStep} />}
         </div>
 
         <div className={styles.modalFoot}>
@@ -407,9 +405,25 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
 // previous step leads here, and only when that step has ways out going
 // spare: a gate whose Yes is spoken for and whose No is not should offer
 // the No rather than quietly repoint the Yes and strand what it reached.
-function AddStepModal({ tree, fromId, onCancel, onAdd }) {
+// When the press itself named a branch - the + on one branch row, or on an
+// outline row reading "not linked yet" - there is nothing left to ask and it
+// says which branch instead.
+function AddStepModal({ tree, fromId, lockedBranchId = null, onCancel, onAdd }) {
   const parent = getNode(tree, fromId);
   const free = useMemo(() => (parent?.branches || []).filter(b => !b.to), [parent]);
+  // Some callers already know the answer: the + on a gate's Yes, or on an
+  // outline row that reads "not linked yet", is a press on ONE branch. The
+  // dialog states which rather than asking, because re-asking a question the
+  // click already answered is how the wrong branch gets filled in.
+  //
+  // Every branch, not just the free ones: pressing + on a branch that already
+  // leads somewhere means "put a step here instead", and offering some OTHER
+  // free branch because this one was taken is how you repoint the wrong arrow.
+  const locked = useMemo(
+    () => (lockedBranchId ? (parent?.branches || []).find(b => b.id === lockedBranchId) || null : null),
+    [parent, lockedBranchId],
+  );
+  const displaced = locked?.to ? getNode(tree, locked.to) : null;
   const [kind, setKind] = useState('question');
   const [title, setTitle] = useState('');
   // '' means "on a new branch of its own"; anything else is one of the free
@@ -418,7 +432,7 @@ function AddStepModal({ tree, fromId, onCancel, onAdd }) {
   // what makes the second press of + fill in a gate's Yes. Read once, at
   // mount - the dialog is thrown away and rebuilt on every press, so there
   // is no later state of the tree for it to be stale against.
-  const [branchId, setBranchId] = useState(() => free[0]?.id || '');
+  const [branchId, setBranchId] = useState(() => locked?.id || free[0]?.id || '');
   const [branchLabel, setBranchLabel] = useState('');
   const titleRef = useRef(null);
 
@@ -494,7 +508,16 @@ function AddStepModal({ tree, fromId, onCancel, onAdd }) {
             />
           </label>
 
-          {free.length > 0 && (
+          {locked ? (
+            <div className={styles.afterNote}>
+              Reached by <strong>{locked.label || '(unlabelled branch)'}</strong>
+              {displaced && (
+                <span className={styles.fieldHint}>
+                  {`That branch goes to "${displaced.title || '(untitled step)'}" today - the new step takes its place, and the old one stays in the tree as a step nothing reaches.`}
+                </span>
+              )}
+            </div>
+          ) : free.length > 0 && (
             <label className={styles.field}>
               <span className={styles.fieldLabel}>
                 Reached by
@@ -556,7 +579,9 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [importError, setImportError] = useState('');
   const [zoom, setZoom] = useState(0.8);
   const [popupId, setPopupId] = useState(null);   // the box whose detail is open
-  const [addAfterId, setAddAfterId] = useState(null); // the box the + was pressed on
+  // The add-step dialog: which step the new one comes after, and - when the
+  // press already said so - which way out of it leads there.
+  const [addAfter, setAddAfter] = useState(null);
   const [freshId, setFreshId] = useState(null);   // the step just added, to scroll to and mark
   const canvasWrapRef = useRef(null);
 
@@ -654,12 +679,27 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     return () => clearTimeout(timer);
   }, [freshId, layout, zoom]);
 
+  // Every "add a step" on the page opens the same dialog, so the choice
+  // between a decision point - which arrives with its Yes and its No - and a
+  // step that just says what happens is offered wherever a step is added,
+  // rather than only on the diagram's hover handle where it used to live.
+  //
+  // It turns Edit on rather than requiring it first: pressing a button that
+  // says "add a step" has already said what the checkbox asks, and the popup
+  // is closed because the dialog would otherwise open behind it.
+  const openAddStep = useCallback((fromId, branchId = null) => {
+    if (!fromId) return;
+    setPopupId(null);
+    setEditing(true);
+    setAddAfter({ fromId, branchId });
+  }, []);
+
   // The + on a box: the new step, wired to the one it was added after, and
   // the diagram moved to it. Everything the dialog asked goes straight in;
   // anything it didn't ask about is what addNextStep decides.
   function addStepAfter(fromId, { kind, title, branchId, branchLabel }) {
     const { tree: next, id } = addNextStep(tree, { fromId, branchId, branchLabel, kind, title });
-    setAddAfterId(null);
+    setAddAfter(null);
     if (!id) {
       setStatus('This tree is full - 500 steps is the limit.');
       return;
@@ -848,6 +888,19 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             <button type="button" className={mode === 'map' ? styles.modeBtnActive : styles.modeBtn}
               onClick={() => setMode('map')}>Map &amp; edit</button>
           </div>
+          {/* Adding a step used to be a handle that stayed invisible until
+              you hovered the right box with Edit already on, which is a
+              control you have to be told about. This one is always on the
+              toolbar, and it is where the decision point with its Yes and
+              its No is chosen. */}
+          {mode === 'diagram' && (
+            <button
+              type="button"
+              className={styles.primaryBtn}
+              onClick={() => openAddStep(getNode(tree, selectedId) ? selectedId : tree.rootId)}
+              title="Add a decision point that branches, or a step that just says what happens"
+            >+ Add step</button>
+          )}
           {mode === 'diagram' && (
             <div className={styles.zoomBar}>
               <button type="button" className={styles.iconBtn} title="Zoom out"
@@ -932,16 +985,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             broken page unless it says what it is waiting for. */}
         {stats.nodes <= 1 && (
           <span className={styles.muted}>
-            {editing
-              ? 'Empty tree - write this step, then “+ Add branch and a new step” to grow it.'
-              : 'Empty tree - turn on Edit to build it.'}
+            {mode === 'diagram'
+              ? 'Empty tree - “+ Add step” builds it out.'
+              : editing
+                ? 'Empty tree - write this step, then “+ Add the next step” to grow it.'
+                : 'Empty tree - turn on Edit to build it.'}
           </span>
         )}
         {mode === 'diagram' && (
           <span className={styles.muted}>
-            Click a box for the detail · drag to pan · {editing
-              ? 'hover a box for the + that adds the step after it'
-              : 'turn on Edit to add steps here'}
+            Click a box for the detail · drag to pan · “+ Add step” for the step after the one you picked{editing
+              ? ', or hover a box for its own +'
+              : ''}
           </span>
         )}
         {status && <span className={styles.muted}>{status}</span>}
@@ -1068,14 +1123,14 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   {editing && (
                     <button
                       type="button"
-                      className={addAfterId === box.id ? styles.addHandleOn : styles.addHandle}
+                      className={addAfter?.fromId === box.id ? styles.addHandleOn : styles.addHandle}
                       style={{ transform: `translate(-50%, 50%) scale(${Math.min(3, 1 / zoom).toFixed(2)})` }}
                       aria-label={`Add the step after ${node.title || 'this step'}`}
                       title={`Add the step that comes after "${node.title || '(untitled step)'}"`}
                       onClick={(ev) => {
                         const wrap = canvasWrapRef.current;
                         if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
-                        setAddAfterId(box.id);
+                        openAddStep(box.id);
                       }}
                     >+</button>
                   )}
@@ -1149,7 +1204,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               )}
 
               {editing && (
-                <NodeEditor tree={tree} nodeId={current.id} catalog={catalog} onChange={applyTree} onSelect={() => {}} />
+                <NodeEditor tree={tree} nodeId={current.id} catalog={catalog} onChange={applyTree} onAddStep={openAddStep} />
               )}
             </div>
           ) : (
@@ -1190,12 +1245,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       {row.repeat && <span className={styles.repeatChip} title="Drawn in full higher up - the flow rejoins here">↩ rejoins above</span>}
                       {editing && !row.repeat && (
                         <span className={styles.rowActions}>
-                          <button type="button" className={styles.iconBtn} title="Add a step under this one"
-                            onClick={() => {
-                              const { tree: next, id } = addNode(tree, { parentId: node.id, title: '' });
-                              applyTree(next);
-                              if (id) setSelectedId(id);
-                            }}>+</button>
+                          <button type="button" className={styles.iconBtn} title="Add the step that comes after this one"
+                            onClick={() => openAddStep(node.id)}>+</button>
                           {row.parentId && (
                             <>
                               <button type="button" className={styles.iconBtn} title="Move this branch up"
@@ -1226,11 +1277,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       not linked yet
                       {editing && row.parentId && (
                         <button type="button" className={styles.iconBtn} title="Create the step this branch goes to"
-                          onClick={() => {
-                            const { tree: next, id } = addNode(tree, { parentId: row.parentId, branchId: row.branchId, title: '' });
-                            applyTree(next);
-                            if (id) setSelectedId(id);
-                          }}>+ step</button>
+                          onClick={() => openAddStep(row.parentId, row.branchId)}>+ step</button>
                       )}
                     </span>
                   )}
@@ -1273,7 +1320,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   <button type="button" className={styles.smallBtn} onClick={() => walkFrom(selectedId)}>Walk from here</button>
                 </div>
                 {editing ? (
-                  <NodeEditor tree={tree} nodeId={selectedId} catalog={catalog} onChange={applyTree} onSelect={setSelectedId} />
+                  <NodeEditor tree={tree} nodeId={selectedId} catalog={catalog} onChange={applyTree} onAddStep={openAddStep} />
                 ) : (
                   <>
                     <NodeDetail detail={getNode(tree, selectedId).detail} />
@@ -1294,12 +1341,13 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         </div>
       )}
 
-      {addAfterId && (
+      {addAfter && (
         <AddStepModal
           tree={tree}
-          fromId={addAfterId}
-          onCancel={() => setAddAfterId(null)}
-          onAdd={picked => addStepAfter(addAfterId, picked)}
+          fromId={addAfter.fromId}
+          lockedBranchId={addAfter.branchId}
+          onCancel={() => setAddAfter(null)}
+          onAdd={picked => addStepAfter(addAfter.fromId, picked)}
         />
       )}
 
@@ -1314,6 +1362,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           onGoTo={(id) => { setPopupId(id); setSelectedId(id); }}
           onWalkFrom={walkFrom}
           onChange={applyTree}
+          onAddStep={openAddStep}
         />
       )}
     </div>
