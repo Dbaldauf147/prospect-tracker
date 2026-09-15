@@ -4,7 +4,7 @@
 // that decides whether a market earns a band at all.
 //
 // These two maps used to live inside SitesView. They moved here so the
-// Lists > Market Savings editor and SitesView read one copy: the editor
+// Market Savings editor and SitesView read one copy: the editor
 // lists every market with the band it is on and lets the seller retype
 // the figures, and SitesView applies those edits over these defaults
 // (see utils/marketSavings.js). Two copies would have meant the editor

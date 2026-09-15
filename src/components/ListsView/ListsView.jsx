@@ -17,12 +17,10 @@ const EcoActClientsView = lazyView(() => import('../EcoActClientsView/EcoActClie
 const SitesView = lazyView(() => import('../SitesView/SitesView').then(m => ({ default: m.SitesView })));
 const MasterSiteListView = lazyView(() => import('../MasterSiteListView/MasterSiteListView').then(m => ({ default: m.MasterSiteListView })));
 const UploadedListView = lazyView(() => import('../UploadedListView/UploadedListView').then(m => ({ default: m.UploadedListView })));
-const MarketSavingsView = lazyView(() => import('../MarketSavingsView/MarketSavingsView').then(m => ({ default: m.MarketSavingsView })));
 
 
 const SUBTABS = [
   { key: 'sites', label: 'Utility Lookup' },
-  { key: 'marketsavings', label: 'Market Savings' },
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Targets' },
   { key: 'largest', label: 'Largest', storageKey: 'largest-list-override' },
@@ -444,7 +442,6 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         )}
         {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} onSelectProspect={onSelectProspect} />}
         {subtab === 'mastersites' && <MasterSiteListView prospects={prospects} settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'marketsavings' && <MarketSavingsView settings={settings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"

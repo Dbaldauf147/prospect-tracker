@@ -1,4 +1,5 @@
-// Assertion tests for the savings bands behind Lists > Market Savings.
+// Assertion tests for the savings bands behind Utility Lookup > Market
+// Savings.
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/marketSavings.test.mjs
 //
