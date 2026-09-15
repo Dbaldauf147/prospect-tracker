@@ -108,18 +108,25 @@ const gutter = (w = 12) => `<td class="gut" width="${w}" style="width:${w}px;fon
 // is stated in an attribute as well as in CSS, which is what Word reads.
 // A browser still compresses the whole track when the card is narrower
 // than it, so the fill keeps its share of the bar on a phone.
-function barHtml({ fillPx, trackPx, color, height = 14, radius = '0 3px 3px 0' }) {
+function barHtml({ fillPx, trackPx, color, height = 14, radius = '0 3px 3px 0', trackBg = '' }) {
   const fill = Math.max(0, Math.min(trackPx, Math.round(fillPx) || 0));
   const rest = trackPx - fill;
   // A cell with no text still needs a character in Outlook, and the
   // character must not be allowed to set the cell's height.
   const blank = 'font-size:0;line-height:0;mso-line-height-rule:exactly';
+  // A counts bar is drawn against empty space, because the axis it would
+  // be drawn against is the tallest bar in the series and that is already
+  // the full track. A percentage has a real 100% end, so its track is
+  // painted: without it a 79% bar and a 100% bar are two lengths with
+  // nothing behind them saying what length would be all of it.
+  const restBg = trackBg ? ` bgcolor="${trackBg}"` : '';
+  const restFill = trackBg ? `background-color:${trackBg};` : '';
   const cells = [
     fill > 0
       ? `<td width="${fill}" height="${height}" bgcolor="${color}" style="width:${fill}px;height:${height}px;border-radius:${radius};${blank}">&nbsp;</td>`
       : '',
     rest > 0
-      ? `<td width="${rest}" height="${height}" style="width:${rest}px;height:${height}px;${blank}">&nbsp;</td>`
+      ? `<td width="${rest}" height="${height}"${restBg} style="width:${rest}px;height:${height}px;${restFill}${blank}">&nbsp;</td>`
       : '',
   ].join('');
   return table(`width="${trackPx}" style="border-collapse:collapse;width:${trackPx}px"`, `<tr>${cells}</tr>`);
@@ -262,6 +269,112 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
       ${table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, rows)}
       ${feet ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(feet)}</div>` : ''}
     ${CARD_CLOSE}`;
+}
+
+// ---- Account coverage ---------------------------------------------------
+//
+// The Progress tab's two coverage charts, as the email can draw them. On
+// the tab they are lines: a point a week per tier, running back to April.
+// A line needs an image or an SVG and mail gets neither, so the same
+// series arrives as five weekly rows of paired bars - which is the length
+// the "Emails sent" card beside it already runs to, so the two sections
+// line up rather than one dwarfing the other.
+//
+// Both series are percentages, so both are drawn against a painted 0-100%
+// track and read straight across: a Tier 2 bar three-quarters of the way
+// along IS three quarters of Tier 2.
+const COVERAGE_T1 = '#DC2626';   // the Progress chart's Tier 1 red
+const COVERAGE_T2 = '#3B82F6';   // and its Tier 2 blue
+const COVERAGE_TRACK_BG = '#EDF1F6';
+// Half the content column, less the card's border and padding, the week
+// label and the two percentage columns, split between the two tracks.
+const COVERAGE_TRACK = 84;
+
+// The row of cells a week is drawn in, in order: the week label, then each
+// tier's bar and the figure beside it, then the slack that keeps all five
+// together on the left of the card.
+const COVERAGE_LABEL = 46;
+// Wide enough for "100%" and for the "Tier 1" that heads the column.
+const COVERAGE_FIGURE = 40;
+// The slack is not `hpad`, the class the trend cards drop on a phone: with
+// the bar columns already gone there, dropping it too leaves the table
+// nothing to spend its width on, and the columns drift apart across an
+// empty card. Nothing in this card has to wrap, so the slack can stay.
+const COVERAGE_SLACK = '<td width="99%" style="width:99%"></td>';
+
+// A tier names its own column rather than sitting in a legend above the
+// card: on a phone the bars go (see `.cbar`) and two columns of bare
+// percentages are left, which a swatch off to one side cannot label.
+//
+// The heading takes exactly the cells a week's row takes - the swatch over
+// the bar, the name over the figure - so the two line up without a
+// colspan, which in a table this narrow takes the slack for itself and
+// drags "Tier 2" away from the numbers under it. It also means the swatch
+// leaves with the bars on a phone, which is right: a colour is a key only
+// while something is painted in it.
+const coverageHeadCell = (color, name) => `<td class="cbar" width="${COVERAGE_TRACK}" valign="bottom" style="width:${COVERAGE_TRACK}px;padding:0 0 5px 4px">${table(`align="right" style="border-collapse:collapse"`, `<tr>
+        <td width="8" height="8" bgcolor="${color}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+      </tr>`)}</td>
+      <td width="${COVERAGE_FIGURE}" valign="bottom" style="width:${COVERAGE_FIGURE}px;padding:0 0 5px 5px;font-family:${FONT};font-size:11px;font-weight:600;color:${MUTED};white-space:nowrap;text-align:right">${esc(name)}</td>`;
+
+const coverageHeadRow = () => `<tr>
+      <td width="${COVERAGE_LABEL}" style="width:${COVERAGE_LABEL}px"></td>
+      ${coverageHeadCell(COVERAGE_T1, 'Tier 1')}
+      ${coverageHeadCell(COVERAGE_T2, 'Tier 2')}
+      ${COVERAGE_SLACK}
+    </tr>`;
+
+// One week: the label, then each tier's bar with its own figure beside it.
+//
+// A null is not a zero here either. It means the Progress tab recorded no
+// snapshot that week, so the row shows "-" against an empty track rather
+// than a bar on the floor, which would read as the week every contact
+// vanished.
+function coverageRowHtml(point, isLast) {
+  const tier = (value, color) => {
+    const known = value != null;
+    // A percentage that rounds below one track pixel still gets a sliver,
+    // so "3%" has something beside it; a true 0% gets nothing, which is
+    // the honest picture of nothing.
+    const fillPx = known && value > 0
+      ? Math.max(2, Math.round((value / 100) * COVERAGE_TRACK))
+      : 0;
+    const bar = barHtml({
+      fillPx, trackPx: COVERAGE_TRACK, color, height: 9,
+      radius: '2px', trackBg: COVERAGE_TRACK_BG,
+    });
+    // The bar column carries `cbar` so a phone drops it: two fixed tracks
+    // and their figures are wider than a 320px screen, and there the
+    // percentages are the whole story - the same trade the funnel's stage
+    // bars make.
+    return `<td class="cbar" width="${COVERAGE_TRACK}" valign="middle" style="width:${COVERAGE_TRACK}px;padding:3px 0 3px 4px">${bar}</td>
+      <td width="${COVERAGE_FIGURE}" valign="middle" style="width:${COVERAGE_FIGURE}px;padding:3px 0 3px 5px;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? `${value}%` : '-'}</td>`;
+  };
+  return `<tr>
+      <td width="${COVERAGE_LABEL}" valign="middle" style="width:${COVERAGE_LABEL}px;padding:3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${isLast ? INK : MUTED};white-space:nowrap">${esc(point.label)}</td>
+      ${tier(point.t1, COVERAGE_T1)}
+      ${tier(point.t2, COVERAGE_T2)}
+      ${COVERAGE_SLACK}
+    </tr>`;
+}
+
+function coverageCardHtml(chart) {
+  const points = Array.isArray(chart?.points) ? chart.points : [];
+  const rows = points.map((p, i) => coverageRowHtml(p, i === points.length - 1)).join('');
+  return `${cardOpen()}
+      <div style="font-family:${FONT};font-size:13px;font-weight:700;line-height:1.3;color:${INK}">${esc(chart.title)}</div>
+      ${table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, coverageHeadRow() + rows)}
+      ${chart.note ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(chart.note)}</div>` : ''}
+    ${CARD_CLOSE}`;
+}
+
+// The pair, side by side, as they sit on the Progress tab. Nothing at all
+// when the snapshot carries no coverage: an empty card would say the
+// coverage is missing, when what is missing is the recording of it.
+export function coverageHtml(coverage) {
+  const charts = (Array.isArray(coverage?.charts) ? coverage.charts : [])
+    .filter(c => c && c.title && Array.isArray(c.points) && c.points.length);
+  return charts.length ? cardRow(charts.map(coverageCardHtml)) : '';
 }
 
 // A group of changes, as the tab lists them: uppercase title, a count pill,
@@ -687,6 +800,12 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
   // Straight under the funnel, as on the tab: the funnel says where each
   // stage's close rate stands, this says which way it is going.
   const trend = closeRateTrendHtml(s.closeRateTrend);
+  // The Progress tab's two coverage charts. They sit under the activity
+  // series rather than up with the pipeline figures because they answer a
+  // different question: not what the year is worth, but whether the
+  // accounts it rests on have anybody in them to call.
+  const coverage = coverageHtml(s.coverage);
+  const coverageWeeks = Number(s.coverage?.weeks) || (s.coverage?.charts?.[0]?.points || []).length;
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
@@ -754,6 +873,10 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
        does not have: there the figures beside them are the whole story,
        as they are for a reader whose client hides the chart image. */
     .sbar { display:none !important; width:0 !important; }
+    /* Same trade for the coverage cards: two fixed tracks and their
+       figures are wider than a phone, and the percentages beside them
+       carry the series on their own. */
+    .cbar { display:none !important; width:0 !important; }
   }
 </style>
 </head>
@@ -784,6 +907,8 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
     ${trend ? `${spacer(20)}${headingHtml('Close rate trend', `Last ${trendMonths} months, by the stage each closed deal reached`)}${spacer(8)}${trend}` : ''}
 
     ${spacer(16)}${trendRow}
+
+    ${coverage ? `${spacer(20)}${headingHtml('Account coverage', `Last ${coverageWeeks} weeks, from the Progress tab`)}${spacer(8)}${coverage}` : ''}
 
     ${narrative ? `${spacer(16)}${narrative}` : ''}
 

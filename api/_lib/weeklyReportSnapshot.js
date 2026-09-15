@@ -128,6 +128,39 @@ function closeRateTrendDoc(t) {
   return { months, rows };
 }
 
+// The two account-coverage series, bounded the same way the trend series
+// are. A point's `t1` / `t2` may be null and that is load-bearing: it means
+// the Progress tab recorded no snapshot for that week, which is a different
+// fact from a week where no account had a contact. clampInt would turn the
+// first into the second and draw a coverage collapse that never happened.
+export const MAX_COVERAGE_CHARTS = 4;
+export const MAX_COVERAGE_POINTS = 12;
+
+const covPct = (v) => (v == null ? null : clampInt(v, 0, 100, 0));
+
+function coverageDoc(c) {
+  if (!c || typeof c !== 'object') return null;
+  const charts = (Array.isArray(c.charts) ? c.charts : [])
+    .slice(0, MAX_COVERAGE_CHARTS)
+    .map(ch => ({
+      id: str(ch?.id, 40),
+      title: str(ch?.title, 120),
+      points: (Array.isArray(ch?.points) ? ch.points : [])
+        .slice(0, MAX_COVERAGE_POINTS)
+        .map(p => ({
+          key: str(p?.key, 10),
+          label: str(p?.label, 16),
+          t1: covPct(p?.t1),
+          t2: covPct(p?.t2),
+        }))
+        .filter(p => p.label),
+      note: str(ch?.note, 200),
+    }))
+    .filter(ch => ch.title && ch.points.length);
+  if (!charts.length) return null;
+  return { weeks: charts[0].points.length, charts };
+}
+
 // The funnel as a picture: a PNG the tab rasterised off its own chart,
 // carried as a data URL and mailed as an attachment.
 //
@@ -190,6 +223,10 @@ export function buildSnapshotDoc(input, auth) {
     // tiles: emails by week, new opps by month. Stored as points rather
     // than as a rendered chart, so the email can draw its own bars.
     trends: trendsDoc(s.trends),
+    // The Progress tab's two account-coverage charts, as points rather than
+    // a picture, for the same reason the trends are: the email draws its
+    // own bars from them.
+    coverage: coverageDoc(s.coverage),
     oppChanges: {
       closed: trimList(oc.closed),
       newOpps: trimList(oc.newOpps),

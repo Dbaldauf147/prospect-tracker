@@ -110,6 +110,7 @@ export function emailSnapshotPayload({
   funnelImage = null,
   closeRateTrend = null,
   trends = null,
+  coverage = null,
   oppChanges = {},
   goalsProgress = {},
   narrative = '',
@@ -150,6 +151,17 @@ export function emailSnapshotPayload({
         emailsByWeek: trends.emailsByWeek || [],
         newOppsByMonth: trends.newOppsByMonth || [],
       }
+      : null,
+    // The two account-coverage charts off the Progress tab: how much of
+    // Tier 1 and Tier 2 has a HubSpot contact, and how much has a decision
+    // maker named. They answer the question the pipeline figures above
+    // cannot - whether there is anybody to call at the accounts the year
+    // depends on - and they move week to week, so the email carries the
+    // last few weeks rather than today's two numbers. Built by the caller
+    // via utils/weeklyReportTrends (coverageByWeek), from the same
+    // progressHistory weeks the KPI cards read.
+    coverage: coverage?.charts?.length
+      ? { weeks: coverage.weeks || coverage.charts[0].points.length, charts: coverage.charts }
       : null,
     oppChanges: {
       closed: list(oc.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),

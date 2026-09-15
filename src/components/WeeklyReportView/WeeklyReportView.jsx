@@ -27,7 +27,7 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
-  emailsByWeek, newOppsByMonth, TREND_WEEKS, TREND_MONTHS,
+  emailsByWeek, newOppsByMonth, coverageByWeek, TREND_WEEKS, TREND_MONTHS,
 } from '../../utils/weeklyReportTrends';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -571,6 +571,14 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     }),
   }), [cache, activityLog, senderEmail, oppsRecords, bounds]);
 
+  // The Progress tab's two account-coverage charts, off the same weekly
+  // snapshots the KPI cards already read. Not scoped to the period the way
+  // the series above are: coverage is a level, not a count of the week's
+  // work, so a day-scoped report carries the same weekly series.
+  const coverageSeries = useMemo(() => coverageByWeek({
+    progressWeeks, refMs: bounds.start, weeks: TREND_WEEKS,
+  }), [progressWeeks, bounds]);
+
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing
   // this back, but both go through emailSnapshotPayload so the document the
@@ -589,13 +597,17 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     // line is going, and "27 emails, /50" cannot answer that. The tab keeps
     // its tiles; this is the email's version.
     trends: trendSeries,
+    // The Progress tab's coverage charts, drawn as bars in the email: the
+    // pipeline figures above say what the year is worth, these say whether
+    // the accounts it rests on have anybody in them to call.
+    coverage: coverageSeries,
     oppChanges,
     goalsProgress: goalsProg,
     // Only ship a recap that was written for this period; a stale one
     // would describe a different week under this week's heading.
     narrative: narrativeStale ? '' : narrative,
   }), [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
-    trendSeries, oppChanges, goalsProg, narrative, narrativeStale]);
+    trendSeries, coverageSeries, oppChanges, goalsProg, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

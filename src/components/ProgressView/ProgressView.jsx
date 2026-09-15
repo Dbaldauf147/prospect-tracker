@@ -14,6 +14,7 @@ import { peStageOf } from '../../utils/peStages';
 import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
+import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -405,10 +406,19 @@ const PE_STAGE_SERIES = [
 // chart, and its default view. Both the rendered charts and the Excel
 // raw-data export read from this so the download always matches the charts.
 const PROGRESS_CHART_DEFS = [
-  { id: 'contactPct',   label: '% of Accounts with HubSpot Contacts', isPct: true,
-    series: [{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }] },
-  { id: 'dmPct',        label: '% of Accounts with Decision Maker Identified', isPct: true,
-    series: [{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }] },
+  // The first two come from the shared definition in utils/progressCoverage:
+  // the Weekly Report email draws the same two series, and a label or a
+  // tier colour that drifted between here and there would be one measure
+  // arriving under two names.
+  ...COVERAGE_CHARTS.map(c => ({
+    id: c.id,
+    label: c.label,
+    isPct: true,
+    series: [
+      { key: c.t1Key, name: 'Tier 1', color: COVERAGE_T1 },
+      { key: c.t2Key, name: 'Tier 2', color: COVERAGE_T2 },
+    ],
+  })),
   { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
     series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }] },
   { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,

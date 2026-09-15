@@ -38,7 +38,7 @@ import {
 } from '../../src/utils/weeklyReport.js';
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
 import {
-  emailsByWeek, newOppsByMonth, recentWeeks, TREND_WEEKS, TREND_MONTHS,
+  emailsByWeek, newOppsByMonth, coverageByWeek, recentWeeks, TREND_WEEKS, TREND_MONTHS,
 } from '../../src/utils/weeklyReportTrends.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -201,6 +201,14 @@ export function buildReportPayload(sources, period) {
     }),
   };
 
+  // The Progress tab's account-coverage charts, off the same
+  // progressHistory weeks the review snapshot below reads. Not scoped to
+  // the period: coverage is a level, not a count, so a day-scoped report
+  // gets the same weekly series a week-scoped one does.
+  const coverage = coverageByWeek({
+    progressWeeks: s.progressWeeks, refMs: start, weeks: TREND_WEEKS,
+  });
+
   const reviewSnapshot = buildReviewSnapshot({
     pipeline: s.pipeline,
     bfo: s.bfo,
@@ -232,6 +240,7 @@ export function buildReportPayload(sources, period) {
     funnelImage: null,
     closeRateTrend: emailCloseRateTrend(closeRateTrendByStage(s.oppsRecords, { months: 6 })),
     trends,
+    coverage,
     oppChanges,
     goalsProgress,
     // The recap is the tab's one on-demand piece; a cron that wrote its own
@@ -249,6 +258,7 @@ export function payloadHasFigures(payload) {
   if ((payload.kpiCards || []).length) return true;
   if (payload.funnel) return true;
   if (payload.closeRateTrend) return true;
+  if (payload.coverage) return true;
   const tr = payload.trends || {};
   const points = [...(tr.emailsByWeek || []), ...(tr.newOppsByMonth || [])];
   if (points.some(p => Number(p.value) > 0)) return true;
