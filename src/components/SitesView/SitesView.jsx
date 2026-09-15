@@ -128,6 +128,12 @@ import {
   COUNTRY_DEREGULATION,
   NOT_SERVED,
 } from '../../data/countryDeregulation';
+// The savings bands below are the shipped tables with whatever the
+// seller typed into Lists > Market Savings laid over them, so a retyped
+// percentage reaches every sheet this page builds. countryElectricSavings
+// / countryGasSavings above stay imported for the callers that want the
+// unedited reference.
+import { stateSavingsBands, countrySavings } from '../../utils/marketSavings';
 import {
   NA_CATEGORIES,
   US_MARKETS,
@@ -4857,131 +4863,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   });
 
   // Per-commodity savings % used for the overview. Applied to
-  // deregulated spend only — the user can adjust the numbers later if
-  // their bid-based estimates diverge.
-  // Electric deregulation status per state / province, with the
-  // corresponding indicative savings range. Anything not listed here
-  // is treated as a regulated market with zero savings — the user
-  // explicitly asked that regulated markets show no savings.
-  const ELECTRIC_DEREGULATION = {
-    AB: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
-    CT: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    DC: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    DE: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    IL: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    MA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    MD: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    ME: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    NH: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    NJ: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    NY: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
-    OH: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    ON: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
-    OR: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    PA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
-    TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
-    // Limited-deregulation markets — the underlying retail-choice
-    // programs are narrow enough (Direct Access only in CA, opt-in
-    // pilots in MI, prior-3rd-party gating in AZ) that the standard
-    // 2-4 % commodity savings doesn't apply. Surfaced as 0 - 0 % so
-    // the Indicative Savings tab still lists them (Status stays
-    // "Limited" so they aren't filtered out as regulated) but every
-    // savings column resolves to $0. WA is intentionally absent —
-    // its retail-choice pilot was small enough that the seller no
-    // longer wants WA sites surfaced as deregulated at all, so it
-    // falls through to the regulated bucket. VA is handled separately
-    // below — it's only included when at least one site clears the
-    // 45,000 MWh/yr large-load threshold.
-    AZ: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    ...(vaHasQualifyingSite
-      ? { VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 } }
-      : {}),
-  };
+  // deregulated spend only.
+  //
+  // The tables themselves are in data/marketSavingsBands.js; what comes
+  // back here is those tables with the seller's own figures laid over
+  // them, since Lists > Market Savings lets them retype the low / high
+  // percentage of any market. Only the percentages move: deregulation
+  // status stays with the reference tables, which is what decides which
+  // sites count as deregulated and which tier a market lands in.
+  //
+  // Virginia is folded into the electric map only when the upload has a
+  // site clearing the large-load threshold above, so a portfolio of small
+  // Virginia sites doesn't advertise a savings motion it can't run.
+  const { electric: ELECTRIC_DEREGULATION, gas: GAS_DEREGULATION } = useMemo(
+    () => stateSavingsBands(settings, { includeVirginiaElectric: vaHasQualifyingSite }),
+    [settings, vaHasQualifyingSite],
+  );
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
-  // Per-state natural-gas deregulation status + savings range. States
-  // marked "Large load only" mean retail choice is restricted to
-  // industrial / large-volume customers, so the standard 2-4 %
-  // doesn't apply — they carry a 0 - 0 % savings range so the row
-  // still surfaces on the Indicative Savings tab (status keeps it
-  // out of the regulated-hide filter) but every savings column
-  // resolves to $0. Anything not in this map falls through to
-  // status 'no'.
-  //
-  // US coverage is a closed list, corrected against the seller's own
-  // read of the gas markets: AL, ID, MS, MT, ND and SD are the only
-  // large-load-only states, Vermont is the only regulated one (so it is
-  // the one US code deliberately absent below), and every other state
-  // plus DC is fully competitive at 2 - 4 %. Canada is unchanged and is
-  // NOT covered by that rule — AB, BC and MB stay large-load-only.
-  //
-  // Editing this map moves money: it sets the indicative gas savings
-  // band for every site in the state. naMarkets.js mirrors the status
-  // for display and has to be updated alongside it.
-  const GAS_DEREGULATION = {
-    AK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    AR: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    AZ: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    CA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    CO: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    CT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    DC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    DE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    FL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    GA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    HI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    IA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    IL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    IN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    KS: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    KY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    LA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MD: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    ME: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    MO: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NB: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NJ: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NM: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NV: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    NY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    OH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    OK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    ON: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    OR: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    PA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    QC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    RI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    SC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    SK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    TN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    TX: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    UT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    VA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    WA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    WI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    WV: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    WY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    // Large-load-only markets — retail choice is restricted to
-    // industrial / large-volume customers.
-    AB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    AL: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    BC: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    ID: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MS: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    MT: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    ND: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    SD: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
-  };
 
   // Deregulation status → the tier the Overview tables and the map dots
   // bucket by.
@@ -7277,9 +7176,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           let bandHighPct = null;
           let countryRegRateOpportunity = false;
           if (isCountryBucket) {
-            const entry = commodity === 'electric'
-              ? countryElectricSavings(country)
-              : countryGasSavings(country);
+            // The seller's own figure for this country when they have
+            // typed one in Lists > Market Savings, the reference table's
+            // otherwise. Status comes from the reference either way - an
+            // override sets the band, not whether the market is one.
+            const entry = countrySavings(settings, country, commodity);
             bandStatus = entry?.status || 'No opportunity';
             bandRange = entry?.range ?? '';
             bandLowPct = entry?.lowPct ?? null;
