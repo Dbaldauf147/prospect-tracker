@@ -15,7 +15,7 @@
 // report itself honestly before it runs — the count it offers is the count it
 // changes, and the rows it would strip are named.
 import {
-  setNoFee, planNoFee, pricingFor, estimateService, estimateScope, isNoFeeBucket,
+  setNoFee, planNoFee, pricingFor, estimateService, estimateScope, isGraveyardBucket,
   setPricingField, setPricingLine, setPricingSetupLine, feeBasisLabel,
 } from '../src/utils/servicePricing.js';
 
@@ -135,7 +135,7 @@ const PRICED = { basis: 'per_site', rate: 900, rateHigh: 1200, setupLines: [{ ba
 {
   check('the bucket is matched on the word, not on one exact name',
     ['Graveyard', 'Old Graveyard', 'graveyard (2024)', 'GHG Reporting', '', null]
-      .map(isNoFeeBucket),
+      .map(isGraveyardBucket),
     [true, true, true, false, false, false]);
 
   const rows = [

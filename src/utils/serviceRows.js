@@ -13,14 +13,21 @@
 
 import { getEffectiveDropdownLists } from './dropdownListsStore.js';
 import { getEffectiveServiceMetadata } from '../data/serviceCatalog.js';
-import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from './serviceCategoriesStore.js';
+import {
+  getServiceCategories, graveyardTest, serviceBucketOf, UNGROUPED_SERVICES,
+} from './serviceCategoriesStore.js';
 
 /**
- * Every service in the vocabulary, as { name, meta, bucket }.
+ * Every service in the vocabulary, as { name, meta, bucket, graveyard }.
  *
  * `bucket` is '' when no box on the board claims the service, which is the
  * Scope picker's catch-all card — named rather than left blank so a cell and
  * a search box can read the same.
+ *
+ * `graveyard` says the service has been retired — see graveyardTest. Carried
+ * on the row so every table built from these reads one answer: it is what
+ * greys a row and pins it under the live ones. Rows arrive in the Solutions
+ * list's order, which already has the retired ones last.
  */
 export function buildServiceRows(settings) {
   const lists = getEffectiveDropdownLists(settings);
@@ -29,10 +36,12 @@ export function buildServiceRows(settings) {
     ? settings.serviceOverrides
     : {};
   const categories = getServiceCategories(settings);
+  const isDead = graveyardTest(settings);
   return options.map(name => ({
     name,
     meta: getEffectiveServiceMetadata(name, overrides),
     bucket: serviceBucketOf(categories, name) || UNGROUPED_SERVICES,
+    graveyard: isDead(name),
   }));
 }
 

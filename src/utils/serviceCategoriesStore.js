@@ -11,6 +11,8 @@
 // board has always worked; the Services subtab is just a second way in.
 
 import { SERVICE_CATEGORIES } from '../data/enums.js';
+import { getEffectiveServiceMetadata } from '../data/serviceCatalog.js';
+import { isGraveyardBucket } from './servicePricing.js';
 
 // The card the Scope picker adds for services no box claims. Not a real box:
 // nothing is stored under it, and choosing it on the Services subtab takes
@@ -32,15 +34,76 @@ export function sortServiceNames(items, renames) {
   return [...(items || [])].sort((a, b) => NAME_COLLATOR.compare(label(a), label(b)));
 }
 
+// The graveyard boxes last, everything else in the order it was in.
+//
+// A box named for the graveyard holds what nobody sells any more, and a
+// board reads top-down: the live work belongs above the dead. Nothing else
+// is reordered — box order groups the business and is the user's own.
+//
+// Applied on the way out rather than stored, so it holds for a layout that
+// has never been edited. An edit that writes the layout back (filing a
+// service into another box) does persist this order, which is the order the
+// board was already showing.
+function graveyardLast(cats) {
+  const live = [];
+  const dead = [];
+  for (const c of cats) (isGraveyardBucket(c.name) ? dead : live).push(c);
+  return dead.length ? [...live, ...dead] : cats;
+}
+
 // The layout: boxes in board order — that ordering groups the business, so
-// it's left as the user (or the seed) arranged it — each box's services
-// alphabetical. Always a fresh copy, so a caller can rearrange what it gets
-// back without mutating settings.
+// it's left as the user (or the seed) arranged it, bar the graveyard, which
+// sinks — each box's services alphabetical. Always a fresh copy, so a caller
+// can rearrange what it gets back without mutating settings.
 export function getServiceCategories(settings) {
   const custom = settings?.customServiceCategories;
   const base = (Array.isArray(custom) && custom.length) ? custom : SERVICE_CATEGORIES;
   const renames = settings?.serviceRenames;
-  return base.map(c => ({ name: c.name, items: sortServiceNames(c.items, renames) }));
+  return graveyardLast(base.map(c => ({ name: c.name, items: sortServiceNames(c.items, renames) })));
+}
+
+/**
+ * A test for "has this service been retired", built once against settings.
+ *
+ * Two things say a service is dead and they mean the same thing: the box it
+ * is filed in (any box with "graveyard" in its name — the user's own box,
+ * see isGraveyardBucket) and the seed catalog's `graveyard` flag, which
+ * predates the board and marks the handful that died before boxes existed.
+ * Either one greys the service and sinks it to the bottom of every list it
+ * appears in.
+ *
+ * A test rather than a list of names, because the lists it orders carry
+ * names no box claims — a service on the Solutions list and filed nowhere
+ * still has to be answered for.
+ */
+export function graveyardTest(settings) {
+  const overrides = (settings?.serviceOverrides && typeof settings.serviceOverrides === 'object')
+    ? settings.serviceOverrides
+    : {};
+  const boxed = new Set();
+  for (const cat of getServiceCategories(settings)) {
+    if (!isGraveyardBucket(cat.name)) continue;
+    for (const item of cat.items || []) boxed.add(String(item).trim().toLowerCase());
+  }
+  return (name) => {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return false;
+    if (boxed.has(key)) return true;
+    return !!getEffectiveServiceMetadata(name, overrides)?.graveyard;
+  };
+}
+
+/**
+ * `names` with the retired ones moved to the end, each half in the order it
+ * arrived. `isDead` is a graveyardTest.
+ */
+export function graveyardNamesLast(names, isDead) {
+  const list = [...(names || [])];
+  if (!isDead) return list;
+  const live = [];
+  const dead = [];
+  for (const n of list) (isDead(n) ? dead : live).push(n);
+  return dead.length ? [...live, ...dead] : list;
 }
 
 // The board as it should be shown: the user's boxes, plus a trailing
@@ -75,7 +138,13 @@ export function buildServiceBoard(settings, options) {
     extra.push(name);
   }
   if (!extra.length) return cats;
-  return [...cats, { name: UNGROUPED_SERVICES, items: sortServiceNames(extra, settings?.serviceRenames) }];
+  // Sunk again after the catch-all card is added: "Other services" holds
+  // live work nobody has filed, so it belongs above the graveyard rather
+  // than under it.
+  return graveyardLast([
+    ...cats,
+    { name: UNGROUPED_SERVICES, items: sortServiceNames(extra, settings?.serviceRenames) },
+  ]);
 }
 
 // Which box a service sits in, or '' when no box claims it — the Scope

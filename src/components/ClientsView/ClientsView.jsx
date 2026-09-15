@@ -1110,11 +1110,13 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         const link = resolveColumnLink('Status', columnLinks);
         let cell;
         if (link) {
-          const opts = listRegistry?.get(link.listKey)?.options || [];
+          const list = listRegistry?.get(link.listKey);
+          const opts = list?.options || [];
+          const muted = list?.muted;
           const onChange = (v) => setClientStatus(row.company, v);
           cell = link.mode === 'multi'
-            ? <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />
-            : <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+            ? <MultiSelectCell value={row.Status} onChange={onChange} options={opts} muted={muted} />
+            : <SelectCell value={row.Status} onChange={onChange} options={opts} muted={muted} />;
         } else {
           cell = (
             <ClientStatusTextCell

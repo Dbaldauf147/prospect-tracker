@@ -291,10 +291,13 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
   } else if (field.yesno) {
     editor = <SelectCell value={raw} onChange={onChange} options={['Yes', 'No']} />;
   } else if (link) {
-    const opts = listRegistry?.get(link.listKey)?.options || [];
+    const list = listRegistry?.get(link.listKey);
+    const opts = list?.options || [];
+    // Retired options read greyed, at the bottom where the list put them.
+    const muted = list?.muted;
     editor = link.mode === 'multi'
-      ? <MultiSelectCell value={raw} onChange={onChange} options={opts} />
-      : <SelectCell value={raw} onChange={onChange} options={opts} />;
+      ? <MultiSelectCell value={raw} onChange={onChange} options={opts} muted={muted} />
+      : <SelectCell value={raw} onChange={onChange} options={opts} muted={muted} />;
   } else {
     editor = <ProgressTextEditor value={raw} onCommit={onChange} />;
   }
@@ -1184,12 +1187,14 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
         // existing dealsStore persistence round-trips it cleanly.
         const link = resolveColumnLink(k, columnLinks);
         if (link) {
-          const opts = listRegistry?.get(link.listKey)?.options || [];
+          const list = listRegistry?.get(link.listKey);
+          const opts = list?.options || [];
+          const muted = list?.muted;
           const onChange = (v) => row.__onUpdate?.(row.id, k, v);
           if (link.mode === 'multi') {
-            return <MultiSelectCell value={row[k]} onChange={onChange} options={opts} />;
+            return <MultiSelectCell value={row[k]} onChange={onChange} options={opts} muted={muted} />;
           }
-          return <SelectCell value={row[k]} onChange={onChange} options={opts} />;
+          return <SelectCell value={row[k]} onChange={onChange} options={opts} muted={muted} />;
         }
         // Revenue Recorded / Paid to Date auto-populate from the
         // Commissions tab when the deal's BFO opp name matches a

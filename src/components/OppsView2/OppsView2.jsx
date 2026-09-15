@@ -7942,7 +7942,11 @@ export function OppInfoModal({
     }
     const link = columnLinks ? resolveColumnLink(h, columnLinks) : null;
     if (link && listRegistry) {
-      const opts = listRegistry.get(link.listKey)?.options || [];
+      const list = listRegistry.get(link.listKey);
+      const opts = list?.options || [];
+      // Which of those the list says are retired, so the menu greys them
+      // where they sit - at the bottom, where the list already put them.
+      const muted = list?.muted;
       if (link.mode === 'multi') {
         const extraGroups = link.listKey === 'solutions'
           ? Object.entries(pricingOptionServices || {})
@@ -7978,6 +7982,7 @@ export function OppInfoModal({
             value={value}
             onChange={onChange}
             options={opts}
+            muted={muted}
             extraGroups={extraGroups}
             extraGroupsLabel="Add from Pricing Option"
             extraGroupsPlaceholder="(pick an option)"
@@ -7986,7 +7991,7 @@ export function OppInfoModal({
           />
         );
       }
-      return <SelectCell value={value} onChange={onChange} options={opts} />;
+      return <SelectCell value={value} onChange={onChange} options={opts} muted={muted} />;
     }
     if (h === 'Contact') {
       return (
@@ -13632,7 +13637,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           }
           const link = resolveColumnLink(h, columnLinks);
           if (link) {
-            const opts = listRegistry.get(link.listKey)?.options || [];
+            const list = listRegistry.get(link.listKey);
+            const opts = list?.options || [];
+            const muted = list?.muted;
             if (link.mode === 'multi') {
               // Surface the Pricing-tab per-Option services bundle only
               // when this cell's vocabulary is the Solutions catalog
@@ -13676,6 +13683,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                   value={row[h]}
                   onChange={(v) => updateOppField(row._id, h, v)}
                   options={opts}
+                  muted={muted}
                   extraGroups={extraGroups}
                   extraGroupsLabel="Add from Pricing Option"
                   extraGroupsPlaceholder="(pick an option)"
@@ -13689,6 +13697,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 options={opts}
+                muted={muted}
               />
             );
           }
