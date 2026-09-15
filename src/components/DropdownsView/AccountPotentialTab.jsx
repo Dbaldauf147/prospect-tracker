@@ -6,6 +6,7 @@ import { oppScenario } from '../../utils/oppPricingImport';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../../utils/pricingAnalysis';
 import { OppImportModal } from './OppImportModal';
+import { ScopeLineMathModal } from './ScopeLineMathModal';
 import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
@@ -115,6 +116,11 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   const [oppRecords, setOppRecords] = useState(null);
   const [oppError, setOppError] = useState('');
   const [oppLoading, setOppLoading] = useState(false);
+
+  // Which service in the scope breakdown has its working open, by name. A
+  // name rather than the line itself, so the panel re-reads a live estimate:
+  // edit a count with it open and the arithmetic behind it moves too.
+  const [mathFor, setMathFor] = useState('');
 
   const pricing = useMemo(() => getServicePricing(settings), [settings?.servicePricing]);
   // The Pricing Basis vocabulary in force: the edited list when there is
@@ -466,6 +472,22 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // and its share of the deal. Read off the same estimate the bar's totals
   // come from, so the panel and the headline can never disagree.
   const scopeLines = useMemo(() => scopeYear1Lines(totals), [totals]);
+
+  // The same lines with their working still attached, for the panel that
+  // opens off a bullet. scopeYear1Lines trims an estimate down to what the
+  // breakdown prints — a name, a figure and a share — and the rate, the
+  // count and the setup line that produced the figure are exactly what the
+  // popup is for, so it reads the estimate itself rather than the trimmed
+  // copy. Keyed by name, which is what the estimate and the breakdown agree
+  // on.
+  const estimateByName = useMemo(
+    () => new Map((totals.lines || []).map(l => [l.name, l])),
+    [totals.lines],
+  );
+  // Held open by name, so a line that falls out of scope while its panel is
+  // up closes it rather than going on explaining a service the deal no
+  // longer has.
+  const mathLine = mathFor ? estimateByName.get(mathFor) || null : null;
 
   // The project work in this scope, one row per service. Sites and accounts
   // are facts about the account, so one box each answers for every service
@@ -1122,14 +1144,34 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           </div>
           <table className={styles.bundleTable}>
             <tbody>
+              {/* Every bullet opens its own working. The figure beside it
+                  is the end of a sum whose parts are on three other
+                  subtabs, and a range quoted to a client is the number
+                  most likely to be challenged - so the row that states it
+                  is also the way to see how it was reached. */}
               {scopeLines.map(line => (
-                <tr key={line.name}>
+                <tr
+                  key={line.name}
+                  className={styles.scopeRow}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`How ${line.name} is priced`}
+                  title={`How ${line.name} got to this figure: the rates, the counts and the setup behind it.`}
+                  onClick={() => setMathFor(line.name)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setMathFor(line.name);
+                    }
+                  }}
+                >
                   <td className={styles.bundleCellName}>
                     <span className={styles.bundleBullet}>{'\u2022'}</span>
-                    {line.name}
+                    <span className={styles.scopeRowName}>{line.name}</span>
                     {line.setupNote && (
                       <span className={styles.scopeSetupMark} title={line.setupNote}>incl. setup</span>
                     )}
+                    <span className={styles.scopeRowWhy} aria-hidden="true">how?</span>
                   </td>
                   <td className={styles.bundleCellMoney}>
                     {line.priced
@@ -1325,6 +1367,15 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           error={oppError}
           onPick={applyOpp}
           onClose={() => setOppPicker(false)}
+        />
+      )}
+
+      {mathLine && (
+        <ScopeLineMathModal
+          line={mathLine}
+          dealTotal={totals.year1Total}
+          bases={bases}
+          onClose={() => setMathFor('')}
         />
       )}
     </>
