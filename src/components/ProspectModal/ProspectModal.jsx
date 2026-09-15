@@ -50,7 +50,7 @@ import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
-import { estimateEmailDomain } from '../../utils/emailDomainPattern';
+import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
@@ -4636,10 +4636,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // rather than asked for: the field is what lets the app guess an address
   // for somebody nobody has an email for, and a company with eight
   // contacts on it has already answered the question it is asking.
-  const emailDomainEstimate = useMemo(
-    () => estimateEmailDomain(companyContacts),
+  //
+  // Every format the contacts support, not only the best one: two
+  // conventions on one domain is ordinary at a company that acquired
+  // another, and which of them is live is something the person reading
+  // the card knows and a vote count does not.
+  const emailDomainOptions = useMemo(
+    () => estimateEmailDomainCandidates(companyContacts),
     [companyContacts],
   );
+
+  // The Email Domains picker. `domainPicks` is the field as it would be
+  // saved: an ordered list of entries where the FIRST is the primary, in
+  // the only sense the app has of one - buildEmailFromPattern walks the
+  // field in order and stops at the first entry it can build an address
+  // from. Held on the component so the panel survives a re-render (a
+  // contact sync landing mid-read) rather than closing under the user.
+  const [domainPickerOpen, setDomainPickerOpen] = useState(false);
+  const [domainPicks, setDomainPicks] = useState([]);
 
   // Per-contact sent / received email counts sourced from the
   // hubspot-activity-cache localStorage entry that the Activity tab
@@ -7880,23 +7894,66 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Email Domains</label>
               {(() => {
                 const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
-                const est = emailDomainEstimate;
-                const alreadyHasEstimate = !!est.entry
-                  && domains.some(d => d.toLowerCase() === est.entry.toLowerCase());
+                const opts = emailDomainOptions;
+                const lower = v => String(v || '').toLowerCase();
+                const recorded = new Set(domains.map(lower));
+                const newCandidates = opts.candidates.filter(o => !recorded.has(lower(o.entry)));
+                // "address" takes -es, and every other word here takes -s.
+                const plural = (n, word) => `${n} ${word}${n === 1 ? '' : /s$/.test(word) ? 'es' : 's'}`;
+
+                // Everything the picker can list, in the order it would be
+                // saved in: the formats the contacts support, then whatever
+                // is already in the field that no contact votes for (typed
+                // by hand, or learned back when the roster looked
+                // different). One list, because the field is ordered and
+                // the primary can be any of them - including one that was
+                // already there.
+                const rows = [
+                  ...opts.candidates.map(o => ({ ...o, suggested: true, onRecord: recorded.has(lower(o.entry)) })),
+                  ...domains
+                    .filter(d => !opts.candidates.some(o => lower(o.entry) === lower(d)))
+                    .map(d => ({ entry: d, suggested: false, onRecord: true, samples: [], votes: 0 })),
+                ];
+                // Domains that taught nothing at all. Named rather than
+                // dropped: "nothing offered for parentco.com" answers the
+                // question, and silence about it reads as a bug.
+                const quiet = opts.domains.filter(d => !opts.candidates.some(o => o.domain === d.domain));
+
                 // Why the button can't do anything, said on the button
                 // itself. A disabled control with no reason is a control
                 // that reads as broken.
-                const estimateBlocked = alreadyHasEstimate
-                  ? `"${est.entry}" is already recorded here.`
-                  : est.reason === 'no-contacts'
+                const busiest = opts.domains[0];
+                const estimateBlocked = rows.length > 0
+                  ? ''
+                  : opts.reason === 'no-contacts'
                     ? 'No contacts on this company yet, so there is nothing to learn a format from. Add them on the Contacts tab.'
-                    : est.reason === 'no-work-emails'
+                    : opts.reason === 'no-work-emails'
                       ? 'The contacts here have no work addresses - free-mail or blank only - and those say nothing about how this company builds an address.'
-                      : est.reason === 'no-pattern'
-                        ? `The ${est.domainCount} address${est.domainCount === 1 ? '' : 'es'} at ${est.domain} do not follow one convention, so there is nothing worth recording.`
-                        : '';
+                      : opts.reason === 'no-pattern' && busiest
+                        ? `The ${plural(busiest.count, 'address')} at ${busiest.domain} do not follow one convention, so there is nothing worth recording.`
+                        : 'There is nothing to estimate from yet.';
+
+                const openPicker = () => {
+                  // Opens on what is already recorded, in the order it is
+                  // recorded in, with the best NEW suggestion ticked on the
+                  // end. Open it and hit Save without touching anything and
+                  // you get exactly what the old one-shot button gave you.
+                  const start = [...domains];
+                  if (newCandidates[0]) start.push(newCandidates[0].entry);
+                  setDomainPicks(start);
+                  setDomainPickerOpen(true);
+                };
+                const togglePick = entry => setDomainPicks(prev => (
+                  prev.some(e => lower(e) === lower(entry))
+                    ? prev.filter(e => lower(e) !== lower(entry))
+                    : [...prev, entry]
+                ));
+                const makePrimary = entry => setDomainPicks(prev => (
+                  [entry, ...prev.filter(e => lower(e) !== lower(entry))]
+                ));
+
                 return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', position: 'relative' }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: `1px solid ${domains.length === 0 ? '#FCA5A5' : 'var(--color-border)'}`, borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
                       {/* Nothing on record is worth saying out loud: this
                           field is what every guessed address on the account
@@ -7909,8 +7966,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >Missing</span>
                       )}
                       {domains.map((d, i) => (
-                        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
+                        <span
+                          key={i}
+                          title={i === 0 && domains.length > 1 ? 'Used first when an address is guessed here.' : undefined}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}
+                        >
                           {d}
+                          {i === 0 && domains.length > 1 && (
+                            <span style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.03em', color: '#2563EB' }}>1ST</span>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -7938,40 +8002,144 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       />
                     </div>
                     {/* The contacts on this card have already answered this
-                        question, one address each. The button reads their
-                        answer back rather than making somebody work it out
-                        by eye - and names the sample it learned from, so it
-                        can be checked before it is trusted. */}
+                        question, one address each - but they can answer it
+                        more than one way, and a company that acquired
+                        another usually does. So the button opens the whole
+                        field of answers with the addresses behind each,
+                        rather than committing the winner unseen: the user
+                        picks which one is used first and keeps the rest. */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                       <button
                         type="button"
-                        disabled={!est.entry || alreadyHasEstimate}
-                        onClick={() => set('emailDomain', [...domains, est.entry].join('\n'))}
-                        title={estimateBlocked || `${est.votes} of the ${est.domainCount} contact${est.domainCount === 1 ? '' : 's'} at ${est.domain} `
-                          + `${est.votes === 1 ? 'is' : 'are'} written ${est.patternKey}, e.g. ${est.sample}. `
-                          + `Adds "${est.entry}" here. Check it before it is used to guess somebody's address.`}
+                        disabled={rows.length === 0}
+                        onClick={() => (domainPickerOpen ? setDomainPickerOpen(false) : openPicker())}
+                        title={estimateBlocked || (newCandidates.length > 0
+                          ? `${plural(newCandidates.length, 'format')} the contacts here support and this field does not have yet. Opens them with the addresses behind each, to pick from.`
+                          : 'Everything the contacts here suggest is already recorded. Opens the list to change which one is used first, or to remove one.')}
                         style={{
                           padding: '0.2rem 0.5rem',
-                          border: `1px solid ${est.entry && !alreadyHasEstimate ? '#86EFAC' : 'var(--color-border)'}`,
+                          border: `1px solid ${rows.length === 0 ? 'var(--color-border)' : newCandidates.length > 0 ? '#86EFAC' : '#CBD5E1'}`,
                           borderRadius: 4,
-                          background: est.entry && !alreadyHasEstimate ? '#F0FDF4' : '#F8FAFC',
-                          color: est.entry && !alreadyHasEstimate ? '#166534' : '#94A3B8',
+                          background: rows.length === 0 ? '#F8FAFC' : newCandidates.length > 0 ? '#F0FDF4' : '#F8FAFC',
+                          color: rows.length === 0 ? '#94A3B8' : newCandidates.length > 0 ? '#166534' : '#475569',
                           fontSize: '0.68rem',
                           fontWeight: 600,
                           fontFamily: 'inherit',
-                          cursor: est.entry && !alreadyHasEstimate ? 'pointer' : 'not-allowed',
+                          cursor: rows.length === 0 ? 'not-allowed' : 'pointer',
                         }}
                       >
-                        {est.entry && !alreadyHasEstimate
-                          ? `Estimate from ${est.domainCount} contact${est.domainCount === 1 ? '' : 's'}`
-                          : 'Estimate from contacts'}
+                        {newCandidates.length > 0
+                          ? `Estimate from ${plural(opts.total, 'contact')}...`
+                          : 'Estimate from contacts...'}
                       </button>
-                      {est.entry && !alreadyHasEstimate && (
+                      {!domainPickerOpen && newCandidates.length > 0 && (
                         <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {est.entry}
+                          {newCandidates[0].entry}
+                          {newCandidates.length > 1 ? ` and ${newCandidates.length - 1} other option${newCandidates.length === 2 ? '' : 's'}` : ''}
                         </span>
                       )}
                     </div>
+
+                    {domainPickerOpen && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 340, overflowY: 'auto' }}>
+                        <div style={{ padding: '0.5rem 0.6rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#334155' }}>
+                            {opts.candidates.length > 0
+                              ? `Formats the ${plural(opts.total, 'work address')} here suggest`
+                              : 'Formats on record'}
+                          </div>
+                          <div style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)', marginTop: 2, lineHeight: 1.4 }}>
+                            Tick every format that is real at this company. The primary is the one an address is built from; the others still pull contacts on their domain onto this card. Read the addresses before trusting a format: it is what the app will write to somebody.
+                          </div>
+                        </div>
+                        {rows.map(row => {
+                          const idx = domainPicks.findIndex(e => lower(e) === lower(row.entry));
+                          const picked = idx >= 0;
+                          const isPrimary = idx === 0;
+                          const hasPattern = row.entry.lastIndexOf('@') > 0;
+                          return (
+                            <div
+                              key={row.entry}
+                              style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.45rem 0.6rem', borderBottom: '1px solid #F1F5F9', background: isPrimary ? '#F0FDF4' : '#fff' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={picked}
+                                onChange={() => togglePick(row.entry)}
+                                title={picked ? 'Keep this format on the company' : 'Not on the company'}
+                                style={{ marginTop: 3, cursor: 'pointer', flexShrink: 0 }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#1E40AF', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' }}>{row.entry}</span>
+                                  {isPrimary && (
+                                    <span style={{ fontSize: '0.58rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#DCFCE7', color: '#166534' }}>PRIMARY</span>
+                                  )}
+                                  {picked && !isPrimary && (
+                                    <button
+                                      type="button"
+                                      onClick={() => makePrimary(row.entry)}
+                                      style={{ fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', padding: '1px 6px', borderRadius: 999, border: '1px solid #CBD5E1', background: '#fff', color: '#475569', cursor: 'pointer' }}
+                                    >Make primary</button>
+                                  )}
+                                  {row.onRecord && (
+                                    <span style={{ fontSize: '0.58rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F1F5F9', color: '#64748B' }}>ON RECORD</span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                                  {row.suggested
+                                    ? `${row.votes} of the ${plural(row.domainCount, 'contact')} at ${row.domain} ${row.votes === 1 ? 'is' : 'are'} written this way.`
+                                    : hasPattern
+                                      ? 'Added by hand. No contact here is written this way.'
+                                      : 'Added by hand, and no naming pattern, so no address is built from it. It still pulls contacts on this domain onto the card.'}
+                                </div>
+                                {row.samples.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.1rem 0.5rem', marginTop: 2 }}>
+                                    {row.samples.map(s => (
+                                      <span key={s.email} style={{ fontSize: '0.66rem', color: '#475569' }}>
+                                        <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{s.email}</span>
+                                        {s.name ? ` (${s.name})` : ''}
+                                      </span>
+                                    ))}
+                                    {row.votes > row.samples.length && (
+                                      <span style={{ fontSize: '0.66rem', color: '#94A3B8' }}>
+                                        and {row.votes - row.samples.length} more
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {quiet.length > 0 && (
+                          <div style={{ padding: '0.4rem 0.6rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.66rem', color: '#94A3B8', lineHeight: 1.4 }}>
+                            Nothing to offer for {quiet.map(d => `${d.domain} (${plural(d.count, 'address')}, no shared convention)`).join(', ')}.
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.5rem 0.6rem', background: '#F8FAFC' }}>
+                          <span style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {domainPicks.length === 0
+                              ? 'Nothing ticked. Saving empties this field.'
+                              : `${domainPicks[0]} is used first when an address is guessed.`}
+                          </span>
+                          <span style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => setDomainPickerOpen(false)}
+                              style={{ padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                            >Cancel</button>
+                            <button
+                              type="button"
+                              onClick={() => { set('emailDomain', domainPicks.join('\n')); setDomainPickerOpen(false); }}
+                              style={{ padding: '0.2rem 0.5rem', border: '1px solid #86EFAC', borderRadius: 4, background: '#F0FDF4', color: '#166534', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                            >
+                              {domainPicks.length === 0 ? 'Save (empty)' : `Save ${plural(domainPicks.length, 'format')}`}
+                            </button>
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}

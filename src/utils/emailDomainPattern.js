@@ -96,30 +96,34 @@ export function buildEmailFromPattern(emailDomainField, firstname, lastname) {
 }
 
 /**
- * What a set of contacts says this company's Email Domains entry should be.
+ * Every email format this company's own contacts could be said to follow,
+ * best first, with the addresses that taught each one.
  *
- * The busiest work domain wins, and then the commonest naming pattern
- * AMONG THE PEOPLE ON THAT DOMAIN - counting patterns across every domain
- * at once would let a handful of people at a parent company decide the
- * convention for a subsidiary that spells its addresses differently.
+ * estimateEmailDomain below picks the single winner. This returns the whole
+ * field of candidates instead, because the winner is a guess and the person
+ * reading the card often knows which of two conventions is the live one -
+ * a company that acquired another spells addresses two ways for years, and
+ * only one of those is how the next person's address will be built.
  *
- * Free-mail addresses are ignored: a contact who gave us a gmail address
- * says nothing about how their employer builds addresses.
+ * Returns { candidates, domains, total, reason }:
  *
- * Always returns an object, so a caller can say WHY there is nothing to
- * offer rather than showing a dead button:
+ *   candidates  ranked "<pattern>@<domain>" options, each carrying the
+ *               evidence for it: how many people on that domain are
+ *               written that way, and up to three of their addresses by
+ *               name, so the suggestion can be checked rather than trusted.
+ *   domains     every work domain seen, with its contact count and how
+ *               many of those follow no convention at all. A domain that
+ *               produced no candidate still belongs here: "nothing offered
+ *               for parentco.com" is an answer, and a silent omission is not.
+ *   reason      why there are no candidates, when there are none:
+ *               'no-contacts', 'no-work-emails' or 'no-pattern'.
  *
- *   { entry, domain, patternKey, votes, domainCount, total, sample, reason }
- *
- * `entry` is null unless a domain and a pattern both won, and `reason` is
- * then one of 'no-contacts' (nobody to learn from), 'no-work-emails' (only
- * free-mail or malformed addresses) or 'no-pattern' (a domain, but no
- * convention any two people agree on).
+ * Ranking is domain first (the busiest domain's options all come before a
+ * quieter domain's, ties broken on the name), then votes within a domain,
+ * then EMAIL_PATTERN_RULES order - the same order detectLocalPattern reads
+ * them in, so the same roster always ranks the same way.
  */
-export function estimateEmailDomain(contacts = []) {
-  const empty = {
-    entry: null, domain: '', patternKey: '', votes: 0, domainCount: 0, total: 0, sample: '',
-  };
+export function estimateEmailDomainCandidates(contacts = []) {
   const byDomain = new Map();
   let total = 0;
   for (const c of contacts || []) {
@@ -133,42 +137,116 @@ export function estimateEmailDomain(contacts = []) {
     const pattern = detectLocalPattern(email, c?.firstname, c?.lastname);
     if (!pattern) continue;
     bucket.patterns.set(pattern, (bucket.patterns.get(pattern) || 0) + 1);
-    if (!bucket.samples.has(pattern)) bucket.samples.set(pattern, email);
-  }
-  if (total === 0) {
-    return { ...empty, reason: (contacts || []).length === 0 ? 'no-contacts' : 'no-work-emails' };
-  }
-
-  // The busiest domain, with the name breaking a tie so the same book of
-  // contacts always estimates the same way.
-  let domain = '';
-  let domainCount = 0;
-  for (const [d, bucket] of byDomain) {
-    if (bucket.count > domainCount || (bucket.count === domainCount && d < domain)) {
-      domain = d;
-      domainCount = bucket.count;
+    if (!bucket.samples.has(pattern)) bucket.samples.set(pattern, []);
+    const shown = bucket.samples.get(pattern);
+    // Three is enough to show a convention and short enough to read at a
+    // glance; the vote count says how many more there are.
+    if (shown.length < 3) {
+      const name = [c?.firstname, c?.lastname].map(s => String(s || '').trim()).filter(Boolean).join(' ');
+      shown.push({ email, name });
     }
   }
-  const bucket = byDomain.get(domain);
-  let patternKey = '';
-  let votes = 0;
-  for (const rule of EMAIL_PATTERN_RULES) {
-    const n = bucket.patterns.get(rule.key) || 0;
-    // Ties go to the earlier rule, which is the more specific one - the
-    // same order detectLocalPattern reads them in.
-    if (n > votes) { patternKey = rule.key; votes = n; }
+
+  if (total === 0) {
+    return {
+      candidates: [],
+      domains: [],
+      total: 0,
+      reason: (contacts || []).length === 0 ? 'no-contacts' : 'no-work-emails',
+    };
   }
-  if (!patternKey) {
-    return { ...empty, domain, domainCount, total, reason: 'no-pattern' };
+
+  const domainNames = [...byDomain.keys()].sort((a, b) => {
+    const diff = byDomain.get(b).count - byDomain.get(a).count;
+    return diff !== 0 ? diff : (a < b ? -1 : a > b ? 1 : 0);
+  });
+
+  const candidates = [];
+  const domains = [];
+  for (const domain of domainNames) {
+    const bucket = byDomain.get(domain);
+    let voted = 0;
+    for (const rule of EMAIL_PATTERN_RULES) {
+      const votes = bucket.patterns.get(rule.key) || 0;
+      if (votes === 0) continue;
+      voted += votes;
+      candidates.push({
+        entry: `${rule.key}@${domain}`,
+        domain,
+        patternKey: rule.key,
+        votes,
+        domainCount: bucket.count,
+        samples: bucket.samples.get(rule.key) || [],
+      });
+    }
+    domains.push({ domain, count: bucket.count, unmatched: bucket.count - voted });
   }
+  // Votes decide the order within a domain; the domain order above is kept
+  // by sorting only inside each domain's run.
+  candidates.sort((a, b) => {
+    if (a.domain !== b.domain) return domainNames.indexOf(a.domain) - domainNames.indexOf(b.domain);
+    return b.votes - a.votes;
+  });
+
   return {
-    entry: `${patternKey}@${domain}`,
-    domain,
-    patternKey,
-    votes,
-    domainCount,
+    candidates,
+    domains,
     total,
-    sample: bucket.samples.get(patternKey) || '',
+    reason: candidates.length === 0 ? 'no-pattern' : '',
+  };
+}
+
+/**
+ * What a set of contacts says this company's Email Domains entry should be.
+ *
+ * The busiest work domain wins, and then the commonest naming pattern
+ * AMONG THE PEOPLE ON THAT DOMAIN - counting patterns across every domain
+ * at once would let a handful of people at a parent company decide the
+ * convention for a subsidiary that spells its addresses differently.
+ *
+ * Free-mail addresses are ignored: a contact who gave us a gmail address
+ * says nothing about how their employer builds addresses.
+ *
+ * This is the top of estimateEmailDomainCandidates' ranking, kept as its
+ * own call because most readers want the one answer: Table View's inferred
+ * suggestions take it unattended, and the company card opens on it.
+ *
+ * Always returns an object, so a caller can say WHY there is nothing to
+ * offer rather than showing a dead button:
+ *
+ *   { entry, domain, patternKey, votes, domainCount, total, sample, reason }
+ *
+ * `entry` is null unless a domain and a pattern both won, and `reason` is
+ * then one of 'no-contacts' (nobody to learn from), 'no-work-emails' (only
+ * free-mail or malformed addresses) or 'no-pattern' (a domain, but no
+ * convention any two people agree on).
+ */
+export function estimateEmailDomain(contacts = []) {
+  const { candidates, domains, total, reason } = estimateEmailDomainCandidates(contacts);
+  const empty = {
+    entry: null, domain: '', patternKey: '', votes: 0, domainCount: 0, total: 0, sample: '',
+  };
+  if (candidates.length === 0) {
+    // The busiest domain is still worth naming on a 'no-pattern': it is
+    // what the card tells the user nobody at it agrees on.
+    const top = domains[0];
+    return {
+      ...empty,
+      domain: top ? top.domain : '',
+      domainCount: top ? top.count : 0,
+      total,
+      reason,
+    };
+  }
+  const best = candidates[0];
+  return {
+    entry: best.entry,
+    domain: best.domain,
+    patternKey: best.patternKey,
+    votes: best.votes,
+    domainCount: best.domainCount,
+    total,
+    sample: best.samples[0] ? best.samples[0].email : '',
     reason: '',
   };
 }

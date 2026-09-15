@@ -9,7 +9,8 @@
 // a free-mail-only account - and that the pattern keys it writes are the
 // same strings buildEmailFromPattern reads back.
 import {
-  EMAIL_PATTERN_RULES, estimateEmailDomain, detectLocalPattern, buildEmailFromPattern, domainOf,
+  EMAIL_PATTERN_RULES, estimateEmailDomain, estimateEmailDomainCandidates,
+  detectLocalPattern, buildEmailFromPattern, domainOf,
 } from '../src/utils/emailDomainPattern.js';
 
 let passed = 0, failed = 0;
@@ -96,6 +97,64 @@ const tied = [c('a.b@alpha.com', 'A', 'B'), c('c.d@beta.com', 'C', 'D')];
 check('a tie is broken the same way every run',
   [estimateEmailDomain(tied).domain, estimateEmailDomain([...tied].reverse()).domain],
   ['alpha.com', 'alpha.com']);
+
+// --- every option, not just the winner -----------------------------------
+// The card offers a choice, so what it offers has to be the whole field and
+// has to carry its own evidence: a suggestion nobody can check is a
+// suggestion somebody sends a wrong address from.
+const mixed = [
+  c('john.smith@ahr.com', 'John', 'Smith'),
+  c('jane.doe@ahr.com', 'Jane', 'Doe'),
+  c('mczarnecki@ahr.com', 'Mia', 'Czarnecki'),
+  c('info@ahr.com', 'Front', 'Desk'),
+  c('adoe@parentco.com', 'Alice', 'Doe'),
+  c('somebody@gmail.com', 'Some', 'Body'),
+];
+const field = estimateEmailDomainCandidates(mixed);
+check(
+  'both conventions on the busy domain are offered, busiest first',
+  field.candidates.map(o => [o.entry, o.votes]),
+  [
+    ['firstname.lastname@ahr.com', 2],
+    ['firstinitiallastname@ahr.com', 1],
+    ['firstinitiallastname@parentco.com', 1],
+  ],
+);
+check('the winner is the head of the same ranking', estimateEmailDomain(mixed).entry, field.candidates[0].entry);
+check(
+  'each option names the addresses behind it',
+  field.candidates[0].samples.map(s => [s.name, s.email]),
+  [['John Smith', 'john.smith@ahr.com'], ['Jane Doe', 'jane.doe@ahr.com']],
+);
+check('and how many people it is choosing among', [field.candidates[0].domainCount, field.total], [4, 5]);
+// A domain that taught nothing is still reported: silence about parentco.com
+// reads as "no such domain", which is a different thing.
+check(
+  'every work domain is accounted for, pattern or not',
+  estimateEmailDomainCandidates([
+    c('john.smith@ahr.com', 'John', 'Smith'),
+    c('info@quiet.com', 'Front', 'Desk'),
+  ]).domains,
+  [{ domain: 'ahr.com', count: 1, unmatched: 0 }, { domain: 'quiet.com', count: 1, unmatched: 1 }],
+);
+check('a domain says how many of its people follow nothing',
+  estimateEmailDomainCandidates(mixed).domains[0], { domain: 'ahr.com', count: 4, unmatched: 1 });
+// Samples stay short enough to read on the card.
+check(
+  'at most three addresses are shown per option',
+  estimateEmailDomainCandidates(
+    ['ann', 'bob', 'cal', 'dee'].map(n => c(`${n}.smith@ahr.com`, n, 'Smith')),
+  ).candidates[0].samples.length,
+  3,
+);
+// Nothing to offer is reported the same way it is on the single estimate,
+// so the card can say why with one branch.
+check('no options, and why', [
+  estimateEmailDomainCandidates([]).candidates.length,
+  estimateEmailDomainCandidates([]).reason,
+  estimateEmailDomainCandidates([c('a@gmail.com', 'A', 'B')]).reason,
+  estimateEmailDomainCandidates([c('info@ahr.com', 'Front', 'Desk')]).reason,
+], [0, 'no-contacts', 'no-work-emails', 'no-pattern']);
 
 // --- the round trip that matters ----------------------------------------
 // Whatever the estimate writes, buildEmailFromPattern has to read: this is
