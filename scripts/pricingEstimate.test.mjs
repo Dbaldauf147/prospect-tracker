@@ -7,9 +7,9 @@
 // mid-write, a hand edit, and a browser that refuses storage entirely —
 // and the estimator it feeds prices a real deal off those numbers. So
 // nothing is taken on trust: a count that isn't a number is dropped rather
-// than reaching the estimate as NaN, an import with no account comes back
-// as no import rather than as a crash on mount, and an emptied estimator
-// leaves nothing behind rather than a husk that reads as a live deal.
+// than reaching the estimate as NaN, a half-written record is a lost
+// estimate rather than a broken page, and an emptied estimator leaves
+// nothing behind rather than a husk that reads as a live deal.
 
 // A localStorage stand-in, installed before the module under test reads it.
 class FakeStorage {
@@ -34,12 +34,6 @@ function check(label, actual, expected) {
 }
 
 const UID = 'user-1';
-const IMPORT = {
-  account: 'Ventas', id: '17', stage: 'Lead', company: 'Ventas Inc',
-  services: 5, unmatchedTokens: ['widget polishing'],
-  filled: [{ unit: 'sites', label: 'Sites', value: 819, source: 'the opp’s “Sites” column' }],
-  missing: ['Meters'], noPrice: [],
-};
 const ESTIMATE = {
   scenario: {
     // The account the potential is being read for. A name rather than an
@@ -51,14 +45,12 @@ const ESTIMATE = {
     // which is why it travels with the estimate and not the rate card.
     serviceUnits: { Metering: 40 },
   },
-  pinned: ['Bill Pay', 'Metering'],
-  oppImport: IMPORT,
 };
 
 // ── The round trip: what went in is what comes back ───────────────────
 {
   savePricingEstimate(UID, ESTIMATE);
-  check('an imported estimate survives the round trip', loadPricingEstimate(UID), ESTIMATE);
+  check('an estimate survives the round trip', loadPricingEstimate(UID), ESTIMATE);
 }
 
 // ── One record per user ───────────────────────────────────────────────
@@ -71,7 +63,7 @@ const ESTIMATE = {
 
 // ── Clearing the scope clears the record ──────────────────────────────
 {
-  savePricingEstimate(UID, { scenario: { services: [], counts: {}, serviceUnits: {} }, pinned: null, oppImport: null });
+  savePricingEstimate(UID, { scenario: { services: [], counts: {}, serviceUnits: {} } });
   check('an emptied estimator leaves nothing behind', loadPricingEstimate(UID), null);
   check('and the key is gone, not just blank',
     globalThis.localStorage.getItem(pricingEstimateKey(UID)), null);
@@ -89,15 +81,8 @@ const ESTIMATE = {
   // field nothing reads.
   check('a deal size left over from an older record is not carried back',
     normalizeEstimate({ scenario: { services: ['A'], dealSize: 300000 } }).scenario.dealSize, undefined);
-  check('an import with no account is no import',
-    normalizeEstimate({ scenario: { services: ['A'] }, oppImport: { ...IMPORT, account: '  ' } }).oppImport, null);
-  check('a filled figure that isn’t a number is dropped from the note',
-    normalizeEstimate({ oppImport: { ...IMPORT, filled: [{ unit: 'sites', label: 'Sites', value: null }] } }).oppImport.filled,
-    []);
   check('service names that aren’t strings are dropped',
     normalizeEstimate({ scenario: { services: ['Bill Pay', 42, null, ''] } }).scenario.services, ['Bill Pay']);
-  check('an empty pin list reads as nothing pinned',
-    normalizeEstimate({ scenario: { services: ['A'] }, pinned: [] }).pinned, null);
   check('junk is not an estimate', normalizeEstimate('nope'), null);
   check('an empty estimate is not stored', normalizeEstimate({ scenario: { services: [] } }), null);
   check('an untouched estimator is empty', isEmptyEstimate({ scenario: { services: [], counts: {} } }), true);
@@ -115,8 +100,16 @@ const ESTIMATE = {
   check('units typed for this deal are worth remembering on their own',
     normalizeEstimate({ scenario: { serviceUnits: { 'Bill Pay': 40, 'Bad': 'lots' } } }).scenario.serviceUnits,
     { 'Bill Pay': 40 });
-  check('and the opp the estimate came from is kept, to save back to',
-    normalizeEstimate({ scenario: { services: ['A'] }, oppImport: IMPORT }).oppImport.id, '17');
+  // The estimator used to import an opp and pin its services to the top of
+  // the table. Both are gone - the Deal Size popup on the Opps page prices
+  // an opp now - so a record still carrying them comes back as the scenario
+  // alone rather than restoring fields nothing reads.
+  check('an older record\'s import and pins are left behind',
+    Object.keys(normalizeEstimate({
+      scenario: { services: ['A'] },
+      pinned: ['A'],
+      oppImport: { account: 'Ventas', id: '17' },
+    })), ['scenario']);
 }
 
 // ── A record that isn't JSON any more ─────────────────────────────────

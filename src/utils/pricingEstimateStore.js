@@ -3,16 +3,15 @@
 //
 // The rate card is in settings and syncs across devices; this is the other
 // half of that page — which company is on it, which services are ticked,
-// the counts they're priced against, which opp the numbers came from, and
-// which rows the import pinned to the top. It used to die with the view, so stepping
-// over to Opps for a figure, or reloading the page, threw an imported deal
-// away and the import had to be done again.
+// and the counts they're priced against. It used to die with the view, so
+// stepping over to Opps for a figure, or reloading the page, threw a
+// half-built estimate away and it had to be ticked out again.
 //
 // Kept in localStorage rather than settings: it's a working estimate on one
 // machine, not shared data, and pushing a scratch calculation into the
 // synced settings document on every tick would hand every other device a
 // half-built deal. The trade is that an estimate doesn't follow you to
-// another browser — Import opp rebuilds it there in one click.
+// another browser.
 //
 // Scoped by uid, the way the IndexedDB stores are, so two people signing in
 // on the same browser don't inherit each other's deal. Without a uid — the
@@ -60,38 +59,6 @@ function normalizeCounts(raw) {
   return out;
 }
 
-// What the last import managed, as the note under the bar reads it back.
-// Every field is rebuilt to the shape that note renders — it maps over the
-// lists and calls toLocaleString on the filled values — so a malformed
-// record comes back as no import rather than as a crash on mount.
-function normalizeImport(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const account = asString(raw.account).trim();
-  // Nothing to say without the account: the note leads with its name.
-  if (!account) return null;
-  const filled = (Array.isArray(raw.filled) ? raw.filled : [])
-    .filter(f => f && typeof f === 'object' && asCount(f.value) !== null)
-    .map(f => ({
-      unit: asString(f.unit),
-      label: asString(f.label),
-      value: asCount(f.value),
-      source: asString(f.source),
-    }));
-  return {
-    account,
-    // Which opp this estimate came from, so it can be saved back to it
-    // after a reload without importing it again.
-    id: asString(raw.id),
-    stage: asString(raw.stage),
-    company: asString(raw.company),
-    services: asCount(raw.services) ?? 0,
-    unmatchedTokens: asStringList(raw.unmatchedTokens),
-    filled,
-    missing: asStringList(raw.missing),
-    noPrice: asStringList(raw.noPrice),
-  };
-}
-
 /** True when there's nothing worth remembering — an untouched estimator. */
 export function isEmptyEstimate(estimate) {
   if (!estimate) return true;
@@ -99,9 +66,7 @@ export function isEmptyEstimate(estimate) {
   return !String(scenario.company || '').trim()
     && (scenario.services || []).length === 0
     && Object.keys(scenario.counts || {}).length === 0
-    && Object.keys(scenario.serviceUnits || {}).length === 0
-    && !estimate.oppImport
-    && (estimate.pinned || []).length === 0;
+    && Object.keys(scenario.serviceUnits || {}).length === 0;
 }
 
 /**
@@ -112,7 +77,6 @@ export function isEmptyEstimate(estimate) {
 export function normalizeEstimate(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const scenarioRaw = (raw.scenario && typeof raw.scenario === 'object') ? raw.scenario : {};
-  const pinned = asStringList(raw.pinned);
   const estimate = {
     scenario: {
       // The company the potential is being read for. A name rather than an
@@ -125,10 +89,6 @@ export function normalizeEstimate(raw) {
       counts: normalizeCounts(scenarioRaw.counts),
       serviceUnits: normalizeServiceUnits(scenarioRaw.serviceUnits),
     },
-    // Null rather than an empty list: the tab reads it as "nothing is
-    // pinned" and skips the whole grouping pass.
-    pinned: pinned.length ? pinned : null,
-    oppImport: normalizeImport(raw.oppImport),
   };
   return isEmptyEstimate(estimate) ? null : estimate;
 }
