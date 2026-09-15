@@ -595,19 +595,6 @@ function recordToSave(fields) {
   return data;
 }
 
-// A big number read back the way it is said, under the box it was typed
-// into. A number input holds digits only, and the two analysis figures are
-// six and seven of them.
-function moneyHint(value) {
-  const n = Number(value);
-  if (value === '' || value == null || !Number.isFinite(n) || n === 0) return null;
-  return (
-    <div className={styles.fieldHint}>
-      {n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}
-    </div>
-  );
-}
-
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
@@ -8317,14 +8304,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 shopping this estate is worth in a year, and what its building
                 mandates cost if nothing is done about them. Both were figures
                 you had to open a workbook to read, which is why they never
-                made it into a conversation about the account. */}
+                made it into a conversation about the account.
+
+                Both read as money IN the box. They used to be number inputs
+                with the figure repeated underneath, because a number input
+                cannot hold a comma and "1696113" is not a number anybody
+                checks at a glance - so the row carried the same figure twice,
+                once unreadable and once in grey below it, and the readable
+                one was the one nobody could type into. A money box formats
+                itself when nobody is in it and shows the bare digits the
+                moment it is focused, which leaves one figure on the row and
+                it is the one you edit. */}
             <div>
               <label
                 className={styles.label}
                 title="Total indicative annual savings, electric and natural gas combined - the headline figure on the Utility Lookup analysis's Executive Summary, following the Savings Scenario and term chosen there. Filled in when a Master Analysis is saved against the company, and typed over here if you know better."
               >Indicative Annual Savings ($)</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.indicativeAnnualSavings ?? ''} onCommit={v => set('indicativeAnnualSavings', v)} />
-              {moneyHint(fields.indicativeAnnualSavings)}
+              <CommitOnBlurInput className={styles.input} money value={fields.indicativeAnnualSavings ?? ''} onCommit={v => set('indicativeAnnualSavings', v)} />
             </div>
 
             <div>
@@ -8332,8 +8328,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 className={styles.label}
                 title="Est. max yearly exposure - what this company's sites could be fined in a year if every building mandate they owe went unmet, summed across benchmarking, energy audits and performance standards. The Building Compliance tile of the same name, filled in when a Master Analysis is saved against the company."
               >Est. Max Yearly Exposure ($)</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.maxYearlyExposure ?? ''} onCommit={v => set('maxYearlyExposure', v)} />
-              {moneyHint(fields.maxYearlyExposure)}
+              <CommitOnBlurInput className={styles.input} money value={fields.maxYearlyExposure ?? ''} onCommit={v => set('maxYearlyExposure', v)} />
             </div>
 
             <div>
