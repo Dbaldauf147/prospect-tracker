@@ -43,6 +43,10 @@ import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../uti
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
+import { pricedServiceRows } from '../../utils/serviceRows';
+import { accountPotential } from '../../utils/accountPotential';
+import { clientCounts } from '../../utils/clientDealSizing';
+import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
@@ -522,11 +526,6 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
   );
 }
 
-
-// A data-only deal is billed per utility account per month, so a company's
-// account count is most of the way to what the deal is worth in a year.
-// The Scale section shows that annualised figure beside the count.
-const DATA_DEAL_PER_ACCOUNT_MONTH = 5;
 
 // The Scale fields are numbers in Firestore but strings in an <input>, and a
 // cleared box hands back ''. Every save path runs a record through here, so a
@@ -5149,16 +5148,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // don't have to be counted out of it by eye.
   const siteListFacts = useMemo(() => computeSiteListFacts(currentSiteList), [currentSiteList]);
 
-  // Estimated annual value of a data deal for this company: its utility
-  // accounts at $5 each per month, for twelve months. Null - shown as a
-  // dash - until there is an account count to work from, since $0 would
-  // read as a priced deal rather than an unanswered question.
-  const estAnnualDataDeal = useMemo(() => {
-    const accounts = Number(fields.numberOfAccounts);
-    if (!Number.isFinite(accounts) || accounts <= 0) return null;
-    return Math.round(accounts * DATA_DEAL_PER_ACCOUNT_MONTH * 12);
-  }, [fields.numberOfAccounts]);
-
   // Re-read the Scale figures off this company's saved site list.
   //
   // Sites, accounts, equipment and sites-with-a-mandate are all stamped here
@@ -5566,6 +5555,76 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     () => [...new Set(serviceBoard.flatMap(c => c.items || []))],
     [serviceBoard],
   );
+
+  // The biggest thing still left to sell this account, and what it is.
+  //
+  // The same reading Dropdowns > Account Potential gives, on the company it
+  // is about: every service nobody has ruled on, priced off the Scale
+  // figures in this very section through the Services Pricing rate card,
+  // bundled with whatever its Auto-add cell drags in behind it, and ranked
+  // by the first twelve months at the low end of a quoted range. That page
+  // states its winner in a tile because it is the one line of it anybody
+  // reads out loud in a pipeline review; the card that already holds the
+  // counts it was worked out from should not make somebody open another tab
+  // to hear it.
+  //
+  // The client is assembled from the fields rather than passed whole so a
+  // keystroke in Notes cannot re-price a hundred-and-sixty-service
+  // catalogue: only the six counts and the service statuses change the
+  // answer, and only those are watched.
+  //
+  // Null when nothing here can be priced - no rate card behind the open
+  // services, or nothing open at all - which the field shows as a dash.
+  // Naming an unpriced service as the biggest deal would be a claim
+  // nothing supports, and $0 would read as a priced deal rather than an
+  // unanswered question.
+  const biggestDeal = useMemo(() => {
+    const rows = pricedServiceRows(settings);
+    if (rows.length === 0) return null;
+    const client = {
+      servicesExplored: fields.servicesExplored,
+      numberOfSites: fields.numberOfSites,
+      sitesWithMandate: fields.sitesWithMandate,
+      numberOfAccounts: fields.numberOfAccounts,
+      numberOfMeters: fields.numberOfMeters,
+      equipmentCount: fields.equipmentCount,
+      annualMwh: fields.annualMwh,
+    };
+    return accountPotential({
+      client,
+      serviceRows: rows,
+      pricing: getServicePricing(settings),
+      bases: resolvePricingBases(settings),
+      counts: clientCounts(client, null).counts,
+      // What this company's own opportunities say about each service: the
+      // map the services board below already reads, so the two halves of
+      // this card can't disagree about what is still open.
+      oppStages: scopeMatchedServices,
+      overrides: settings.serviceOverrides,
+    }).top;
+  }, [settings, scopeMatchedServices, fields.servicesExplored, fields.numberOfSites,
+    fields.sitesWithMandate, fields.numberOfAccounts, fields.numberOfMeters,
+    fields.equipmentCount, fields.annualMwh]);
+
+  // The services that ride along with it, named. A bundle is what actually
+  // gets sold, so the figure above is the lead plus its add-ons, and a
+  // number covering four services while only one is named is a number that
+  // can't be checked.
+  const biggestDealAdds = useMemo(
+    () => (biggestDeal?.bundle?.adds || []).filter(a => a.open).map(a => a.name),
+    [biggestDeal],
+  );
+
+  // What the field says when it is hovered, in one sentence, whichever of
+  // the three states it is in.
+  const biggestDealTitle = biggestDeal
+    ? `${biggestDeal.name} is the biggest service still open on this account, at `
+      + `${formatMoneyRange(biggestDeal.fee, biggestDeal.feeHigh)} in its first year`
+      + (biggestDealAdds.length
+        ? `, sold with ${biggestDealAdds.join(', ')}`
+        : '')
+      + '. Priced off the Scale figures here through the Services Pricing rate card.'
+    : 'Nothing open on this account can be priced from the Services Pricing rate card yet.';
 
   // Services this account needs no answer on, because something it has
   // already bought retires them: the Auto-N/A Services column on
@@ -7193,7 +7252,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">Meters</div><div class="info-val">${f.numberOfMeters ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Equipment</div><div class="info-val">${f.equipmentCount ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Electric MWh</div><div class="info-val">${f.annualMwh != null ? f.annualMwh.toLocaleString() : '-'}</div></div>
-        <div class="info-item"><div class="info-label">Est. Data Deal</div><div class="info-val">${estAnnualDataDeal != null ? '$' + estAnnualDataDeal.toLocaleString() : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Biggest Deal</div><div class="info-val">${biggestDeal ? `${formatMoneyRange(biggestDeal.fee, biggestDeal.feeHigh)}<div style="font-size:0.7rem;font-weight:600;color:#475569;margin-top:1px">${biggestDeal.name}${biggestDealAdds.length ? ` +${biggestDealAdds.length} with it` : ''}</div>` : '-'}</div></div>
         <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '-'}</div></div>
         <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '-'}</div></div>
         <div class="info-item"><div class="info-label">Website</div><div class="info-val">${f.website ? `<a href="${f.website.startsWith('http') ? f.website : 'https://' + f.website}">${f.website}</a>` : '-'}</div></div>
@@ -7920,19 +7979,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label} title="Number of Accounts x $5 per account per month, over twelve months.">Est. Data Deal</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+              <label className={styles.label} title={biggestDealTitle}>Biggest Deal</label>
+              <div style={{ minWidth: 0 }}>
                 <input
                   className={styles.input}
-                  style={{ background: '#F8FAFC', color: '#475569', fontWeight: 600, flex: '1 1 auto', minWidth: 0 }}
-                  value={estAnnualDataDeal != null ? `$${estAnnualDataDeal.toLocaleString()}` : ''}
+                  style={{ background: '#F8FAFC', color: '#475569', fontWeight: 600 }}
+                  value={biggestDeal ? formatMoneyRange(biggestDeal.fee, biggestDeal.feeHigh) : ''}
                   readOnly
                   placeholder="-"
-                  title="Number of Accounts x $5 per account per month, over twelve months."
+                  title={biggestDealTitle}
                 />
-                <span style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
-                  $5/acct/mo
-                </span>
+                {/* The service under the figure. A deal size with no name on
+                    it is the half of this that can't be acted on, and the
+                    name is why the field is here at all. */}
+                <div
+                  style={{
+                    fontSize: '0.6rem', marginTop: 2, lineHeight: 1.3,
+                    color: biggestDeal ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
+                    fontWeight: biggestDeal ? 600 : 400,
+                    fontStyle: biggestDeal ? 'normal' : 'italic',
+                  }}
+                  title={biggestDealTitle}
+                >
+                  {biggestDeal ? biggestDeal.name : 'Nothing priced yet'}
+                  {biggestDealAdds.length > 0 && (
+                    <span
+                      style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}
+                      title={`Sold with ${biggestDealAdds.join(', ')}`}
+                    > +{biggestDealAdds.length} with it</span>
+                  )}
+                </div>
               </div>
             </div>
 
