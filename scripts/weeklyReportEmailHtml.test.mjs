@@ -233,9 +233,15 @@ check('the projected total is readable text under the picture',
   check('the long grey one-liner no longer runs under the heading',
     stale.includes('before this period ended'), false);
 
+  // Off the clock this runs on, not off a date in the fixture above: the
+  // banner appears once a snapshot is a week old, so a "current" report
+  // pinned to a fixed timestamp stops being current a week after it is
+  // written, and this check then fails every day for a reason that has
+  // nothing to do with the report.
+  const justNow = Date.now();
   const current = renderWeeklyReportHtml({
-    capturedAt: Date.parse('2026-09-07T05:00:00Z'),
-    periodEnd: Date.parse('2026-09-06T23:59:59Z'),
+    capturedAt: justNow,
+    periodEnd: justNow - 60 * 60 * 1000,
     periodLabel: 'Mon, Aug 31 - Sun, Sep 6, 2026',
   }, {});
   check('a current report carries no banner',
