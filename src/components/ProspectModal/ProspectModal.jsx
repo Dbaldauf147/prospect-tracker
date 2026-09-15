@@ -532,9 +532,10 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 // The card's pages, in the order the bar shows them.
 //
 // Company first because it is what somebody usually came for, then the two
-// things asked about an account in a meeting (who do we know there, what do
-// they buy), then the deals, then the portfolio side - divisions, sites and
-// holdings, which is the longest of the five and the least often opened.
+// things asked about an account in a meeting (who do we know there and how
+// they are divided up, what do they buy), then the deals, then what is left
+// to sell them, then the portfolio side - the site list and the holdings,
+// which is the least often opened.
 //
 // Out here rather than inside the component so the list is one thing to read
 // and the render doesn't rebuild it on every keystroke.
@@ -547,7 +548,7 @@ const PROSPECT_TABS = [
   {
     key: 'contacts',
     label: 'Contacts',
-    title: 'Everybody we know at this company, as a table or as an org chart',
+    title: 'Everybody we know at this company, as a table or as an org chart, and the divisions they sit in',
   },
   {
     key: 'services',
@@ -567,7 +568,7 @@ const PROSPECT_TABS = [
   {
     key: 'portfolio',
     label: 'Portfolio',
-    title: "The company's divisions, its site list, and the companies it holds",
+    title: "What the company owns: its site list and the companies it holds",
   },
 ];
 
@@ -4068,9 +4069,9 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
 }
 
 function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings, onOpenContact = () => {} }) {
-  // Open on arrival, like every other section on the card: the Portfolio
-  // tab is where somebody goes to see this, so it is already showing when
-  // they get there.
+  // Open on arrival, like every other section on the card: the Contacts tab
+  // is where somebody goes to see this, so it is already showing when they
+  // get there.
   const [open, setOpen] = useState(true);
   const [draft, setDraft] = useState('');
   // Which box is being renamed, and which box is having one added under
@@ -4924,11 +4925,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [bulkField, setBulkField] = useState('jobtitle');
   const [bulkValue, setBulkValue] = useState('');
   const [bulkMode, setBulkMode] = useState('replace'); // 'replace' | 'append'
-  // Which page of the card is showing. The card holds five things - the
-  // company's own fields, its contacts, the services board, its opps, and
-  // the portfolio side (divisions, sites, holdings) - and it used to hold
-  // them end to end, so whichever one somebody opened it for, the other
-  // four were in the way.
+  // Which page of the card is showing. The card holds six things - the
+  // company's own fields, its contacts and divisions, the services board,
+  // its opps, what is still open on it, and the portfolio side (the site
+  // list, the holdings) - and it used to hold them end to end, so whichever
+  // one somebody opened it for, the rest were in the way.
   //
   // A record being added has none of the other five yet (every one of them
   // is behind `!isNew`), so it skips the bar and is only ever the fields.
@@ -9637,21 +9638,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
-          {/* Divisions - other tracker companies that roll up under this
-              one. Shares settings.divisionsMap with the My Accounts
-              Divisions column. Needs a saved record to key the mapping. */}
-          {!isNew && activeTab === 'portfolio' && prospect?.id && (
-            <DivisionsSection
-              parentId={prospect.id}
-              parentCompany={fields.company}
-              prospects={prospects}
-              contacts={localContacts}
-              settings={settings}
-              updateSettings={updateSettings}
-              onOpenContact={setEditingContact}
-            />
-          )}
-
           {/* Site List - uploaded spreadsheet of this company's physical
               sites/locations. Surfaces on the Email Drafts page as part of
               the combined Site List Overview. */}
@@ -11710,6 +11696,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
               </div>
             </div>
+          )}
+
+          {/* Divisions - other tracker companies that roll up under this
+              one. Shares settings.divisionsMap with the My Accounts
+              Divisions column. Needs a saved record to key the mapping.
+
+              On Contacts rather than Portfolio: the boxes hold the people
+              in each division and clicking one opens that contact, so it is
+              the same question the roster above it answers - who is at this
+              company, and where do they sit. Portfolio is what the company
+              OWNS: its sites and its holdings. */}
+          {!isNew && activeTab === 'contacts' && prospect?.id && (
+            <DivisionsSection
+              parentId={prospect.id}
+              parentCompany={fields.company}
+              prospects={prospects}
+              contacts={localContacts}
+              settings={settings}
+              updateSettings={updateSettings}
+              onOpenContact={setEditingContact}
+            />
           )}
         </div>
         <div className={styles.footer}>
