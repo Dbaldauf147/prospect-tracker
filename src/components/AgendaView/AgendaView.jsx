@@ -449,6 +449,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   }, []);
   const [dismissedSuggestedCompanies, setDismissedSuggestedCompanies] = useState(() => new Set());
   const [companyRules, setCompanyRules] = useState(() => loadCompanyRules());
+  // Which row's Company cell is swapped out of link mode and into its
+  // input. One at a time (keyed by the row's email, the same handle
+  // updateRow takes), because editing ends the moment the input blurs.
+  const [companyEditKey, setCompanyEditKey] = useState(null);
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   // Column-resize + visibility state for the Bulk Add Contacts table.
   const [bulkColWidths, setBulkColWidths] = useSyncedTablePref({
@@ -3014,39 +3018,81 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       {bulkColVisible.has('jobtitle') && <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>}
                       {bulkColVisible.has('company') && <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <input
-                            className={styles.cellInput}
-                            value={r.company}
-                            onChange={e => updateRow(r.email, { company: e.target.value, _companyFromRule: false })}
-                            list="bulk-contacts-company-list"
-                            autoComplete="off"
-                          />
-                          {/* Into that company's card, without leaving the
-                              page. The cell itself stays an input - typing a
-                              company is most of the work on this table and a
-                              link you had to click past to edit would cost
-                              more than it gives - so the way through is the
-                              ↗ beside it, the same as the LinkedIn cell.
+                          {/* The company name is the way into that company's
+                              card. It is the thing on the row people point
+                              at, so pointing at it is what opens the popup:
+                              a row the tracker holds reads its company as a
+                              link, and clicking it opens the card without
+                              leaving the page.
 
-                              The company it opens is the row's matched
+                              The cell is still typed in - naming companies is
+                              most of the work on this table - so the ✎ beside
+                              the name swaps the link back for the input, and
+                              the input reverts to a link as soon as it blurs.
+                              Rows the tracker does not hold, and rows with
+                              nothing typed yet, are a plain input from the
+                              start: there is no name to click, and on the
+                              second kind the arrow still carries you to the
+                              card the row was matched to.
+
+                              The company that opens is the row's matched
                               prospect, which is the one every other column on
                               this row is already about: the Tier badge, the
                               CDM pills and the Table View columns all read it.
                               What is typed in the cell can be the HubSpot
                               spelling ("CBRE Inc (CBRE) - HQ") rather than the
                               tracker's, so matching on the text would leave
-                              the arrow off exactly the rows that most need it.
+                              the link off exactly the rows that most need it.
                               The tooltip names the company that will open, so
                               the two never quietly disagree. */}
-                          {companyCard && onSelectProspect && (
-                            <button
-                              type="button"
-                              onClick={() => onSelectProspect(companyCard)}
-                              title={`Open the company popup for "${companyCard.company}"`}
-                              aria-label={`Open the company popup for ${companyCard.company}`}
-                              style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
-                            >↗</button>
-                          )}
+                          {(() => {
+                            const canOpen = Boolean(companyCard && onSelectProspect);
+                            const editingCompany = companyEditKey === r.email;
+                            const linkable = canOpen && String(r.company || '').trim() !== '';
+                            if (linkable && !editingCompany) {
+                              return (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={styles.companyLink}
+                                    onClick={() => onSelectProspect(companyCard)}
+                                    title={`Open the company popup for "${companyCard.company}"`}
+                                    aria-label={`Open the company popup for ${companyCard.company}`}
+                                  >{r.company}</button>
+                                  <button
+                                    type="button"
+                                    className={styles.companyEditBtn}
+                                    onClick={() => setCompanyEditKey(r.email)}
+                                    title="Edit this company name"
+                                    aria-label={`Edit the company name for ${r.firstname} ${r.lastname}`.trim()}
+                                  >✎</button>
+                                </>
+                              );
+                            }
+                            return (
+                              <>
+                                <input
+                                  className={styles.cellInput}
+                                  value={r.company}
+                                  autoFocus={editingCompany}
+                                  onChange={e => updateRow(r.email, { company: e.target.value, _companyFromRule: false })}
+                                  onBlur={() => setCompanyEditKey(k => (k === r.email ? null : k))}
+                                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
+                                  list="bulk-contacts-company-list"
+                                  autoComplete="off"
+                                />
+                                {canOpen && !editingCompany && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectProspect(companyCard)}
+                                    title={`Open the company popup for "${companyCard.company}"`}
+                                    aria-label={`Open the company popup for ${companyCard.company}`}
+                                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+                                  >↗</button>
+                                )}
+                              </>
+                            );
+                          })()}
                           {r._companyFromRule && (
                             <span title="Applied from a saved rule" style={{ fontSize: '0.72rem', color: '#F59E0B' }}>★</span>
                           )}

@@ -213,6 +213,46 @@
 .cellInput:hover { background: var(--color-surface-alt); }
 .cellInput:focus { outline: none; border-color: var(--color-accent); background: #fff; }
 
+/* A Company cell in link mode. Same box, padding and font as .cellInput so
+   swapping one for the other never shifts the row; it reads as the cell's
+   own text until you point at it, and then it is plainly a link. */
+.companyLink {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.78rem;
+  /* Same weight the Table View and My Accounts pages give a clickable
+     company name, which is the only other place this name is a link. */
+  font-weight: 600;
+  text-align: left;
+  color: var(--color-text);
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.companyLink:hover { background: var(--color-surface-alt); color: var(--color-accent); text-decoration: underline; }
+.companyLink:focus-visible { outline: none; border-color: var(--color-accent); background: #fff; color: var(--color-accent); }
+
+/* Stays quiet next to the name and comes forward on hover: the pencil is
+   the way back to typing, but the name is what the cell is for. */
+.companyEditBtn {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.companyEditBtn:hover { color: var(--color-accent); }
+
 .suggestCell { padding: 0.25rem 0.4rem; }
 
 .suggestPill {
