@@ -7847,6 +7847,604 @@ function FieldPlacementMenu({ field, label, anchor, current, isOverridden, onPic
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
+// One opp field, with the editor that field deserves: the date picker for a
+// date column, the list for a column tied to a dropdown, the contact picker
+// for Contact, and a plain editable cell for everything else. Read-only
+// where there is nothing to edit (the computed day counts) or nowhere to
+// write it (no onFieldChange).
+//
+// Module-level rather than a closure inside the details popup because the
+// Flags popup renders the same editors for the fields behind a flag. One
+// copy means a field cannot offer a date picker in one popup and a text box
+// in the other.
+function OppFieldEditor({
+  field,
+  opp,
+  onFieldChange,
+  columnLinks,
+  listRegistry,
+  companySuggestions,
+  peOwnerSuggestions,
+  prospects,
+  updateProspect,
+  hubspotContacts,
+  pricingOptionServices,
+  pricingOptionLinkName,
+  onOpenContact,
+  onOpenCompany,
+  settings,
+  oppRows,
+}) {
+  const formatValue = (key, raw) => {
+    if (raw == null || raw === '') return '-';
+    if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
+    return String(raw);
+  };
+  const editor = ((h) => {
+    const value = opp[h];
+    // Computed columns stay read-only — they're derived from sibling
+    // fields and don't have a stored value to edit.
+    if (h === 'Call In' || h === 'Last Spoke') {
+      return (
+        <span style={{ color: 'var(--color-text-muted)' }}>
+          {value == null || value === '' ? '-' : String(value)}
+        </span>
+      );
+    }
+    // The linked Pricing Option is never stored on the opp record — the
+    // table column reads it from the Pricing tab's link map, so the
+    // generic editable-cell path below would render this row blank even
+    // with an SIA tied to the opp. Mirror the column here (read-only),
+    // falling back to the saved snapshot's own name so the row still
+    // fills in on a device whose local link map hasn't caught up: the
+    // snapshot rides on the record through Firestore, the link map is
+    // per-browser IndexedDB.
+    if (h === 'Pricing Option') {
+      const linkedName = String(pricingOptionLinkName || '').trim();
+      const snapName = String(opp._pricingOption?.name || '').trim();
+      return (
+        <PricingOptionCell
+          value={linkedName || snapName}
+          onClear={linkedName ? () => setOppOptionLink(opp._id, '') : undefined}
+        />
+      );
+    }
+    // Pull-through gets the full labelled toggle plus a line saying what
+    // the current state actually does — the bare box the column shows is
+    // too terse for the one place the user goes to understand an opp.
+    // Rendered ahead of the read-only fallback so it still shows the
+    // resolved state (just not clickable) in a modal without an editor.
+    if (h === PULL_THROUGH_COLUMN) {
+      const on = isPullThroughOpp(opp);
+      const source = pullThroughSource(opp);
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
+          <PullThroughToggle
+            variant="pill"
+            on={on}
+            onChange={onFieldChange ? (next) => onFieldChange(h, next ? 'Yes' : 'No') : undefined}
+            title={pullThroughHint(on, source)}
+          />
+          <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+            {on
+              ? <>Rides along with a parent sale{source === 'scope' ? <> (read from the Scope text)</> : null} - left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
+              : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
+          </span>
+        </div>
+      );
+    }
+    // Sourced from the matching Table View company, independent of the
+    // opp's own edit callback, so it works even in the read-only modal.
+    if (h === 'BFO Company Name') {
+      return <BfoCompanyNameCell account={opp['Account']} prospects={prospects} updateProspect={updateProspect} />;
+    }
+    if (!onFieldChange) {
+      // Fallback to the original read-only renderer when the modal is
+      // mounted without an edit callback.
+      return <span>{formatValue(h, value)}</span>;
+    }
+    const onChange = (v) => onFieldChange(h, v);
+    if (DATE_COLUMNS.has(h)) {
+      return <DateCell value={value} onChange={onChange} />;
+    }
+    if (TRISTATE_COLUMNS.has(h)) {
+      return <TristateCheckCell value={value} onChange={onChange} title={`${h}: blank → ✓ → ✗ → blank`} />;
+    }
+    const link = columnLinks ? resolveColumnLink(h, columnLinks) : null;
+    if (link && listRegistry) {
+      const list = listRegistry.get(link.listKey);
+      const opts = list?.options || [];
+      // Which of those the list says are retired, so the menu greys them
+      // where they sit - at the bottom, where the list already put them.
+      const muted = list?.muted;
+      if (link.mode === 'multi') {
+        const extraGroups = link.listKey === 'solutions'
+          ? Object.entries(pricingOptionServices || {})
+              .map(([sheetName, services]) => ({
+                label: sheetName,
+                options: Array.isArray(services) ? services : [],
+              }))
+              .filter(g => g.options.length > 0)
+              .sort((a, b) => a.label.localeCompare(b.label))
+          : undefined;
+        if (h === 'Scope') {
+          return (
+            <ScopeServicesCell
+              value={value}
+              onChange={onChange}
+              options={opts}
+              account={opp['Account']}
+              prospects={prospects}
+              updateProspect={updateProspect}
+              settings={settings}
+              oppRows={oppRows}
+              currentOppId={opp._id}
+              extraGroups={extraGroups}
+              extraGroupsLabel="Add from Pricing Option"
+              extraGroupsPlaceholder="(pick an option)"
+              nowrap
+              placeholder="AEM"
+            />
+          );
+        }
+        return (
+          <MultiSelectCell
+            value={value}
+            onChange={onChange}
+            options={opts}
+            muted={muted}
+            extraGroups={extraGroups}
+            extraGroupsLabel="Add from Pricing Option"
+            extraGroupsPlaceholder="(pick an option)"
+            nowrap={h === 'Scope'}
+            placeholder={h === 'Scope' ? 'AEM' : undefined}
+          />
+        );
+      }
+      return <SelectCell value={value} onChange={onChange} options={opts} muted={muted} />;
+    }
+    if (h === 'Contact') {
+      return (
+        <ContactCell
+          value={value}
+          onChange={onChange}
+          account={opp['Account']}
+          peOwner={opp['PE Owner']}
+          prospects={prospects}
+          updateProspect={updateProspect}
+          hubspotContacts={hubspotContacts}
+          onOpenContact={onOpenContact}
+          onOpenCompany={onOpenCompany}
+          contactEmails={opp._contactEmails}
+          onChangeEmails={(m) => onFieldChange('_contactEmails', m)}
+        />
+      );
+    }
+    return (
+      <EditableCell
+        value={value}
+        onChange={onChange}
+        suggestions={h === 'Account' ? companySuggestions : h === 'PE Owner' ? peOwnerSuggestions : undefined}
+      />
+    );
+  })(field);
+  return editor;
+}
+
+// The two tones the Flags column speaks in: red for a value that is wrong
+// or missing right now, amber for one that is waiting on somebody else.
+const OPP_FLAG_TONES = {
+  red: { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+  amber: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' },
+};
+
+// Whatever key this record actually stores the user-added "Timeline?"
+// column under. A pasted sheet can hand it over with odd casing or a
+// zero-width character in it, and the flag reads it tolerantly, so
+// anything writing it back has to find the same key rather than mint a
+// second one beside it.
+function timelineKeyFor(opp) {
+  for (const k in (opp || {})) {
+    if (normCell(k) === 'timeline?') return k;
+  }
+  return 'Timeline?';
+}
+
+// Every flag the Flags column can raise, defined once: what fires it, how
+// the chip reads, and what answers it.
+//
+// The column renders its chips from this list and the popup a chip opens
+// reads the same entry, so a chip cannot name one problem and then offer
+// the fields of another. `fields` are the columns the popup puts an
+// editor on, in the order the fix is usually made: the request date
+// before the approval date that is waiting on it. A flag answered by a
+// whole editor rather than by cells carries a `section` instead, and the
+// two that can be parked (the stall, the Lead-with-a-meeting nudge) carry
+// the wording for that button so the popup and the chip offer the same
+// escape.
+const OPP_FLAG_DEFS = [
+  {
+    id: 'usd',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => needsUsdFlag(row),
+    label: () => 'Missing USD value',
+    title: () => 'Stage is Qualifying or later but the USD? field is blank or “-”: fill in USD? to clear it.',
+    fields: () => ['USD?'],
+  },
+  {
+    id: 'competition',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => needsCompetitionFlag(row),
+    label: () => 'Missing Competition',
+    title: () => 'This opp is closed but the Competition field is blank or “-”: it’s required to close an opp out.',
+    fields: () => ['Competition'],
+  },
+  {
+    id: 'coa',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => coaApprovalsNeeded(row).length > 0,
+    label: (row) => `COA approvals needed (${coaApprovalsNeeded(row).length})`,
+    title: (row) => {
+      const out = coaApprovalsNeeded(row);
+      return `Stage is Agreement Sent but ${out.length} COA item${out.length === 1 ? '' : 's'} ${out.length === 1 ? 'is' : 'are'} neither approved nor marked N/A: ${out.map(r => r.item).join(', ')}.`;
+    },
+    fields: () => [],
+    section: 'coa',
+  },
+  {
+    id: 'budgetTimeline',
+    tone: () => 'amber',
+    icon: '⚠',
+    test: (row) => needsBudgetTimelineFlag(row),
+    label: () => 'Budget delivery timeline?',
+    title: () => 'Budgets is in Scope but the Timeline? field is empty: set the budget delivery timeline.',
+    fields: (row) => [timelineKeyFor(row)],
+  },
+  {
+    id: 'qualifying',
+    tone: () => 'red',
+    icon: '🚩',
+    test: (row) => qualifyingStageFlagState(row) === 'active',
+    label: () => 'Move to Qualifying?',
+    title: () => 'Stage is still Lead but Status says a meeting is scheduled: consider moving this opp to Qualifying.',
+    fields: () => ['Stage'],
+    park: {
+      label: 'snooze',
+      title: `Snooze this flag for ${QUALIFYING_FLAG_SNOOZE_DAYS} days`,
+      apply: (onFieldChange) => onFieldChange('_snoozeQualifyingFlagUntil', isoDaysFromToday(QUALIFYING_FLAG_SNOOZE_DAYS)),
+    },
+  },
+  {
+    id: 'bfoAddress',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppMissingBfoAddress(row),
+    label: () => 'No BFO Address',
+    title: () => 'Has a BFO Opportunity Name but no BFO Address: add the BFO Address.',
+    fields: () => ['BFO Address'],
+  },
+  {
+    id: 'dealSize',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppMissingQuotedAmount(row),
+    label: () => 'Deal Size Missing',
+    title: (row) => `Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size: add the Deal Size.`,
+    fields: () => ['Quoted Amount'],
+  },
+  {
+    id: 'marginRequest',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppMissingMarginApproval(row),
+    label: () => 'Missing Margin Approval',
+    title: (row) => `Opp in "${String(row['Stage'] || '').trim()}" with no ${headerLabel('Margin Email Date - Sales Leader Review Date')}: get margin approval.`,
+    fields: () => ['Margin Email Date - Sales Leader Review Date'],
+  },
+  {
+    id: 'marginApproval',
+    tone: () => 'amber',
+    icon: '⚠',
+    test: (row) => oppMissingMarginApprovalDate(row),
+    label: () => 'Awaiting Margin Approval',
+    title: () => `${headerLabel('Margin Email Date - Sales Leader Review Date')} is filled but ${headerLabel('Margin Approval Date')} is still blank: the margin request went in and hasn’t come back - chase it.`,
+    fields: () => ['Margin Email Date - Sales Leader Review Date', 'Margin Approval Date'],
+  },
+  {
+    id: 'creditNeeded',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppNeedsCreditApproval(row),
+    label: () => 'Credit Approval Needed',
+    title: (row) => `Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank ${headerLabel('Credit approval')}: get credit approval.`,
+    fields: () => ['Credit approval'],
+  },
+  {
+    id: 'creditApproval',
+    tone: () => 'amber',
+    icon: '⚠',
+    test: (row) => oppMissingCreditApprovalDate(row),
+    label: () => 'Awaiting Credit Approval',
+    title: () => `${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn’t come back - chase it.`,
+    fields: () => ['Credit approval', 'Credit Approval Date'],
+  },
+  {
+    id: 'entity',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppMissingEntityApproval(row),
+    label: () => 'Missing Entity Approval',
+    title: () => 'Opp in "Agreement Sent" with a blank Entity Outside the US Approval: fill it in.',
+    fields: () => ['Entity Outside the US Approval'],
+  },
+  {
+    id: 'verbal',
+    tone: () => 'red',
+    icon: '⚠',
+    test: (row) => oppMissingVerbal(row),
+    label: () => 'Missing Verbal',
+    title: () => 'Opp in "Agreement Sent" with a blank Verbal: fill it in.',
+    fields: () => ['Verbal'],
+  },
+  {
+    id: 'kickoff',
+    tone: (row) => (kickoffDeadlineFlag(row) < 0 ? 'red' : 'amber'),
+    icon: '⚠',
+    test: (row) => kickoffDeadlineFlag(row) != null,
+    label: (row) => `Kickoff ${kickoffCountdownLabel(kickoffDeadlineFlag(row))}`,
+    title: (row) => `Kickoff Deadline is ${kickoffCountdownLabel(kickoffDeadlineFlag(row))} (warns under ${KICKOFF_WARN_DAYS} days out).`,
+    fields: () => [],
+    section: 'kickoff',
+  },
+  {
+    id: 'stall',
+    tone: () => 'amber',
+    icon: '⚠',
+    test: (row) => !!oppStageStall(row) && !row?._ignoreStallFlag,
+    label: (row) => oppStageStall(row)?.suggestion || 'Stalled',
+    title: (row) => {
+      const stall = oppStageStall(row);
+      return stall ? `Stalled ${stall.days}d in ${row['Stage']} (limit ${stall.limit}d) → ${stall.suggestion}` : '';
+    },
+    fields: () => ['Stage'],
+    park: {
+      label: 'ignore',
+      title: 'Ignore this stall flag for this opp (also clears it on the Days in Stage board)',
+      apply: (onFieldChange) => onFieldChange('_ignoreStallFlag', true),
+    },
+  },
+];
+
+// Not Sold is a closed/lost deal: no point nagging about missing data or
+// stalls on it, so every flag stays down on those rows regardless of which
+// ones would otherwise fire.
+function oppFlagsSuppressed(row) {
+  return String(row?.['Stage'] || '').trim() === 'Not Sold';
+}
+
+// The flags firing on a row right now, in catalog order.
+function activeOppFlags(row) {
+  if (!row || oppFlagsSuppressed(row)) return [];
+  return OPP_FLAG_DEFS.filter(def => def.test(row));
+}
+
+// The Kickoff Deadline lives on the timeline rows, not in a column of its
+// own: the opp-level `_kickoffDeadline` the flag reads is only a mirror of
+// the soonest of them. So this edits the rows and re-mirrors, the way the
+// follow-up popup's timeline table does. Writing the mirror directly would
+// look right until the next timeline edit overwrote it.
+function OppKickoffDeadlinesEditor({ opp, onFieldChange }) {
+  const { list } = readTimelines(opp);
+  const visible = list.map((row, idx) => ({ row, idx })).filter(({ row }) => row.hidden !== true);
+  const commit = (idx, kickoff) => {
+    const next = list.map((row, i) => (i === idx ? { ...row, kickoff } : row));
+    onFieldChange('_timelines', next);
+    onFieldChange('_kickoffDeadline', earliestKickoff(next));
+    onFieldChange(timelineKeyFor(opp), summarizeTimelines(next));
+  };
+  if (visible.length === 0) {
+    return (
+      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+        This opp has no timeline rows, so there is nothing here to move. Add one on the follow-up popup and its kickoff date shows up here.
+      </span>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      {visible.map(({ row, idx }) => (
+        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--color-text)', minWidth: 160 }}>
+            {String(row.type || row.value || '').trim() || `Timeline ${idx + 1}`}
+          </span>
+          <DateCell value={row.kickoff} onChange={(v) => commit(idx, v)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The popup behind a Flags chip: every flag the row is carrying, each one
+// sitting above the fields that answer it.
+//
+// It opens on the chip that was clicked but shows the rest too, because a
+// row that has one flag usually has three and they are fixed in one pass.
+// The sections are frozen at open: a flag that clears while the popup is
+// up keeps its place and goes green rather than vanishing, so the fields
+// under the cursor do not jump when a date lands.
+function OppFlagsFixModal({ opp, focusFlagId, onClose, onFieldChange, editorProps }) {
+  // The flags the row had when the popup opened, and how each one read at
+  // that moment. The wording is frozen with them because a flag that has
+  // just been answered has nothing left to describe: the stall's day
+  // count, the kickoff countdown and the COA item count all read the state
+  // the fix has just removed, so a live label would leave the cleared
+  // section reading "Kickoff " or "(0)".
+  const [openedLabels] = useState(() => new Map(activeOppFlags(opp).map(def => [def.id, def.label(opp)])));
+  // Escape closes it wherever the focus is. The card's own handler only
+  // fires once something inside it has focus, and nothing here takes it on
+  // open: the fields are what the user came for, and stealing the caret
+  // into the first of them would put a date picker over the flag they are
+  // still reading.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  if (!opp) return null;
+  const shownIds = [...openedLabels.keys()];
+  const activeNow = new Set(activeOppFlags(opp).map(def => def.id));
+  // The clicked chip first, then the rest in the order the column listed
+  // them. Anything that has started flagging since the popup opened joins
+  // the end rather than pushing the others down.
+  const order = [
+    ...shownIds.filter(id => id === focusFlagId),
+    ...shownIds.filter(id => id !== focusFlagId),
+    ...[...activeNow].filter(id => !shownIds.includes(id)),
+  ];
+  const defs = order.map(id => OPP_FLAG_DEFS.find(d => d.id === id)).filter(Boolean);
+  const account = String(opp['Account'] || '').trim();
+  const oppName = String(opp['BFO Link'] || '').trim();
+  const clearedCount = defs.filter(def => !activeNow.has(def.id)).length;
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        style={{
+          width: 640, maxWidth: '94vw', maxHeight: '92vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)', flexShrink: 0 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Flags{account ? ` on ${account}` : ''}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            {oppName ? `${oppName}. ` : ''}
+            Each flag sits above the fields that clear it. Edits save as you make them, and a flag turns green once it stops firing.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+          {defs.length === 0 && (
+            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+              Nothing flagged on this opp.
+            </div>
+          )}
+          {defs.map(def => {
+            const cleared = !activeNow.has(def.id);
+            const tone = cleared ? null : OPP_FLAG_TONES[def.tone(opp)];
+            const fields = cleared ? [] : def.fields(opp);
+            return (
+              <div
+                key={def.id}
+                style={{
+                  border: '1px solid var(--color-border-light)', borderRadius: 6,
+                  padding: '0.6rem 0.7rem',
+                  background: def.id === focusFlagId && !cleared ? '#F8FAFC' : '#fff',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span
+                    title={cleared ? 'Cleared: this flag has stopped firing.' : def.title(opp)}
+                    style={{
+                      display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+                      fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
+                      ...(cleared
+                        ? { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' }
+                        : tone),
+                    }}
+                  >
+                    {cleared
+                      ? `✓ ${openedLabels.get(def.id) || def.label(opp)}`
+                      : `${def.icon} ${def.label(opp)}`}
+                  </span>
+                  {!cleared && def.park && (
+                    <button
+                      type="button"
+                      onClick={() => def.park.apply(onFieldChange)}
+                      title={def.park.title}
+                      style={{
+                        border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                        fontSize: '0.68rem', color: 'var(--color-accent)',
+                        fontFamily: 'inherit', textDecoration: 'underline',
+                      }}
+                    >{def.park.label}</button>
+                  )}
+                </div>
+                {!cleared && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                    {def.title(opp)}
+                  </div>
+                )}
+                {!cleared && def.section === 'coa' && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <OppCoaItemsSection key={opp._id} opp={opp} onFieldChange={onFieldChange} />
+                  </div>
+                )}
+                {!cleared && def.section === 'kickoff' && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <OppKickoffDeadlinesEditor opp={opp} onFieldChange={onFieldChange} />
+                  </div>
+                )}
+                {fields.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                    {fields.map(field => (
+                      <div key={field} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', width: 190, flexShrink: 0, paddingTop: 3 }}>
+                          {headerLabel(field)}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <OppFieldEditor
+                            field={field}
+                            opp={opp}
+                            onFieldChange={onFieldChange}
+                            {...editorProps}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{
+          padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+            {clearedCount > 0
+              ? `${clearedCount} of ${defs.length} cleared.`
+              : 'Nothing cleared yet.'}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.3rem 0.9rem', border: '1px solid var(--color-border)',
+              background: '#fff', borderRadius: 4, fontSize: '0.78rem',
+              fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function OppInfoModal({
   opp,
   headers,
@@ -7997,159 +8595,26 @@ export function OppInfoModal({
   // so the "Show N hidden" toggle reflects what's collapsed right here.
   const hiddenCount = tabFields.filter(h => hiddenFields.has(h)).length;
   const placementOf = (h) => oppDetailPlacementFor(h, fieldPlacements);
-  const formatValue = (key, raw) => {
-    if (raw == null || raw === '') return '-';
-    if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
-    return String(raw);
-  };
-  const renderEditor = (h) => {
-    const value = opp[h];
-    // Computed columns stay read-only — they're derived from sibling
-    // fields and don't have a stored value to edit.
-    if (h === 'Call In' || h === 'Last Spoke') {
-      return (
-        <span style={{ color: 'var(--color-text-muted)' }}>
-          {value == null || value === '' ? '-' : String(value)}
-        </span>
-      );
-    }
-    // The linked Pricing Option is never stored on the opp record — the
-    // table column reads it from the Pricing tab's link map, so the
-    // generic editable-cell path below would render this row blank even
-    // with an SIA tied to the opp. Mirror the column here (read-only),
-    // falling back to the saved snapshot's own name so the row still
-    // fills in on a device whose local link map hasn't caught up: the
-    // snapshot rides on the record through Firestore, the link map is
-    // per-browser IndexedDB.
-    if (h === 'Pricing Option') {
-      const linkedName = String(pricingOptionLinkName || '').trim();
-      const snapName = String(opp._pricingOption?.name || '').trim();
-      return (
-        <PricingOptionCell
-          value={linkedName || snapName}
-          onClear={linkedName ? () => setOppOptionLink(opp._id, '') : undefined}
-        />
-      );
-    }
-    // Pull-through gets the full labelled toggle plus a line saying what
-    // the current state actually does — the bare box the column shows is
-    // too terse for the one place the user goes to understand an opp.
-    // Rendered ahead of the read-only fallback so it still shows the
-    // resolved state (just not clickable) in a modal without an editor.
-    if (h === PULL_THROUGH_COLUMN) {
-      const on = isPullThroughOpp(opp);
-      const source = pullThroughSource(opp);
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
-          <PullThroughToggle
-            variant="pill"
-            on={on}
-            onChange={onFieldChange ? (next) => onFieldChange(h, next ? 'Yes' : 'No') : undefined}
-            title={pullThroughHint(on, source)}
-          />
-          <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-            {on
-              ? <>Rides along with a parent sale{source === 'scope' ? <> (read from the Scope text)</> : null} - left out of every close rate, the % not quoted table and the Days-in-Stage board.</>
-              : <>Counts as a real opportunity in close rates and the Days-in-Stage board.</>}
-          </span>
-        </div>
-      );
-    }
-    // Sourced from the matching Table View company, independent of the
-    // opp's own edit callback, so it works even in the read-only modal.
-    if (h === 'BFO Company Name') {
-      return <BfoCompanyNameCell account={opp['Account']} prospects={prospects} updateProspect={updateProspect} />;
-    }
-    if (!onFieldChange) {
-      // Fallback to the original read-only renderer when the modal is
-      // mounted without an edit callback.
-      return <span>{formatValue(h, value)}</span>;
-    }
-    const onChange = (v) => onFieldChange(h, v);
-    if (DATE_COLUMNS.has(h)) {
-      return <DateCell value={value} onChange={onChange} />;
-    }
-    if (TRISTATE_COLUMNS.has(h)) {
-      return <TristateCheckCell value={value} onChange={onChange} title={`${h}: blank → ✓ → ✗ → blank`} />;
-    }
-    const link = columnLinks ? resolveColumnLink(h, columnLinks) : null;
-    if (link && listRegistry) {
-      const list = listRegistry.get(link.listKey);
-      const opts = list?.options || [];
-      // Which of those the list says are retired, so the menu greys them
-      // where they sit - at the bottom, where the list already put them.
-      const muted = list?.muted;
-      if (link.mode === 'multi') {
-        const extraGroups = link.listKey === 'solutions'
-          ? Object.entries(pricingOptionServices || {})
-              .map(([sheetName, services]) => ({
-                label: sheetName,
-                options: Array.isArray(services) ? services : [],
-              }))
-              .filter(g => g.options.length > 0)
-              .sort((a, b) => a.label.localeCompare(b.label))
-          : undefined;
-        if (h === 'Scope') {
-          return (
-            <ScopeServicesCell
-              value={value}
-              onChange={onChange}
-              options={opts}
-              account={opp['Account']}
-              prospects={prospects}
-              updateProspect={updateProspect}
-              settings={settings}
-              oppRows={oppRows}
-              currentOppId={opp._id}
-              extraGroups={extraGroups}
-              extraGroupsLabel="Add from Pricing Option"
-              extraGroupsPlaceholder="(pick an option)"
-              nowrap
-              placeholder="AEM"
-            />
-          );
-        }
-        return (
-          <MultiSelectCell
-            value={value}
-            onChange={onChange}
-            options={opts}
-            muted={muted}
-            extraGroups={extraGroups}
-            extraGroupsLabel="Add from Pricing Option"
-            extraGroupsPlaceholder="(pick an option)"
-            nowrap={h === 'Scope'}
-            placeholder={h === 'Scope' ? 'AEM' : undefined}
-          />
-        );
-      }
-      return <SelectCell value={value} onChange={onChange} options={opts} muted={muted} />;
-    }
-    if (h === 'Contact') {
-      return (
-        <ContactCell
-          value={value}
-          onChange={onChange}
-          account={opp['Account']}
-          peOwner={opp['PE Owner']}
-          prospects={prospects}
-          updateProspect={updateProspect}
-          hubspotContacts={hubspotContacts}
-          onOpenContact={onOpenContact}
-          onOpenCompany={onOpenCompany}
-          contactEmails={opp._contactEmails}
-          onChangeEmails={(m) => onFieldChange('_contactEmails', m)}
-        />
-      );
-    }
-    return (
-      <EditableCell
-        value={value}
-        onChange={onChange}
-        suggestions={h === 'Account' ? companySuggestions : h === 'PE Owner' ? peOwnerSuggestions : undefined}
-      />
-    );
-  };
+  const renderEditor = (h) => (
+    <OppFieldEditor
+      field={h}
+      opp={opp}
+      onFieldChange={onFieldChange}
+      columnLinks={columnLinks}
+      listRegistry={listRegistry}
+      companySuggestions={companySuggestions}
+      peOwnerSuggestions={peOwnerSuggestions}
+      prospects={prospects}
+      updateProspect={updateProspect}
+      hubspotContacts={hubspotContacts}
+      pricingOptionServices={pricingOptionServices}
+      pricingOptionLinkName={pricingOptionLinkName}
+      onOpenContact={onOpenContact}
+      onOpenCompany={onOpenCompany}
+      settings={settings}
+      oppRows={oppRows}
+    />
+  );
   // One field table: six fixed columns — toggle, label and value, twice
   // over. A paired row fills all six; every other row fills the first
   // three and spans the rest. Fixed rather than auto because the two
@@ -11767,6 +12232,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
+  // Which Flags chip is open, as { oppId, flagId }: the row the popup is
+  // about and the chip that opened it, which the popup puts first.
+  const [flagFixTarget, setFlagFixTarget] = useState(null);
   // _id of the opp whose saved pricing analysis is open, resolved against
   // the live records the same way, so a re-save from the Deal Pricing tab
   // shows through without closing and reopening the popup.
@@ -14094,13 +14562,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       display: 'inline-block', padding: '1px 8px', borderRadius: 999,
       fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
     };
-    // Not Sold is a closed/lost deal — no point nagging about missing
-    // data or stalls on it, so the Flags column stays blank for those
-    // rows regardless of which individual flags would otherwise fire.
-    const flagsSuppressedForStage = (row) =>
-      String(row?.['Stage'] || '').trim() === 'Not Sold';
     const flagSummary = (row) => {
-      if (flagsSuppressedForStage(row)) return '';
+      if (oppFlagsSuppressed(row)) return '';
       const parts = [];
       if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (needsCompetitionFlag(row)) parts.push('Missing Competition');
@@ -14126,94 +14589,53 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       label: 'Flags',
       defaultWidth: 200,
       getFilterValue: (row) => flagSummary(row),
-      getSortValue: (row) => {
-        if (flagsSuppressedForStage(row)) return 0;
-        let n = 0;
-        if (needsUsdFlag(row)) n += 1;
-        if (needsCompetitionFlag(row)) n += 1;
-        if (coaApprovalsNeeded(row).length) n += 1;
-        if (needsBudgetTimelineFlag(row)) n += 1;
-        if (qualifyingStageFlagState(row) === 'active') n += 1;
-        if (oppMissingBfoAddress(row)) n += 1;
-        if (oppMissingQuotedAmount(row)) n += 1;
-        if (oppMissingMarginApproval(row)) n += 1;
-        if (oppMissingMarginApprovalDate(row)) n += 1;
-        if (oppNeedsCreditApproval(row)) n += 1;
-        if (oppMissingCreditApprovalDate(row)) n += 1;
-        if (oppMissingEntityApproval(row)) n += 1;
-        if (oppMissingVerbal(row)) n += 1;
-        if (kickoffDeadlineFlag(row) != null) n += 1;
-        if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
-        return n;
-      },
+      // How many flags the row is carrying: the same list the cell
+      // renders, so the sort can't rank a row above one that shows more
+      // chips than it.
+      getSortValue: (row) => activeOppFlags(row).length,
       exportValue: (row) => flagSummary(row),
       render: (row) => {
-        if (flagsSuppressedForStage(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
-        const missingUsd = needsUsdFlag(row);
-        const missingCompetition = needsCompetitionFlag(row);
-        const coaOutstanding = coaApprovalsNeeded(row);
-        const missingBudgetTimeline = needsBudgetTimelineFlag(row);
-        const qualifyingFlag = qualifyingStageFlagState(row);
-        const missingAddr = oppMissingBfoAddress(row);
-        const missingQuote = oppMissingQuotedAmount(row);
-        const missingMargin = oppMissingMarginApproval(row);
-        const awaitingMargin = oppMissingMarginApprovalDate(row);
-        const needsCredit = oppNeedsCreditApproval(row);
-        const awaitingCredit = oppMissingCreditApprovalDate(row);
-        const missingEntity = oppMissingEntityApproval(row);
-        const missingVerbal = oppMissingVerbal(row);
-        const kickoffDays = kickoffDeadlineFlag(row);
+        if (oppFlagsSuppressed(row)) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        // Every chip is a button into the popup that fixes it. The
+        // tooltip still says what the flag means, because reading the
+        // row is most of what this column is for and that should not
+        // need a click; the click is for the times reading it is not
+        // enough.
+        const active = activeOppFlags(row);
+        const qualifyingSnoozed = qualifyingStageFlagState(row) === 'snoozed';
         const stall = oppStageStall(row);
-        const ignored = !!row?._ignoreStallFlag;
-        if (!missingUsd && !missingCompetition && !coaOutstanding.length && !missingBudgetTimeline && !qualifyingFlag && !missingAddr && !missingQuote && !missingMargin && !awaitingMargin && !needsCredit && !awaitingCredit && !missingEntity && !missingVerbal && kickoffDays == null && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        const stallIgnored = !!row?._ignoreStallFlag;
+        if (active.length === 0 && !qualifyingSnoozed && !(stall && stallIgnored)) {
+          return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+        }
+        const parkChange = (field, value) => updateOppField(row._id, field, value);
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
-            {missingUsd && (
-              <span
-                title="Stage is Qualifying or later but the USD? field is blank or “-”: fill in USD? to clear it."
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Missing USD value</span>
-            )}
-            {missingCompetition && (
-              <span
-                title="This opp is closed but the Competition field is blank or “-”: it's required to close an opp out."
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Missing Competition</span>
-            )}
-            {coaOutstanding.length > 0 && (
-              <span
-                title={`Stage is Agreement Sent but ${coaOutstanding.length} COA item${coaOutstanding.length === 1 ? '' : 's'} ${coaOutstanding.length === 1 ? 'is' : 'are'} neither approved nor marked N/A: ${coaOutstanding.map(r => r.item).join(', ')}.`}
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ COA approvals needed ({coaOutstanding.length})</span>
-            )}
-            {missingBudgetTimeline && (
-              <span
-                title="Budgets is in Scope but the Timeline? field is empty: set the budget delivery timeline."
-                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
-              >⚠ Budget delivery timeline?</span>
-            )}
-            {qualifyingFlag === 'active' && (
-              <>
-                <span
-                  title="Stage is still Lead but Status says a meeting is scheduled: consider moving this opp to Qualifying."
-                  style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-                >🚩 Move to Qualifying?</span>
+            {active.map(def => (
+              <span key={def.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    updateOppField(row._id, '_snoozeQualifyingFlagUntil', isoDaysFromToday(QUALIFYING_FLAG_SNOOZE_DAYS));
-                  }}
+                  onClick={(e) => { e.stopPropagation(); setFlagFixTarget({ oppId: row._id, flagId: def.id }); }}
                   onMouseDown={(e) => e.stopPropagation()}
-                  title={`Snooze this flag for ${QUALIFYING_FLAG_SNOOZE_DAYS} days`}
-                  style={{
-                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
-                    fontSize: '0.62rem', color: '#991B1B', fontFamily: 'inherit', textDecoration: 'underline',
-                  }}
-                >snooze</button>
-              </>
-            )}
-            {qualifyingFlag === 'snoozed' && (
+                  title={`${def.title(row)}\n\nClick to fix it here.`}
+                  style={{ ...chipBase, ...OPP_FLAG_TONES[def.tone(row)], cursor: 'pointer', fontFamily: 'inherit' }}
+                >{def.icon} {def.label(row)}</button>
+                {def.park && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); def.park.apply(parkChange); }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    title={def.park.title}
+                    style={{
+                      border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
+                      fontSize: '0.62rem', color: OPP_FLAG_TONES[def.tone(row)].color,
+                      fontFamily: 'inherit', textDecoration: 'underline',
+                    }}
+                  >{def.park.label}</button>
+                )}
+              </span>
+            ))}
+            {qualifyingSnoozed && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span
                   title={`"Move to Qualifying?" snoozed - back ${snoozeCountdownLabel(qualifyingFlagSnoozeDaysLeft(row))} (${row._snoozeQualifyingFlagUntil}).`}
@@ -14231,81 +14653,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 >restore</button>
               </span>
             )}
-            {missingAddr && (
-              <span
-                title="Has a BFO Opportunity Name but no BFO Address: add the BFO Address."
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ No BFO Address</span>
-            )}
-            {missingQuote && (
-              <span
-                title={`Active opp in "${String(row['Stage'] || '').trim()}" with no Deal Size: add the Deal Size.`}
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Deal Size Missing</span>
-            )}
-            {missingMargin && (
-              <span
-                title={`Opp in "${String(row['Stage'] || '').trim()}" with no ${headerLabel('Margin Email Date - Sales Leader Review Date')}: get margin approval.`}
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Missing Margin Approval</span>
-            )}
-            {awaitingMargin && (
-              <span
-                title={`${headerLabel('Margin Email Date - Sales Leader Review Date')} is filled but ${headerLabel('Margin Approval Date')} is still blank: the margin request went in and hasn't come back - chase it.`}
-                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
-              >⚠ Awaiting Margin Approval</span>
-            )}
-            {needsCredit && (
-              <span
-                title={`Deal Size over $50,000 in "${String(row['Stage'] || '').trim()}" with a blank ${headerLabel('Credit approval')}: get credit approval.`}
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Credit Approval Needed</span>
-            )}
-            {awaitingCredit && (
-              <span
-                title={`${headerLabel('Credit approval')} is filled but ${headerLabel('Credit Approval Date')} is still blank: the credit review went in and hasn't come back - chase it.`}
-                style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
-              >⚠ Awaiting Credit Approval</span>
-            )}
-            {missingEntity && (
-              <span
-                title="Opp in &quot;Agreement Sent&quot; with a blank Entity Outside the US Approval: fill it in."
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Missing Entity Approval</span>
-            )}
-            {missingVerbal && (
-              <span
-                title="Opp in &quot;Agreement Sent&quot; with a blank Verbal: fill it in."
-                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
-              >⚠ Missing Verbal</span>
-            )}
-            {kickoffDays != null && (
-              <span
-                title={`Kickoff Deadline is ${kickoffCountdownLabel(kickoffDays)} (warns under ${KICKOFF_WARN_DAYS} days out).`}
-                style={{ ...chipBase, ...(kickoffDays < 0
-                  ? { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }
-                  : { background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }) }}
-              >⚠ Kickoff {kickoffCountdownLabel(kickoffDays)}</span>
-            )}
-            {stall && !ignored && (
-              <>
-                <span
-                  title={`Stalled ${stall.days}d in ${row['Stage']} (limit ${stall.limit}d) → ${stall.suggestion}`}
-                  style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
-                >⚠ {stall.suggestion}</span>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); updateOppField(row._id, '_ignoreStallFlag', true); }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  title="Ignore this stall flag for this opp (also clears it on the Days in Stage board)"
-                  style={{
-                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
-                    fontSize: '0.62rem', color: '#92400E', fontFamily: 'inherit', textDecoration: 'underline',
-                  }}
-                >ignore</button>
-              </>
-            )}
-            {stall && ignored && (
+            {stall && stallIgnored && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span
                   title={`Stall flag ignored (${stall.days}d in ${row['Stage']}).`}
@@ -15783,6 +16131,37 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onOpenCompany={openCompanyDetails}
             settings={settings}
             oppRows={records}
+          />
+        );
+      })()}
+
+      {flagFixTarget && (() => {
+        const opp = records.find(r => r._id === flagFixTarget.oppId);
+        if (!opp) return null;
+        return (
+          <OppFlagsFixModal
+            // The popup freezes the row's flags as it opens them, so it has
+            // to start again when a chip on a different row opens it: left
+            // mounted it would carry the last record's flags onto this one.
+            key={opp._id}
+            opp={opp}
+            focusFlagId={flagFixTarget.flagId}
+            onClose={() => setFlagFixTarget(null)}
+            onFieldChange={(field, value) => updateOppField(opp._id, field, value)}
+            editorProps={{
+              columnLinks,
+              listRegistry,
+              companySuggestions,
+              peOwnerSuggestions,
+              prospects,
+              updateProspect,
+              hubspotContacts,
+              pricingOptionServices,
+              onOpenContact: openContactDetails,
+              onOpenCompany: openCompanyDetails,
+              settings,
+              oppRows: records,
+            }}
           />
         );
       })()}
