@@ -8,7 +8,7 @@
 // and the leading letter isn't a first name, so that case offers the surname
 // alone rather than inventing one.
 
-import { FREE_MAIL_DOMAINS } from './companyGuess';
+import { FREE_MAIL_DOMAINS } from './companyGuess.js';
 
 // "smith-jones" and "o'brien" are each one name, so capitalize across the
 // punctuation rather than only at the front.
@@ -19,8 +19,12 @@ function capitalize(word) {
 }
 
 // Particles that belong to the surname following them: "van der berg" is one
-// last name, not a first and a last.
-const SURNAME_PARTICLES = new Set([
+// last name, not a first and a last. Exported because splitFullName reads a
+// name out of a different source and has to draw the same line: "Mary Van Der
+// Berg" and mary.van.der.berg@ are the same person, and a form that split
+// them differently depending on which one was pasted would be a form that
+// disagrees with itself.
+export const SURNAME_PARTICLES = new Set([
   'van', 'von', 'de', 'del', 'della', 'di', 'da', 'dos', 'du',
   'la', 'le', 'den', 'der', 'ten', 'ter', 'af', 'bin', 'ibn', 'mac', 'mc',
 ]);
