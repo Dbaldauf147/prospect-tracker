@@ -52,6 +52,11 @@ import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx
 import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
 import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
 import CorporateCompliance from './CorporateCompliance';
+// The savings bands this page quotes, editable. A subtab rather than a
+// page of its own because the figures are only ever read here: every
+// surface that spends them - the Indicative Savings sheets, the by-state
+// and by-country overviews - is built a few hundred lines below.
+import { MarketSavingsView } from '../MarketSavingsView/MarketSavingsView';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization, sitesWithMandate } from '../../utils/complianceMandates';
 // The same reading of a saved site list the company popup renders under
 // "Site List", so the equipment total stamped on the prospect below and the
@@ -129,7 +134,7 @@ import {
   NOT_SERVED,
 } from '../../data/countryDeregulation';
 // The savings bands below are the shipped tables with whatever the
-// seller typed into Lists > Market Savings laid over them, so a retyped
+// seller typed into the Market Savings subtab laid over them, so a retyped
 // percentage reaches every sheet this page builds. countryElectricSavings
 // / countryGasSavings above stay imported for the callers that want the
 // unedited reference.
@@ -1500,7 +1505,7 @@ function CompanySiteListLookup({ prospects = [], companySiteLists = {}, onUseCom
 export function SitesView({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, onSelectProspect } = {}) {
   // Top-level toggle between the Utility Lookup page and the nested
   // Utility Mapping view (interval-data availability by utility).
-  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance'
+  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance' | 'roadmap' | 'corporate' | 'marketsavings'
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
@@ -4867,7 +4872,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   //
   // The tables themselves are in data/marketSavingsBands.js; what comes
   // back here is those tables with the seller's own figures laid over
-  // them, since Lists > Market Savings lets them retype the low / high
+  // them, since the Market Savings subtab lets them retype the low / high
   // percentage of any market. Only the percentages move: deregulation
   // status stays with the reference tables, which is what decides which
   // sites count as deregulated and which tier a market lands in.
@@ -7177,7 +7182,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           let countryRegRateOpportunity = false;
           if (isCountryBucket) {
             // The seller's own figure for this country when they have
-            // typed one in Lists > Market Savings, the reference table's
+            // typed one on the Market Savings subtab, the reference table's
             // otherwise. Status comes from the reference either way - an
             // override sets the band, not whether the market is one.
             const entry = countrySavings(settings, country, commodity);
@@ -15692,6 +15697,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           className={mainTab === 'corporate' ? styles.subtabActive : styles.subtab}
           onClick={() => setMainTab('corporate')}
         >Corporate Compliance</button>
+        <button
+          type="button"
+          className={mainTab === 'marketsavings' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('marketsavings')}
+        >Market Savings</button>
         {/* Division scope. Lives in the tab bar rather than inside the
             Site List page because it scopes every tab — the compliance
             tabs render instead of the Site List, so a control down there
@@ -15746,7 +15756,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           </div>
         )}
       </div>
-      {mainTab === 'corporate' ? (
+      {mainTab === 'marketsavings' ? (
+        <MarketSavingsView settings={settings} updateSettingsPath={updateSettingsPath} />
+      ) : mainTab === 'corporate' ? (
         <CorporateCompliance sites={complianceSites} settings={settings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} />
       ) : mainTab === 'roadmap' ? (
         <ComplianceRoadmap

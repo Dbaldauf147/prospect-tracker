@@ -1,11 +1,11 @@
 // The seller's own savings figures, laid over the shipped defaults.
 //
-// Lists > Market Savings lets the seller retype the low / high indicative
-// savings percentage for any US state, Canadian province or country, for
-// electric and for gas. What they type is stored per user under
-// settings.marketSavings and read back here, so every surface that quotes
-// a band — the Indicative Savings sheets, the by-state overview, the site
-// detail rows — quotes the edited one.
+// Utility Lookup > Market Savings lets the seller retype the low / high
+// indicative savings percentage for any US state, Canadian province or
+// country, for electric and for gas. What they type is stored per user
+// under settings.marketSavings and read back here, so every surface that
+// quotes a band — the Indicative Savings sheets, the by-state overview,
+// the site detail rows — quotes the edited one.
 //
 // What an override can and cannot do:
 //

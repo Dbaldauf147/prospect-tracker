@@ -14,8 +14,8 @@ import {
 } from '../../utils/marketSavings';
 import styles from './MarketSavingsView.module.css';
 
-// Lists > Market Savings. The indicative commodity-savings band behind
-// every savings figure the app quotes, in one editable table.
+// Utility Lookup > Market Savings. The indicative commodity-savings band
+// behind every savings figure the app quotes, in one editable table.
 //
 // The bands used to be a pair of hard-coded maps inside SitesView, which
 // meant a seller whose own bid history said 3 - 5 % in Texas had no way
