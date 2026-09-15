@@ -5,7 +5,6 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
 import { ScopeLineMathModal } from './ScopeLineMathModal';
 import { CountInput, NumberCell } from './pricingCells';
-import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
@@ -100,10 +99,10 @@ const DEAL_TABLE_COLUMNS = [
 // settings — the rate card is the part worth keeping, and that's over there.
 export function AccountPotentialTab({
   settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [],
-  // The account this page is about, when the page it is embedded in already
-  // knows. On the company card there is nothing to pick: the card IS the
-  // account, and a combo offering to switch to somebody else's potential
-  // inside their popup is a way to misread a page you did not mean to open.
+  // The account this page is about. The card IS the account and its name is
+  // already at the top of the popup, so the page neither names it again nor
+  // offers a combo to switch it: a page that could quietly be about
+  // somebody else is a page you can misread without noticing.
   lockedCompany = null,
   // The opp store, when the host already holds it. The company card loads
   // it for its own sections and works out the same "what is still open"
@@ -120,7 +119,7 @@ export function AccountPotentialTab({
   // Firestore pull, which is exactly the right behaviour there.
   const { user } = useAuth() || {};
 
-  // The account this page is about, when the host already knows it.
+  // The account this page is about, as the host named it.
   const locked = String(lockedCompany ?? '').trim();
 
   // The account's own opportunities: their stages are what rules a service
@@ -161,22 +160,11 @@ export function AccountPotentialTab({
   const serviceUnits = useMemo(() => scenario?.serviceUnits || {}, [scenario?.serviceUnits]);
 
   // ---- the account this potential is being read for -------------------
-  // What is in the box, and what everything else matches on. Two values,
-  // because they are two different things: the box has to hold exactly
-  // what was typed - a space in the middle of "Blue Owl" included - and
-  // every lookup below wants the name without its edges. Trimming what the
-  // box shows is what used to eat the space bar: "Blue " trimmed back to
-  // "Blue", which equalled the value already there, so the keystroke was
-  // dropped and the word could never be finished.
-  // Locked to the card's own account when embedded, and whatever is in the
-  // box otherwise. The scenario still carries the name either way, so the
-  // scope, the counts and the saved estimate behave identically in both.
+  // The name the host locked the page to, and the same name without its
+  // edges, which is what every lookup below matches on. The scenario
+  // carries it too, so the stored estimate can tell whose it is.
   const companyTyped = locked || String(scenario?.company ?? '');
   const company = companyTyped.trim();
-  const companyOptions = useMemo(
-    () => [...new Set((prospects || []).map(p => String(p?.company || '').trim()).filter(Boolean))].sort(),
-    [prospects],
-  );
   // The record behind the typed name. A name that matches nothing leaves
   // this null, which the page shows as "no record" rather than pretending
   // to have found one - the counts and the statuses both come off the
@@ -234,65 +222,11 @@ export function AccountPotentialTab({
   }), [client, serviceRows, pricing, bases, effectiveCounts, serviceUnits, oppStages,
     settings?.serviceOverrides]);
 
-  // What the account has already ruled on, said in words. A count alone
-  // ("29 left out") reads as a filter that might be wrong; naming the
-  // outcomes says why each one went, which is the difference between a
-  // number somebody trusts and one they come and ask about.
-  const decidedSentence = useMemo(() => {
-    const c = potential.decidedCounts;
-    const total = potential.decided.length;
-    if (!total) return 'Nothing ruled out yet - every service is still open.';
-    const parts = [];
-    if (c.sold) parts.push(`${c.sold} sold`);
-    if (c.inProgress) parts.push(`${c.inProgress} in flight`);
-    if (c.notSold) parts.push(`${c.notSold} not sold`);
-    if (c.na) parts.push(`${c.na} N/A`);
-    return `${total} left out: ${parts.join(', ')}`;
-  }, [potential]);
-
-  // The same services by name, on the sentence itself. The count says how
-  // many went; the only question it is ever asked is which. Somebody
-  // looking for a service they cannot find on the table wants to know
-  // whether this is where it went, and a number cannot answer that.
-  const decidedTitle = useMemo(() => {
-    const named = [...potential.decided]
-      .map(d => `${d.name}${d.status ? ` (${d.status})` : ''}`)
-      .sort((a, b) => a.localeCompare(b));
-    if (!named.length) {
-      return 'Nothing on this account has been sold, quoted, turned down or marked N/A yet, so every service in the catalogue is below.';
-    }
-    const shown = named.slice(0, 16);
-    return 'Not on the table below, because the account has already ruled on them: '
-      + shown.join(', ')
-      + (named.length > shown.length ? `, and ${named.length - shown.length} more.` : '.')
-      + ' A status typed on the Services tab is changed there; one that came off an opportunity is changed on the opp.';
-  }, [potential]);
-
   // Only the undecided services reach the table. A service this account
   // already buys is not potential, and neither is one they turned down, one
   // marked N/A, or one already sitting in a live opp - that money is in the
   // pipeline and counting it here would count it twice in the same review.
   const openRows = potential.open;
-
-  function setCompany(name) {
-    if (locked) return;
-    const typed = String(name ?? '');
-    const next = typed.trim();
-    if (typed === companyTyped) return;
-    // Still the same account, just spaced differently - somebody typing
-    // the space in "Blue Owl", or trailing one off. Keep what is ticked:
-    // wiping a scope mid-word would be a page that punishes typing.
-    if (next === company) {
-      setScenario(s2 => ({ ...s2, company: typed }));
-      return;
-    }
-    // A different account changes which services are even on the page, so a
-    // scope ticked against the last one is not a scope against this one.
-    // The typed counts go too: sites belong to a company, and carrying one
-    // account's estate onto another's page is the quiet way to price a deal
-    // against the wrong estate.
-    setScenario(s2 => ({ ...s2, company: typed, services: [], counts: {}, serviceUnits: {} }));
-  }
 
   // Keep the stored estimate in step with the one on screen. Written from
   // here rather than split across the two components that hold it: the
@@ -973,51 +907,6 @@ export function AccountPotentialTab({
 
   return (
     <>
-      {/* The account. Everything below reads off it: its own site and meter
-          figures price the services, and its Services Explored decides
-          which services are on the page at all. */}
-      <div className={styles.potentialBar}>
-        <div className={styles.potentialPick}>
-          <span className={styles.pricingBarTitle}>Account potential</span>
-          {locked ? (
-            <strong className={styles.potentialLockedName} title="The account this card is about. Everything below is priced against its own figures.">
-              {locked}
-            </strong>
-          ) : (
-            <div className={styles.potentialCombo}>
-              <ColumnFilterCombo
-                value={companyTyped}
-                onChange={setCompany}
-                suggestions={companyOptions}
-                label="Company"
-                placeholder="Type a company…"
-              />
-            </div>
-          )}
-          {company && !client && (
-            <span className={styles.potentialWarn} title="Nothing in the client list matches this name, so no counts and no service statuses could be read. The services below are priced on whatever is typed in the boxes.">
-              No record for this name
-            </span>
-          )}
-          {client && oppLoading && (
-            <span className={styles.potentialNote}>Reading their opportunities…</span>
-          )}
-          {client && (
-            <span className={styles.potentialNote} title={decidedTitle}>
-              {decidedSentence}
-            </span>
-          )}
-          {company && !locked && (
-            <button
-              type="button"
-              className={styles.showHiddenBtn}
-              onClick={() => setCompany('')}
-              title="Go back to the whole catalogue with nothing ruled out"
-            >Clear account</button>
-          )}
-        </div>
-      </div>
-
       {/* The estimator. Everything in it is a scenario rather than saved
           data, so it reads left to right as one sentence: this many sites,
           on a deal this big, with these services ticked, comes to this. */}
@@ -1047,6 +936,19 @@ export function AccountPotentialTab({
               onClick={clearScope}
               title="Untick every service and forget the imported opp"
             >Clear scope</button>
+          )}
+          {/* What the counts beside them are worth. Both say the same kind
+              of thing - the boxes are not reading off a record, or not
+              reading off all of it yet - so they sit on the bar the boxes
+              are on, at the end of it, where appearing and disappearing
+              does not shove the inputs along. */}
+          {company && !client && (
+            <span className={styles.potentialWarn} title="Nothing in the client list matches this name, so no counts and no service statuses could be read. The services below are priced on whatever is typed in the boxes.">
+              No record for this name
+            </span>
+          )}
+          {client && oppLoading && (
+            <span className={styles.potentialNote}>Reading their opportunities…</span>
           )}
         </div>
       </div>
