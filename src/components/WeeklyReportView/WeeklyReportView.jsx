@@ -27,8 +27,10 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
-  emailsByWeek, newOppsByMonth, coverageByWeek, TREND_WEEKS, TREND_MONTHS,
+  emailsByWeek, newOppsByMonth, coverageByWeek,
+  TREND_WEEKS, TREND_MONTHS, COVERAGE_WEEKS,
 } from '../../utils/weeklyReportTrends';
+import { withCoverageImages } from '../../utils/coverageChartImage';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../utils/pipelineFunnelData';
@@ -575,9 +577,13 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // snapshots the KPI cards already read. Not scoped to the period the way
   // the series above are: coverage is a level, not a count of the week's
   // work, so a day-scoped report carries the same weekly series.
-  const coverageSeries = useMemo(() => coverageByWeek({
-    progressWeeks, refMs: bounds.start, weeks: TREND_WEEKS,
-  }), [progressWeeks, bounds]);
+  // Drawn as well as counted. The chart is encoded from the numbers rather
+  // than rasterised off the screen the way the funnel is, so the same
+  // picture comes out of the cron's rebuild; this is the same call, not a
+  // capture the server has to do without.
+  const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
+    progressWeeks, refMs: bounds.start, weeks: COVERAGE_WEEKS,
+  })), [progressWeeks, bounds]);
 
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing

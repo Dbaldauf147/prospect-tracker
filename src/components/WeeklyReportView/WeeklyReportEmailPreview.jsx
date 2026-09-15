@@ -40,7 +40,19 @@ export function WeeklyReportEmailPreview({
     // the data URL the snapshot already carries. Same markup either way,
     // and a snapshot with no picture previews without one, exactly as it
     // would arrive.
-    return renderWeeklyReportHtml(doc, { message, funnelImageSrc: doc.funnelImage?.src || '' });
+    // The coverage charts preview off the same data URLs the snapshot
+    // carries; a sent message swaps in its own attachments. Keyed by chart
+    // id, which is what the markup looks them up by.
+    const coverageImageSrcs = Object.fromEntries(
+      (doc.coverage?.charts || [])
+        .filter(c => c.image?.src)
+        .map(c => [c.id, c.image.src]),
+    );
+    return renderWeeklyReportHtml(doc, {
+      message,
+      funnelImageSrc: doc.funnelImage?.src || '',
+      coverageImageSrcs,
+    });
   }, [open, snapshot, message, uid]);
 
   // Grow the frame to its content, so the preview scrolls with the modal

@@ -38,8 +38,10 @@ import {
 } from '../../src/utils/weeklyReport.js';
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
 import {
-  emailsByWeek, newOppsByMonth, coverageByWeek, recentWeeks, TREND_WEEKS, TREND_MONTHS,
+  emailsByWeek, newOppsByMonth, coverageByWeek,
+  recentWeeks, TREND_WEEKS, TREND_MONTHS, COVERAGE_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
+import { withCoverageImages } from '../../src/utils/coverageChartImage.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../src/utils/pipelineFunnelData.js';
@@ -205,9 +207,13 @@ export function buildReportPayload(sources, period) {
   // progressHistory weeks the review snapshot below reads. Not scoped to
   // the period: coverage is a level, not a count, so a day-scoped report
   // gets the same weekly series a week-scoped one does.
-  const coverage = coverageByWeek({
-    progressWeeks: s.progressWeeks, refMs: start, weeks: TREND_WEEKS,
-  });
+  // Drawn here as well as counted: unlike the funnel, whose picture needs a
+  // canvas the tab has and this does not, the coverage chart is encoded
+  // pixel by pixel (utils/coverageChartImage), so a scheduled send carries
+  // the same picture the preview shows.
+  const coverage = withCoverageImages(coverageByWeek({
+    progressWeeks: s.progressWeeks, refMs: start, weeks: COVERAGE_WEEKS,
+  }));
 
   const reviewSnapshot = buildReviewSnapshot({
     pipeline: s.pipeline,

@@ -358,12 +358,50 @@ function coverageRowHtml(point, isLast) {
     </tr>`;
 }
 
-function coverageCardHtml(chart) {
+// How many weeks the fallback table shows. The chart behind it runs to
+// half a year; a table that long would be the tallest thing in the report,
+// so where there is no picture it shows the recent end of the series.
+const COVERAGE_TABLE_ROWS = 5;
+
+// Where a tier stands now, under the picture: the swatch that keys the
+// line, the tier's name, and its latest figure. This is what the bars
+// would have said, for a reader who has the chart above it.
+function coverageStandingHtml(points, isT1) {
+  const key = isT1 ? 't1' : 't2';
+  const last = [...points].reverse().find(p => p[key] != null);
+  const colour = isT1 ? COVERAGE_T1 : COVERAGE_T2;
+  return `<td valign="middle" style="padding:0 14px 0 0">${table(`style="border-collapse:collapse"`, `<tr>
+        <td width="8" height="8" bgcolor="${colour}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+        <td style="padding-left:5px;font-family:${FONT};font-size:11px;color:${MUTED};white-space:nowrap">${isT1 ? 'Tier 1' : 'Tier 2'}</td>
+        <td style="padding-left:5px;font-family:${FONT};font-size:13px;font-weight:700;color:${INK};white-space:nowrap">${last ? `${last[key]}%` : '-'}</td>
+      </tr>`)}</td>`;
+}
+
+function coverageCardHtml(chart, src) {
   const points = Array.isArray(chart?.points) ? chart.points : [];
-  const rows = points.map((p, i) => coverageRowHtml(p, i === points.length - 1)).join('');
+  const img = src && chart?.image
+    ? `<img src="${esc(src)}" width="${chart.image.width}" height="${chart.image.height}" alt="${esc(chart.image.alt || chart.title || '')}" style="display:block;width:100%;max-width:${chart.image.width}px;height:auto;border:0;outline:none;text-decoration:none">`
+    : '';
+
+  // With the chart drawn, the weekly figures beside every bar would be the
+  // same series told twice, so the card carries where each tier stands and
+  // leaves the shape to the picture. Without it, the bars ARE the chart -
+  // the same arrangement the funnel makes with its stage table.
+  const body = img
+    ? `<div style="margin-top:8px">${img}</div>
+      ${table(`style="border-collapse:collapse;margin-top:9px"`, `<tr>
+        ${coverageStandingHtml(points, true)}
+        ${coverageStandingHtml(points, false)}
+      </tr>`)}`
+    : table(
+      `width="100%" style="border-collapse:collapse;margin-top:8px"`,
+      coverageHeadRow() + points.slice(-COVERAGE_TABLE_ROWS)
+        .map((p, i, shown) => coverageRowHtml(p, i === shown.length - 1)).join(''),
+    );
+
   return `${cardOpen()}
       <div style="font-family:${FONT};font-size:13px;font-weight:700;line-height:1.3;color:${INK}">${esc(chart.title)}</div>
-      ${table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, coverageHeadRow() + rows)}
+      ${body}
       ${chart.note ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(chart.note)}</div>` : ''}
     ${CARD_CLOSE}`;
 }
@@ -371,10 +409,15 @@ function coverageCardHtml(chart) {
 // The pair, side by side, as they sit on the Progress tab. Nothing at all
 // when the snapshot carries no coverage: an empty card would say the
 // coverage is missing, when what is missing is the recording of it.
-export function coverageHtml(coverage) {
+//
+// `srcs` maps a chart's id to where its picture is to be fetched from - a
+// `cid:` reference into the message's own attachments when this is being
+// mailed, the data URL the snapshot carries when the tab is previewing it.
+// A chart with no entry falls back to the bars.
+export function coverageHtml(coverage, srcs = {}) {
   const charts = (Array.isArray(coverage?.charts) ? coverage.charts : [])
     .filter(c => c && c.title && Array.isArray(c.points) && c.points.length);
-  return charts.length ? cardRow(charts.map(coverageCardHtml)) : '';
+  return charts.length ? cardRow(charts.map(c => coverageCardHtml(c, srcs[c.id] || ''))) : '';
 }
 
 // A group of changes, as the tab lists them: uppercase title, a count pill,
@@ -751,7 +794,9 @@ export function staleBannerHtml(fresh) {
  *   email is the stage table alone, which is also what happens when the
  *   snapshot carries no picture.
  */
-export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc = '' } = {}) {
+export function renderWeeklyReportHtml(snapshot, {
+  message = '', funnelImageSrc = '', coverageImageSrcs = {},
+} = {}) {
   const s = snapshot || {};
   const fresh = freshnessNote(s);
   const cards = Array.isArray(s.kpiCards) ? s.kpiCards : [];
@@ -804,8 +849,14 @@ export function renderWeeklyReportHtml(snapshot, { message = '', funnelImageSrc 
   // series rather than up with the pipeline figures because they answer a
   // different question: not what the year is worth, but whether the
   // accounts it rests on have anybody in them to call.
-  const coverage = coverageHtml(s.coverage);
-  const coverageWeeks = Number(s.coverage?.weeks) || (s.coverage?.charts?.[0]?.points || []).length;
+  const coverage = coverageHtml(s.coverage, coverageImageSrcs);
+  // The heading counts what the cards actually show. With the charts drawn
+  // that is the whole series; falling back to the bars it is the tail of
+  // it, and a heading claiming half a year over five rows of bars would be
+  // the report miscounting itself.
+  const coverageDrawn = (s.coverage?.charts || []).some(c => c.image && coverageImageSrcs[c.id]);
+  const coverageSpan = Number(s.coverage?.weeks) || (s.coverage?.charts?.[0]?.points || []).length;
+  const coverageWeeks = coverageDrawn ? coverageSpan : Math.min(coverageSpan, COVERAGE_TABLE_ROWS);
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
