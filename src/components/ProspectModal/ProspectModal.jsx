@@ -9657,6 +9657,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               setScenario={setPotentialScenario}
               prospects={prospects}
               lockedCompany={fields.company}
+              // The same opp records the Biggest Deal field above reads, so
+              // the two cannot name a different service as the biggest
+              // thing left to sell this account. Null while the card is
+              // still loading them, which the tab says out loud.
+              oppRecords={oppsCache}
             />
             </div>
           )}
