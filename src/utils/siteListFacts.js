@@ -46,6 +46,13 @@ function toCount(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+// A market cell, lowercased, so "Deregulated" written by the save and
+// "deregulated" typed into a spreadsheet read the same.
+const DEREGULATED = 'deregulated';
+function marketValue(row, col) {
+  return col ? String(row[col] ?? '').trim().toLowerCase() : '';
+}
+
 /**
  * Sq ft, divisions, property types and equipment across a stored site list.
  *
@@ -63,6 +70,14 @@ function toCount(value) {
  * still totals. `accounts` — the utility bills behind those buildings — is
  * read exactly the same way, and is what the Utility Lookup save has always
  * counted to set a company's Number of Accounts.
+ *
+ * `deregulatedSites` is how much of the estate can be shopped, read back
+ * off the Electric Market / Gas Market columns the Utility Lookup save
+ * writes per site. Null - not 0 - on a list that carries no market column
+ * at all, for the reason `sqft` is: a hand-uploaded list has never been
+ * classified, and "nobody has worked this out" must not overwrite a figure
+ * somebody typed. `marketSites` says how many rows carried a
+ * classification, so a caller can tell the two apart.
  */
 export function siteListFacts(entry) {
   const headers = (entry?.headers || []).filter(h => typeof h === 'string');
@@ -84,7 +99,8 @@ export function siteListFacts(entry) {
     return {
       sites: 0, listedSites: listed.length, inactiveSites, inactiveNote,
       sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
-      accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
+      accounts: null, accountSites: 0, deregulatedSites: null, marketSites: 0,
+      divisions: [], propertyTypes: [],
     };
   }
 
@@ -113,6 +129,20 @@ export function siteListFacts(entry) {
   const accountsCol = findHeader(headers, [
     /^est\.?\s*utility\s*accounts/i, /^utility\s*accounts$/i, /^accounts$/i,
   ]);
+  // Whether each site sits in a market that can be shopped. The Utility
+  // Lookup save writes these two columns already classified - the same
+  // classifier the page's Market card and its Indicative Savings sheets
+  // run - so the answer is read back here rather than worked out again,
+  // which is what keeps this count and that page's from disagreeing.
+  // Matched on a prefix because a colliding uploaded column pushes the
+  // analysis one to "Electric Market (analysis)", and loosely after that
+  // because an uploaded sheet writes its own wording.
+  const electricMarketCol = findHeader(headers, [
+    /^electric(ity)?\s*market/i, /\belectric(ity)?\s*market\b/i,
+  ]);
+  const gasMarketCol = findHeader(headers, [
+    /^gas\s*market/i, /^natural\s*gas\s*market/i, /\bgas\s*market\b/i,
+  ]);
 
   let sqft = 0;
   let sqftSites = 0;
@@ -120,6 +150,8 @@ export function siteListFacts(entry) {
   let equipmentSites = 0;
   let accounts = 0;
   let accountSites = 0;
+  let deregulated = 0;
+  let marketSites = 0;
   const divisions = new Map();
   const propertyTypes = new Map();
   const add = (map, value) => {
@@ -148,6 +180,21 @@ export function siteListFacts(entry) {
     const statedAccounts = accountsCol ? toCount(row[accountsCol]) : null;
     const a = statedAccounts ? statedAccounts : (typeCol ? propertyTypeAccountTotal(row[typeCol]) : null);
     if (a) { accounts += a; accountSites += 1; }
+    // Either commodity counts: a site on a regulated electric utility whose
+    // gas is deregulated is still a supply conversation, and a count that
+    // took electricity alone would say there is nothing to talk about. The
+    // same rule the Utility Lookup page counts its own Deregulated Sites by.
+    //
+    // A row only counts as classified when one of the two cells says
+    // something. The classifier leaves a site blank where it cannot tell -
+    // a competitive state with no utility on file - and a blank is not a
+    // regulated site.
+    if (electricMarketCol || gasMarketCol) {
+      const e = marketValue(row, electricMarketCol);
+      const g = marketValue(row, gasMarketCol);
+      if (e || g) marketSites += 1;
+      if (e === DEREGULATED || g === DEREGULATED) deregulated += 1;
+    }
   }
 
   return {
@@ -164,6 +211,10 @@ export function siteListFacts(entry) {
     equipmentSites,
     accounts: accountSites > 0 ? Math.round(accounts) : null,
     accountSites,
+    // Null when nothing on this list has been classified - see the note at
+    // the top. Zero is a real answer: an estate with nothing to shop.
+    deregulatedSites: marketSites > 0 ? deregulated : null,
+    marketSites,
     divisions: [...divisions.values()].sort((a, b) => a.localeCompare(b)),
     propertyTypes: [...propertyTypes.values()].sort((a, b) => a.localeCompare(b)),
   };

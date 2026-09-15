@@ -142,7 +142,8 @@ function eq(actual, expected, name) {
     {
       sites: 0, listedSites: 0, inactiveSites: 0, inactiveNote: '',
       sqft: null, sqftSites: 0, equipment: null, equipmentSites: 0,
-      accounts: null, accountSites: 0, divisions: [], propertyTypes: [],
+      accounts: null, accountSites: 0, deregulatedSites: null, marketSites: 0,
+      divisions: [], propertyTypes: [],
     },
     'no list is no facts');
   eq(siteListFacts({ headers: ['Site Name'], rows: [{ 'Site Name': 'A' }] }).sqft, null,
@@ -276,6 +277,84 @@ function eq(actual, expected, name) {
   }], 'a list with nothing to place reads as a row with nothing on it');
   eq(siteListScreeningRows(null), [], 'no list, no rows');
   eq(siteListScreeningRows({ headers: ['City'], rows: [] }), [], 'and no rows, no rows');
+}
+
+// --- how much of the estate can be shopped -------------------------------
+//
+// The Utility Lookup save writes each site's market classification into the
+// list, so the company card can count it back without the utility files that
+// produced it. The interesting cases are the ones that are NOT a count: a
+// list nobody has classified, and a site the classifier could not place.
+{
+  const list = (rows) => siteListFacts({
+    headers: ['Site Name', 'ST / Prov', 'Electric Market', 'Gas Market'],
+    rows,
+  });
+
+  eq(list([
+    { 'Site Name': 'A', 'ST / Prov': 'TX', 'Electric Market': 'Deregulated', 'Gas Market': 'Regulated' },
+    { 'Site Name': 'B', 'ST / Prov': 'CA', 'Electric Market': 'Regulated', 'Gas Market': 'Regulated' },
+  ]).deregulatedSites, 1, 'a deregulated electric market counts the site');
+
+  eq(list([
+    { 'Site Name': 'A', 'ST / Prov': 'CA', 'Electric Market': 'Regulated', 'Gas Market': 'Deregulated' },
+  ]).deregulatedSites, 1, 'so does a deregulated gas market on a regulated electric site');
+
+  eq(list([
+    { 'Site Name': 'A', 'ST / Prov': 'TX', 'Electric Market': 'Deregulated', 'Gas Market': 'Deregulated' },
+  ]).deregulatedSites, 1, 'a site deregulated on both is still one site');
+
+  eq(list([
+    { 'Site Name': 'A', 'ST / Prov': 'CA', 'Electric Market': 'Regulated', 'Gas Market': 'Regulated' },
+  ]).deregulatedSites, 0, 'an estate with nothing to shop counts zero, which is an answer');
+
+  // The classifier leaves a competitive state with no utility on file
+  // blank. That is "we cannot tell yet", so the site is not counted as
+  // deregulated - but the list HAS been classified, so the total is still a
+  // number rather than null.
+  const partial = list([
+    { 'Site Name': 'A', 'ST / Prov': 'TX', 'Electric Market': '', 'Gas Market': '' },
+    { 'Site Name': 'B', 'ST / Prov': 'TX', 'Electric Market': 'Deregulated', 'Gas Market': '' },
+  ]);
+  eq(partial.deregulatedSites, 1, 'a site the classifier could not place is not a deregulated one');
+  eq(partial.marketSites, 1, 'and only the classified rows count as classified');
+
+  // A list that never went through Utility Lookup. Null, not zero: the
+  // company card writes this figure onto the record, and a zero here would
+  // overwrite a number somebody typed with "nobody has worked it out".
+  const unclassified = siteListFacts({
+    headers: ['Site Name', 'State', 'SQFT'],
+    rows: [{ 'Site Name': 'Mill', State: 'MA', SQFT: '90000' }],
+  });
+  eq(unclassified.deregulatedSites, null, 'a list with no market column answers null, not zero');
+  eq(unclassified.marketSites, 0, 'and says nothing on it was classified');
+
+  // Header tolerance, the thing this module is mostly about: a colliding
+  // uploaded column pushes the analysis one to "(analysis)", and an upload
+  // that wrote its own wording still reads.
+  eq(siteListFacts({
+    headers: ['Electric Market (analysis)', 'Natural Gas Market'],
+    rows: [{ 'Electric Market (analysis)': 'Deregulated', 'Natural Gas Market': 'Regulated' }],
+  }).deregulatedSites, 1, 'the renamed analysis column and an upload\'s own wording both read');
+
+  eq(siteListFacts({
+    headers: ['Electric Market'],
+    rows: [{ 'Electric Market': ' deregulated ' }],
+  }).deregulatedSites, 1, 'case and padding do not decide whether a site can be shopped');
+
+  // Inactive sites are out of every other total on this list, and out of
+  // this one: a shut store in a competitive market is not an estate we can
+  // shop.
+  eq(siteListFacts({
+    headers: ['Site Name', 'Site Status', 'Electric Market'],
+    rows: [
+      { 'Site Name': 'Open', 'Site Status': 'Active', 'Electric Market': 'Deregulated' },
+      { 'Site Name': 'Shut', 'Site Status': 'Closed', 'Electric Market': 'Deregulated' },
+    ],
+  }).deregulatedSites, 1, 'a closed site is not something to shop');
+
+  eq(siteListFacts({ headers: ['Electric Market'], rows: [] }).deregulatedSites, null,
+    'an empty list answers null too');
 }
 
 // --- how a floor area reads ---------------------------------------------

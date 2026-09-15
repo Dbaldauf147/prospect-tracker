@@ -5273,10 +5273,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // ordinance changes what a building owes, and the penalty changes with
       // it - so the button that re-reads one re-reads the other.
       //
-      // Deregulated Sites and Indicative Annual Savings are not here: both
-      // need the utility files and the savings model the Utility Lookup page
-      // holds, which a saved site list does not carry. They come from a
-      // Master Analysis save, or they are typed.
+      // Deregulated Sites comes off the list too, and used to be left out
+      // of this button on the reading that it needed the utility files the
+      // Utility Lookup page holds. It does not: that page writes each site's
+      // Electric Market and Gas Market into the saved list already
+      // classified, so the count is read back rather than worked out, and
+      // reading it back is what makes it right - it is the same classifier's
+      // answer, over the whole saved list rather than whichever upload
+      // happened to be open when the analysis ran. See siteListFacts.
+      //
+      // Indicative Annual Savings genuinely is not here. It is a
+      // month-by-month ramp gated by each site's supplier contract dates,
+      // and those dates are not among the columns the save writes, so there
+      // is nothing on this list to rebuild it from. It comes from a Master
+      // Analysis save, or it is typed - and the note below says so rather
+      // than leaving the one figure that did not move unexplained.
       const exposure = Math.round(CATEGORIES.reduce((sum, c) => sum + totalPenalty(screening, c), 0));
       const changes = [];
       // Only what actually moved is written, and the note names it: a button
@@ -5294,9 +5305,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       apply('equipmentCount', 'Equipment', facts.equipment);
       apply('sitesWithMandate', 'Sites w/ Mandate', mandated);
       apply('maxYearlyExposure', 'Est. Max Yearly Exposure', exposure);
-      setAnalysisRefreshNote(changes.length
+      apply('deregulatedSites', 'Deregulated Sites', facts.deregulatedSites);
+      // What this button could not answer, named. Deregulated Sites is
+      // blank rather than wrong on a list nobody has classified, and
+      // Indicative Annual Savings is never refreshable here at all; a box
+      // that stays empty while the ones around it fill in reads as a bug,
+      // which is exactly how this one was reported.
+      const cannot = [];
+      if (facts.deregulatedSites == null) {
+        cannot.push('Deregulated Sites (this list carries no market classification: save it from Utility Lookup to add one)');
+      }
+      cannot.push('Indicative Annual Savings (it follows each site\'s supplier contract dates, which the list does not hold)');
+      const cannotNote = ` Not refreshed from the list: ${cannot.join('; ')}.`;
+      setAnalysisRefreshNote((changes.length
         ? `Updated from the ${facts.sites.toLocaleString()}-site list: ${changes.join(' · ')}.`
-        : `Already matches the ${facts.sites.toLocaleString()}-site list.`);
+        : `Already matches the ${facts.sites.toLocaleString()}-site list.`) + cannotNote);
     } catch (err) {
       console.error('Refreshing figures from the site list failed:', err);
       setAnalysisError(err?.message || 'Could not read the figures off the site list.');
@@ -7666,16 +7689,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <div style={{ fontSize: '0.68rem', color: '#166534', marginTop: '0.2rem' }}>{analysisRefreshNote}</div>
                 )}
               </div>
-              {/* Re-reads Sites, Accounts, Equipment, Sites w/ Mandate and
-                  the exposure those mandates carry off the company's saved
-                  site list, so the Scale figures can be brought up to date
-                  without loading the portfolio back onto the Utility Lookup
-                  page and re-saving the whole workbook. */}
+              {/* Re-reads Sites, Accounts, Equipment, Sites w/ Mandate,
+                  Deregulated Sites and the exposure those mandates carry off
+                  the company's saved site list, so the Scale figures can be
+                  brought up to date without loading the portfolio back onto
+                  the Utility Lookup page and re-saving the whole workbook.
+                  The note under it names what it could not answer. */}
               <button
                 type="button"
                 onClick={refreshAnalysisFigures}
                 disabled={analysisRefreshing}
-                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
+                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate, Deregulated Sites and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping, the current compliance screening and the market classification the list carries. Updates the Scale boxes below; it does not rebuild the saved workbook, and it cannot work out Indicative Annual Savings, which follows contract dates the list does not hold.'}
                 style={{
                   padding: '0.4rem 0.9rem',
                   background: '#fff',
