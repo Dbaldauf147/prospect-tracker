@@ -132,6 +132,7 @@ import {
   NA_CATEGORIES,
   US_MARKETS,
   CA_MARKETS,
+  MX_MARKETS,
   normalizeProvince,
 } from '../../data/naMarkets';
 import {
@@ -212,11 +213,21 @@ function naScopeOf(row) {
   const stateCode = String(row?.__state__ || '').trim().toUpperCase();
   let isUS = isUnitedStatesCountry(country);
   let isCA = isCanadaCountry(country);
-  if (!isUS && !isCA && !rawCountry && stateCode) {
+  // Mexico is the third country in North America and the sheet is the NAM
+  // view, so its sites belong on it. It carries no state code - see
+  // isStateCodeCountry, which keeps Mexican postal codes away from the US
+  // zip tables - so it is placed, counted and coloured as one country.
+  //
+  // Read off the Country column only. The blank-country rescue below can
+  // infer the US or Canada from a state code because those codes are what
+  // the derivation produces; nothing produces a Mexican one, so a blank
+  // country is never Mexico.
+  const isMX = !isUS && !isCA && isMexicoCountry(rawCountry);
+  if (!isUS && !isCA && !isMX && !rawCountry && stateCode) {
     if (US_STATE_CENTERS[stateCode]) isUS = true;
     else if (CANADA_PROVINCE_CENTERS[stateCode]) isCA = true;
   }
-  return { country, stateCode, isUS, isCA, isNA: isUS || isCA };
+  return { country, stateCode, isUS, isCA, isMX, isNA: isUS || isCA || isMX };
 }
 
 // Does a derived row fall inside the active division scope? '' scopes to
@@ -8315,11 +8326,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
     // ---- North America Overview sheet --------------------------
     // Same map-and-summary treatment as the Portfolio Overview, but
-    // scoped to US + Canadian sites only. The projection is bounded
-    // to the NA bounding box so states / provinces fill the canvas
-    // instead of being a handful of pixels on a world map, and the
-    // bottom table breaks out per US state / Canadian province
-    // rather than rolling up to the country level.
+    // scoped to North American sites. The projection is bounded to the
+    // NA bounding box so states / provinces fill the canvas instead of
+    // being a handful of pixels on a world map, and the bottom table
+    // breaks out per US state / Canadian province rather than rolling
+    // up to the country level.
+    //
+    // Mexico is on it as one country. It was drawn here from the start,
+    // but only ever as grey filler behind the two countries the sheet
+    // was about - so a portfolio with Mexican sites got a map that
+    // coloured every state it had a site in and left Mexico the same
+    // grey as Kansas, which on this map's own legend reads "no portfolio
+    // sites". It has no state shapes to colour (the admin-1 data is US +
+    // Canada) and no state-level market to colour them by, so it is
+    // shaded as a whole, off one row of its own.
     {
       const ws = wb.addWorksheet('NAM', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
@@ -8348,12 +8368,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Bucket NA sites by (state | province). Non-NA rows are
       // skipped — they're already covered on the Portfolio Overview
       // sheet, so dropping them here keeps this view focused.
+      // Mexico's row on this sheet, and the key everything files it
+      // under. One country, one category, one key: the map's fill, the
+      // tier roll-up and the State / Province table all read these, so
+      // the shape, the count and the status line cannot disagree.
+      const MX_MARKET = MX_MARKETS[0];
+      const MX_KEY = `MX/${MX_MARKET?.code || 'MX'}`;
+      const MX_CATEGORY = MX_MARKET ? NA_CATEGORIES[MX_MARKET.category] : null;
+      // A status string off that category as one of the tiers the
+      // Overview counts by. The states get theirs from
+      // ELECTRIC_DEREGULATION / GAS_DEREGULATION, which are US + Canada
+      // only; Mexico's comes from the same words the table prints.
+      const mxTier = (statusText) => {
+        const t = String(statusText || '').toLowerCase();
+        if (t.includes('limited') || t.startsWith('large load')) return 'some';
+        if (t.startsWith('deregulated')) return 'dereg';
+        return 'reg';
+      };
+      const MX_ELEC_TIER = mxTier(MX_CATEGORY?.ep);
+      const MX_GAS_TIER = mxTier(MX_CATEGORY?.ng);
+
       const buckets = new Map();
       for (const r of rows) {
-        const { stateCode, isUS, isCA, isNA } = naScopeOf(r);
+        const { stateCode, isUS, isCA, isMX, isNA } = naScopeOf(r);
         if (!isNA) continue;
         let key, location, elecTier, gasTier, label;
-        if (isUS && US_STATE_CENTERS[stateCode]) {
+        if (isMX) {
+          key = MX_KEY;
+          location = COUNTRY_CENTERS.Mexico;
+          label = 'Mexico';
+          elecTier = MX_ELEC_TIER;
+          gasTier = MX_GAS_TIER;
+        } else if (isUS && US_STATE_CENTERS[stateCode]) {
           key = `US/${stateCode}`;
           location = US_STATE_CENTERS[stateCode];
           label = `${stateCode}, USA`;
@@ -8376,7 +8422,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           continue;
         }
         if (!buckets.has(key)) {
-          buckets.set(key, { location, elecTier, gasTier, label, count: 0, stateCode, country: isUS ? 'United States' : 'Canada' });
+          const country = isMX ? 'Mexico' : isUS ? 'United States' : 'Canada';
+          buckets.set(key, { location, elecTier, gasTier, label, count: 0, stateCode, country });
         }
         buckets.get(key).count++;
       }
@@ -8390,12 +8437,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const blankTierAgg = () => ({ sites: 0, kwh: 0, therms: 0, cost: 0 });
       const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
       const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
-      const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
+      const rowTierFor = (commodity, country, stateCode, isUS, isCA, isMX) => {
         if (isUS && US_STATE_CENTERS[stateCode]) {
           const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
           return deregStatusTier(m);
         }
         if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
+        // One answer for the whole country, which is how Mexico is
+        // regulated: federally, with CFE as the counterparty.
+        if (isMX) return commodity === 'electric' ? MX_ELEC_TIER : MX_GAS_TIER;
         return 'unknown';
       };
       // Denominator for the tier percentages, and the site figure the
@@ -8405,10 +8455,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Per-state aggregation for the breakdown table at the bottom.
       const stateAggs = new Map();
       for (const r of rows) {
-        const { country, stateCode, isUS, isCA, isNA } = naScopeOf(r);
+        const { country, stateCode, isUS, isCA, isMX, isNA } = naScopeOf(r);
         if (!isNA) continue;
-        const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
-        const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
+        const eTier = rowTierFor('electric', country, stateCode, isUS, isCA, isMX);
+        const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA, isMX);
         electricTierAgg[eTier].sites++;
         gasTierAgg[gTier].sites++;
         naSites++;
@@ -8424,16 +8474,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         gasTierAgg[gTier].therms += therms;
         electricTierAgg[eTier].cost += eCost;
         gasTierAgg[gTier].cost += gCost;
-        const key = `${isUS ? 'US' : 'CA'}/${stateCode || '-'}`;
+        const key = isMX ? MX_KEY : `${isUS ? 'US' : 'CA'}/${stateCode || '-'}`;
         let agg = stateAggs.get(key);
         if (!agg) {
           const eDereg = ELECTRIC_DEREGULATION[stateCode];
           const gDereg = GAS_DEREGULATION[stateCode];
           agg = {
-            label: stateCode || '-',
-            country: isUS ? 'United States' : 'Canada',
-            elecStatus: isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(eDereg)],
-            gasStatus:  isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(gDereg)],
+            label: isMX ? (MX_MARKET?.code || 'MX') : (stateCode || '-'),
+            country: isMX ? 'Mexico' : isUS ? 'United States' : 'Canada',
+            elecStatus: isMX ? DEREG_TIER_LABEL[MX_ELEC_TIER] : isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(eDereg)],
+            gasStatus:  isMX ? DEREG_TIER_LABEL[MX_GAS_TIER] : isCA ? 'Deregulated' : DEREG_TIER_LABEL[deregStatusTier(gDereg)],
             sites: 0,
             kwh: 0,
             therms: 0,
@@ -8495,6 +8545,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ngStatusByKey.set(`CA/${m.code}`, statusBucket(cat?.ng));
         epStatusByKey.set(`CA/${m.code}`, epCategoryKey(cat?.ep));
       }
+      for (const m of MX_MARKETS) {
+        const cat = NA_CATEGORIES[m.category];
+        ngStatusByKey.set(`MX/${m.code}`, statusBucket(cat?.ng));
+        epStatusByKey.set(`MX/${m.code}`, epCategoryKey(cat?.ep));
+      }
       const hasSites = (key) => buckets.has(key);
 
       const STATUS_FILL = {
@@ -8525,7 +8580,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       };
       const NO_SITES_FILL   = '#E5E7EB';
       const NO_SITES_STROKE = '#9CA3AF';
-      const MEXICO_FILL     = '#E5E7EB';
 
       // Site-count → fill shading. Sqrt scaling keeps a single-site
       // state visibly tinted while the densest market hits the full
@@ -8634,7 +8688,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ctx.fillStyle = NO_SITES_FILL;
         ctx.fillRect(originX, originY, MAP_W, MAP_H);
 
-        ctx.fillStyle = MEXICO_FILL;
+        // Mexico, shaded exactly like a state: its market status for
+        // this panel, darkened by how many sites are there. With no
+        // Mexican sites shadeForCount returns the no-sites grey, which
+        // is the backdrop it has always been - the difference is that a
+        // portfolio WITH sites there now colours it instead of leaving
+        // it reading as empty.
+        ctx.fillStyle = shadeForCount(
+          STATUS_FILL[statusByKey.get(MX_KEY) || 'reg'],
+          buckets.get(MX_KEY)?.count || 0,
+        );
         ctx.strokeStyle = NO_SITES_STROKE;
         ctx.lineWidth = 0.5;
         for (const feat of countryFeatures) {
@@ -8747,7 +8810,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'NAM View: US + Canada Site Distribution';
+      title.value = 'NAM View: North America Site Distribution';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -8856,6 +8919,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const marketRows = [
         ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
         ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
+        // One row for the whole country, and only when the portfolio has
+        // sites there - the same rule every market above follows. Without
+        // it a coloured Mexico on the map would be a figure with nothing
+        // on the sheet to check it against.
+        ...MX_MARKETS.map(m => ({ ...m, country: 'Mexico',        countryKey: 'MX' })),
       ]
         .filter(m => (stateAggs.get(`${m.countryKey}/${m.code}`)?.sites || 0) > 0)
         .sort((a, b) => {
@@ -8870,7 +8938,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const stateHdrRow = tableHeaderRow + tierRows.length + 4;
         ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
         const sHdr = ws.getCell(stateHdrRow, 1);
-        sHdr.value = 'State / Province deregulation status';
+        // "Market", not "State / Province": one of these rows is a
+        // country. The Code and Country columns say which is which.
+        sHdr.value = 'Market deregulation status';
         sHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
         sHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
         sHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };

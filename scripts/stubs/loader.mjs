@@ -10,6 +10,15 @@ const FIREBASE = new URL('./firebase.mjs', import.meta.url).href;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === 'firebase/firestore') return { url: FIRESTORE, shortCircuit: true };
+  // Vite imports JSON with a bare `import data from './x.json'`; Node needs
+  // an import attribute at the import site, which the source file cannot
+  // carry without breaking the bundler. Adding the attribute here means a
+  // data module that bundles a .json file (the map geometry, chiefly) is
+  // importable from a test at all.
+  if (/\.json$/i.test(specifier)) {
+    const resolved = await nextResolve(specifier, context);
+    return { ...resolved, importAttributes: { type: 'json' }, shortCircuit: true };
+  }
   // Every module under src/ reaches the app's firebase handle by relative
   // path ('../firebase', './firebase.js'), so match on the tail.
   if (/(^|\/)\.\.?\/firebase(\.js)?$/.test(specifier)) return { url: FIREBASE, shortCircuit: true };
