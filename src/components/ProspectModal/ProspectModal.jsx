@@ -50,6 +50,7 @@ import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
+import { estimateEmailDomain } from '../../utils/emailDomainPattern';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
@@ -4647,6 +4648,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   localContactsRef.current = localContacts;
   const companyContacts = localContacts;
 
+  // What this company's own people say its address format is, for the
+  // Email Domains field below. Read off the contacts already on the card
+  // rather than asked for: the field is what lets the app guess an address
+  // for somebody nobody has an email for, and a company with eight
+  // contacts on it has already answered the question it is asking.
+  const emailDomainEstimate = useMemo(
+    () => estimateEmailDomain(companyContacts),
+    [companyContacts],
+  );
+
   // Per-contact sent / received email counts sourced from the
   // hubspot-activity-cache localStorage entry that the Activity tab
   // populates. Counts dedupe by message id so a single email
@@ -7862,36 +7873,98 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Email Domains</label>
               {(() => {
                 const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+                const est = emailDomainEstimate;
+                const alreadyHasEstimate = !!est.entry
+                  && domains.some(d => d.toLowerCase() === est.entry.toLowerCase());
+                // Why the button can't do anything, said on the button
+                // itself. A disabled control with no reason is a control
+                // that reads as broken.
+                const estimateBlocked = alreadyHasEstimate
+                  ? `"${est.entry}" is already recorded here.`
+                  : est.reason === 'no-contacts'
+                    ? 'No contacts on this company yet, so there is nothing to learn a format from. Add them on the Contacts tab.'
+                    : est.reason === 'no-work-emails'
+                      ? 'The contacts here have no work addresses - free-mail or blank only - and those say nothing about how this company builds an address.'
+                      : est.reason === 'no-pattern'
+                        ? `The ${est.domainCount} address${est.domainCount === 1 ? '' : 'es'} at ${est.domain} do not follow one convention, so there is nothing worth recording.`
+                        : '';
                 return (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
-                    {domains.map((d, i) => (
-                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
-                        {d}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = domains.filter((_, j) => j !== i);
-                            set('emailDomain', next.join('\n'));
-                          }}
-                          style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-                        >&times;</button>
-                      </span>
-                    ))}
-                    <input
-                      type="text"
-                      placeholder={domains.length === 0 ? 'firstname.lastname@domain.com' : '+ Add domain'}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          e.preventDefault();
-                          const val = e.target.value.trim();
-                          if (!domains.includes(val)) {
-                            set('emailDomain', [...domains, val].join('\n'));
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: `1px solid ${domains.length === 0 ? '#FCA5A5' : 'var(--color-border)'}`, borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                      {/* Nothing on record is worth saying out loud: this
+                          field is what every guessed address on the account
+                          is built from, and an empty box reads exactly like
+                          a field nobody needed. */}
+                      {domains.length === 0 && (
+                        <span
+                          title="No email format on record. Without one, nothing can guess an address for a contact here: name-only pastes on Bulk Add Contacts stay blank."
+                          style={{ display: 'inline-flex', alignItems: 'center', padding: '0.15rem 0.5rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, color: '#B91C1C' }}
+                        >Missing</span>
+                      )}
+                      {domains.map((d, i) => (
+                        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
+                          {d}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = domains.filter((_, j) => j !== i);
+                              set('emailDomain', next.join('\n'));
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                          >&times;</button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        placeholder={domains.length === 0 ? 'firstname.lastname@domain.com' : '+ Add domain'}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && e.target.value.trim()) {
+                            e.preventDefault();
+                            const val = e.target.value.trim();
+                            if (!domains.includes(val)) {
+                              set('emailDomain', [...domains, val].join('\n'));
+                            }
+                            e.target.value = '';
                           }
-                          e.target.value = '';
-                        }
-                      }}
-                      style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
-                    />
+                        }}
+                        style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
+                      />
+                    </div>
+                    {/* The contacts on this card have already answered this
+                        question, one address each. The button reads their
+                        answer back rather than making somebody work it out
+                        by eye - and names the sample it learned from, so it
+                        can be checked before it is trusted. */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        disabled={!est.entry || alreadyHasEstimate}
+                        onClick={() => set('emailDomain', [...domains, est.entry].join('\n'))}
+                        title={estimateBlocked || `${est.votes} of the ${est.domainCount} contact${est.domainCount === 1 ? '' : 's'} at ${est.domain} `
+                          + `${est.votes === 1 ? 'is' : 'are'} written ${est.patternKey}, e.g. ${est.sample}. `
+                          + `Adds "${est.entry}" here. Check it before it is used to guess somebody's address.`}
+                        style={{
+                          padding: '0.2rem 0.5rem',
+                          border: `1px solid ${est.entry && !alreadyHasEstimate ? '#86EFAC' : 'var(--color-border)'}`,
+                          borderRadius: 4,
+                          background: est.entry && !alreadyHasEstimate ? '#F0FDF4' : '#F8FAFC',
+                          color: est.entry && !alreadyHasEstimate ? '#166534' : '#94A3B8',
+                          fontSize: '0.68rem',
+                          fontWeight: 600,
+                          fontFamily: 'inherit',
+                          cursor: est.entry && !alreadyHasEstimate ? 'pointer' : 'not-allowed',
+                        }}
+                      >
+                        {est.entry && !alreadyHasEstimate
+                          ? `Estimate from ${est.domainCount} contact${est.domainCount === 1 ? '' : 's'}`
+                          : 'Estimate from contacts'}
+                      </button>
+                      {est.entry && !alreadyHasEstimate && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {est.entry}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })()}

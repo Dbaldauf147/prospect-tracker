@@ -8,6 +8,8 @@ import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotConta
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDomainPattern';
+import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
 import { pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
 import styles from './AgendaView.module.css';
 
@@ -381,64 +383,6 @@ function guessNameFromEmail(email) {
   return { firstname: cap(parts[0]), lastname: cap(parts[parts.length - 1]) };
 }
 
-// Patterns we check a contact email's local-part against to detect the
-// company's naming convention. The winner (most common across the
-// rows matched to a given prospect) becomes the "<pattern>@<domain>"
-// Email Domain suggestion.
-const EMAIL_PATTERN_RULES = [
-  { key: 'firstname.lastname',    build: (f, l) => (f && l ? `${f}.${l}` : null) },
-  { key: 'firstname_lastname',    build: (f, l) => (f && l ? `${f}_${l}` : null) },
-  { key: 'firstname-lastname',    build: (f, l) => (f && l ? `${f}-${l}` : null) },
-  { key: 'firstnamelastname',     build: (f, l) => (f && l ? `${f}${l}` : null) },
-  { key: 'lastname.firstname',    build: (f, l) => (f && l ? `${l}.${f}` : null) },
-  { key: 'lastnamefirstname',     build: (f, l) => (f && l ? `${l}${f}` : null) },
-  { key: 'firstinitial.lastname', build: (f, l) => (f && l ? `${f[0]}.${l}` : null) },
-  { key: 'firstinitiallastname',  build: (f, l) => (f && l ? `${f[0]}${l}` : null) },
-  { key: 'firstname.lastinitial', build: (f, l) => (f && l ? `${f}.${l[0]}` : null) },
-  { key: 'firstnamelastinitial',  build: (f, l) => (f && l ? `${f}${l[0]}` : null) },
-  { key: 'firstname',             build: (f)    => (f ? f : null) },
-  { key: 'lastname',              build: (_, l) => (l ? l : null) },
-];
-
-function detectLocalPattern(email, firstname, lastname) {
-  if (!email) return null;
-  const at = email.lastIndexOf('@');
-  if (at <= 0) return null;
-  const local = email.slice(0, at).toLowerCase().replace(/\+.*/, '');
-  const f = String(firstname || '').toLowerCase().replace(/[^a-z]/g, '');
-  const l = String(lastname || '').toLowerCase().replace(/[^a-z]/g, '');
-  for (const rule of EMAIL_PATTERN_RULES) {
-    const expected = rule.build(f, l);
-    if (expected && local === expected) return rule.key;
-  }
-  return null;
-}
-
-// Materialise an email address from a company's recorded naming pattern.
-// A prospect's Email Domain field holds one or more "<pattern>@<domain>"
-// entries (e.g. "firstinitiallastname@coatue.com"), where the pattern half is
-// one of the EMAIL_PATTERN_RULES keys. Given a name and that field, build the
-// address. Returns '' when no usable pattern is on record — a bare domain with
-// no naming pattern, an unrecognised pattern, or a name we can't fill it with.
-function buildEmailFromPattern(emailDomainField, firstname, lastname) {
-  const f = String(firstname || '').toLowerCase().replace(/[^a-z]/g, '');
-  const l = String(lastname || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (!f && !l) return '';
-  const entries = String(emailDomainField || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
-  for (const entry of entries) {
-    const at = entry.lastIndexOf('@');
-    if (at <= 0) continue; // bare domain, no naming pattern recorded
-    const patternKey = entry.slice(0, at).toLowerCase();
-    const domain = entry.slice(at + 1).toLowerCase();
-    if (!domain) continue;
-    const rule = EMAIL_PATTERN_RULES.find(r => r.key === patternKey);
-    if (!rule) continue;
-    const local = rule.build(f, l);
-    if (local) return `${local}@${domain}`;
-  }
-  return '';
-}
-
 // A row's email is "real" when it's a syntactically valid address. Name-only
 // pastes arrive without one; rather than leaving the email blank (which would
 // collide as a row key and could be mistaken for a sendable address) those rows
@@ -455,18 +399,6 @@ function placeholderEmailKey(firstname, lastname, company) {
   const slug = `${firstname || ''} ${lastname || ''} ${company || ''}`
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `__noemail__${slug || Math.random().toString(36).slice(2)}`;
-}
-
-const FREE_MAIL_DOMAINS = new Set([
-  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
-  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
-]);
-
-function pickDominantKey(map) {
-  let bestKey = null;
-  let bestCount = 0;
-  for (const [k, c] of map) if (c > bestCount) { bestKey = k; bestCount = c; }
-  return bestKey;
 }
 
 // Prepend https:// when a URL doesn't already carry a protocol so the
@@ -1719,44 +1651,28 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const errorCount = Object.values(results).filter(v => typeof v === 'string' && v.startsWith('error')).length;
 
   // Per-prospect inferences derived from the contact rows matched to
-  // that prospect. Looks at each email's domain (ignoring free webmail)
-  // to pick the dominant company domain, and compares each email's
-  // local-part to the contact's firstname/lastname to pick the dominant
-  // naming pattern (firstname.lastname, flastname, etc.). The winners
-  // become the Website + Email Domain suggestions for that prospect.
+  // that prospect: the busiest work domain, and the naming pattern the
+  // people on it agree on. Both come from estimateEmailDomain, which is
+  // also what the company card's "Estimate from contacts" button reads -
+  // a pattern learned on this page and a pattern learned there have to be
+  // the same string or the field stops working.
   const inferredSuggestions = useMemo(() => {
     const byProspect = new Map();
     for (const r of rows) {
       if (!r._matchedProspectId) continue;
-      if (!byProspect.has(r._matchedProspectId)) {
-        byProspect.set(r._matchedProspectId, { domains: new Map(), patterns: new Map() });
-      }
-      const bucket = byProspect.get(r._matchedProspectId);
-      const email = String(r.email || '').toLowerCase();
-      const at = email.lastIndexOf('@');
-      if (at <= 0) continue;
-      const domain = email.slice(at + 1);
-      if (domain && !FREE_MAIL_DOMAINS.has(domain)) {
-        bucket.domains.set(domain, (bucket.domains.get(domain) || 0) + 1);
-      }
-      const pattern = detectLocalPattern(email, r.firstname, r.lastname);
-      if (pattern) bucket.patterns.set(pattern, (bucket.patterns.get(pattern) || 0) + 1);
+      if (!byProspect.has(r._matchedProspectId)) byProspect.set(r._matchedProspectId, []);
+      byProspect.get(r._matchedProspectId).push(r);
     }
     const out = new Map();
-    for (const [pid, { domains, patterns }] of byProspect) {
-      const dominantDomain = pickDominantKey(domains);
-      const dominantPattern = pickDominantKey(patterns);
+    for (const [pid, matchedRows] of byProspect) {
+      const est = estimateEmailDomain(matchedRows);
       out.set(pid, {
-        website: dominantDomain || null,
-        // Only suggest an emailDomain entry when we have a naming
-        // pattern. A bare domain like "acme.com" would just duplicate
-        // the company website and isn't useful in Table View — we
-        // skip it so the user sees patterns like "firstname.lastname
-        // @acme.com" only.
-        emailDomain: dominantDomain && dominantPattern
-          ? `${dominantPattern}@${dominantDomain}`
-          : null,
-        // zoomCompanyId / zoomCompanyName cannot be inferred from emails — upload only.
+        website: est.domain || null,
+        // Only ever a "<pattern>@<domain>" entry. A bare domain would
+        // just duplicate the company website and isn't useful in Table
+        // View, so estimateEmailDomain withholds one.
+        emailDomain: est.entry,
+        // zoomCompanyId / zoomCompanyName cannot be inferred from emails - upload only.
       });
     }
     return out;
