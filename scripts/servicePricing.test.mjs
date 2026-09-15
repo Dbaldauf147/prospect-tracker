@@ -268,6 +268,78 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('junk in, empty list out', projectServiceLines(null), []);
 }
 
+// --- a project nobody counted is one project -----------------------------
+//
+// Every other unit prices at nothing when no count is given, because it is a
+// fact about the account and guessing it would invent the portfolio. A
+// project is the thing being sold, and the ordinary sale is one of them.
+{
+  const rows = [
+    { name: 'API/ETL', meta: { serviceType: 'Project', years: '1 year' }, bucket: '' },
+    { name: 'Invoice processing', meta: { serviceType: 'Recurring', years: '3 years' }, bucket: '' },
+  ];
+  const pricing = {
+    'API/ETL': { basis: 'per_project', rate: 25000 },
+    'Invoice processing': { basis: 'per_site', rate: 400 },
+  };
+  const at = (opts) => estimateScope({
+    rows, services: rows.map(r => r.name), pricing, dealSize: 0, ...opts,
+  });
+
+  const none = at({ counts: {} });
+  const byName = (est, name) => est.lines.find(l => l.name === name);
+  check('a project service with no count anywhere prices one project',
+    byName(none, 'API/ETL').fee, 25000);
+  check('...and says so rather than reporting a missing count',
+    byName(none, 'API/ETL').note, '');
+  // The rule is projects-only. A per-site service with no site count is
+  // still unknown, and inventing one site would be inventing an estate.
+  check('a per-site service with no count is still nothing',
+    byName(none, 'Invoice processing').fee, 0);
+  check('...and still says why', byName(none, 'Invoice processing').note, 'No sites entered');
+
+  check('a shared Projects count still wins',
+    byName(at({ counts: { projects: 4 } }), 'API/ETL').fee, 100000);
+  check('a count typed against the row still wins',
+    byName(at({ counts: { projects: 4 }, serviceUnits: { 'API/ETL': 2 } }), 'API/ETL').fee, 50000);
+
+  // A deliberate zero is an answer, not an absence: it must not be rounded
+  // back up to the default.
+  const zeroed = byName(at({ counts: {}, serviceUnits: { 'API/ETL': 0 } }), 'API/ETL');
+  check('a row set to no projects stays at nothing', zeroed.fee, 0);
+  check('...and says it was set that way', zeroed.note, 'Set to no projects');
+  const sharedZero = byName(at({ counts: { projects: 0 } }), 'API/ETL');
+  check('a shared count of zero is an answer too', sharedZero.fee, 0);
+}
+
+// --- the rate card's standing units figure is retired --------------------
+//
+// The box that set it is gone from the pricing panel, so a count saved
+// against a service went on charging every deal with nowhere to go and
+// clear it. Same treatment as the minimum fee and the typed fee before it:
+// the stored number is left where it is and stops reaching the maths.
+{
+  const rows = [{ name: 'API/ETL', meta: { serviceType: 'Project', years: '1 year' }, bucket: '' }];
+  const pricing = { 'API/ETL': { basis: 'per_project', rate: 25000, units: 3 } };
+
+  check('a stored units figure no longer reaches the entry',
+    pricingFor(pricing, 'API/ETL').units, null);
+  check('...so it cannot charge three projects on a deal that counted none',
+    estimateScope({ rows, services: ['API/ETL'], pricing, counts: {}, dealSize: 0 }).lines[0].fee,
+    25000);
+  check('...nor outrank the shared count',
+    estimateScope({
+      rows, services: ['API/ETL'], pricing, counts: { projects: 5 }, dealSize: 0,
+    }).lines[0].fee, 125000);
+  // The per-deal count rides on the same field, laid over the entry AFTER
+  // pricingFor - so retiring the stored one must not have taken it with it.
+  check('a count typed for one estimate still prices that estimate',
+    estimateScope({
+      rows, services: ['API/ETL'], pricing, counts: {}, dealSize: 0,
+      serviceUnits: { 'API/ETL': 2 },
+    }).lines[0].fee, 50000);
+}
+
 // ── A rate range: low and high, all the way through ───────────────────
 {
   // $450–$600 a site over 819 sites, on a three-year recurring service.

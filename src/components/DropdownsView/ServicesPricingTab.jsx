@@ -299,10 +299,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _extraBasisLabels: extraBases.map(k => basisFor(k, bases)?.label || k),
         notes: entry.notes,
         // What the panel prices against: the deal's own figure for this
-        // service first, then the card's standing one, then the shared
-        // count the estimate carries.
-        units: ownUnits !== null ? ownUnits : (entry.units !== null ? entry.units : (est?.units ?? null)),
-        _unitsTyped: ownUnits !== null || entry.units !== null,
+        // service first, then the shared count the estimate carries. The
+        // card's own standing figure was the middle term and is retired -
+        // see pricingFor.
+        units: ownUnits !== null ? ownUnits : (est?.units ?? null),
         _unitsOwn: ownUnits !== null,
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',

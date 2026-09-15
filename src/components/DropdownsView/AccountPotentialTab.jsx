@@ -485,10 +485,11 @@ export function AccountPotentialTab({
         // Typed against the row when there is one, otherwise whatever the
         // estimator's count works out to — the estimate already prefers the
         // typed figure, except on a row whose fee was typed too, where it
-        // never got as far as counting. This estimate's own figure comes
-        // first, then the rate card's standing one.
-        units: ownUnits !== null ? ownUnits : (entry.units !== null ? entry.units : (est?.units ?? null)),
-        _unitsTyped: ownUnits !== null || entry.units !== null,
+        // never got as far as counting. The rate card used to sit between
+        // the two with a standing figure of its own; it no longer does, and
+        // nothing is left that can be typed once and charge every deal (see
+        // pricingFor).
+        units: ownUnits !== null ? ownUnits : (est?.units ?? null),
         _unitsOwn: ownUnits !== null,
         _unit: basis?.unit || null,
         _unitLabel: basis?.unitLabel || '',
@@ -721,15 +722,15 @@ export function AccountPotentialTab({
                 display={row.units === null
                   ? ''
                   : (
-                    <span className={row._unitsTyped ? styles.pricingUnitsTyped : undefined}>
+                    <span className={row._unitsOwn ? styles.pricingUnitsTyped : undefined}>
                       {row.units.toLocaleString('en-US')}
                     </span>
                   )}
                 placeholder={row._unitLabel}
                 title={row._unitsOwn
                   ? `Typed in for this estimate: charged on ${row.units.toLocaleString('en-US')} ${unit}, whatever the ${row._unitLabel} box above says. It belongs to this analysis alone - no other deal and no account record moves. Clear the cell to go back to that count.`
-                  : row._unitsTyped
-                    ? `A standing figure on the rate card: ${row.units.toLocaleString('en-US')} ${unit} on every deal. Type here to charge this estimate on its own number instead.`
+                  : row._unit === PROJECT_UNIT && sharedProjects === null
+                    ? `One ${unit.replace(/s$/, '')}, which is what a project service is charged on until somebody says otherwise. Type a figure here, or fill the ${row._unitLabel} box above, to charge this estimate on more of them.`
                     : `From the ${row._unitLabel} box above. Type a figure to charge this service on its own number of ${unit} in this estimate.`}
                 onCommit={(v) => setServiceUnits(row.name, v)}
               />
@@ -983,7 +984,7 @@ export function AccountPotentialTab({
             <span className={styles.projectPanelHint}>
               How many of each. A row left blank is priced on the shared{' '}
               {sharedProjects === null
-                ? 'Projects count above, which is empty - so it comes out at $0 until one of them has a number.'
+                ? 'Projects count above, which is empty - so each one is priced as a single project until somebody says otherwise.'
                 : `Projects count above (${sharedProjects.toLocaleString('en-US')}).`}
               {' '}Numbers here belong to this estimate: no other deal and no rate card moves.
             </span>
