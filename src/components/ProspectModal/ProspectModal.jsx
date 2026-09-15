@@ -844,8 +844,17 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
+// The tag list off a contact record, whichever of the three spellings the
+// record happens to carry. Module scope because the component seeds its tag
+// state from it and the memo comparator below decides whether a changed one
+// is worth a re-render - and those two reading it differently is how a saved
+// tag never reaches the popup that saved it.
+function contactTagString(c) {
+  return (c && (c.dans_tags || c.dan_s_tags || c.dans_tag)) || '';
+}
+
 export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
-  const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
+  const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
   // "Met In Person" is handled by its own checkbox, never as a tag chip —
@@ -995,8 +1004,29 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     savedTagsRef.current = rawTags;
     setCheckedTags(checkedTagsFrom(rawTags));
     editorBaseRef.current = editorViewOf(rawTags);
+    // Deliberately NOT keyed on tagOptions. The vocabulary is rebuilt from
+    // every contact in the HubSpot cache, so it gets a new identity whenever
+    // that cache moves - including on the write this popup just made. Keyed
+    // on it, this effect ran on a vocabulary refresh and re-seeded from
+    // `rawTags`, and a tag the user had just ticked vanished off the screen
+    // while staying on the record. That is the whole of the "the tags I
+    // select disappear, but some of them stick" report. The vocabulary is
+    // handled on its own below, off a list that cannot be stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawTags, tagOptions]);
+  }, [rawTags]);
+
+  // A tag whose spelling the vocabulary didn't hold reads as unticked until
+  // the vocabulary catches up, so the checked set does have to be rebuilt
+  // when the options change. Rebuilt from the last list HubSpot ACCEPTED,
+  // never from the prop: the prop can be an older list this popup has
+  // already moved past, and re-deriving from one is what made a click
+  // disappear. Skipped while a write is owed, when the popup's own
+  // optimistic state is newer than anything saved.
+  useEffect(() => {
+    if (tagWriterRef.current?.pending() > 0) return;
+    setCheckedTags(checkedTagsFrom(savedTagsRef.current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tagOptions]);
   const savedTagReview = metCid != null ? contactTagReview[metCid] : undefined;
   useEffect(() => {
     setTagVerdicts(savedTagReview && typeof savedTagReview === 'object' ? { ...savedTagReview } : {});
@@ -2909,7 +2939,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
   ]));
   const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prev.onOpenCompany === next.onOpenCompany && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
+  // The popup seeds its tag state from this prop and re-seeds when it
+  // changes, so a save coming back with a new tag list has to get through.
+  // Nothing else here looks at the contact's contents - the id alone is what
+  // the rule turns on - so without this a refreshed list could never reach
+  // the popup, and the only thing that ever re-rendered it was an unrelated
+  // prop changing identity, with the stale list still in hand.
+  const tagsEqual = contactTagString(prev.contact) === contactTagString(next.contact);
+  return prevId === nextId && tagsEqual && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prev.onOpenCompany === next.onOpenCompany && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
@@ -6230,7 +6267,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return [...prev, updated];
     });
     if (!wasPresent && updatedId) linkContactToCompany(updatedId);
-    if (options.silent) return; // e.g. inline autosaves shouldn't close the modal
+    if (options.silent) {
+      // An inline autosave leaves the popup open, so it also has to hand the
+      // saved record BACK to it. The popup's tag state is seeded from the
+      // contact prop and re-seeded when it changes, and every guard in there
+      // is written on the understanding that "each save hands the new list
+      // back through the contact prop as it lands". Until this it never did:
+      // the prop stayed frozen at whatever the popup opened with, so the
+      // first re-seed for any reason put the tag list back to that and threw
+      // away every tag added since.
+      setEditingContact(prev => (prev && String(prev.id || prev.vid) === updatedId
+        ? { ...prev, ...updated }
+        : prev));
+      return; // and it does not close the modal
+    }
     setAddingContact(false);
     setEditingContact(null);
   }, [linkContactToCompany]);
