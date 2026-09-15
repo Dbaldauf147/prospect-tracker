@@ -14,6 +14,7 @@ import {
   impactAmountTitle,
   impactLabel,
   impactMissingTitle,
+  impactRoi,
   impactTitle,
 } from '../../utils/serviceImpact';
 import {
@@ -112,6 +113,11 @@ const DEAL_TABLE_COLUMNS = [
   // own record. What we bill and what it is worth to them, side by side,
   // which is the pair that makes a service worth putting in front of them.
   { key: 'impact',       label: 'Impact',              width: 200 },
+  // The two columns beside it, divided: what the account gets back for what
+  // it pays, in the first year. Last on the row because it is the sentence
+  // the two before it add up to, and because it is the number somebody
+  // sorts by when the question is "what do we lead with".
+  { key: 'roi',          label: 'ROI',                 width: 110 },
 ];
 
 // Dropdowns › Deal Pricing. One deal at a time, priced off the rate card the
@@ -506,8 +512,15 @@ export function AccountPotentialTab({
   // entry names, resolved against the company's own record. Three states,
   // and the cell says which - no figure named, a figure named that the
   // record does not carry, and an amount.
-  const impactOf = useCallback((name, entry) => {
+  const impactOf = useCallback((name, entry, feeAvg = null) => {
     const resolved = impactAmount(entry.impact, client);
+    const amount = resolved ? resolved.amount : null;
+    // Against the fee the row actually shows - the middle of the range, the
+    // bundle's total where it is a bundle - so the division is the one a
+    // reader can do by eye from the two columns to its left. Worked out
+    // here rather than in the cell for the same reason the fee average is:
+    // the sort, the export and the figure on screen have to be one number.
+    const roi = impactRoi(amount, feeAvg);
     return {
       // The label rather than the stored key: the column filter matches on
       // what is on screen, and "savings" is what somebody types.
@@ -520,6 +533,26 @@ export function AccountPotentialTab({
         : resolved.amount === null
           ? impactMissingTitle(entry.impact, company)
           : impactAmountTitle(entry.impact, company),
+      _roi: roi,
+      // Why there is no multiple, when there is none. Four ways to have no
+      // answer and they send the reader to four different places: name a
+      // figure on the rate card, fill one in on the company card, price the
+      // service, or read the lead's row.
+      _roiTitle: roi
+        ? (roi.free
+          ? `Delivered at no charge, so there is no fee to pay back: the whole ${formatMoney(amount)} of `
+            + `${impactLabel(entry.impact)} is the account’s. A service that costs them nothing and moves a figure `
+            + 'this size is the easiest thing on this page to put in front of them.'
+          : `${formatMoney(amount)} of ${impactLabel(entry.impact)} against an estimated first-year fee of `
+            + `${formatMoney(feeAvg)}: ${roi.text.replace('x', ' times')} over in year one. `
+            + 'Two services can name the same figure, so this reads down the row it is on and is never added up.')
+        : !resolved
+          ? 'No figure named as this service’s impact, so there is nothing to divide. '
+            + 'Tie it to one in the Impact column on Dropdowns › Services Pricing.'
+          : amount === null
+            ? impactMissingTitle(entry.impact, company)
+            : 'Not priced against this account yet, so there is nothing to divide by. Set a basis and a rate '
+              + 'on Dropdowns › Services Pricing, and fill the counts above.',
     };
   }, [client, company]);
 
@@ -530,6 +563,9 @@ export function AccountPotentialTab({
       const est = allEstimates.get(name);
       const bundle = potential.bundleOf.get(name);
       const ownUnits = parseMoney(serviceUnits[name]);
+      // The figure the money column shows, worked out once: the fee cell
+      // reads it, and so does the payback beside it.
+      const feeAvg = bundle?.totals.priced ? avgMoney(bundle.totals.fee, bundle.totals.feeHigh) : null;
       const row = {
         id: name,
         name,
@@ -573,7 +609,7 @@ export function AccountPotentialTab({
         // and what the table sorts and ranks on. Held on the row rather
         // than worked out in the cell so the sort, the export and the
         // figure on screen cannot come out as three different numbers.
-        _feeAvg: bundle?.totals.priced ? avgMoney(bundle.totals.fee, bundle.totals.feeHigh) : null,
+        _feeAvg: feeAvg,
         // The lead's own share of that, for the first line of the
         // breakdown.
         _ownFee: est?.priced ? est.fee : null,
@@ -591,7 +627,7 @@ export function AccountPotentialTab({
         // untouched whitespace would hide the one fact about it worth
         // knowing.
         _status: potential.statusOf.get(name) || '',
-        ...impactOf(name, entry),
+        ...impactOf(name, entry, feeAvg),
       };
       return row;
     })
@@ -648,7 +684,11 @@ export function AccountPotentialTab({
           _bundledInto: lead,
           _closed: false,
           _status: potential.statusOf.get(name) || '',
-          ...impactOf(name, entry),
+          // No fee on this row, so no multiple: the payback is on the lead,
+          // whose figure already carries this service. The impact is still
+          // named, because what it is worth to them is a fact about the
+          // service rather than about whose row holds the money.
+          ...impactOf(name, entry, null),
           // Where the lead came in the money order, for the rank cell: "-"
           // on its own says unranked, which is not the same as counted
           // somewhere else.
@@ -669,6 +709,7 @@ export function AccountPotentialTab({
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
       const ownUnits = parseMoney(serviceUnits[name]);
+      const answeredFeeAvg = line?.priced ? avgMoney(line.fee, line.feeHigh) : null;
       return {
         id: name,
         name,
@@ -695,7 +736,7 @@ export function AccountPotentialTab({
         // is a sale being proposed and this one is not on offer.
         fee: line?.priced ? line.fee : null,
         feeHigh: line?.priced ? line.feeHigh : null,
-        _feeAvg: line?.priced ? avgMoney(line.fee, line.feeHigh) : null,
+        _feeAvg: answeredFeeAvg,
         _ownFee: line?.priced ? line.fee : null,
         _ownFeeHigh: line?.priced ? line.feeHigh : null,
         _adds: [],
@@ -709,8 +750,9 @@ export function AccountPotentialTab({
         _closed: true,
         _status: status,
         // Worth naming even here: a service they turned down, measured by
-        // the figure it would have moved, is the argument for asking again.
-        ...impactOf(name, entry),
+        // the figure it would have moved, is the argument for asking again -
+        // and the payback beside it is what that argument is made of.
+        ...impactOf(name, entry, answeredFeeAvg),
       };
     })),
   [leadRows, openRows, bundledInto, pricing, bases, allEstimates, inScope, serviceUnits, potential,
@@ -1140,6 +1182,57 @@ export function AccountPotentialTab({
                 {formatMoney(row._impactAmount)}
                 <span className={styles.impactCellShort}>{row._impactShort}</span>
               </span>
+            );
+          },
+        };
+      // What the account gets back for what it pays, in the first year:
+      // the Impact column divided by the fee column, said as a multiple
+      // because "14x" is a sentence and "1,400%" is arithmetic somebody has
+      // to finish. Every state that isn't a multiple says so in words the
+      // reader can act on - the tooltip names which of the four is missing
+      // and where it is filled in.
+      //
+      // Never totalled, for the reason the Impact column isn't: the same
+      // savings figure can sit behind several services, so these are
+      // answers to a question asked one row at a time.
+      case 'roi':
+        return {
+          ...base,
+          // A service given away free pays back without limit, so it sorts
+          // above every multiple rather than below them as a blank would.
+          // No figure at all sorts with the blanks, because it is not a
+          // small return, it is no answer.
+          getSortValue: (row) => (row._roi ? (row._roi.free ? Infinity : row._roi.multiple) : null),
+          exportValue: (row) => {
+            if (row._bundledInto) return `in ${row._bundledInto}`;
+            if (!row._roi) return '';
+            // The multiple itself, not the rounded text: a spreadsheet can
+            // round a number and cannot un-round "14x".
+            return row._roi.free ? 'No fee' : row._roi.multiple;
+          },
+          render: (row) => {
+            // Its fee is inside the lead's figure, so its payback is on
+            // that row too. Saying it again here would be the same double
+            // count the money column already refuses.
+            if (row._bundledInto) {
+              return (
+                <span
+                  className={styles.serviceMutedCell}
+                  title={`Counted inside "${row._bundledInto}", so the payback is on that row - what this service `
+                    + 'is worth to them is named here, but the fee it is divided by belongs to the bundle.'}
+                >-</span>
+              );
+            }
+            if (!row._roi) {
+              return <span className={styles.serviceMutedCell} title={row._roiTitle}>-</span>;
+            }
+            return (
+              <span
+                className={row._roi.free
+                  ? styles.roiCellFree
+                  : (row._roi.multiple < 1 ? styles.roiCellThin : styles.roiCell)}
+                title={row._roiTitle}
+              >{row._roi.text}</span>
             );
           },
         };

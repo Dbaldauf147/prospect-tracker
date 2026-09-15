@@ -161,3 +161,47 @@ export function impactMissingTitle(key, company = '') {
   return `${source.label} is not on ${whose}’s record yet, so there is no amount to show. `
     + `It is filled from the saved Master Analysis - Refresh figures on the Analysis button - and lives on ${source.where}.`;
 }
+
+/**
+ * The impact against the fee: how many times over the first year pays for
+ * itself.
+ *
+ * Null when the question cannot be asked - no figure named, no figure on
+ * the company's record, or no price on the service - because a column that
+ * prints 0x for "nobody has said yet" is stating something it does not
+ * know. The cell says which of those it is; this only says there is no
+ * number.
+ *
+ * A service charging nothing is the one case with no arithmetic in it. The
+ * fee is zero, the division is not a number, and the honest answer is that
+ * there is nothing to pay back: `free` says so, and the cell says it in
+ * words rather than printing an infinity sign at somebody.
+ *
+ * Read per row and never added up, for the same reason the Impact column it
+ * divides is: two services measured by the same savings figure are two ways
+ * at the same money. "This fee buys that much" is a question each row
+ * answers for itself.
+ */
+export function impactRoi(amount, fee) {
+  if (!Number.isFinite(amount) || !Number.isFinite(fee)) return null;
+  if (fee <= 0) return { free: true, multiple: null, text: 'No fee' };
+  const multiple = amount / fee;
+  return { free: false, multiple, text: formatRoi(multiple) };
+}
+
+/**
+ * A multiple, at the precision it can be read at.
+ *
+ * Whole numbers once it is into double figures, because 14x and 9x is the
+ * comparison being made down a column of a hundred rows and ".3" of it is
+ * noise. One decimal below that, where the difference between three times
+ * over and four is the whole point. And a floor at 0.1x: a service whose
+ * fee dwarfs what it saves rounds to 0.0x, which reads as "saves nothing"
+ * rather than "costs far more than it returns".
+ */
+export function formatRoi(multiple) {
+  if (!Number.isFinite(multiple)) return '';
+  if (multiple >= 10) return `${Math.round(multiple).toLocaleString('en-US')}x`;
+  if (multiple > 0 && multiple < 0.1) return '<0.1x';
+  return `${multiple.toFixed(1)}x`;
+}

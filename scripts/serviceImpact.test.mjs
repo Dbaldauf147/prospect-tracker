@@ -10,8 +10,8 @@
 // source that no longer exists has to read as "not tied" rather than as a
 // tie to a figure nothing produces.
 import {
-  IMPACT_SOURCES, impactAmount, impactAmountTitle, impactKey, impactLabel,
-  impactMissingTitle, impactSourceFor, impactTitle,
+  IMPACT_SOURCES, formatRoi, impactAmount, impactAmountTitle, impactKey, impactLabel,
+  impactMissingTitle, impactRoi, impactSourceFor, impactTitle,
 } from '../src/utils/serviceImpact.js';
 import { pricingFor, setPricingField, setNoFee } from '../src/utils/servicePricing.js';
 
@@ -154,6 +154,54 @@ function check(label, actual, expected) {
     impactMissingTitle('maxYearlyExposure', 'Vibrantz Technology').includes('Master Analysis'), true);
   check('an untied cell falls back to the rate card wording',
     impactAmountTitle('', 'Vibrantz Technology'), impactTitle(''));
+}
+
+// ── The payback ─────────────────────────────────────────────
+//
+// The ROI column on Account Potential: the impact divided by the first-year
+// fee. Most of what can go wrong here is a number printed where there is no
+// answer - 0x for a service nobody has priced reads as "worth nothing",
+// which is a claim the page has no basis for - so what is pinned is which
+// inputs produce no answer at all, and the one case where the arithmetic
+// does not exist because the fee is zero.
+{
+  check('the multiple is the impact over the fee', impactRoi(1696113, 121150).text, '14x');
+  check('and the exact ratio is kept for sorting',
+    Math.round(impactRoi(1696113, 121150).multiple * 100) / 100, 14);
+
+  // Nothing to divide, or nothing to divide by. Four ways in and all of
+  // them are silence rather than a figure.
+  check('no impact figure, no answer', impactRoi(null, 50000), null);
+  check('no fee, no answer', impactRoi(1696113, null), null);
+  check('neither, still no answer', impactRoi(null, null), null);
+  check('and nothing is ever NaN', impactRoi(NaN, 10), null);
+
+  // A service delivered free pays back without limit. The division does not
+  // exist, so the cell says so in words - and it must not read as 0x, which
+  // is the opposite claim.
+  const free = impactRoi(1696113, 0);
+  check('a free service has no fee to pay back', [free.free, free.text], [true, 'No fee']);
+  check('and carries no multiple to be mistaken for one', free.multiple, null);
+
+  // Precision follows what the number is read for: whole multiples down a
+  // long column, one decimal where the difference matters, and a floor so a
+  // service that costs far more than it moves never reads as zero.
+  check('double figures round to whole ones', formatRoi(14.4), '14x');
+  check('a big one keeps its commas', formatRoi(1250.2), '1,250x');
+  check('single figures keep a decimal', formatRoi(2.53), '2.5x');
+  check('a service that barely pays back reads as itself', formatRoi(0.4), '0.4x');
+  check('and one that badly does not is floored, not rounded away',
+    [formatRoi(0.004), formatRoi(0.09)], ['<0.1x', '<0.1x']);
+  check('an impact figure of zero is a real 0x', formatRoi(0), '0.0x');
+  check('nothing formats to nothing', formatRoi(Infinity), '');
+
+  // The two columns either side of it, end to end: a tie on the rate card,
+  // an amount on the company record, a fee off the estimate.
+  const pricing = setPricingField({}, 'Energy Procurement', 'impact', 'indicativeAnnualSavings');
+  const tied = pricingFor(pricing, 'Energy Procurement').impact;
+  const { amount } = impactAmount(tied, { indicativeAnnualSavings: '$1,284,000' });
+  check('the tie, the figure and the fee make one sentence',
+    impactRoi(amount, 96000).text, '13x');
 }
 
 console.log(`${passed} passed, ${failed} failed`);
