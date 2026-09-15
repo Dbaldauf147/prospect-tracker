@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PRICING_BASES, formatMoney, parseMoney } from '../../utils/servicePricing';
+import { IMPACT_SOURCES, impactTitle } from '../../utils/serviceImpact';
 import styles from './DropdownsView.module.css';
 
 // One service's pricing, all of it, on one screen.
@@ -351,6 +352,25 @@ export function ServicePricingModal({
             onSaveLine={onSaveLine}
             onSaveSetupLine={onSaveSetupLine}
           />
+
+          {/* The other side of the row: what the service is worth to the
+              account it is quoted to. It sits under the fee because that is
+              the order the two get read in - this is what makes the fee
+              arguable - and it is a picker rather than a box because the
+              figure is already worked out elsewhere on the site. Naming it
+              here ties the service to it; the amount is the company's own
+              and is read off the company's card. */}
+          <div className={styles.pricingModalSectionTitle}>Impact</div>
+          <select
+            className={styles.pricingModalImpact}
+            value={row.impact || ''}
+            onChange={(e) => onSaveField('impact', e.target.value)}
+            title={impactTitle(row.impact)}
+          >
+            <option value="">Not tied to a figure</option>
+            {IMPACT_SOURCES.map(src => <option key={src.key} value={src.key}>{src.label}</option>)}
+          </select>
+          <div className={styles.oppPickerSub}>{impactTitle(row.impact)}</div>
 
           <div className={styles.pricingModalSectionTitle}>Pricing notes</div>
           {/* A textarea rather than the table's one-line cell: the note is the

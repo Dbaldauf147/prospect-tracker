@@ -2639,6 +2639,29 @@
   background: #fff;
 }
 
+/* The impact picker in the pricing panel: which figure elsewhere on the site
+   says what this service is worth to the client. Sized like the notes box
+   under it rather than like the table's inline cell, because here it is a
+   field on a form. */
+.pricingModalImpact {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pricingModalImpact:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
 /* The Pricing Basis cell: the picker, and a count of the lines the picker
    isn't showing. */
 /* DataTable truncates every direct child of a cell — `display: inline-block`,
