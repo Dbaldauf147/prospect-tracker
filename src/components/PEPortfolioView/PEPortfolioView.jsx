@@ -361,9 +361,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
-  // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'cdm', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
+  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, status: 140, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
+  // company is sticky and always shown — every other column is opt-in, and
+  // a starred one is opt-in that stays in (see starredCols below).
+  const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -378,11 +379,44 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return ['discovery', 'piloting', 'existingPartnership', 'notSold'].includes(saved) ? 'peStage' : saved;
   });
   const [sortDir, setSortDir] = useState(() => localStorage.getItem('pe-portfolio:sort-dir') || 'desc');
+  // The columns this user has starred: the ones that should be on the table
+  // whatever else is hidden.
+  //
+  // The Columns menu on its own only ever answers "is this showing right
+  // now", and that answer is fragile - Hide all clears it, and a column
+  // added later arrives switched off, which is why the set below is a
+  // sediment of one-time migrations that each had to reveal a column
+  // somebody had asked for. A star is the durable half of the question:
+  // this one matters, keep it. Starring shows the column, keeps its
+  // checkbox on, and puts it back on any table the saved set has lost it
+  // from - so a new column, once starred, never needs a migration again.
+  //
+  // Empty by default, so nothing changes for anyone until they star
+  // something. `company` is the firm's name and is sticky whether or not
+  // anybody stars it, so it is left out of this set entirely rather than
+  // being a star the user can't remove.
+  const [starredCols, setStarredCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-portfolio:starred-cols'));
+      return new Set(Array.isArray(saved) ? saved.filter(k => k !== 'company') : []);
+    } catch { return new Set(); }
+  });
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
+      // Read here rather than off the state above: both initialisers run on
+      // the same first render, and one piece of useState cannot see
+      // another's value.
+      let starred = [];
+      try {
+        const raw = JSON.parse(localStorage.getItem('pe-portfolio:starred-cols'));
+        if (Array.isArray(raw)) starred = raw;
+      } catch { /* no stars saved */ }
       if (Array.isArray(saved)) {
-        const next = new Set([...saved, 'company']);
+        // The stars go in with the saved set, which is what makes them
+        // durable: whatever the last session hid, a starred column is on
+        // the table when it opens.
+        const next = new Set([...saved, ...starred, 'company']);
         // The four one-per-stage tick columns (discovery / piloting /
         // existingPartnership / notSold) are now the single peStage
         // column. Anyone who had any of them showing gets the combined
@@ -434,6 +468,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           next.add('topPcAnalysis');
           try { localStorage.setItem('pe-portfolio:cols-top-pc-analysis', '1'); } catch {}
         }
+        // One-time migration: reveal the Status column for users whose
+        // saved set predates it. The last of these - a column starred from
+        // now on comes back on its own.
+        if (!localStorage.getItem('pe-portfolio:cols-status')) {
+          next.add('status');
+          try { localStorage.setItem('pe-portfolio:cols-status', '1'); } catch { /* ignore */ }
+        }
         return next;
       }
     } catch {}
@@ -450,12 +491,28 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => document.removeEventListener('mousedown', handleClick);
   }, [colMenuOpen]);
   function toggleCol(key) {
-    if (key === 'company') return;
+    // The firm's name, and anything starred, are not hideable from here:
+    // the star is the switch for a starred column, and a checkbox that
+    // silently un-starred one would make "always present" mean "until you
+    // click the other control".
+    if (key === 'company' || starredCols.has(key)) return;
     setVisibleCols(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+  }
+  // Starring a column shows it. Unstarring only releases it - it stays on
+  // the table, because a click meaning "this one need not always be here"
+  // should not also take it away from the person reading it.
+  function toggleStar(key) {
+    if (key === 'company') return;
+    setStarredCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+    setVisibleCols(prev => (starredCols.has(key) ? prev : new Set([...prev, key])));
   }
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:pe-firm', peFirm); } catch {}
@@ -472,6 +529,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:visible-cols', JSON.stringify([...visibleCols])); } catch {}
   }, [visibleCols]);
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:starred-cols', JSON.stringify([...starredCols])); } catch { /* ignore */ }
+  }, [starredCols]);
   const resizingRef = useRef(null);
   function startResize(colKey, e) {
     e.preventDefault();
@@ -1118,6 +1178,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         case 'cdm':
           cmp = (a.cdm || '').localeCompare(b.cdm || '');
           break;
+        case 'status': {
+          // STATUSES order - the order the status dropdown offers them - so
+          // the column groups the way the rest of the app lists statuses
+          // rather than alphabetically. A firm with nothing set ranks below
+          // every real status instead of sorting in among the S's.
+          const rank = (p) => {
+            const i = STATUSES.indexOf(String(p.status || '').trim());
+            return i < 0 ? -1 : i;
+          };
+          cmp = rank(a) - rank(b);
+          break;
+        }
         case 'dm':
           cmp = ((sa.decisionMakerNames || []).length) - ((sb.decisionMakerNames || []).length);
           break;
@@ -1459,25 +1531,61 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           >Columns ({visibleCols.size}/{ALL_COL_KEYS.length})</button>
           {colMenuOpen && (() => {
             const COL_LABELS = {
-              company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
+              company: 'PE firm', cdm: 'CDM', status: 'Status', peAum: 'PE AUM', geography: 'Geography',
+              dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               topPc: 'Top/Current PC', topPcAnalysis: 'Top/Current PC Analysis', topPcStatus: 'Top/Current PC Status',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               peStage: 'PE Stage', newsFeed: 'News Feed',
             };
             return (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
-                {ALL_COL_KEYS.map(key => (
-                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: key === 'company' ? '#94A3B8' : '#334155', cursor: key === 'company' ? 'not-allowed' : 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={visibleCols.has(key)}
-                      disabled={key === 'company'}
-                      onChange={() => toggleCol(key)}
-                    />
-                    <span style={{ flex: 1 }}>{COL_LABELS[key] || key}</span>
-                  </label>
-                ))}
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 260, padding: '0.3rem 0' }}>
+                <div style={{ padding: '0.2rem 0.6rem 0.35rem', fontSize: '0.64rem', color: '#94A3B8', lineHeight: 1.35 }}>
+                  Star a column to keep it on the table: starred columns come
+                  back every time, and Hide all leaves them alone.
+                </div>
+                {ALL_COL_KEYS.map(key => {
+                  const starred = starredCols.has(key);
+                  const locked = key === 'company' || starred;
+                  return (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
+                      {/* The star sits ahead of the tick because it is the
+                          stronger statement of the two: it decides whether
+                          the tick is even the user's to change. */}
+                      <button
+                        type="button"
+                        onClick={() => toggleStar(key)}
+                        disabled={key === 'company'}
+                        title={key === 'company'
+                          ? 'The PE firm column is always on the table'
+                          : starred
+                            ? `Stop keeping ${COL_LABELS[key] || key} on the table. It stays showing until you hide it.`
+                            : `Always keep ${COL_LABELS[key] || key} on the table`}
+                        style={{
+                          border: 'none', background: 'none', padding: 0, lineHeight: 1,
+                          fontSize: '0.85rem', fontFamily: 'inherit',
+                          cursor: key === 'company' ? 'default' : 'pointer',
+                          color: starred ? '#D97706' : '#CBD5E1',
+                        }}
+                      >{starred || key === 'company' ? '★' : '☆'}</button>
+                      {/* A starred row keeps its ordinary colour: its tick is
+                          locked, but it is the row the user cared most
+                          about, and greying it says the opposite. Only the
+                          firm name, which nobody chose, reads as disabled. */}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1, minWidth: 0, color: key === 'company' ? '#94A3B8' : '#334155', cursor: locked ? 'default' : 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={visibleCols.has(key)}
+                          disabled={locked}
+                          onChange={() => toggleCol(key)}
+                        />
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {COL_LABELS[key] || key}
+                        </span>
+                      </label>
+                    </div>
+                  );
+                })}
                 <div style={{ borderTop: '1px solid #F1F5F9', marginTop: '0.3rem', padding: '0.3rem 0.6rem', display: 'flex', gap: '0.4rem' }}>
                   <button
                     type="button"
@@ -1486,7 +1594,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                   >Show all</button>
                   <button
                     type="button"
-                    onClick={() => setVisibleCols(new Set(['company']))}
+                    onClick={() => setVisibleCols(new Set(['company', ...starredCols]))}
+                    title={starredCols.size > 0
+                      ? 'Clear the table back to the firm name and the columns you starred'
+                      : 'Clear the table back to the firm name'}
                     style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
                   >Hide all</button>
                 </div>
@@ -1523,6 +1634,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           const ALL_HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
             { key: 'cdm', label: 'CDM', align: 'left', tip: 'The CDM on the PE firm\'s prospect record. Sort to group a book together; the picker above filters the page to one CDM.' },
+            { key: 'status', label: 'Status', align: 'left', tip: `The Status on the PE firm's own prospect record - the same field the company popup and Table View set: ${STATUSES.join(' / ')}. Sorts in that order, with firms carrying no status below every one that does.` },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
@@ -1621,21 +1733,55 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         onClick={e => { e.stopPropagation(); onSelectProspect?.(pe); }}
                       >{pe.company}</div>
 
-                      {visibleCols.has('peAum') && (
-                      <div
-                        style={{ padding: '0.55rem 0.6rem', textAlign: 'right', fontSize: '0.78rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }}
-                        title={pe.peAum ? `PE AUM from Table View: $${pe.peAum}B` : 'No PE AUM set on this prospect record'}
-                      >
-                        {formatAum(pe.peAum)}
-                      </div>
-                      )}
-
                       {visibleCols.has('cdm') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.cdm ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         title={pe.cdm || 'No CDM on this prospect record. Set one on the firm\'s company popup.'}
                       >
                         {pe.cdm || '-'}
+                      </div>
+                      )}
+
+                      {/* The firm's own Status, painted the colour the rest
+                          of the app paints it. Read-only here: it is set on
+                          the company popup, and the two places this page
+                          already writes a field from a cell (PE Stage,
+                          Sales Partner) are both fields whose home is this
+                          page. A blank status is a real state - a firm
+                          nobody has triaged - so it says so rather than
+                          showing a dash that reads like missing data. */}
+                      {visibleCols.has('status') && (() => {
+                        const status = String(pe.status || '').trim();
+                        const color = STATUS_COLORS[status];
+                        return (
+                          <div
+                            style={{ padding: '0.55rem 0.6rem', fontSize: '0.7rem', overflow: 'hidden' }}
+                            title={status
+                              ? `${pe.company} is set to "${status}" on its company record`
+                              : `${pe.company} has no Status set. Set one on the firm's company popup.`}
+                          >
+                            <span
+                              style={{
+                                display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+                                textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                                padding: '1px 8px', borderRadius: 999,
+                                background: color ? `${color}1A` : '#F8FAFC',
+                                border: `1px solid ${color || '#E2E8F0'}`,
+                                color: color || '#64748B',
+                                fontStyle: status ? 'normal' : 'italic',
+                                fontWeight: status ? 700 : 500,
+                              }}
+                            >{status || 'No status'}</span>
+                          </div>
+                        );
+                      })()}
+
+                      {visibleCols.has('peAum') && (
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', textAlign: 'right', fontSize: '0.78rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }}
+                        title={pe.peAum ? `PE AUM from Table View: $${pe.peAum}B` : 'No PE AUM set on this prospect record'}
+                      >
+                        {formatAum(pe.peAum)}
                       </div>
                       )}
 
