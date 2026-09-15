@@ -10,6 +10,13 @@ import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
 import {
+  impactAmount,
+  impactAmountTitle,
+  impactLabel,
+  impactMissingTitle,
+  impactTitle,
+} from '../../utils/serviceImpact';
+import {
   avgMoney,
   basisFor,
   estimateScope,
@@ -98,6 +105,13 @@ const DEAL_TABLE_COLUMNS = [
   // the header says the number is an average so it is never mistaken for a
   // quote.
   { key: 'fee',          label: 'Est. Year 1 Fee (avg)', width: 220 },
+  // The client's half of the row, which the rate card can only ever NAME:
+  // it is one card for every account, so it stores "measured by savings"
+  // and stops there. This page is about one account, so the name resolves -
+  // the figure named on the Services Pricing tab, read off this company's
+  // own record. What we bill and what it is worth to them, side by side,
+  // which is the pair that makes a service worth putting in front of them.
+  { key: 'impact',       label: 'Impact',              width: 200 },
 ];
 
 // Dropdowns › Deal Pricing. One deal at a time, priced off the rate card the
@@ -488,6 +502,27 @@ export function AccountPotentialTab({
     [openRows, potential],
   );
 
+  // What one service is worth to THIS account: the figure its rate card
+  // entry names, resolved against the company's own record. Three states,
+  // and the cell says which - no figure named, a figure named that the
+  // record does not carry, and an amount.
+  const impactOf = useCallback((name, entry) => {
+    const resolved = impactAmount(entry.impact, client);
+    return {
+      // The label rather than the stored key: the column filter matches on
+      // what is on screen, and "savings" is what somebody types.
+      impact: impactLabel(entry.impact),
+      _impactKey: entry.impact || '',
+      _impactShort: resolved?.source.short || '',
+      _impactAmount: resolved ? resolved.amount : null,
+      _impactTitle: !resolved
+        ? impactTitle('')
+        : resolved.amount === null
+          ? impactMissingTitle(entry.impact, company)
+          : impactAmountTitle(entry.impact, company),
+    };
+  }, [client, company]);
+
   const allRows = useMemo(() => leadRows
     .map(({ name, meta, bucket }) => {
       const entry = pricingFor(pricing, name, bases);
@@ -556,6 +591,7 @@ export function AccountPotentialTab({
         // untouched whitespace would hide the one fact about it worth
         // knowing.
         _status: potential.statusOf.get(name) || '',
+        ...impactOf(name, entry),
       };
       return row;
     })
@@ -612,6 +648,7 @@ export function AccountPotentialTab({
           _bundledInto: lead,
           _closed: false,
           _status: potential.statusOf.get(name) || '',
+          ...impactOf(name, entry),
           // Where the lead came in the money order, for the rank cell: "-"
           // on its own says unranked, which is not the same as counted
           // somewhere else.
@@ -671,9 +708,13 @@ export function AccountPotentialTab({
         _bundledInto: '',
         _closed: true,
         _status: status,
+        // Worth naming even here: a service they turned down, measured by
+        // the figure it would have moved, is the argument for asking again.
+        ...impactOf(name, entry),
       };
     })),
-  [leadRows, openRows, bundledInto, pricing, bases, allEstimates, inScope, serviceUnits, potential]);
+  [leadRows, openRows, bundledInto, pricing, bases, allEstimates, inScope, serviceUnits, potential,
+    impactOf]);
 
   // Which bundles are opened up. A set of lead names rather than of row
   // ids because they are the same thing here, and a name survives the
@@ -1059,6 +1100,46 @@ export function AccountPotentialTab({
                     ? `. ${row.name} is ${row._status} here, so this figure orders the row and nothing else: it is in no total on this page.`
                     : '')}
               >{formatMoney(row._feeAvg)}</span>
+            );
+          },
+        };
+      // What the service is worth to the account, as money. The rate card
+      // names the figure; this page has the company, so it can say what the
+      // figure actually is - and a service is worth putting in front of
+      // somebody when that number is large, whatever we charge for it.
+      //
+      // Never added up. Two services measured by the same savings figure
+      // are two ways at the same money, not twice the money, so there is no
+      // total under this column and the deal panel does not carry one.
+      case 'impact':
+        return {
+          ...base,
+          // By the amount, so a click on the header brings the services
+          // with the most behind them to the top. A tie with no figure on
+          // the record sorts with the untied: it is not a small number, it
+          // is no number.
+          getSortValue: (row) => row._impactAmount,
+          exportValue: (row) => (row._impactAmount === null ? '' : row._impactAmount),
+          render: (row) => {
+            if (!row._impactKey) {
+              return (
+                <span className={styles.serviceMutedCell} title={row._impactTitle}>-</span>
+              );
+            }
+            // Named, but this company's record does not carry it. Not "-",
+            // which is what an untied service shows, and not $0, which
+            // would be a claim: the figure is missing, and the tooltip says
+            // which one and where it is filled from.
+            if (row._impactAmount === null) {
+              return (
+                <span className={styles.serviceMutedCell} title={row._impactTitle}>not on file</span>
+              );
+            }
+            return (
+              <span className={styles.impactCell} title={row._impactTitle}>
+                {formatMoney(row._impactAmount)}
+                <span className={styles.impactCellShort}>{row._impactShort}</span>
+              </span>
             );
           },
         };

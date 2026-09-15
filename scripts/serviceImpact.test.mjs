@@ -9,7 +9,10 @@
 // the mark being put on; and it is not free text, so a key left behind by a
 // source that no longer exists has to read as "not tied" rather than as a
 // tie to a figure nothing produces.
-import { IMPACT_SOURCES, impactKey, impactLabel, impactSourceFor, impactTitle } from '../src/utils/serviceImpact.js';
+import {
+  IMPACT_SOURCES, impactAmount, impactAmountTitle, impactKey, impactLabel,
+  impactMissingTitle, impactSourceFor, impactTitle,
+} from '../src/utils/serviceImpact.js';
 import { pricingFor, setPricingField, setNoFee } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -32,7 +35,7 @@ function check(label, actual, expected) {
   const keys = IMPACT_SOURCES.map(s => s.key);
   check('every source key is unique', keys.length, new Set(keys).size);
   check('every source is complete',
-    IMPACT_SOURCES.filter(s => s.key && s.label && s.field && s.where && s.blurb).length,
+    IMPACT_SOURCES.filter(s => s.key && s.label && s.short && s.field && s.where && s.blurb).length,
     IMPACT_SOURCES.length);
   check('the two figures off the analysis are on the list',
     keys.includes('indicativeAnnualSavings') && keys.includes('maxYearlyExposure'), true);
@@ -101,6 +104,56 @@ function check(label, actual, expected) {
   // quietly break.
   const repriced = setPricingField(setNoFee({}, ['Benchmarking']), 'Benchmarking', 'basis', 'flat');
   check('a price still unmarks it', pricingFor(repriced, 'Benchmarking').noFee, false);
+}
+
+// ── Resolving the figure against one company ──────────────────────────
+//
+// The rate card can only name the figure, because it is the same card for
+// every account. Account Potential is about one account, so it resolves the
+// name into an amount off that company's record - and the three answers it
+// can give are three different things, which is the whole of what this
+// has to get right.
+{
+  const client = { company: 'Vibrantz Technology', indicativeAnnualSavings: 1284000, maxYearlyExposure: '' };
+
+  check('a named figure resolves to the amount on the record',
+    impactAmount('indicativeAnnualSavings', client).amount, 1284000);
+  check('and it carries the source, so a cell can say which figure it is',
+    impactAmount('indicativeAnnualSavings', client).source.short, 'saved');
+
+  // Named, but the record does not have it. Not zero: zero savings is a
+  // claim, and this is the absence of one.
+  check('a figure the record is missing resolves to no amount',
+    impactAmount('maxYearlyExposure', client).amount, null);
+  check('an empty record is the same answer',
+    impactAmount('indicativeAnnualSavings', {}).amount, null);
+  check('and so is no record at all',
+    impactAmount('indicativeAnnualSavings', null).amount, null);
+
+  // No tie at all is a different answer again: nobody has said what this
+  // service is worth to anybody, which is not a fact about this company.
+  check('an untied service resolves to nothing', impactAmount('', client), null);
+  check('so does a retired key', impactAmount('someRetiredFigure', client), null);
+
+  // Typed money comes off a company card as a string more often than not.
+  check('a typed figure is read as a number',
+    impactAmount('indicativeAnnualSavings', { indicativeAnnualSavings: '$1,284,000' }).amount, 1284000);
+  check('and something that is not a number is not zero',
+    impactAmount('indicativeAnnualSavings', { indicativeAnnualSavings: 'lots' }).amount, null);
+
+  // A figure of zero IS a figure - a screening that found no mandates says
+  // nothing is at risk, and that is an answer rather than a blank.
+  check('zero is a figure, not a blank',
+    impactAmount('maxYearlyExposure', { maxYearlyExposure: 0 }).amount, 0);
+
+  // The two tooltips the account page needs: one naming whose estate the
+  // amount describes, one saying where a missing figure comes from.
+  check('the amount tooltip names the account',
+    impactAmountTitle('indicativeAnnualSavings', 'Vibrantz Technology').includes('Vibrantz Technology'), true);
+  check('the missing tooltip says where the figure comes from',
+    impactMissingTitle('maxYearlyExposure', 'Vibrantz Technology').includes('Master Analysis'), true);
+  check('an untied cell falls back to the rate card wording',
+    impactAmountTitle('', 'Vibrantz Technology'), impactTitle(''));
 }
 
 console.log(`${passed} passed, ${failed} failed`);

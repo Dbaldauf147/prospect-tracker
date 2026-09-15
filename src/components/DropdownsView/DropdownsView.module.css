@@ -3195,6 +3195,27 @@
   font-weight: 600;
 }
 
+/* What a service is worth to the account, on the Account Potential table:
+   the amount, and one word saying which figure it is. Tabular, like every
+   other money column here, so the amounts line up down the page. */
+.impactCell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* "saved", "at risk". Quiet, because the number is the point and the same
+   word repeats down most of the column - but it has to be there, since two
+   services on one account can name different figures and "$1,284,000" does
+   not say which one it is. */
+.impactCellShort {
+  margin-left: 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--color-text-muted);
+  font-variant-numeric: normal;
+}
+
 /* Tabular so the ranks read as a column of numbers rather than drifting
    with the digit count. */
 .pricingRank {
