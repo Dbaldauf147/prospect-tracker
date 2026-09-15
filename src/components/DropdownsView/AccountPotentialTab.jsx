@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadOpps2Newest } from '../../utils/opps2Store';
@@ -46,6 +46,11 @@ function ordinal(n) {
   if (teen >= 11 && teen <= 13) return `${v}th`;
   return `${v}${({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th'}`;
 }
+
+// Past any rank the page can hand out - the ranks run 1 to however many
+// services the book holds - so an unpriced row sorts below the priced ones
+// instead of above them. See the In Scope column's sort.
+const UNRANKED = 1e6;
 
 const DEAL_TABLE_COLUMNS = [
   { key: 'scope',        label: 'In Scope',            width: 78 },
@@ -598,6 +603,44 @@ export function AccountPotentialTab({
   // service by that name comes back.
   useEffect(() => { setExpanded(new Set()); }, [company]);
 
+  // How many rows of the table are ticked into the deal above. Counted off
+  // the rows rather than off the scope set, because those are the ticks
+  // somebody can actually go and find: a name left in the scope for a
+  // service the account has since ruled on is priced nowhere and shown
+  // nowhere, and counting it would send a reader looking for a checkbox
+  // that is not there.
+  const scopedCount = useMemo(() => allRows.filter(r => r._scoped).length, [allRows]);
+
+  // Taking a reader from the deal to the rows it is made of.
+  //
+  // The table is in money order, so a ticked service worth $1,600 sits a
+  // hundred rows below a fold that shows six-figure ones - and the deal
+  // panel above, which is the only thing on the page that says it is
+  // ticked at all, then reads as an estimate that came from nowhere. A
+  // scope also outlives the visit that built it (see the stored estimate
+  // above), so the reader who is surprised by it is often not the one who
+  // ticked it.
+  //
+  // Sorting by the tick rather than filtering to it: the question is
+  // "which of these did I tick", and an answer that hides every service
+  // they did not answers a different one.
+  const tableRef = useRef(null);
+  const [scopeSortSignal, setScopeSortSignal] = useState(null);
+  const showScopedRows = useCallback(() => {
+    setScopeSortSignal(prev => ({
+      key: 'scope',
+      direction: 'asc',
+      // Whatever column they are on: this is a click asking to be taken to
+      // the ticked rows, not a re-rank arriving behind their back.
+      force: true,
+      nonce: (prev?.nonce || 0) + 1,
+    }));
+    // 'nearest', so a table already on screen does not move: the panel
+    // this button sits on would scroll out from under the click, and the
+    // reader would have paid for the answer by losing the question.
+    tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, []);
+
   // What the lead's Year 1 fee is made of, as a table. Bulleted lines with
   // the money beside them rather than a sentence: the question this answers
   // is "where does that figure come from", and a column of figures that
@@ -676,7 +719,15 @@ export function AccountPotentialTab({
       case 'scope':
         return {
           ...base,
-          getSortValue: (row) => (row._scoped ? 0 : 1),
+          // Ticked first, and the money order kept inside each half.
+          // Sorting on the tick answers "which of these did I tick"; doing
+          // it by the tick alone would drop the other answer this page
+          // exists to give, and hand back the whole book in catalogue
+          // order.
+          // A service that comes with another one sorts on its lead's
+          // rank, so it stays beside the row carrying its money.
+          getSortValue: (row) => (row._scoped ? 0 : 2 * UNRANKED)
+            + (row._rank ?? row._leadRank ?? UNRANKED),
           // A service that comes with another one is ticked through that
           // one: it is never in a scope on its own, so its box moves the
           // whole bundle rather than pretending to move itself.
@@ -966,8 +1017,24 @@ export function AccountPotentialTab({
           check. */}
       {scopeLines.length > 0 && (
         <div className={styles.scopePanel}>
-          <div className={styles.bundleTitle}>
-            {`This deal, service by service. What each one bills in year one${hasSetup ? ', setup included' : ''}, and its share of the deal.`}
+          <div className={styles.scopePanelHead}>
+            <div className={styles.bundleTitle}>
+              {`This deal, service by service. What each one bills in year one${hasSetup ? ', setup included' : ''}, and its share of the deal.`}
+            </div>
+            {/* Where this deal came from, in one click. Everything in the
+                panel is here because a row below is ticked, and until now
+                the panel never said which - so a small service ticked on
+                a previous visit read as money the page had invented. */}
+            {scopedCount > 0 && (
+              <button
+                type="button"
+                className={styles.showHiddenBtn}
+                onClick={showScopedRows}
+                title={`This deal is ${scopedCount === 1 ? 'the one service' : `the ${scopedCount} services`} ticked in the table below. `
+                  + 'The table is in money order, so a ticked service worth little sits a long way down it. '
+                  + 'This brings the ticked rows to the top; Clear scope empties the deal instead.'}
+              >{`${scopedCount} ticked ${scopedCount === 1 ? 'row' : 'rows'} below - show ${scopedCount === 1 ? 'it' : 'them'}`}</button>
+            )}
           </div>
           <table className={styles.bundleTable}>
             <tbody>
@@ -1107,11 +1174,15 @@ export function AccountPotentialTab({
         </div>
       )}
 
-      <div className={styles.serviceTableWrap}>
+      <div className={styles.serviceTableWrap} ref={tableRef}>
         <DataTable
           tableId={DEAL_TABLE_ID}
           columns={columns}
           rows={allRows}
+          // Fired by "show them" on the deal panel, and by nothing else:
+          // it is the one thing on this page allowed to take the table out
+          // of the order the reader put it in.
+          sortSignal={scopeSortSignal}
           // Biggest prize first, because that is the question the page
           // answers. Alphabetical is what the table did as a rate card,
           // where every row was as interesting as every other; here the
