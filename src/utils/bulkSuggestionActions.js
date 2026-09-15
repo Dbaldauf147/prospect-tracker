@@ -23,6 +23,23 @@ export const TV_SUGGESTION_FIELDS = ['website', 'zoomCompanyId', 'zoomCompanyNam
 const trimmed = (v) => String(v ?? '').trim();
 
 /**
+ * Whether a row's Company is already the company being suggested.
+ *
+ * Compared as text, not as characters. Table View names carry stray
+ * whitespace - "CBRE Investment Management " is one of them - and an exact
+ * `===` made those rows unfixable: applying the suggestion wrote the name,
+ * the cell compared the written name against the untrimmed original, found
+ * them different, and left the yellow pill sitting there. The suggestion
+ * had taken; the page said it had not.
+ *
+ * Case still counts. "cbre" and "CBRE" are the same company but not the
+ * same name, and fixing the casing is exactly what the ✓ is for.
+ */
+export function companyTextEquals(a, b) {
+  return trimmed(a) === trimmed(b);
+}
+
+/**
  * The pending suggestions across `rows`, in row order.
  *
  * Two kinds come back, because the two halves of the table write to two
@@ -58,7 +75,7 @@ export function pendingSuggestionActions(rows, read = {}) {
     const to = trimmed(suggestedCompanyFor(row));
     // "Already the company on the row" is what the cell reads as `applied`,
     // and there is nothing left to apply about it.
-    if (to && trimmed(row?.company) !== to && !companyDismissed(row)) {
+    if (to && !companyTextEquals(row?.company, to) && !companyDismissed(row)) {
       actions.push({ kind: 'company', email: row.email, from: row.company, to });
     }
 

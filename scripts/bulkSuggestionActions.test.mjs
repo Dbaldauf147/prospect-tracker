@@ -16,7 +16,7 @@
 // The count on the button comes from this list, so a rule that drifts from
 // the cells shows up as a number nobody can reconcile with the rows.
 import {
-  pendingSuggestionActions, summarizeSuggestionActions, TV_SUGGESTION_FIELDS,
+  companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions, TV_SUGGESTION_FIELDS,
 } from '../src/utils/bulkSuggestionActions.js';
 
 let passed = 0, failed = 0;
@@ -102,6 +102,34 @@ check(
     suggested: { 'a@x.com': 'Macerich Company' },
   }))),
   [],
+);
+
+// --- whitespace, which is what made half a batch look like it failed ----
+// Table View names carry stray spaces. Applying the suggestion writes the
+// name; if "already applied" is judged on the exact characters, the row
+// compares its written name against the untrimmed original, decides they
+// differ, and keeps offering the same suggestion forever. The batch looked
+// like it had half taken.
+check('a trailing space is the same company', companyTextEquals('CBRE Investment Management ', 'CBRE Investment Management'), true);
+check('and so is a leading one', companyTextEquals(' Nuveen', 'Nuveen'), true);
+check('a blank and a missing value agree', companyTextEquals('', null), true);
+// Case is a real difference: fixing it is what the ✓ is for.
+check('different casing is not the same name', companyTextEquals('cbre', 'CBRE'), false);
+check('a different company is a different company', companyTextEquals('Nuveen', 'Nuveen Real Estate'), false);
+
+check(
+  'a suggestion already applied, bar the whitespace, is not offered again',
+  names(pendingSuggestionActions([{ email: 'a@x.com', company: 'CBRE Investment Management' }], reader({
+    suggested: { 'a@x.com': 'CBRE Investment Management ' },
+  }))),
+  [],
+);
+check(
+  'and the value it writes is the trimmed one',
+  pendingSuggestionActions([{ email: 'a@x.com', company: 'CBRE Inc' }], reader({
+    suggested: { 'a@x.com': 'CBRE Investment Management ' },
+  }))[0].to,
+  'CBRE Investment Management',
 );
 check(
   'a row with no matched prospect offers no record write',

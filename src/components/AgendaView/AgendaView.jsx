@@ -10,7 +10,7 @@ import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampa
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDomainPattern';
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
-import { pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
+import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -1289,7 +1289,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
 
       let suggestedCompany = '';
       if (!dismissed && live.suggestedCompany) {
-        suggestedCompany = (r.company === live.suggestedCompany) ? 'applied' : live.suggestedCompany;
+        suggestedCompany = companyTextEquals(r.company, live.suggestedCompany)
+          ? 'applied'
+          : live.suggestedCompany;
       }
 
       let tier = '';
@@ -1825,7 +1827,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       out = out.filter(r => {
         const live = lookupMatch(r.email, r);
         return live.suggestedCompany
-          && r.company !== live.suggestedCompany
+          && !companyTextEquals(r.company, live.suggestedCompany)
           && !dismissedSuggestedCompanies.has(r.email);
       });
     }
@@ -3128,7 +3130,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         {(() => {
                           const sc = live.suggestedCompany;
                           if (!sc) return <span className={styles.metaText}>-</span>;
-                          if (r.company === sc) {
+                          if (companyTextEquals(r.company, sc)) {
                             return <span style={{ fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>applied</span>;
                           }
                           if (dismissedSuggestedCompanies.has(r.email)) {
@@ -3160,8 +3162,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                                 type="button"
                                 title="Use this as Company"
                                 onClick={() => {
-                                  saveCompanyRule(r.company, sc);
-                                  updateRow(r.email, { company: sc });
+                                  // Trimmed on the way in: a Table View name
+                                  // with a stray space would otherwise be
+                                  // copied onto the row and pushed to HubSpot
+                                  // that way.
+                                  saveCompanyRule(r.company, sc.trim());
+                                  updateRow(r.email, { company: sc.trim() });
                                 }}
                                 style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
                               >✓</button>
