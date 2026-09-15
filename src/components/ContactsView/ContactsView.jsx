@@ -28,11 +28,16 @@ const ALL_SUBTABS = [
   { key: 'se',         label: 'SE',               adminOnly: true },
   { key: 'bulk',       label: 'Bulk Add' },
   { key: 'marketing',  label: 'Marketing Leads' },
-  { key: 'all',        label: 'All Contacts' },
+  // Every tab on this bar is a tab of contacts, so three of them spent a
+  // word saying so. "All Contacts / Key Contacts / Active Contacts / Client
+  // Contacts" reads as one word repeated with a qualifier in front, and the
+  // qualifier is the whole of what distinguishes them. The keys are
+  // untouched: they are what the saved tab is remembered by.
+  { key: 'all',        label: 'All' },
   { key: 'key',        label: 'Key Contacts' },
   { key: 'keyprospects', label: 'Key Prospects' },
-  { key: 'active',     label: 'Active Contacts' },
-  { key: 'clients',    label: 'Client Contacts' },
+  { key: 'active',     label: 'Active' },
+  { key: 'clients',    label: 'Clients' },
   { key: 'changed',    label: 'Changed Jobs' },
   { key: 'events',     label: 'Events' },
   { key: 'zoominfo',   label: 'Zoom Info' },
