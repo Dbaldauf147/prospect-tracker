@@ -74,6 +74,7 @@ import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '
 import {
   QUOTED_VARIANCE_COLUMN, quotedVariance, formatQuotedVariance, quotedVarianceTone,
 } from '../../utils/quotedVariance';
+import { compareSiaToEstimate } from '../../utils/siaScopeCompare';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -2265,6 +2266,281 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
   );
 }
 
+// What the SIA actually bills, beside what the rate card said it would.
+//
+// The estimate table above answers "what should this deal be worth"; once an
+// SIA is saved, the more useful question is which service came in over that
+// and which came in under, and nothing was answering it — the quote arrived
+// as one Year 1 figure and the per-service estimate it was supposed to test
+// sat in a different box.
+//
+// Both sides are year one, because that is the only span both sides state:
+// the estimate's annual fee plus its one-off setup, against what the fee
+// schedule bills in its first twelve months. See utils/siaScopeCompare.
+//
+// Rows are the union of both sides. A service in the Scope the SIA never
+// charges for is work about to be delivered for nothing, and a service the
+// SIA charges for that the Scope never listed is a Scope cell somebody
+// forgot — neither shows up if the table only lists what both sides agree
+// on, which is exactly when a comparison is worth drawing.
+function SiaVsEstimateTable({ compare, onUse }) {
+  if (!compare || !compare.rows.length) return null;
+  const { rows, totals } = compare;
+  const cell = { padding: '2px 0', verticalAlign: 'top' };
+  const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 10 };
+  const head = {
+    padding: '0 0 3px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#94A3B8',
+  };
+  const useLink = {
+    background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline',
+    cursor: 'pointer', padding: 0, font: 'inherit', fontSize: '0.7rem',
+  };
+  const sub = { color: '#94A3B8', fontSize: '0.7rem' };
+  const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+
+  // The gap, in the words it is read in: which end the quote passed and by
+  // how much. Inside the range there is no gap — the quote is what the card
+  // said, and "+$0 over" would be a rounding artefact dressed as a finding.
+  const gapLabel = (gap) => {
+    if (!gap) return '';
+    const amt = Math.round(gap.amount || 0);
+    if (gap.state === 'within' || amt === 0) return gap.ranged ? 'in range' : 'on the estimate';
+    return gap.state === 'over' ? `+${money(amt)} over` : `-${money(amt)} under`;
+  };
+  // Over the estimate is money the deal gained, under it money it gave away
+  // — the same reading (and the same two colours) as the Estimated vs.
+  // Actual Quoted column on the table behind this popup.
+  const gapColor = (gap) => {
+    if (!gap || gap.state === 'within') return '#94A3B8';
+    return gap.state === 'over' ? '#15803D' : '#B91C1C';
+  };
+
+  return (
+    <div style={{
+      padding: '0.5rem 0.6rem', background: '#F8FAFC',
+      border: '1px solid var(--color-border-light)', borderRadius: 4,
+      fontSize: '0.78rem', color: '#475569',
+    }}>
+      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
+        SIA vs estimate{' '}
+        <span
+          style={{ color: '#94A3B8', fontWeight: 400 }}
+          title="Every service on either side: what the rate card estimated it at, and what the saved SIA actually bills for it in year 1."
+        >
+          ({rows.length}) &middot; Year 1
+        </span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...head, textAlign: 'left' }}>Service</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to in year 1, setup included">Est. low</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to in year 1, setup included">Est. high</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="What the saved SIA actually bills for this service in year 1">SIA</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.name}>
+              <td style={cell}>
+                {row.name}
+                {/* Where the estimate came from, what it has inside it, and
+                    whether the SIA fee behind it is this service's alone.
+                    One line: three stacked greys under a service name is a
+                    paragraph, and nobody reads a paragraph in a table. */}
+                {!row.inScope ? (
+                  <div style={sub} title="The SIA bills for this service, but it is not in this opp's Scope cell, so the rate card was never asked to price it.">
+                    billed by the SIA, not in this opp&rsquo;s Scope
+                  </div>
+                ) : (() => {
+                  const parts = [];
+                  if (row.note || row.how) parts.push(row.note || row.how);
+                  if (row.setupNote) parts.push(row.setupNote);
+                  if (row.shared) parts.push('shares a fee with another service');
+                  if (!parts.length) return null;
+                  return (
+                    <div
+                      style={sub}
+                      title={row.shared
+                        ? `Fee rows behind this service: ${row.feeNames.join(', ')}. At least one of them also covers another service, so it is counted in full against both, which is why this column adds to more than the SIA total.`
+                        : undefined}
+                    >{parts.join(' · ')}</div>
+                  );
+                })()}
+              </td>
+              {row.priced ? (
+                <>
+                  <td style={num}>
+                    <strong style={{ color: '#1E293B' }}>{money(row.estimated)}</strong>
+                  </td>
+                  <td
+                    style={num}
+                    title={row.estimatedHigh > row.estimated ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
+                  >
+                    <strong style={{ color: row.estimatedHigh > row.estimated ? '#1E293B' : '#94A3B8' }}>
+                      {row.estimatedHigh > row.estimated ? money(row.estimatedHigh) : '-'}
+                    </strong>
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td
+                    style={{ ...num, color: '#94A3B8' }}
+                    title={row.inScope
+                      ? 'No price on the Services Pricing tab yet, so there is nothing to compare the SIA against.'
+                      : 'Not in this opp’s Scope, so the rate card never priced it.'}
+                  >-</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>-</td>
+                </>
+              )}
+              <td style={num}>
+                {row.actual == null ? (
+                  <span
+                    style={{ color: '#94A3B8' }}
+                    title="No fee row in the saved SIA covers this service. Either it is being delivered inside another fee, or the deal is not charging for it."
+                  >-</span>
+                ) : (
+                  <>
+                    <strong style={{ color: '#1E293B' }}>{money(row.actual)}</strong>
+                    {row.gap ? (
+                      <div style={{ ...sub, color: gapColor(row.gap), fontWeight: 600 }}>
+                        {gapLabel(row.gap)}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              Year 1 total
+              {compare.unpriced.length ? (
+                <span style={{ color: '#94A3B8' }}>{' '}({compare.unpriced.length} unpriced)</span>
+              ) : null}
+            </td>
+            <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              {totals.estimated == null ? (
+                <span style={{ color: '#94A3B8' }}>-</span>
+              ) : (
+                <>
+                  <strong style={{ color: '#1E293B' }}>{money(totals.estimated)}</strong>
+                  {onUse ? (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onUse(totals.estimated); }}
+                        title="Put the low end of the estimate in the Deal Size box"
+                        style={useLink}
+                      >Use low</button>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </td>
+            <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              {totals.estimatedHigh > totals.estimated ? (
+                <>
+                  <strong style={{ color: '#1E293B' }}>{money(totals.estimatedHigh)}</strong>
+                  {onUse ? (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onUse(totals.estimatedHigh); }}
+                        title="Put the high end of the estimate in the Deal Size box"
+                        style={useLink}
+                      >Use high</button>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <span style={{ color: '#94A3B8' }}>-</span>
+              )}
+            </td>
+            <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              <strong style={{ color: '#1E293B' }} title="Every fee row in the saved SIA, counted once - the option's own Year 1 total.">
+                {money(totals.actual)}
+              </strong>
+              {totals.gap ? (
+                <div style={{ ...sub, color: gapColor(totals.gap), fontWeight: 600 }}>
+                  {gapLabel(totals.gap)}
+                </div>
+              ) : null}
+              {onUse ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onUse(totals.actual); }}
+                    title="Put the SIA's Year 1 total in the Deal Size box"
+                    style={useLink}
+                  >Use SIA</button>
+                </div>
+              ) : null}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      {/* Money in the quote that no service claims. It is inside the SIA
+          total and outside every row above it, so without this line the
+          column and the total disagree for no visible reason. */}
+      {totals.unmapped.length > 0 && (
+        <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+          {fmtMoneyWhole(Math.round(totals.unmappedTotal))} of SIA fees are not tied to a service
+          ({totals.unmapped.map(u => u.name).join(', ')}) - map their line items under
+          Pricing › Linked To › Line Item → Services.
+        </div>
+      )}
+      {compare.unpriced.length > 0 && (
+        <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+          No price yet: {compare.unpriced.join(', ')} - set one on Dropdowns › Services Pricing.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The same comparison for a snapshot that predates per-fee service
+// attribution: one line, totals only.
+//
+// An older SIA carries no record of which fee paid for which service, and
+// that mapping cannot be reconstructed from the Opp — it lived in the
+// Pricing tab's cache. So the deal-level answer is given, along with what
+// gets the rest of it: re-saving the option from the Pricing tab.
+function SiaTotalsOnlyCompare({ compare }) {
+  if (!compare || !compare.totals.gap) return null;
+  const { totals } = compare;
+  const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+  const gap = totals.gap;
+  const amt = Math.round(gap.amount || 0);
+  const label = (gap.state === 'within' || amt === 0)
+    ? (gap.ranged ? 'inside the estimate' : 'on the estimate')
+    : (gap.state === 'over' ? `${money(amt)} over the high end` : `${money(amt)} under the low end`);
+  const color = (gap.state === 'within' || amt === 0)
+    ? '#475569'
+    : (gap.state === 'over' ? '#15803D' : '#B91C1C');
+  return (
+    <div style={{
+      padding: '0.5rem 0.6rem', background: '#F8FAFC',
+      border: '1px solid var(--color-border-light)', borderRadius: 4,
+      fontSize: '0.78rem', color: '#475569',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>SIA vs estimate <span style={{ color: '#94A3B8' }}>(Year 1)</span></span>
+        <strong style={{ color }}>{label}</strong>
+      </div>
+      <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
+        {money(totals.actual)} quoted against {money(totals.estimated)}
+        {totals.estimatedHigh > totals.estimated ? ` – ${money(totals.estimatedHigh)}` : ''} estimated.
+        This option was saved before fees carried their services, so it can only be
+        compared as a whole - re-save it from Pricing › Save to Opp for the service-by-service split.
+      </div>
+    </div>
+  );
+}
+
 // Quoted Amount cell. Clicking the value opens a small editor popup
 // with two fields — the dollar amount and an optional hyperlink. The
 // cell itself stays icon-free: when a hyperlink is set the amount
@@ -2310,6 +2586,20 @@ function QuotedAmountCell({
   const scopeEstimate = useScopeFeeEstimate({
     active: open, scopeNames, pricing, pricingBases, serviceOverrides, sites, dealSize: draftAmount,
   });
+
+  // Once an SIA is saved, the estimate stops being the answer and becomes
+  // the thing to test: the same services, what the card said they were
+  // worth, and what the quote actually charges for each. Only while the
+  // popup is open, and only when there is a quote to compare.
+  const scopeCompare = useMemo(
+    () => (open && snapshot ? compareSiaToEstimate({ snapshot, estimate: scopeEstimate }) : null),
+    [open, snapshot, scopeEstimate],
+  );
+  // Service by service when the SIA's fees carry the services they pay for;
+  // deal-level otherwise. An older snapshot has no attribution to fall back
+  // on, and an empty column beside every service would read as the SIA
+  // charging nothing for any of them.
+  const comparePerService = !!(scopeCompare && scopeCompare.mapped && scopeCompare.rows.length);
 
   // Services bundled in the saved Option. Prefer the list frozen into
   // the snapshot (self-contained); fall back to the live per-Option
@@ -2361,7 +2651,12 @@ function QuotedAmountCell({
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-              minWidth: 360, maxWidth: 520, boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+              // Wider once the SIA column joins the estimate's two: four
+              // columns of money in a 520px dialog wrap, and a wrapped
+              // figure is one nobody can compare down its column.
+              minWidth: 360, maxWidth: comparePerService ? 660 : 520,
+              maxHeight: '86vh', overflowY: 'auto',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
               display: 'flex', flexDirection: 'column', gap: '0.75rem',
             }}
           >
@@ -2465,10 +2760,20 @@ function QuotedAmountCell({
                 )}
               </div>
             )}
-            <ScopeFeeTable
-              estimate={scopeEstimate}
-              onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
-            />
+            {comparePerService ? (
+              <SiaVsEstimateTable
+                compare={scopeCompare}
+                onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
+              />
+            ) : (
+              <>
+                <ScopeFeeTable
+                  estimate={scopeEstimate}
+                  onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
+                />
+                <SiaTotalsOnlyCompare compare={scopeCompare} />
+              </>
+            )}
             {snapshot && optionServices.length > 0 && (
               <div style={{
                 padding: '0.5rem 0.6rem', background: '#F8FAFC',

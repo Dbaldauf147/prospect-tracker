@@ -147,7 +147,13 @@ export function buildPricingOptionSnapshot(option) {
     // deduped upstream). Frozen in so the Opp can list them even after
     // the Pricing tab is cleared.
     services: Array.isArray(option?.services) ? option.services.filter(Boolean) : [],
-    rows: rows.map(r => ({ ...r })),
+    // Each fee row keeps the services IT pays for, alongside the bundle for
+    // the option as a whole. The mapping behind it (cost line item → its
+    // services, cost line item → the fee that bills it) lives only in the
+    // Pricing tab's cache, so a row that didn't carry its own list here
+    // could never get one later — and without it the Opp can say what the
+    // deal was quoted at but not which service came in over the estimate.
+    rows: rows.map(r => ({ ...r, services: normServiceList(r?.services) })),
     year1Total: yearTotals[0] || 0,
     yearTotals,
     termValues,
@@ -182,6 +188,23 @@ function normNum(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// Service names frozen onto a fee row: trimmed, blanks dropped, deduped
+// case-insensitively. Always an array, so a reader never has to guess
+// whether "no services" means none or means an older snapshot.
+function normServiceList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const s of raw) {
+    const v = String(s ?? '').trim();
+    const k = v.toLowerCase();
+    if (!v || seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
 }
 
 function normMargins(list, termYears) {
