@@ -18,7 +18,6 @@ import { QuestionsTab } from './QuestionsTab';
 import { CoaItemsTab } from './CoaItemsTab';
 import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
 import { ServicesPricingTab } from './ServicesPricingTab';
-import { AccountPotentialTab } from './AccountPotentialTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
@@ -1056,11 +1055,10 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   );
 }
 
-// `prospects` is read only by the Account Potential subtab, to answer how many
-// sites and accounts an imported opp's company has. Optional: the tab falls
-// back to the opp's own columns and the company's saved site list, so the
-// page still works if it's ever rendered without them.
-export function DropdownsView({ settings, updateSettings, prospects = [] }) {
+// No `prospects` any more: the only thing on this page that read them was
+// Account Potential, and that lives on the company card now - where the
+// account is the card rather than a name typed into a combo.
+export function DropdownsView({ settings, updateSettings }) {
   const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
   // How many COA items the subtab badge shows. Read here rather than
@@ -1092,7 +1090,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // this reads back the scenario half of the same record, and hands it to
   // Services Pricing read-only so a rate can be read against the deal it is
   // being quoted on.
-  const [pricingScenario, setPricingScenario] = useState(
+  const [pricingScenario] = useState(
     () => loadPricingEstimate(user?.uid)?.scenario
       || { company: '', services: [], counts: {}, serviceUnits: {} },
   );
@@ -1213,12 +1211,6 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // out of the Opps Scope picker can't be in a deal, so pricing it is moot.
   const pricingServiceRows = useMemo(
     () => serviceRows.filter(r => !hiddenServices.has(r.name)),
-    [serviceRows, hiddenServices],
-  );
-  // The same set as a list, for the subtabs that have to name what they are
-  // not showing rather than only leave it out.
-  const hiddenServiceNames = useMemo(
-    () => serviceRows.filter(r => hiddenServices.has(r.name)).map(r => r.name),
     [serviceRows, hiddenServices],
   );
   const [showHiddenServices, setShowHiddenServices] = useState(false);
@@ -1701,15 +1693,6 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           className={activeTab === 'pricing' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('pricing')}
         >Services Pricing <span className={styles.subtabCount}>{pricingServiceRows.length}</span></button>
-        {/* One deal at a time, priced off the card the subtab before it
-            keeps. The count is what's ticked into the scope rather than how
-            many services exist, because that is the number this tab is
-            about. */}
-        <button
-          type="button"
-          className={activeTab === 'deal' ? styles.subtabActive : styles.subtab}
-          onClick={() => setActiveTab('deal')}
-        >Account Potential <span className={styles.subtabCount}>{pricingScenario?.services?.length || 0}</span></button>
         <button
           type="button"
           className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
@@ -1948,21 +1931,6 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           // Read-only here: the rate card shows what a rate comes to under
           // the deal open next door, but only that tab edits it.
           scenario={pricingScenario}
-        />
-      ) : activeTab === 'deal' ? (
-        <AccountPotentialTab
-          settings={settings}
-          updateSettings={updateSettings}
-          serviceRows={pricingServiceRows}
-          // The services this page never sees, by name. It cannot work out
-          // that a service is hidden from a list it has already been
-          // filtered out of, and "hidden on the Services tab" is one of the
-          // three reasons somebody comes looking for a service that is not
-          // there.
-          hiddenServices={hiddenServiceNames}
-          scenario={pricingScenario}
-          setScenario={setPricingScenario}
-          prospects={prospects}
         />
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />

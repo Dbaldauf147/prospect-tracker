@@ -595,7 +595,7 @@ function App() {
           ) : view === 'opps2' ? (
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} />
           ) : view === 'dropdowns' ? (
-            <DropdownsView settings={settings} updateSettings={updateSettings} prospects={prospects} />
+            <DropdownsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' || view === 'companyType' ? (
             <MyAccountsView
               mode={view === 'companyType' ? 'companyType' : 'table'}

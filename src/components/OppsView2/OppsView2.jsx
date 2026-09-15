@@ -3071,8 +3071,8 @@ function EstimatedFeeCell({ value, analysis, onOpen }) {
       <span
         style={{ color: shown ? 'inherit' : 'var(--color-text-muted)' }}
         title={shown
-          ? 'No saved working behind this figure. Import the opp on Dropdowns › Deal Pricing and save the estimate to attach one.'
-          : 'Set from Dropdowns › Deal Pricing: import this opp, tick the services, then Save to opp.'}
+          ? 'No saved working behind this figure. Open the account\u2019s company card, go to its Potential tab, import this opp and save the estimate to attach one.'
+          : 'Set from the account\u2019s company card: open its Potential tab, import this opp, tick the services, then Save to opp.'}
       >{shown || '-'}</span>
     );
   }
