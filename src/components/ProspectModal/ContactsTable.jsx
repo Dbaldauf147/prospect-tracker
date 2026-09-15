@@ -28,10 +28,9 @@ import { BUCKETS, contactHasTag, getContactTags } from './contactTags.js';
 //              offering a second, different file three inches away.
 //
 // Everything the old table did behaviourally is kept: click a row to open
-// the contact, the yellow tint and left bar on a decision maker, the faded
-// row for a contact excluded from this company, the bulk-select checkbox
-// column, and contacts tagged "left" pinned to the bottom whatever the
-// sort.
+// the contact, the yellow tint on a decision maker, the faded row for a
+// contact excluded from this company, the bulk-select checkbox column, and
+// contacts tagged "left" pinned to the bottom whatever the sort.
 const TABLE_ID = 'company-contacts';
 
 // Tagged as having left the company. Pinned under everyone still there,
@@ -402,11 +401,20 @@ export function ContactsTable({
   // survive every sort: a decision maker is the row you came for, and a
   // contact excluded from this company is still listed but no longer part
   // of it.
+  //
+  // The tint is the whole of it. A decision maker used to carry an amber
+  // bar down its left edge too, which is what the hand-rolled table drew -
+  // but this table mirrors a row's style onto every cell in it (it has to:
+  // a pinned column sets its own background and would otherwise ignore the
+  // row), so one bar at the left of the row became one at the left of every
+  // cell, and the row read as a line of gold column rules cutting across
+  // the ordinary gridlines. The yellow says it on its own, and the DM chip
+  // beside the name says why.
   const rowStyle = (c) => {
     const isDM = contactHasTag(c, 'decision maker');
     const isExcluded = excludedContactIds.has(String(c.id || c.vid || ''));
     const style = {};
-    if (isDM) { style.background = '#FEFCE8'; style.boxShadow = 'inset 3px 0 0 #F59E0B'; }
+    if (isDM) style.background = '#FEFCE8';
     if (isExcluded) style.opacity = 0.5;
     return Object.keys(style).length > 0 ? style : undefined;
   };
