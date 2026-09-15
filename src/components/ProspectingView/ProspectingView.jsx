@@ -46,6 +46,7 @@ import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { collectPeFirmTopPcs, peFirmTopPcKey } from '../../utils/peFirmTopPcs';
 import { TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
+import { COLD_OUTREACH_EXCLUDED_STATUSES } from '../../utils/decisionMakerCoverage';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 
 // The contact popup, loaded when one is actually opened. It lives in
@@ -896,6 +897,14 @@ function VisitContactList({ summary, onNavigate, onOpenContact }) {
 // doesn't paint all of them into a step on a ladder.
 const DM_ROWS_SHOWN = 8;
 
+// The statuses cold outreach leaves out, spelled into the tier tooltip.
+// Read off the rule itself rather than typed out again, so a status added
+// to or dropped from the filter can't leave the tooltip naming a different
+// set from the one the percentages were counted over.
+const DM_EXCLUDED_STATUS_TEXT = COLD_OUTREACH_EXCLUDED_STATUSES.length > 1
+  ? `${COLD_OUTREACH_EXCLUDED_STATUSES.slice(0, -1).join(', ')} and ${COLD_OUTREACH_EXCLUDED_STATUSES.at(-1)}`
+  : (COLD_OUTREACH_EXCLUDED_STATUSES[0] || '');
+
 const TIER_TINTS = {
   'Tier 1': { bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
   'Tier 2': { bg: '#F5F3FF', border: '#DDD6FE', ink: '#6D28D9' },
@@ -944,7 +953,7 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
           return (
             <span
               key={t.tier}
-              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot - ${t.missing.length} still to map. Accounts that already have a history are left out entirely - Client, Old Client, Hold Off and Lost - Not Sold - since cold outreach is for names with no relationship yet. The rest are the accounts on your Table View.`}
+              title={`${t.mapped} of ${t.total} ${t.tier} account${t.total === 1 ? '' : 's'} have a contact tagged Decision Maker in HubSpot - ${t.missing.length} still to map. Accounts that already have a history, or a conversation under way, are left out entirely - ${DM_EXCLUDED_STATUS_TEXT} - since cold outreach is for names with no relationship yet. The rest are the accounts on your Table View.`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 padding: '1px 8px', borderRadius: 999,

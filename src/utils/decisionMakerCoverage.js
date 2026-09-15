@@ -90,9 +90,15 @@ export function accountHasDecisionMaker(prospect, dmCompanies) {
  *
  * The step is for names with no relationship yet, so every one of these is
  * an account that already has a history — a current client, a former one,
- * a deal that went the other way, or one deliberately parked. Finding a
- * decision maker at any of them is not this morning's job, and listing
- * them made the tier percentages read as work owed when it wasn't.
+ * a deal that went the other way, a conversation already under way, or one
+ * deliberately parked. Finding a decision maker at any of them is not this
+ * morning's job, and listing them made the tier percentages read as work
+ * owed when it wasn't.
+ *
+ * "Qualifying" is on the list for that reason: an account being qualified
+ * is already being spoken to, which is the opposite of cold. It is the one
+ * entry here that isn't a finished relationship, and it earns its place
+ * because the step's own line reads "names with no relationship yet".
  *
  * Compared case- and space-insensitively: the status arrives from a sheet,
  * and "old client" must not slip past a filter written for "Old Client".
@@ -100,6 +106,7 @@ export function accountHasDecisionMaker(prospect, dmCompanies) {
 export const COLD_OUTREACH_EXCLUDED_STATUSES = [
   'Client',
   'Old Client',
+  'Qualifying',
   'Hold Off',
   'Lost - Not Sold',
 ];
