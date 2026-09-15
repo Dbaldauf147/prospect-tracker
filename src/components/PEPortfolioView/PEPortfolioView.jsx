@@ -7,8 +7,8 @@ import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils
 import { formatAum } from '../../utils/formatters';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
-import { PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
-import { PE_STAGE_META, PE_DEFAULT_STAGE, peStageOf, peStageMeta } from '../../utils/peStages';
+import { NOT_SOLD_STATUS, PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { PE_STAGE_META, PE_DEFAULT_STAGE, PE_NOT_SOLD_STAGE, peStageOf, peStageMeta, peStageStatusConflict } from '../../utils/peStages';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -312,6 +312,23 @@ function useOppsRecords(userId) {
     return () => { cancelled = true; window.removeEventListener('opps2-cache-updated', onUpdate); };
   }, [userId]);
   return [records, setRecords, read];
+}
+
+// How many firms the banner names before it stops listing and points at the
+// table. A roster where a dozen firms have gone stale is exactly when this
+// warning matters most, and exactly when a full list would push the table
+// off the screen. Every flagged firm carries the same flag on its own row,
+// so nothing is lost by cutting the list short.
+const CONFLICTS_NAMED = 10;
+
+// The one sentence both halves of the status/stage warning say: the flag on
+// the firm's name in the table, and the banner that counts the flagged rows.
+// Written as the fix rather than the fault, because either field could be
+// the stale one and the user is the one who knows which.
+function peConflictText(company, conflict) {
+  if (!conflict) return '';
+  return `${company} is set to "${conflict.status}" on its company record, but its PE Stage is "${conflict.stage}". `
+    + `Move the stage to ${PE_NOT_SOLD_STAGE} or change the Status, so the firm stops counting as a live relationship.`;
 }
 
 // The three picks that aren't a CDM's name. Sentinels rather than '' so a
@@ -1291,6 +1308,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
     : sortedPeFirms;
 
+  // Firms written off on their company record whose PE Stage still reads as
+  // a live relationship (see utils/peStages). Off the rows on screen rather
+  // than the whole roster, so the banner's count is a count of rows the user
+  // can actually see and click - a warning naming firms the CDM filter or
+  // the search box has hidden is a warning with nowhere to go.
+  const stageConflicts = useMemo(
+    () => filteredFirms
+      .map(pe => ({ pe, conflict: peStageStatusConflict(pe) }))
+      .filter(x => x.conflict),
+    [filteredFirms],
+  );
+  // Same findings keyed by row, so a row paints its flag by lookup instead
+  // of re-deriving it and the banner and the table can never disagree.
+  const conflictById = useMemo(
+    () => new Map(stageConflicts.map(x => [x.pe.id, x.conflict])),
+    [stageConflicts],
+  );
+
   function toggle(peId) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -1613,6 +1648,37 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it; counts will populate here afterwards.
           </div>
         )}
+
+        {/* Written off in one field, still live in the other. The banner
+            exists because the Status and PE Stage columns are both
+            hideable, so the flag beside the firm's name can be the only
+            thing on screen that knows - and because a stale row is easier
+            to fix from a list of names than by hunting the table for a
+            flag. Each name opens that firm's popup, where both fields are.
+            Red rather than the amber the notice above uses: that one is a
+            "nothing loaded yet", this is two saved fields contradicting
+            each other. */}
+        {stageConflicts.length > 0 && (
+          <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, fontSize: '0.72rem', color: '#991B1B', lineHeight: 1.5 }}>
+            <span aria-hidden="true">⚠ </span>
+            <strong>{stageConflicts.length} PE {stageConflicts.length === 1 ? 'firm is' : 'firms are'} set to &ldquo;{NOT_SOLD_STATUS}&rdquo; but {stageConflicts.length === 1 ? 'its' : 'their'} PE Stage is not {PE_NOT_SOLD_STAGE}.</strong>{' '}
+            Open {stageConflicts.length === 1 ? 'it' : 'each one'} and set the stage to {PE_NOT_SOLD_STAGE}, or change the Status:{' '}
+            {stageConflicts.slice(0, CONFLICTS_NAMED).map(({ pe, conflict }, i) => (
+              <span key={pe.id}>
+                {i > 0 && ', '}
+                <button
+                  type="button"
+                  onClick={() => onSelectProspect?.(pe)}
+                  title={peConflictText(pe.company, conflict)}
+                  style={{ padding: 0, border: 'none', background: 'none', color: '#991B1B', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+                >{pe.company || '(unnamed firm)'}</button>
+                <span style={{ fontWeight: 600 }}> ({conflict.stage})</span>
+              </span>
+            ))}
+            {stageConflicts.length > CONFLICTS_NAMED
+              && `, and ${stageConflicts.length - CONFLICTS_NAMED} more flagged in the table below`}
+          </div>
+        )}
         {filteredFirms.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
@@ -1648,7 +1714,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page; In Progress when one is marked In Progress (and none are Yes)' },
-            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell - it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order. A firm with no stage stored reads as Lead.` },
+            { key: 'peStage', label: 'PE Stage', align: 'center', tip: `This firm's PE Stage: ${PE_STAGES.join(' / ')}. Set it from the cell - it writes the same field the company popup does, and re-dates the firm's days in stage. Sorts in that order. A firm with no stage stored reads as Lead. A cell outlined in red is a firm whose Status says "${NOT_SOLD_STATUS}" while its stage still says the relationship is live.` },
             { key: 'newsFeed', label: 'News Feed', align: 'center', tip: 'Yes when "Track acquisition news" is ticked on this firm\'s company popup, which includes it in the weekly acquisition-news email. Sort to group the tracked firms together.' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
@@ -1709,6 +1775,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                 const isExpanded = expanded.has(pe.id);
                 const stats = stageStatsByFirm.get(pe.id) || {};
                 const dmFound = (stats.decisionMakerNames || []).length > 0;
+                const conflict = conflictById.get(pe.id) || null;
                 return (
                   <div key={pe.id} style={{ borderTop: rowIdx === 0 ? 'none' : '1px solid #E2E8F0' }}>
                     {/* A div rather than a <button>: the PE Stage cell holds a
@@ -1727,11 +1794,27 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                       }}
                       style={{ width: '100%', padding: 0, background: isExpanded ? '#F8FAFC' : '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'grid', gridTemplateColumns: GRID, alignItems: 'center' }}
                     >
+                      {/* The firm name, and the status/stage warning when this
+                          row has one. The flag rides this cell rather than
+                          either of the two cells it is about because this is
+                          the one column that cannot be hidden - the whole
+                          conflict is invisible on a table with Status and PE
+                          Stage both switched off. Clicking anywhere in the
+                          cell, flag included, opens the popup that holds both
+                          fields. */}
                       <div
                         style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={pe.company}
+                        title={conflict ? peConflictText(pe.company, conflict) : pe.company}
                         onClick={e => { e.stopPropagation(); onSelectProspect?.(pe); }}
-                      >{pe.company}</div>
+                      >
+                        {conflict && (
+                          <span
+                            aria-hidden="true"
+                            style={{ color: '#DC2626', marginRight: 4, fontWeight: 700 }}
+                          >⚠</span>
+                        )}
+                        {pe.company}
+                      </div>
 
                       {visibleCols.has('cdm') && (
                       <div
@@ -4216,15 +4299,23 @@ function PEStageDaysTab({ firms, portfolioByPe, onSelectProspect }) {
 function PeStageCell({ prospect, onUpdateProspect }) {
   const meta = peStageMeta(prospect?.peStage);
   const name = prospect?.company || 'This firm';
+  // A firm written off on its company record whose stage still says the
+  // relationship is live. The cell keeps its stage palette and swaps the
+  // border for a red one: the chip's job is still to say which stage the
+  // firm is at, and the warning is that this stage is the wrong one. The
+  // control that fixes it is the one carrying the flag.
+  const conflict = peStageStatusConflict(prospect);
   const chip = {
     padding: '1px 8px', borderRadius: 999,
-    background: meta.bg, border: `1px solid ${meta.border}`, color: meta.accent,
+    background: meta.bg, border: `1px solid ${conflict ? '#DC2626' : meta.border}`, color: meta.accent,
     fontSize: '0.7rem', fontWeight: 700,
   };
   if (!onUpdateProspect) {
     return (
       <span
-        title={`PE Stage set to "${meta.stage}" in this firm's company popup`}
+        title={conflict
+          ? peConflictText(name, conflict)
+          : `PE Stage set to "${meta.stage}" in this firm's company popup`}
         style={{
           ...chip, display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
           textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
@@ -4237,7 +4328,9 @@ function PeStageCell({ prospect, onUpdateProspect }) {
       value={meta.stage}
       onClick={e => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onUpdateProspect(prospect.id, { peStage: e.target.value }); }}
-      title={`${name} is at "${meta.stage}". Change it here - it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
+      title={conflict
+        ? peConflictText(name, conflict)
+        : `${name} is at "${meta.stage}". Change it here - it saves to the firm's record, the same field the company popup sets, and re-dates its days in stage.`}
       style={{ ...chip, maxWidth: '100%', padding: '2px 4px', fontFamily: 'inherit', cursor: 'pointer' }}
     >
       {/* No blank option: every PE firm sits at a stage, and a firm with
