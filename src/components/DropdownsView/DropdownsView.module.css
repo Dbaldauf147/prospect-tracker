@@ -3744,3 +3744,16 @@
   opacity: 1;
   color: var(--color-accent);
 }
+
+/* The account, on a card that already is one. Sits where the company combo
+   sits on the standalone page, and reads as a heading rather than a control:
+   there is nothing to pick here. */
+.potentialLockedName {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}

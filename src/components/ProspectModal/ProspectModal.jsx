@@ -43,7 +43,9 @@ import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../uti
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
-import { pricedServiceRows } from '../../utils/serviceRows';
+import { buildServiceRows, pricedServiceRows } from '../../utils/serviceRows';
+import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
+import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
@@ -556,6 +558,11 @@ const PROSPECT_TABS = [
     key: 'opps',
     label: 'Opps',
     title: 'The opportunities whose Account is this company, and the note pages kept against them',
+  },
+  {
+    key: 'potential',
+    label: 'Potential',
+    title: 'What this account is still worth: every service nobody has ruled on, priced off its own figures and ranked by the first twelve months',
   },
   {
     key: 'portfolio',
@@ -4931,6 +4938,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // on, so closing the editor doesn't land somebody on a tab they never
   // asked for.
   const [activeTab, setActiveTab] = useState(initialEditContact ? 'contacts' : 'company');
+
+  // The Potential tab's working estimate: which services are ticked against
+  // this account, the counts they are priced on, and the units typed against
+  // a row. Held here rather than inside the tab so switching to Contacts and
+  // back does not throw a half-built scope away.
+  //
+  // Seeded from the estimate the last visit left behind, but only when that
+  // estimate is THIS account's - there is one stored estimate and there are
+  // hundreds of company cards, and restoring it wherever it was found would
+  // open this card holding another account's scope.
+  const [potentialScenario, setPotentialScenario] = useState(() => {
+    const company = String(prospect?.company ?? '').trim();
+    const stored = company ? loadPricingEstimate(user?.uid) : null;
+    const storedFor = String(stored?.scenario?.company ?? '').trim();
+    const mine = storedFor && storedFor.toLowerCase() === company.toLowerCase();
+    return mine
+      ? { ...stored.scenario, company }
+      : { company, services: [], counts: {}, serviceUnits: {} };
+  });
   // Every section below still folds, and now every one of them starts
   // unfolded: they used to open closed to keep this card short, and the
   // tab bar does that job now. Clicking a tab is already somebody asking
@@ -5723,19 +5749,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Portfolio counts the companies it holds rather than adding its three
   // sections up: divisions, sites and holdings are three different things
   // and one number covering all of them would mean none of them.
-  const tabCounts = useMemo(() => {
-    const n = (v) => (v > 0 ? String(v) : '');
-    return {
-      company: '',
-      contacts: n(companyContacts.length),
-      services: servicesExploredCount.total
-        ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
-        : '',
-      opps: n(companyOppsSummary.total),
-      portfolio: n((fields.portfolioCompanies || []).length),
-    };
-  }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
-    fields.portfolioCompanies]);
 
   // The biggest thing still left to sell this account, and what it is.
   //
@@ -5759,7 +5772,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Naming an unpriced service as the biggest deal would be a claim
   // nothing supports, and $0 would read as a priced deal rather than an
   // unanswered question.
-  const biggestDeal = useMemo(() => {
+  const accountPotentialReading = useMemo(() => {
     const rows = pricedServiceRows(settings);
     if (rows.length === 0) return null;
     const client = {
@@ -5782,10 +5795,45 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // this card can't disagree about what is still open.
       oppStages: scopeMatchedServices,
       overrides: settings.serviceOverrides,
-    }).top;
+    });
   }, [settings, scopeMatchedServices, fields.servicesExplored, fields.numberOfSites,
     fields.sitesWithMandate, fields.numberOfAccounts, fields.numberOfMeters,
     fields.equipmentCount, fields.annualMwh]);
+  // The one line of it the Scale section shows. The Potential tab shows the
+  // rest, off its own run of the same function.
+  const biggestDeal = accountPotentialReading?.top || null;
+
+  const tabCounts = useMemo(() => {
+    const n = (v) => (v > 0 ? String(v) : '');
+    return {
+      company: '',
+      contacts: n(companyContacts.length),
+      services: servicesExploredCount.total
+        ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
+        : '',
+      opps: n(companyOppsSummary.total),
+      // What is on the Potential tab: the services nobody has ruled on. The
+      // tab's own headline calls them untapped services, and the count in
+      // the pill is that number rather than what happens to be ticked into
+      // the estimator - a tab bar says what is on a page, not what somebody
+      // left selected on it.
+      potential: n(accountPotentialReading?.open?.length || 0),
+      portfolio: n((fields.portfolioCompanies || []).length),
+    };
+  }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
+    accountPotentialReading, fields.portfolioCompanies]);
+
+  // What the Potential tab prices: the catalogue minus the services retired
+  // on the Services tab, and the retired names beside it so the tab can say
+  // "hidden on the Services tab" when somebody searches for one rather than
+  // leaving it looking dropped.
+  const potentialServiceRows = useMemo(() => pricedServiceRows(settings), [settings]);
+  const potentialHiddenServices = useMemo(() => {
+    const hidden = new Set(settings?.hiddenServices || []);
+    return hidden.size
+      ? buildServiceRows(settings).filter(r => hidden.has(r.name)).map(r => r.name)
+      : [];
+  }, [settings]);
 
   // The services that ride along with it, named. A bundle is what actually
   // gets sold, so the figure above is the lead plus its add-ons, and a
@@ -9566,6 +9614,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 </div>
                 );
               })()}
+            </div>
+          )}
+
+          {/* What this account is still worth. The same page Dropdowns used
+              to carry, on the company it is about: it used to make you type
+              the account into a combo on another tab, when the card that
+              holds the counts it prices from was already open. Locked to
+              this company - there is nothing to pick here. */}
+          {!isNew && activeTab === 'potential' && fields.company?.trim() && (
+            <div className={styles.potentialPane}>
+            <AccountPotentialTab
+              settings={settings}
+              updateSettings={updateSettings}
+              serviceRows={potentialServiceRows}
+              hiddenServices={potentialHiddenServices}
+              scenario={potentialScenario}
+              setScenario={setPotentialScenario}
+              prospects={prospects}
+              lockedCompany={fields.company}
+            />
             </div>
           )}
 

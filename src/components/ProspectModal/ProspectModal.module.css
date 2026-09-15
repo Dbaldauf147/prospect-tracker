@@ -584,3 +584,17 @@
   font-size: 0.68rem;
   color: var(--color-text-muted);
 }
+
+/* The Potential page, inside a card that scrolls as a whole.
+   It was built to own a viewport: its table is `flex: 1` inside a column
+   that has a height, which on a plain block parent collapses to the header
+   row and nothing under it. So it is handed a height here, and its own
+   1.25rem gutters are let through by pulling back this body's padding
+   rather than stacking two sets of margins down both sides. */
+.potentialPane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 68vh;
+  margin: -0.25rem -1.5rem -0.5rem;
+}

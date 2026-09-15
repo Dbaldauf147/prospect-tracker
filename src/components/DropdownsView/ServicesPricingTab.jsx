@@ -435,7 +435,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       ? 'The first year: the ongoing fee plus what the service costs to stand up.'
       : 'The first year. This service has no setup fee, so it is the ongoing fee alone.';
     const split = parts.length > 1
-      ? ' Charged against more than one count, so the parts are shown side by side rather than added - what one account pays is the Deal Pricing subtab, which has the counts.'
+      ? ' Charged against more than one count, so the parts are shown side by side rather than added - what one account pays is on that company\u2019s Potential tab, which has the counts.'
       : '';
     const range = end === 'hi' ? ' The top of the range.' : '';
     return `${head}${body}${split}${range}`;
@@ -823,13 +823,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       )}
 
       {/* Said once, at the top: this table is the standing price of a
-          service, and the deal that price is being quoted on is a subtab
-          over. Without it the rate card reads as though it had lost its
-          estimator rather than handed it to a tab of its own. */}
+          service, and the account that price is being quoted against is a
+          tab on that company's own card. Without it the rate card reads as
+          though it had lost its estimator rather than handed it to the
+          company it was always about. */}
       <div className={styles.oppImportNote}>
         The standing price of each service - what it is charged on, at what rate, and what it costs
-        to stand up. An edit here reaches every deal. To price one deal - tick a scope, enter the
-        account&rsquo;s counts and read the totals - use the <strong>Deal Pricing</strong> subtab.
+        to stand up. An edit here reaches every deal. To price one account - tick a scope and read
+        the totals against its own figures - open that company and use its <strong>Potential</strong> tab.
       </div>
 
       <div className={styles.serviceTableWrap}>

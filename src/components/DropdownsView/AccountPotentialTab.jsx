@@ -94,19 +94,39 @@ const DEAL_TABLE_COLUMNS = [
 // parent rather than here so switching subtabs and coming back doesn't lose
 // a half-built estimate. It's a scratch calculation, so it isn't saved into
 // settings — the rate card is the part worth keeping, and that's over there.
-export function AccountPotentialTab({ settings, updateSettings, serviceRows = [], hiddenServices = [], scenario, setScenario, prospects = [] }) {
+export function AccountPotentialTab({
+  settings, updateSettings, serviceRows = [], hiddenServices = [], scenario, setScenario, prospects = [],
+  // The account this page is about, when the page it is embedded in already
+  // knows. On the company card there is nothing to pick: the card IS the
+  // account, and a combo offering to switch to somebody else's potential
+  // inside their popup is a way to misread a page you did not mean to open.
+  lockedCompany = null,
+}) {
   const [search, setSearch] = useState('');
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
   // Firestore pull, which is exactly the right behaviour there.
   const { user } = useAuth() || {};
 
+  // The account this page is about, when the host already knows it.
+  const locked = String(lockedCompany ?? '').trim();
+
   // What the last visit left in the estimator, read once on mount. The
   // scenario half of it is restored by the parent, which owns that state;
   // the two halves are written together below, so they can't come back out
   // of step with each other.
+  //
+  // On a card, only when the stored estimate is THIS account's. There is one
+  // stored estimate and there are hundreds of company cards, so restoring it
+  // wherever it was found would open Ventas's popup holding Prologis's
+  // imported opp and the counts that went with it.
   const restoredRef = useRef(undefined);
-  if (restoredRef.current === undefined) restoredRef.current = loadPricingEstimate(user?.uid);
+  if (restoredRef.current === undefined) {
+    const found = loadPricingEstimate(user?.uid);
+    const belongsHere = !locked
+      || String(found?.scenario?.company ?? '').trim().toLowerCase() === locked.toLowerCase();
+    restoredRef.current = belongsHere ? found : null;
+  }
   const restored = restoredRef.current;
 
   // The Opps 2 dataset, pulled only when the picker is first opened. It's
@@ -152,7 +172,10 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // box shows is what used to eat the space bar: "Blue " trimmed back to
   // "Blue", which equalled the value already there, so the keystroke was
   // dropped and the word could never be finished.
-  const companyTyped = String(scenario?.company ?? '');
+  // Locked to the card's own account when embedded, and whatever is in the
+  // box otherwise. The scenario still carries the name either way, so the
+  // scope, the counts and the saved estimate behave identically in both.
+  const companyTyped = locked || String(scenario?.company ?? '');
   const company = companyTyped.trim();
   const companyOptions = useMemo(
     () => [...new Set((prospects || []).map(p => String(p?.company || '').trim()).filter(Boolean))].sort(),
@@ -230,6 +253,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   const openRows = potential.open;
 
   function setCompany(name) {
+    if (locked) return;
     const typed = String(name ?? '');
     const next = typed.trim();
     if (typed === companyTyped) return;
@@ -271,12 +295,29 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
   // with an opp's scope and someone else's counts. Emptying the estimator
   // writes nothing and clears the record (see savePricingEstimate).
   useEffect(() => {
-    savePricingEstimate(user?.uid, {
-      scenario: { services: [...inScope], counts, serviceUnits },
+    // Which account it is for, so the next visit can tell whether the stored
+    // estimate is the one it is looking at. There is one record and there
+    // are hundreds of company cards.
+    const next = {
+      scenario: { company: companyTyped, services: [...inScope], counts, serviceUnits },
       pinned: pinnedNames ? [...pinnedNames] : null,
       oppImport,
-    });
-  }, [user?.uid, inScope, counts, serviceUnits, pinnedNames, oppImport]);
+    };
+    // A card that has only been LOOKED at has produced no estimate, and
+    // writing one would throw away whatever is stored for another account.
+    // Only ever skipped for somebody else's record: an emptied estimator on
+    // the account the record belongs to still clears it, which is what
+    // Clear scope has always done.
+    if (locked) {
+      const nothingHere = inScope.size === 0
+        && Object.keys(counts).length === 0
+        && Object.keys(serviceUnits).length === 0
+        && !oppImport && !pinnedNames;
+      const storedFor = String(loadPricingEstimate(user?.uid)?.scenario?.company ?? '').trim();
+      if (nothingHere && storedFor && storedFor.toLowerCase() !== locked.toLowerCase()) return;
+    }
+    savePricingEstimate(user?.uid, next);
+  }, [user?.uid, companyTyped, locked, inScope, counts, serviceUnits, pinnedNames, oppImport]);
 
   // The last save, so the note under the bar can say it landed — and say
   // it didn't when it didn't. { ok, at, error }.
@@ -958,15 +999,21 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
       <div className={styles.potentialBar}>
         <div className={styles.potentialPick}>
           <span className={styles.pricingBarTitle}>Account potential</span>
-          <div className={styles.potentialCombo}>
-            <ColumnFilterCombo
-              value={companyTyped}
-              onChange={setCompany}
-              suggestions={companyOptions}
-              label="Company"
-              placeholder="Type a company…"
-            />
-          </div>
+          {locked ? (
+            <strong className={styles.potentialLockedName} title="The account this card is about. Everything below is priced against its own figures.">
+              {locked}
+            </strong>
+          ) : (
+            <div className={styles.potentialCombo}>
+              <ColumnFilterCombo
+                value={companyTyped}
+                onChange={setCompany}
+                suggestions={companyOptions}
+                label="Company"
+                placeholder="Type a company…"
+              />
+            </div>
+          )}
           {company && !client && (
             <span className={styles.potentialWarn} title="Nothing in the client list matches this name, so no counts and no service statuses could be read. The services below are priced on whatever is typed in the boxes.">
               No record for this name
@@ -980,7 +1027,7 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
               {decidedSentence}
             </span>
           )}
-          {company && (
+          {company && !locked && (
             <button
               type="button"
               className={styles.showHiddenBtn}
