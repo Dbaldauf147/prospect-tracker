@@ -104,6 +104,8 @@ import {
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
+import { BUCKETS, contactHasTag, contactIsHidden, getContactTags } from './contactTags.js';
+import { ContactsTable } from './ContactsTable.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact, withoutUnknownBlanks } from '../../utils/hubspotContactFields';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
@@ -346,28 +348,6 @@ function companiesMatch(a, b) {
 
 function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-}
-
-const BUCKETS = [
-  { key: 'esg',             label: 'ESG',              tag: 'esg',              accent: '#059669', bg: '#ECFDF5', border: '#6EE7B7', headerBg: '#D1FAE5', headerColor: '#065F46' },
-  { key: 'procurement',    label: 'Procurement',      tag: 'procurement',     accent: '#7C3AED', bg: '#F5F3FF', border: '#C4B5FD', headerBg: '#EDE9FE', headerColor: '#4C1D95' },
-  { key: 'utilities',      label: 'Utilities',        tag: 'utilities',       accent: '#2563EB', bg: '#EFF6FF', border: '#93C5FD', headerBg: '#DBEAFE', headerColor: '#1E3A8A' },
-  { key: 'climaterisk',    label: 'Climate Risk',     tag: 'climate risk',    accent: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5', headerBg: '#FEE2E2', headerColor: '#7F1D1D' },
-  { key: 'capitalplanning',label: 'Capital Planning', tag: 'capital planning',accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A', headerBg: '#FEF3C7', headerColor: '#78350F' },
-  { key: 'efficiencyrenewables', label: 'Efficiency / Renewables', tag: 'efficiency / renewables', accent: '#0D9488', bg: '#F0FDFA', border: '#5EEAD4', headerBg: '#CCFBF1', headerColor: '#134E4A' },
-];
-
-function contactHasTag(c, tag) {
-  return getContactTags(c).includes(tag.toLowerCase());
-}
-
-function contactIsHidden(c) {
-  return contactHasTag(c, 'hide');
-}
-
-function getContactTags(c) {
-  const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-  return raw.split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
 function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {} }) {
@@ -11408,215 +11388,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     >Clear</button>
                   </div>
                 )}
-                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
-                    <thead>
-                      <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
-                        <th style={{ padding: '0.4rem 0.4rem', textAlign: 'center', borderBottom: '1px solid #E2E8F0', width: '34px' }}>
-                          {(() => {
-                            const visibleIds = companyContacts.map(c => String(c.id || c.vid || '')).filter(Boolean);
-                            const allSelected = visibleIds.length > 0 && visibleIds.every(id => bulkSelected.has(id));
-                            const someSelected = visibleIds.some(id => bulkSelected.has(id));
-                            return (
-                              <input
-                                type="checkbox"
-                                checked={allSelected}
-                                ref={el => { if (el) el.indeterminate = !allSelected && someSelected; }}
-                                onChange={() => {
-                                  setBulkSelected(prev => {
-                                    const next = new Set(prev);
-                                    if (allSelected) for (const id of visibleIds) next.delete(id);
-                                    else for (const id of visibleIds) next.add(id);
-                                    return next;
-                                  });
-                                }}
-                                onClick={e => e.stopPropagation()}
-                                title="Select all visible"
-                                style={{ cursor: 'pointer' }}
-                              />
-                            );
-                          })()}
-                        </th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Where this contact was created: HubSpot sync, bulk upload, or manual entry.">Source</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Full Name</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '60px' }} title="Outbound emails to this contact, sourced from the Activity tab.">Sent</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '70px' }} title="Inbound emails from this contact, sourced from the Activity tab.">Received</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Work Phone</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Cell Phone</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Country</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Open LinkedIn / Sales Navigator pre-filtered to this contact's name + company.">LinkedIn Search</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Notes</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...companyContacts]
-                        .sort((a, b) => {
-                          const aLeft = contactHasTag(a, 'left') ? 1 : 0;
-                          const bLeft = contactHasTag(b, 'left') ? 1 : 0;
-                          return aLeft - bLeft;
-                        })
-                        .map((c, i) => {
-                        const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
-                        const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
-                        const isDM = contactHasTag(c, 'decision maker');
-                        // Champion / detractor, set on the contact popup - the
-                        // same mark the Divisions chart draws, so a row and a
-                        // chip for one person read the same way.
-                        const standing = sentimentMark(sentimentFor(settings.contactSentiment, c.id || c.vid));
-                        const source = getContactSource(c);
-                        const sourceStyle = source === 'manual'
-                          ? { bg: '#EDE9FE', color: '#5B21B6', label: 'Manual' }
-                          : source === 'bulk'
-                          ? { bg: '#DBEAFE', color: '#1D4ED8', label: 'Bulk' }
-                          : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
-                        const counts = getContactEmailCounts(c);
-                        const isExcluded = excludedContactIds.has(String(c.id || c.vid || ''));
-                        return (
-                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '', opacity: isExcluded ? 0.5 : 1 }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
-                            <td style={{ padding: '0.35rem 0.4rem', textAlign: 'center', width: '34px' }} onClick={e => e.stopPropagation()}>
-                              {(() => {
-                                const cid = String(c.id || c.vid || '');
-                                if (!cid) return null;
-                                return (
-                                  <input
-                                    type="checkbox"
-                                    checked={bulkSelected.has(cid)}
-                                    onChange={() => setBulkSelected(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(cid)) next.delete(cid); else next.add(cid);
-                                      return next;
-                                    })}
-                                    style={{ cursor: 'pointer' }}
-                                  />
-                                );
-                              })()}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
-                              {name || '-'}
-                              {standing && (
-                                <span
-                                  title={`${name || 'This contact'} - ${standing.label}`}
-                                  aria-label={standing.label}
-                                  style={{ marginLeft: '0.3rem', fontSize: '0.8rem', fontWeight: 700, color: standing.color }}
-                                >{standing.symbol}</span>
-                              )}
-                              {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', whiteSpace: 'nowrap' }}>
-                              <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: sourceStyle.bg, color: sourceStyle.color, letterSpacing: '0.02em' }}>{sourceStyle.label}</span>
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#1E293B', whiteSpace: 'nowrap' }}>
-                              {(() => {
-                                const fullFirst = c.firstname || '';
-                                const fullLast = c.lastname || '';
-                                const full = `${fullFirst} ${fullLast}`.trim();
-                                const nicknames = (settings && settings.contactNicknames) || {};
-                                const nick = (c.id && nicknames[c.id]) || '';
-                                if (!full && !nick) return <span style={{ color: '#CBD5E1' }}>-</span>;
-                                return (
-                                  <>
-                                    <span>{full || '-'}</span>
-                                    {nick && <span style={{ marginLeft: '0.35rem', fontSize: '0.65rem', color: '#64748B', fontWeight: 400 }}>({nick})</span>}
-                                  </>
-                                );
-                              })()}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: '#475569' }}>
-                              {(c.dans_tags || c.dan_s_tags || c.dans_tag || '-')}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', maxWidth: '180px' }}>
-                              {(() => {
-                                const matched = BUCKETS.filter(b => getContactTags(c).includes(b.tag));
-                                if (matched.length === 0) return <span style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>-</span>;
-                                return <span style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
-                                  {matched.map(b => <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>{b.label}</span>)}
-                                </span>;
-                              })()}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.sent > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.sent > 0 ? `${counts.sent} outbound emails to this contact (Activity tab)` : 'No outbound emails recorded'}>{counts.sent || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.received > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.received > 0 ? `${counts.received} inbound emails from this contact (Activity tab)` : 'No inbound emails recorded'}>{counts.received || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.mobilephone || c.mobile_phone || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem' }}>
-                              {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>-</span>}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem' }}>
-                              {(() => {
-                                const parts = [c.firstname, c.lastname, c.company || fields.company].map(s => String(s || '').trim()).filter(Boolean);
-                                if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>-</span>;
-                                const keywords = encodeURIComponent(parts.join(' '));
-                                const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
-                                const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
-                                return (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                    <a
-                                      href={liHref}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={e => e.stopPropagation()}
-                                      title={`Open regular LinkedIn people search for "${parts.join(' ')}": best for grabbing the canonical linkedin.com/in/ URL.`}
-                                      style={{ color: '#0A66C2', fontSize: '0.65rem', fontWeight: 600, textDecoration: 'none' }}
-                                    >LinkedIn ↗</a>
-                                    <a
-                                      href={snHref}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={e => e.stopPropagation()}
-                                      title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
-                                      style={{ color: '#0A66C2', fontSize: '0.65rem', fontWeight: 600, textDecoration: 'none' }}
-                                    >Sales Nav ↗</a>
-                                  </div>
-                                );
-                              })()}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '-'}</td>
-                            <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
-                              {(() => {
-                                const cid = String(c.id || c.vid || '');
-                                if (!cid) return null;
-                                return isExcluded ? (
-                                  <button
-                                    onClick={e => { e.stopPropagation(); unexcludeContactFromCompany(cid); }}
-                                    title="Re-add this contact to this company"
-                                    style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
-                                  >＋ Re-add</button>
-                                ) : (
-                                  <button
-                                    onClick={e => { e.stopPropagation(); excludeContactFromCompany(cid); }}
-                                    title="Remove from this company only (keeps the contact in HubSpot)"
-                                    style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.9rem', cursor: 'pointer', padding: '0 3px', lineHeight: 1, fontFamily: 'inherit' }}
-                                    onMouseEnter={e => e.currentTarget.style.color = '#F59E0B'}
-                                    onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
-                                  >⊘</button>
-                                );
-                              })()}
-                              <button
-                                onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
-                                disabled={deletingContact === (c.id || c.vid)}
-                                title="Delete contact from HubSpot (permanent)"
-                                style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}
-                                onMouseEnter={e => e.target.style.color = '#EF4444'}
-                                onMouseLeave={e => e.target.style.color = '#CBD5E1'}
-                              >{deletingContact === (c.id || c.vid) ? '...' : '×'}</button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <ContactsTable
+                  contacts={companyContacts}
+                  company={fields.company}
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  bulkSelected={bulkSelected}
+                  setBulkSelected={setBulkSelected}
+                  excludedContactIds={excludedContactIds}
+                  onExclude={excludeContactFromCompany}
+                  onUnexclude={unexcludeContactFromCompany}
+                  onEditContact={setEditingContact}
+                  onDeleteContact={handleDeleteContact}
+                  deletingContact={deletingContact}
+                  emailCountsFor={getContactEmailCounts}
+                  sourceOf={getContactSource}
+                />
                 </>
               ) : (() => {
                 const totalContacts = Array.isArray(hubspotContacts) ? hubspotContacts.length : 0;

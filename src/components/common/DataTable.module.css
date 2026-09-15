@@ -260,3 +260,11 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-md);
 }
+
+/* Gridlines, for the tables that ask for them (see the gridLines prop).
+   The last column skips the line: the table's own right edge is already
+   there, and a second one beside it reads as an empty column. */
+.gridLines .table th:not(:last-child),
+.gridLines .table td:not(:last-child) {
+  border-right: 1px solid var(--color-border-light);
+}
