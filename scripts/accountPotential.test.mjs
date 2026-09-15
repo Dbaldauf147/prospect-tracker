@@ -6,27 +6,38 @@
 // here is a judgement, and it is the whole page: which services count as
 // potential at all, and in what order they matter.
 //
-// Three ways that goes quietly wrong.
+// Four ways that goes quietly wrong.
 //
 //   1. Counting money we already have. A service this company already buys
 //      is not potential, and neither is one they turned down or one marked
-//      N/A. Less obviously, nor is one sitting in a live opp - that money
-//      is in the pipeline already, and a page that adds it to "untapped"
-//      has counted it twice in the same review.
+//      N/A. Three answers, and an answered service is money that is not
+//      there to win.
 //
-//   2. Missing money we do have. The status that rules a service out has to
-//      be the company page's EFFECTIVE status - a manual entry, or failing
-//      that whatever the account's opps imply. Reading only the manual map
-//      leaves every service sold through an opp looking like whitespace,
-//      which is the same page saying go and sell something we already sold.
+//   2. Dropping money we have not won yet. A service at Exploring or
+//      Quoting is nobody's answer: it is the account's potential and it is
+//      what somebody is working on this week, so it counts, it ranks, and
+//      it can be the biggest deal on the account.
 //
-//   3. Ranking on the wrong end of a range. A service quoted from nothing
+//   3. Missing money we do have. The status that closes a service off has
+//      to be the company page's EFFECTIVE status - a manual entry, or
+//      failing that whatever the account's opps imply. Reading only the
+//      manual map leaves every service sold through an opp looking like
+//      whitespace, which is the same page saying go and sell something we
+//      already sold.
+//
+//   4. Ranking on the wrong end of a range. A service quoted from nothing
 //      up to half a million must not outrank one reliably worth four
 //      hundred thousand. Rank on the low end or the top of the list fills
 //      with whatever is least understood.
+//
+// And one that goes loudly wrong: an answered service must still be
+// LISTED, priced and in size order, because the table shows the whole
+// catalogue and a row that vanished would read as one nobody had looked
+// at. Shown and not counted are two different things, and every figure on
+// this page depends on them staying different.
 import {
   accountPotential, serviceDecision, splitByDecision, decidedCounts, rankByPotential,
-  bundleAutoAdds, bundleTotals, dealSizesByBundle, pricesOnDeal,
+  bundleAutoAdds, bundleTotals, dealSizesByBundle, pricesOnDeal, CLOSED_BUCKETS,
 } from '../src/utils/accountPotential.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
@@ -108,18 +119,32 @@ const run = (client, oppStages = null) => accountPotential({
   check('a service they already buy is not potential', p.decidedNames.has('Bill payment'), true);
   check('nor one they turned down', p.decidedNames.has('GHG reporting'), true);
   check('nor one marked not applicable', p.decidedNames.has('Rate analysis'), true);
-  // The money in a live opp is in the pipeline already. Counting it here
-  // too is counting it twice in the same review.
-  check('nor one already in flight', p.decidedNames.has('Invoice recalculation'), true);
+  // Nobody has said yes and nobody has said no, so it is still the prize -
+  // and it is the one somebody is actually working on.
+  check('but one in flight still is', p.decidedNames.has('Invoice recalculation'), false);
   // A dash is the card's way of writing "no status", not a status called
   // "-". Reading it as one would empty the page on a card somebody had
   // opened and closed.
   check('a dash is no status, so the service stays potential',
-    p.open.map(r => r.name).join(','), 'Tariff review');
-  check('and the totals hold only what is left', p.estimate.contractValue, 0);
+    p.open.map(r => r.name).sort().join(','), 'Invoice recalculation,Tariff review');
+  // 100 sites x $10 x 3 years: the quoted service, and nothing else.
+  check('and the totals hold only what is still winnable', p.estimate.contractValue, 3000);
   const c = p.decidedCounts;
-  check('the decided are counted by outcome',
-    `${c.sold}/${c.inProgress}/${c.notSold}/${c.na}`, '1/1/1/1');
+  check('the answered are counted by outcome',
+    `${c.sold}/${c.inProgress}/${c.notSold}/${c.na}`, '1/0/1/1');
+  check('and the in-flight one is counted on the open side',
+    p.openCounts.inProgress, 1);
+
+  // Answered is not the same as gone. The table shows these rows, greyed,
+  // so they are priced and put in size order like everything else.
+  check('every answered service is still listed',
+    p.closed.map(l => l.name).join(','), 'GHG reporting,Bill payment,Rate analysis');
+  check('in size order of their own', p.closed[0].fee, 50000);
+  check('carrying the status that greys them', p.closed[0].status, 'Not Sold');
+  check('and the bucket behind it', p.closed[2].statusBucket, 'na');
+  // The whole point of showing them: none of it is money on this page.
+  check('none of that money reaches the estimate', p.estimate.year1Total, 1000);
+  check('and none of it can be the biggest deal', p.top.name, 'Invoice recalculation');
 }
 
 // ---- status the company page would show, not just the manual map ---------
@@ -130,9 +155,12 @@ const run = (client, oppStages = null) => accountPotential({
   const client = { company: 'Acme', servicesExplored: {} };
   const stages = new Map([['Bill payment', 'Sold'], ['GHG reporting', 'Qualifying']]);
   const p = run(client, stages);
-  check('a service sold through an opp drops out too', p.decidedNames.has('Bill payment'), true);
-  check('and one in flight through an opp as well', p.decidedNames.has('GHG reporting'), true);
-  check('leaving the rest', p.open.length, 3);
+  check('a service sold through an opp drops out of the money too',
+    p.decidedNames.has('Bill payment'), true);
+  check('but one being qualified through an opp is still potential',
+    p.decidedNames.has('GHG reporting'), false);
+  check('leaving the rest', p.open.length, 4);
+  check('and the qualified one can lead the page', p.top.name, 'GHG reporting');
 
   // A manual entry is an explicit override and beats the opp.
   const overridden = run(
@@ -145,8 +173,10 @@ const run = (client, oppStages = null) => accountPotential({
     { company: 'Acme', servicesExplored: { 'Bill payment': 'Exploring' } },
     new Map([['Bill payment', 'Sold']]),
   );
-  check('but a real manual status wins, and Exploring is still decided',
-    revived.decidedNames.has('Bill payment'), true);
+  check('but a real manual status wins, and Exploring is open again',
+    revived.decidedNames.has('Bill payment'), false);
+  check('so the manual status is what the page reads',
+    revived.open.find(r => r.name === 'Bill payment').status, 'Exploring');
 }
 
 // ---- ranking on year one, at the middle of the range ---------------------
@@ -227,7 +257,12 @@ const run = (client, oppStages = null) => accountPotential({
     pricing: PRICING, bases, counts: COUNTS,
   });
   check('an account with nothing open has no biggest deal', p.top, null);
-  check('and nothing to list', p.open.length, 0);
+  check('and nothing to sell them', p.open.length, 0);
+  // Not nothing to SHOW them, though: the row is still on the table, with
+  // what it is worth on it, greyed.
+  check('the sold service is still on the table', p.closed.length, 1);
+  check('priced, so the row can be read', p.closed[0].fee, 10000);
+  check('and marked as the answer it is', p.closed[0].statusBucket, 'sold');
 }
 
 // ---- services that come with other services ------------------------------
@@ -461,6 +496,13 @@ const run = (client, oppStages = null) => accountPotential({
   check('a decision names the status it found', d.status, 'Sold');
   check('and the bucket it falls in', d.statusBucket, 'sold');
   check('an unknown service is undecided', serviceDecision({}, 'Y').decided, false);
+  const q = serviceDecision({ servicesExplored: { X: 'Quoting' } }, 'X');
+  check('a service in flight is not answered', q.decided, false);
+  check('and says so in its own field', q.inFlight, true);
+  check('a sold one is not in flight',
+    serviceDecision({ servicesExplored: { X: 'Sold' } }, 'X').inFlight, false);
+  check('the three closing buckets and no others',
+    [...CLOSED_BUCKETS].sort().join(','), 'na,notSold,sold');
   check('counting ignores a bucket it does not know',
     decidedCounts([{ statusBucket: 'nonsense' }]).sold, 0);
 }
